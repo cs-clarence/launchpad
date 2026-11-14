@@ -50,12 +50,19 @@ export async function recordAudit(
     await db
         .insertInto("audit_event")
         .values({
-            actor: `user:${event.actor.userId}`,
+            actor: event.actor.credentialId
+                ? `api_key:${event.actor.credentialId}`
+                : `user:${event.actor.userId}`,
             action: event.action,
             target_type: event.targetType,
             target_id: event.targetId,
             organization_id: event.organizationId ?? null,
-            detail: event.detail ?? null,
+            detail: event.actor.credentialId
+                ? JSON.stringify({
+                      onBehalfOf: event.actor.userId,
+                      ...(event.detail ? { detail: event.detail } : {}),
+                  })
+                : (event.detail ?? null),
         })
         .execute();
 }

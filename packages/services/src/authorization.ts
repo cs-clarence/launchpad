@@ -58,4 +58,6 @@ export type ApiKeyScope = (typeof API_KEY_SCOPES)[number];
 export interface Principal {
     userId: string;
     instanceRole: "user" | "operator";
+    // Set when the caller is an API key; audit events then name the key.
+    credentialId?: string;
 }

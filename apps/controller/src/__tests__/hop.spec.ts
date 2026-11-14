@@ -545,6 +545,7 @@ describe("API keys over HTTP", () => {
     let projectId = "";
     let readKey = "";
     let writeKey = "";
+    let readKey2 = "";
 
     it("is issued by a signed-in owner, shown once, and listed without its secret", async () => {
         const operator = await login("op@example.com", PASSWORD, "198.51.100.20");
@@ -588,18 +589,26 @@ describe("API keys over HTTP", () => {
             body: { name: "writer", scopes: ["project:create", "project:read"], expiresInDays: 7 },
         });
         writeKey = createdApiKeySchema.parse(await write.json()).secret;
+        // Kept apart from readKey, which a later test revokes.
+        readKey2 = createdApiKeySchema.parse(
+            await (
+                await api(owner, `/organizations/${orgId}/api-keys`, {
+                    method: "POST",
+                    body: { name: "reader2", scopes: ["project:read"], expiresInDays: 7 },
+                })
+            ).json(),
+        ).secret;
 
         const listed = await (await api(owner, `/organizations/${orgId}/api-keys`)).text();
         expect(listed).not.toContain(readKey);
-        expect(z.array(apiKeySummarySchema).parse(JSON.parse(listed))).toHaveLength(2);
+        expect(z.array(apiKeySummarySchema).parse(JSON.parse(listed))).toHaveLength(3);
     });
 
-    it("authenticates as its creator, limited to its organization and scopes", async () => {
+    it("authenticates as a key, limited to its organization and scopes", async () => {
         const info = keyInfoSchema.parse(await (await bearer(readKey, "/key")).json());
         expect(info).toMatchObject({ organizationId: orgId, name: "reader" });
-        expect(meSchema.parse(await (await bearer(readKey, "/me")).json()).email).toBe(
-            "user@example.com",
-        );
+        // A key learns about itself, never about its creator.
+        expect((await bearer(readKey, "/me")).status).toBe(403);
         const orgs = z
             .array(organizationSummarySchema)
             .parse(await (await bearer(readKey, "/organizations")).json());
@@ -672,6 +681,99 @@ describe("API keys over HTTP", () => {
         expect(create.status).toBe(403);
     });
 
+    it("refuses every session-only operation to a key, driven from the OpenAPI document", async () => {
+        const spec = (await (await fetch(`${proxied.base}/api/openapi/json`)).json()) as {
+            paths: Record<string, Record<string, { security?: Record<string, unknown>[] }>>;
+        };
+        const zero = "00000000-0000-4000-8000-000000000000";
+        let checked = 0;
+        for (const [template, methods] of Object.entries(spec.paths)) {
+            for (const [method, operation] of Object.entries(methods)) {
+                const security = operation.security ?? [];
+                if (security.length === 0 || security.some((entry) => "bearerKey" in entry))
+                    continue;
+                const path = template
+                    .replace("/api/v1", "")
+                    .replace("{orgId}", orgId)
+                    .replace(/\{\w+\}/g, zero);
+                const response = await bearer(readKey2, path, {
+                    method: method.toUpperCase(),
+                    body: method === "get" || method === "delete" ? undefined : {},
+                });
+                expect(response.status, `${method} ${template}`).toBe(403);
+                checked++;
+            }
+        }
+        expect(checked).toBeGreaterThanOrEqual(8);
+    });
+
+    it("needs a fresh sign-in to issue a key, and keeps the origin check when a cookie rides along", async () => {
+        const session = await testDb.db
+            .selectFrom("session")
+            .innerJoin("user", "user.id", "session.userId")
+            .select("session.id")
+            .where("user.email", "=", "user@example.com")
+            .execute();
+        await testDb.db
+            .updateTable("session")
+            .set({ createdAt: new Date(Date.now() - 3_600_000) })
+            .where(
+                "id",
+                "in",
+                session.map((s) => s.id),
+            )
+            .execute();
+        const stale = await api(owner, `/organizations/${orgId}/api-keys`, {
+            method: "POST",
+            body: { name: "late", scopes: ["project:read"], expiresInDays: 1 },
+        });
+        expect(stale.status).toBe(403);
+        await testDb.db
+            .updateTable("session")
+            .set({ createdAt: new Date() })
+            .where(
+                "id",
+                "in",
+                session.map((s) => s.id),
+            )
+            .execute();
+        const crossOrigin = await fetch(`${proxied.base}/api/v1/organizations/${orgId}/projects`, {
+            method: "POST",
+            headers: {
+                cookie: owner,
+                origin: "https://evil.example.com",
+                authorization: `Bearer ${writeKey}`,
+                "content-type": "application/json",
+            },
+            body: JSON.stringify({ name: "Evil", slug: "evil" }),
+        });
+        expect(crossOrigin.status).toBe(403);
+        expect(errorSchema.parse(await crossOrigin.json()).code).toBe("forbidden-origin");
+    });
+
+    it("rejects an expired key, and refuses an Authorization header on public routes", async () => {
+        const expired = createdApiKeySchema.parse(
+            await (
+                await api(owner, `/organizations/${orgId}/api-keys`, {
+                    method: "POST",
+                    body: { name: "short", scopes: ["project:read"], expiresInDays: 1 },
+                })
+            ).json(),
+        );
+        await testDb.db
+            .updateTable("api_key")
+            .set({ expires_at: new Date(Date.now() - 1000) })
+            .where("id", "=", expired.id)
+            .execute();
+        expect((await bearer(expired.secret, "/organizations")).status).toBe(401);
+        const preview = await fetch(`${proxied.base}/api/v1/invitations/preview`, {
+            method: "POST",
+            headers: { authorization: `Bearer ${writeKey}`, "content-type": "application/json" },
+            body: JSON.stringify({ token: "x".repeat(30) }),
+        });
+        expect(preview.status).toBe(401);
+    });
+
     it("rejects bad credentials with 401 and never falls back to the cookie", async () => {
         expect((await bearer("lp_nope", "/organizations")).status).toBe(401);
         expect(
@@ -690,7 +792,7 @@ describe("API keys over HTTP", () => {
         ).toBe(401);
     });
 
-    it("stops working when revoked, and when its creator leaves the organization", async () => {
+    it("stops working when revoked", async () => {
         const list = z
             .array(apiKeySummarySchema)
             .parse(await (await api(owner, `/organizations/${orgId}/api-keys`)).json());

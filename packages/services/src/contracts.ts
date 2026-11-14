@@ -114,7 +114,7 @@ export const apiKeySummarySchema = z.strictObject({
     id: z.uuid(),
     name: z.string(),
     prefix: z.string(),
-    scopes: z.array(z.string()),
+    scopes: z.array(apiKeyScope),
     projectIds: z.array(z.uuid()).nullable(),
     createdBy: z.string(),
     createdAt: timestamp,

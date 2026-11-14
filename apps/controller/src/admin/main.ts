@@ -127,7 +127,7 @@ program
             ),
         );
         console.log(
-            `Password reset for ${result.email}; revoked ${result.revokedSessions} session(s).`,
+            `Password reset for ${result.email}; revoked ${result.revokedSessions} session(s) and ${result.revokedKeys} API key(s).`,
         );
     });
 

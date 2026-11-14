@@ -153,11 +153,11 @@ export function openApiPlugin(enabled: boolean) {
 
 export const docs = {
     me: operation({
-        keys: true,
         tags: ["Session"],
         summary: "Current user",
+        description: "Session only; an API key gets 403 and reads /v1/key instead.",
         ok: { description: "The signed-in user.", schema: meSchema },
-        errors: [401],
+        errors: [401, 403],
     }),
     listOrganizations: operation({
         keys: true,
@@ -167,7 +167,7 @@ export const docs = {
             description: "Organizations the caller belongs to.",
             schema: z.array(organizationSummarySchema),
         },
-        errors: [401],
+        errors: [401, 403],
     }),
     createOrganization: operation({
         tags: ["Organizations"],
@@ -187,7 +187,7 @@ export const docs = {
             description: "The organization and the caller's role.",
             schema: organizationSummarySchema,
         },
-        errors: [401, 404],
+        errors: [401, 403, 404],
     }),
     listMembers: operation({
         keys: true,
@@ -195,7 +195,7 @@ export const docs = {
         summary: "List members",
         path: ["orgId"],
         ok: { description: "Members.", schema: z.array(memberSchema) },
-        errors: [401, 404],
+        errors: [401, 403, 404],
     }),
     addMember: operation({
         tags: ["Organizations"],
@@ -220,7 +220,7 @@ export const docs = {
         summary: "List projects",
         path: ["orgId"],
         ok: { description: "Projects.", schema: z.array(projectSchema) },
-        errors: [401, 404],
+        errors: [401, 403, 404],
     }),
     createProject: operation({
         keys: true,
@@ -247,7 +247,7 @@ export const docs = {
         tags: ["API keys"],
         summary: "Issue an API key",
         description:
-            "Needs admin or owner, signed in (a key cannot issue keys). Scopes must be allowed to your role. The secret is returned once.",
+            "Needs admin or owner and a session created in the last 15 minutes (sign in again otherwise); a key cannot issue keys. The secret is returned once.",
         path: ["orgId"],
         body: createApiKeySchema,
         ok: { status: 201, description: "Issued.", schema: createdApiKeySchema },

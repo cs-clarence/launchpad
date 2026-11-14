@@ -29,6 +29,7 @@ export interface AccountTable {
 export interface SessionTable {
     id: string;
     userId: string;
+    createdAt: Date;
 }
 
 export interface AuditEventTable {
@@ -93,6 +94,7 @@ export interface ApiKeyTable {
     id: Generated<string>;
     organization_id: string;
     created_by: string;
+    member_id: string | null;
     name: string;
     prefix: string;
     secret_hash: string;

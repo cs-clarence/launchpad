@@ -46,7 +46,7 @@ registration is included in this planning request.
 ## Finish line and worked example
 
 An instance operator provisions the installation and organizations Acme and
-Beta. An authorized Acme deployer creates a project and a scoped API key, then:
+Beta. An authorized Acme deployer creates a project; an Acme admin or owner issues a scoped API key, then:
 
 ```sh
 launchpad deploy ./dist --project website --name review --spa --ttl 24h
@@ -349,8 +349,8 @@ Milestone 1 is complete except these known, accepted items:
 - A sign-in whose password check began before an operator password reset can still
   create a session after the reset commits (a millisecond window, and only for someone
   who already knows the old password). Closing it needs a credential generation that
-  sessions and the reset share. API keys do not touch it (they are not sessions);
-  it stays an accepted gap and needs Better Auth's check and insert in one transaction.
+  sessions and the reset share. API keys are revoked by operator recovery, but they are not sessions, so they
+  do not affect it; it stays an accepted gap and needs Better Auth's check and insert in one transaction.
 - Session-refresh cookies are forwarded to the browser for pages, not for direct
   `/api/v1` calls; API clients authenticate with keys from milestone 2.
 - Reset-password, sign-in and invitation endpoints rely on the throttles described in

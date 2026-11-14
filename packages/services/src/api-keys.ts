@@ -29,14 +29,9 @@ export async function createApiKey(
     organizationId: string,
     input: unknown,
 ) {
-    const role = await requireMembership(db, principal, organizationId, "apikey:manage");
+    await requireMembership(db, principal, organizationId, "apikey:manage");
     const data = parseInput(createApiKeySchema, input);
     const scopes = [...new Set(data.scopes)];
-    // No privilege escalation: a key carries only what its creator can do right now.
-    const excess = scopes.filter((scope) => !can(role, scope));
-    if (excess.length > 0) {
-        throw new ServiceError("forbidden", `Your role cannot grant: ${excess.join(", ")}.`);
-    }
     const projectIds = data.projectIds ? [...new Set(data.projectIds)] : null;
 
     const secret = KEY_PREFIX + randomBytes(32).toString("base64url");
@@ -47,6 +42,25 @@ export async function createApiKey(
         await sql`select pg_advisory_xact_lock(hashtextextended(${`api-keys:${organizationId}`}, 0))`.execute(
             trx,
         );
+        // Re-read the creator's membership under a share lock, so a concurrent removal
+        // either finishes first (no key) or waits for this one (the key is then nulled).
+        const member = await trx
+            .selectFrom("member")
+            .select(["id", "role"])
+            .where("organizationId", "=", organizationId)
+            .where("userId", "=", principal.userId)
+            .forShare()
+            .executeTakeFirst();
+        if (!member || !can(member.role, "apikey:manage")) {
+            throw new ServiceError("not-found", "Organization not found.");
+        }
+        // A key carries only what its creator can do right now. Every key scope is
+        // currently held by the roles that may issue keys; the check keeps that true if
+        // the matrix changes, and use-time narrowing remains the protection that counts.
+        const excess = scopes.filter((scope) => !can(member.role, scope));
+        if (excess.length > 0) {
+            throw new ServiceError("forbidden", `Your role cannot grant: ${excess.join(", ")}.`);
+        }
         if (projectIds) {
             const found = await trx
                 .selectFrom("project")
@@ -73,6 +87,7 @@ export async function createApiKey(
             .values({
                 organization_id: organizationId,
                 created_by: principal.userId,
+                member_id: member.id,
                 name: data.name,
                 prefix: secret.slice(0, KEY_PREFIX.length + 6),
                 secret_hash: hashSecret(secret),
@@ -173,12 +188,7 @@ export async function authenticateApiKey(db: Db, secret: string): Promise<ApiKey
     if (!secret.startsWith(KEY_PREFIX) || secret.length > 128) return null;
     const row = await db
         .selectFrom("api_key")
-        .innerJoin("member", (join) =>
-            join
-                .onRef("member.organizationId", "=", "api_key.organization_id")
-                .onRef("member.userId", "=", "api_key.created_by"),
-        )
-        .innerJoin("user", "user.id", "api_key.created_by")
+        .innerJoin("member", "member.id", "api_key.member_id")
         .select([
             "api_key.id",
             "api_key.name",
@@ -189,7 +199,6 @@ export async function authenticateApiKey(db: Db, secret: string): Promise<ApiKey
             "api_key.project_ids",
             "api_key.last_used_at",
             "member.role",
-            "user.role as instanceRole",
         ])
         .where("api_key.secret_hash", "=", hashSecret(secret))
         .where("api_key.revoked_at", "is", null)
@@ -214,7 +223,8 @@ export async function authenticateApiKey(db: Db, secret: string): Promise<ApiKey
         name: row.name,
         expiresAt: row.expires_at,
         organizationId: row.organization_id,
-        principal: { userId: row.created_by, instanceRole: row.instanceRole },
+        // A key never carries the operator flag, whatever its creator is.
+        principal: { userId: row.created_by, instanceRole: "user", credentialId: row.id },
         scopes,
         projectIds: row.project_ids,
     };
@@ -223,11 +233,21 @@ export async function authenticateApiKey(db: Db, secret: string): Promise<ApiKey
 // What a key may do is decided here, before any service runs: the organization is the
 // key's own (another one is indistinguishable from one that does not exist) and the
 // scope was granted. The service that then runs still checks the creator's role.
-export function requireKeyAccess(key: ApiKeyPrincipal, organizationId: string, scope: ApiKeyScope) {
+// A project-limited key reaches a project only if it is on the list; pass `projectId` for
+// every operation on one project.
+export function requireKeyAccess(
+    key: ApiKeyPrincipal,
+    organizationId: string,
+    scope: ApiKeyScope,
+    projectId?: string,
+) {
     if (organizationId !== key.organizationId) {
         throw new ServiceError("not-found", "Organization not found.");
     }
     if (!key.scopes.includes(scope)) {
         throw new ServiceError("forbidden", "This API key does not have that permission.");
+    }
+    if (projectId !== undefined && key.projectIds && !key.projectIds.includes(projectId)) {
+        throw new ServiceError("not-found", "Project not found.");
     }
 }

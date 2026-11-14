@@ -10,6 +10,7 @@ import {
     listApiKeys,
     MAX_ACTIVE_KEYS_PER_ORGANIZATION,
     removeMember,
+    requireKeyAccess,
     revokeApiKey,
     ServiceError,
     type Principal,
@@ -111,7 +112,7 @@ describe("issuing keys", () => {
         expect(await code(listApiKeys(testDb.db, people.dee!, org))).toBe("forbidden");
     });
 
-    it("never grants more than the creator's role, or any management scope", async () => {
+    it("never grants any management scope, and scope validation precedes the role check", async () => {
         expect(await code(issue("ben", { scopes: ["member:manage"] }))).toBe("invalid");
         expect(await code(issue("ben", { scopes: ["apikey:manage"] }))).toBe("invalid");
         expect(await code(issue("ben", { scopes: ["organization:delete"] }))).toBe("invalid");
@@ -186,6 +187,68 @@ describe("authenticating keys", () => {
         expect(await authenticateApiKey(db, expired.secret)).toBeNull();
     });
 
+    it("stays dead after its creator leaves, even when they are added back", async () => {
+        const db = testDb.db;
+        await newUser("rex");
+        await addMember(db, people.ann!, org, { email: "rex@example.com", role: "admin" });
+        const key = await issue("rex");
+        await removeMember(db, people.ann!, org, people.rex!.userId);
+        await addMember(db, people.ann!, org, { email: "rex@example.com", role: "admin" });
+        expect(await authenticateApiKey(db, key.secret)).toBeNull();
+    });
+
+    it("cannot be issued by a creator removed meanwhile, however the race resolves", async () => {
+        const db = testDb.db;
+        for (let round = 0; round < 6; round++) {
+            await newUser(`race${round}`);
+            await addMember(db, people.ann!, org, {
+                email: `race${round}@example.com`,
+                role: "admin",
+            });
+            const [, issued] = await Promise.all([
+                removeMember(db, people.ann!, org, people[`race${round}`]!.userId),
+                issue(`race${round}`).then(
+                    (k) => k,
+                    (e) => (e instanceof ServiceError ? e.code : e),
+                ),
+            ]);
+            await addMember(db, people.ann!, org, {
+                email: `race${round}@example.com`,
+                role: "admin",
+            });
+            if (typeof issued !== "string") {
+                expect(await authenticateApiKey(db, issued.secret), `round ${round}`).toBeNull();
+            } else {
+                expect(issued).toBe("not-found");
+            }
+        }
+    });
+
+    it("never carries the operator flag, and names the key in the audit trail", async () => {
+        const db = testDb.db;
+        const admin = await createOrganization(db, people.root!, {
+            name: "Op",
+            slug: "op-org",
+            ownerEmail: "ann@example.com",
+        });
+        await addMember(db, people.ann!, admin.id, { email: "root@example.com", role: "admin" });
+        const key = await createApiKey(db, people.root!, admin.id, {
+            name: "op",
+            scopes: ["project:create"],
+            expiresInDays: 1,
+        });
+        const auth = (await authenticateApiKey(db, key.secret))!;
+        expect(auth.principal.instanceRole).toBe("user");
+        const project = await createProject(db, auth.principal, admin.id, { name: "K", slug: "k" });
+        const events = await db
+            .selectFrom("audit_event")
+            .select(["actor", "detail"])
+            .where("target_id", "=", project.id)
+            .execute();
+        expect(events[0]!.actor).toBe(`api_key:${key.id}`);
+        expect(events[0]!.detail).toContain(people.root!.userId);
+    });
+
     it("narrows scopes when the creator is demoted, and stops when removed", async () => {
         const db = testDb.db;
         await newUser("kim");
@@ -204,6 +267,21 @@ describe("authenticating keys", () => {
         expect((await authenticateApiKey(db, key.secret))?.scopes).toEqual(["project:read"]);
         await removeMember(db, people.ann!, org, people.kim!.userId);
         expect(await authenticateApiKey(db, key.secret)).toBeNull();
+    });
+});
+
+describe("requireKeyAccess", () => {
+    it("confines a key to its organization, scopes and projects", async () => {
+        const key = (await authenticateApiKey(
+            testDb.db,
+            (await issue("ann", { scopes: ["project:read"], projectIds: [projectA] })).secret,
+        ))!;
+        expect(() => requireKeyAccess(key, org, "project:read", projectA)).not.toThrow();
+        expect(() => requireKeyAccess(key, otherOrg, "project:read")).toThrow(/not found/i);
+        expect(() => requireKeyAccess(key, org, "project:delete")).toThrow(/permission/);
+        expect(() => requireKeyAccess(key, org, "project:read", randomUUID())).toThrow(
+            /not found/i,
+        );
     });
 });
 

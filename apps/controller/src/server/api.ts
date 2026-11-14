@@ -92,7 +92,13 @@ export function createApi(deps: {
         );
     }
 
-    async function sessionPrincipal(request: Request): Promise<Principal | null> {
+    // Issuing a credential needs recent proof of identity: a session older than this
+    // must sign in again first.
+    const FRESH_SESSION_MS = 15 * 60 * 1000;
+
+    async function sessionPrincipal(
+        request: Request,
+    ): Promise<(Principal & { sessionCreatedAt: Date }) | null> {
         if (!request.headers.has("cookie")) {
             return null;
         }
@@ -101,13 +107,21 @@ export function createApi(deps: {
             return null;
         }
         const role = (session.user as { role?: string }).role;
-        return { userId: session.user.id, instanceRole: role === "operator" ? "operator" : "user" };
+        return {
+            userId: session.user.id,
+            instanceRole: role === "operator" ? "operator" : "user",
+            sessionCreatedAt: new Date(session.session.createdAt),
+        };
     }
 
     // A request is authenticated by a bearer key or by a session cookie, never both: if
     // an Authorization header is present it alone decides, so a bad key is a 401 and
     // cannot fall back to ambient browser credentials.
-    type Caller = { principal: Principal; key: ApiKeyPrincipal | null };
+    type Caller = {
+        principal: Principal;
+        key: ApiKeyPrincipal | null;
+        sessionCreatedAt?: Date;
+    };
     async function callerOf(request: Request): Promise<Caller | null> {
         const header = request.headers.get("authorization");
         if (header !== null) {
@@ -115,8 +129,10 @@ export function createApi(deps: {
             const key = match ? await authenticateApiKey(db, match[1]!) : null;
             return key ? { principal: key.principal, key } : null;
         }
-        const principal = await sessionPrincipal(request);
-        return principal ? { principal, key: null } : null;
+        const session = await sessionPrincipal(request);
+        if (!session) return null;
+        const { sessionCreatedAt, ...principal } = session;
+        return { principal, key: null, sessionCreatedAt };
     }
 
     const STATUS = {
@@ -161,6 +177,7 @@ export function createApi(deps: {
         access: Access | null,
         run: (principal: Principal, key: ApiKeyPrincipal | null) => Promise<unknown>,
         successStatus = 200,
+        options: { fresh?: boolean } = {},
     ) {
         const caller = await callerOf(request);
         if (!caller) {
@@ -171,6 +188,12 @@ export function createApi(deps: {
         return execute(
             set,
             async () => {
+                if (
+                    options.fresh &&
+                    Date.now() - (caller.sessionCreatedAt?.getTime() ?? 0) > FRESH_SESSION_MS
+                ) {
+                    throw new ServiceError("forbidden", "Sign in again to do this.");
+                }
                 if (key) {
                     if (!access) {
                         throw new ServiceError("forbidden", "API keys cannot use this endpoint.");
@@ -194,7 +217,16 @@ export function createApi(deps: {
         run: (principal: Principal | null) => Promise<unknown>,
         successStatus = 200,
     ) {
-        const principal = await sessionPrincipal(request);
+        // No Authorization header here: it would otherwise be silently ignored in favour
+        // of the cookie, against the rule that a header alone decides.
+        if (request.headers.has("authorization")) {
+            set.status = 401;
+            return { code: "unauthenticated", status: 401, title: "Unauthorized" };
+        }
+        const session = await sessionPrincipal(request);
+        const principal = session
+            ? { userId: session.userId, instanceRole: session.instanceRole }
+            : null;
         return execute(set, () => run(principal), successStatus);
     }
 
@@ -273,6 +305,15 @@ export function createApi(deps: {
                 if (!caller) {
                     set.status = 401;
                     return { code: "unauthenticated", status: 401, title: "Unauthorized" };
+                }
+                if (caller.key) {
+                    // A key learns about itself from /v1/key, not about its creator.
+                    set.status = 403;
+                    return {
+                        code: "forbidden",
+                        status: 403,
+                        title: "API keys cannot use this endpoint.",
+                    };
                 }
                 const user = await db
                     .selectFrom("user")
@@ -465,6 +506,7 @@ export function createApi(deps: {
                         null,
                         (p) => createApiKey(db, p, params.orgId, input),
                         201,
+                        { fresh: true },
                     );
                 },
             )
