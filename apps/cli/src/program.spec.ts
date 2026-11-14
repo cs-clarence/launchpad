@@ -92,6 +92,38 @@ afterEach(async () => {
 });
 
 describe("login", () => {
+    it("preserves prototype I/O methods and their receiver", async () => {
+        class Terminal implements Io {
+            context = createContext({ LAUNCHPAD_CONFIG_DIR: dir }, { fetch: controller });
+            interactive = true;
+            key = KEY;
+            output: string[] = [];
+            out(text: string) {
+                this.output.push(text);
+            }
+            err(text: string) {
+                this.output.push(text);
+            }
+            async readStdin() {
+                return this.key;
+            }
+            async readSecret(_prompt: string) {
+                return this.key;
+            }
+            async readFile(_path: string) {
+                return { text: this.key, mode: 0o600 };
+            }
+        }
+        for (const source of [["--key-stdin"], ["--key-file", "/key"], []]) {
+            const terminal = new Terminal();
+            expect(await run(["login", "--controller", CONTROLLER, ...source], terminal)).toBe(
+                EXIT.ok,
+            );
+            expect(terminal.output.join("\n")).toContain("Logged in");
+            expect(terminal.output.join("\n")).not.toContain(KEY);
+        }
+    });
+
     it("reads the key from stdin, a file or a prompt, and never echoes it", async () => {
         const viaStdin = await loggedIn();
         expect(viaStdin.code).toBe(EXIT.ok);

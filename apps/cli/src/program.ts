@@ -61,7 +61,19 @@ export function buildProgram(rawIo: Io) {
     // Everything that reaches the terminal passes the redactor: names and other fields
     // come from the server and may contain key-shaped text. Redacting inside a JSON
     // document keeps it valid JSON.
-    const io: Io = { ...rawIo, out: (t) => rawIo.out(redact(t)), err: (t) => rawIo.err(redact(t)) };
+    const io: Io = {
+        get context() {
+            return rawIo.context;
+        },
+        get interactive() {
+            return rawIo.interactive;
+        },
+        out: (t) => rawIo.out(redact(t)),
+        err: (t) => rawIo.err(redact(t)),
+        readStdin: () => rawIo.readStdin(),
+        readSecret: (prompt) => rawIo.readSecret(prompt),
+        readFile: (path) => rawIo.readFile(path),
+    };
     const program = new Command()
         .name("launchpad")
         .description("Work with a Launchpad controller using an organization API key.")
