@@ -4,6 +4,7 @@ export type ClientCoreErrorCode =
     | "corrupt-store"
     | "unsupported-store"
     | "store-unavailable"
+    | "store-busy"
     | "bad-input"
     | "no-organization";
 

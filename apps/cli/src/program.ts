@@ -5,13 +5,13 @@ import {
     listProjects,
     login,
     logout,
-    redact,
     useOrganization,
     useProfile,
     whoami,
 } from "@launchpad/client-core";
 import { describe, EXIT } from "./errors";
 import type { Io } from "./io";
+import { safeOutput } from "./output";
 
 const text = (rows: string[][]) => {
     const widths = rows[0]!.map((_, column) =>
@@ -33,13 +33,20 @@ async function readKey(io: Io, options: { keyFile?: string; keyStdin?: boolean }
     let raw: string;
     if (options.keyFile) {
         const file = await io.readFile(options.keyFile);
-        if (process.platform !== "win32" && (file.mode & 0o077) !== 0) {
+        if (file.regular !== false && process.platform !== "win32" && (file.mode & 0o077) !== 0) {
             io.err(
                 `Warning: ${options.keyFile} is readable by others; restrict it with chmod 600.`,
             );
         }
         raw = file.text;
     } else if (options.keyStdin) {
+        if (io.stdinIsTTY ?? io.interactive) {
+            throw new CommanderError(
+                EXIT.usage,
+                "commander.interactiveStdin",
+                "error: --key-stdin requires redirected input; omit it to use the hidden terminal prompt",
+            );
+        }
         raw = await io.readStdin();
     } else if (io.interactive) {
         raw = await io.readSecret("API key: ");
@@ -68,8 +75,11 @@ export function buildProgram(rawIo: Io) {
         get interactive() {
             return rawIo.interactive;
         },
-        out: (t) => rawIo.out(redact(t)),
-        err: (t) => rawIo.err(redact(t)),
+        get stdinIsTTY() {
+            return rawIo.stdinIsTTY;
+        },
+        out: (t) => rawIo.out(safeOutput(t)),
+        err: (t) => rawIo.err(safeOutput(t)),
         readStdin: () => rawIo.readStdin(),
         readSecret: (prompt) => rawIo.readSecret(prompt),
         readFile: (path) => rawIo.readFile(path),
@@ -225,15 +235,17 @@ export async function run(argv: string[], io: Io): Promise<number> {
         const failure = describe(error);
         const json = argv.includes("--json");
         io.err(
-            json
-                ? JSON.stringify({
-                      error: {
-                          code: failure.code,
-                          message: failure.message,
-                          ...(failure.status ? { status: failure.status } : {}),
-                      },
-                  })
-                : `Error: ${failure.message}`,
+            safeOutput(
+                json
+                    ? JSON.stringify({
+                          error: {
+                              code: failure.code,
+                              message: failure.message,
+                              ...(failure.status ? { status: failure.status } : {}),
+                          },
+                      })
+                    : `Error: ${failure.message}`,
+            ),
         );
         return failure.exitCode;
     }

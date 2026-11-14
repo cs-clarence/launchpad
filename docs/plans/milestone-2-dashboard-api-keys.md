@@ -89,32 +89,31 @@ publishing and milestone 3 are not authorized by this plan.
 ## Progress
 
 - PR #5 merged as `2a9b2fd`; local `main` synchronized and clean before this plan.
-- Branch: `feat/dashboard-api-keys`.
+- Lifecycle prerequisite branch: `feat/dashboard-api-keys`.
 - Opus reviewed the milestone boundary and this plan; no new exploitable
   credential-boundary hole was found. Incorporated its required plan feedback.
-- Lifecycle metadata prerequisite implemented and verified with the full Omni
-  gate and PostgreSQL integration; awaiting PR review/CI. Page implementation
-  not started.
+- Lifecycle metadata prerequisite merged in PR #6 as `9b579e3` after the full Omni
+  gate, PostgreSQL integration and CI/review passed. Page implementation not started.
 
 ## Opus follow-up queue (before declaring milestone 2 complete)
 
 Keep client hardening separate from the lifecycle/dashboard change:
 
-- Decide and document email-password-reset key revocation; operator reset already
-  revokes keys. If email reset revokes them, audit and test the callback.
-- Reject half-configured environment credentials rather than silently selecting a
-  saved profile. Let environment-only project listing discover its key's org, or
-  clearly document required org IDs; keep org-selection precedence explicit.
-- Bound actual key-file reads (not only stat size); avoid echoing a key with
-  interactive `--key-stdin`; remove terminal controls from human output.
-- Resolve stale-lock ownership races and clean up failed temporary writes. Prefer
-  safe failure over breaking a lock whose ownership cannot be proven. Use a typed
-  busy-store error rather than claiming contention is file corruption.
-- Add real loopback SDK redirect/stream-timeout tests, not just mocked fetch.
-- Reject project-limited `project:create` at issuance rather than issuing a key
-  whose create scope can never be used.
-- Fix stale role, `/me` and Better Auth key-plugin descriptions in the design,
-  plan and ADR. Record key counts in recovery audits and document/audit
-  membership-driven deactivation.
-- Record residual and untested behavior explicitly; do not mark these complete
-  merely because the dashboard prerequisite PR passes.
+- [ ] Decide and document email-password-reset key revocation; operator reset already
+      revokes keys. If email reset revokes them, audit and test the callback.
+- [x] Reject half-configured environment credentials rather than silently selecting a
+      saved profile. Let environment-only project listing discover its key's org, or
+      clearly document required org IDs; keep org-selection precedence explicit.
+- [x] Bound actual key-file reads (not only stat size); avoid echoing a key with
+      interactive `--key-stdin`; remove terminal controls from human output.
+- [x] Resolve stale-lock ownership races and clean up failed temporary writes. Prefer
+      safe failure over breaking a lock whose ownership cannot be proven. Use a typed
+      busy-store error rather than claiming contention is file corruption.
+- [ ] Add real loopback SDK redirect/stream-timeout tests, not just mocked fetch.
+- [ ] Reject project-limited `project:create` at issuance rather than issuing a key
+      whose create scope can never be used.
+- [ ] Fix stale role, `/me` and Better Auth key-plugin descriptions in the design,
+      plan and ADR. Record key counts in recovery audits and document/audit
+      membership-driven deactivation.
+- [ ] Record residual and untested behavior explicitly; do not mark these complete
+      merely because the dashboard prerequisite PR passes.

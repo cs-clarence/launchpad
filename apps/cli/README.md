@@ -19,12 +19,21 @@ and `--profile <name>`.
   prompt, so it does not end up in shell history or the process list. Without a terminal and without one of
   those options, it fails. `login` checks the key with the controller before saving it, and selects the
   key's organization.
+  `--key-stdin` requires redirected input; with a terminal, omit it to use the hidden
+  prompt. File and stdin reads stop at 4096 bytes, even when a device reports size zero.
 - **Credentials** live in `~/.config/launchpad/credentials.json` (mode 600; see `packages/client-core`).
   For CI, set `LAUNCHPAD_CONTROLLER` and `LAUNCHPAD_API_KEY` (and optionally `LAUNCHPAD_ORG`) instead; the
-  file is not touched.
+  file is not touched. Set both credential variables or neither; a partial pair is
+  rejected unless `--profile` explicitly chooses saved credentials. `LAUNCHPAD_ORG`
+  is an organization **ID**, not a slug. Without it, project listing discovers
+  the key's organization.
 - **Exit codes:** 0 success, 1 other failure, 2 usage, 3 not logged in or the key is rejected (401/403),
   4 not found, 5 controller unreachable, timed out or unexpected answer, 6 credential file or profile unusable.
-- Output and errors are passed through a redactor that hides anything shaped like a key.
+- Output and errors hide anything shaped like a key and strip terminal escape
+  sequences/control bytes. Serialized JSON stays valid.
+- If the credential store reports `store-busy` (exit 6), wait for other commands
+  to finish and retry. After a crashed writer, remove `credentials.json.lock`
+  only after confirming no client is writing. Locks are never stolen by age.
 
 `src/program.ts` holds the commands behind an `Io` interface (`src/io.ts`), so tests drive `run(argv, io)` with a
 fake terminal, a temporary config directory and a fake controller. `src/index.ts` is the Bun entry point.

@@ -29,7 +29,6 @@ export function configDirectory(env: Record<string, string | undefined>): string
 }
 
 const FILE = "credentials.json";
-const LOCK_STALE_MS = 30_000;
 
 // The credential file: a directory only its owner can enter, a file only its owner can
 // read, replaced atomically. It never reads a file it should not trust, and never
@@ -190,13 +189,17 @@ export class CredentialStore {
             const temp = path.join(this.directory, `.${FILE}.${randomBytes(6).toString("hex")}`);
             const handle = await fs.open(temp, "wx", 0o600);
             try {
-                await handle.writeFile(JSON.stringify(config, null, 2) + "\n");
-                await handle.sync();
+                try {
+                    await handle.writeFile(JSON.stringify(config, null, 2) + "\n");
+                    await handle.sync();
+                } finally {
+                    await handle.close();
+                }
+                await fs.rename(temp, this.file);
+                return result;
             } finally {
-                await handle.close();
+                await fs.rm(temp, { force: true });
             }
-            await fs.rename(temp, this.file);
-            return result;
         } finally {
             await release();
         }
@@ -204,24 +207,38 @@ export class CredentialStore {
 
     private async lock(): Promise<() => Promise<void>> {
         const lockPath = `${this.file}.lock`;
+        const token = randomBytes(24).toString("hex");
         for (let attempt = 0; attempt < 50; attempt++) {
+            let handle;
             try {
-                const handle = await fs.open(lockPath, "wx", 0o600);
-                await handle.close();
-                return () => fs.rm(lockPath, { force: true });
+                handle = await fs.open(lockPath, "wx", 0o600);
             } catch (error) {
                 if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
-                const age = await fs
-                    .stat(lockPath)
-                    .then((s) => Date.now() - s.mtimeMs)
-                    .catch(() => 0);
-                if (age > LOCK_STALE_MS) await fs.rm(lockPath, { force: true });
-                await new Promise((resolve) => setTimeout(resolve, 100));
+                // Never infer that a writer is dead from its lock's age. A slow or
+                // suspended writer can still resume, and unlinking a stale path races
+                // with another waiter acquiring that same path.
+                await new Promise((resolve) => setTimeout(resolve, 20));
+                continue;
             }
+            try {
+                await handle.writeFile(token);
+            } catch (error) {
+                await fs.rm(lockPath, { force: true });
+                throw error;
+            } finally {
+                await handle.close();
+            }
+            return async () => {
+                const current = await fs.readFile(lockPath, "utf8").catch((error) => {
+                    if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
+                    throw error;
+                });
+                if (current === token) await fs.rm(lockPath, { force: true });
+            };
         }
         throw new ClientCoreError(
-            "corrupt-store",
-            `Could not lock ${this.file}; another command may be stuck.`,
+            "store-busy",
+            `The credential store is busy. Retry after other commands finish. If a command crashed, remove ${lockPath} only after confirming no client is writing.`,
         );
     }
 }
