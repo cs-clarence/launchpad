@@ -314,6 +314,20 @@ Milestone 1 (uncommitted at time of writing):
 - [x] Slice 9: hardening (headers, body limits, throttle cleanup), docs sweep, and
       the final independent review; its must-fix findings are applied.
 
+Milestone 2 slices (one PR each):
+
+- [x] M2-1: org-owned API keys in `packages/services` (`api_key` table, issue with
+      one-time reveal, list, revoke, `authenticateApiKey`); scopes exclude member, key
+      and organization management; a key never exceeds its creator's current role and
+      stops when the creator leaves; secrets stored as SHA-256 hashes.
+- [ ] M2-2: bearer-key authentication in the HTTP API (clamped to org, scopes and
+      projects; scope checks in every service a key can reach), `/api/v1` key
+      endpoints, and the credential generation that closes the sign-in/reset race.
+- [ ] M2-3: versioned browser-safe SDK on `contracts.ts` and the shared client core
+      (profiles, mode-600 credential file).
+- [ ] M2-4: CLI (`login --key`, `whoami`, org selection, `projects list`, `--json`)
+      and the dashboard page to create and revoke keys.
+
 Milestone 1 is complete except these known, accepted items:
 
 - No interactive browser check of the UI (no desktop browser was available); the

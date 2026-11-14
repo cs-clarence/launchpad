@@ -89,6 +89,21 @@ export interface InvitationTable {
     revoked_at: Date | null;
 }
 
+export interface ApiKeyTable {
+    id: Generated<string>;
+    organization_id: string;
+    created_by: string;
+    name: string;
+    prefix: string;
+    secret_hash: string;
+    scopes: string[];
+    project_ids: string[] | null;
+    created_at: Generated<Date>;
+    expires_at: Date;
+    revoked_at: Date | null;
+    last_used_at: Date | null;
+}
+
 export interface VerificationTable {
     id: string;
     identifier: string;
@@ -99,6 +114,7 @@ export interface VerificationTable {
 export interface Database {
     verification: VerificationTable;
     organization_invitation: InvitationTable;
+    api_key: ApiKeyTable;
     organization: OrganizationTable;
     member: MemberTable;
     project: ProjectTable;
