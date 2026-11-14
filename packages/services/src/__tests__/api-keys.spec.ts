@@ -127,6 +127,7 @@ describe("issuing keys", () => {
         const session = await sessionOf("gone");
         await testDb.db.deleteFrom("session").where("id", "=", session).execute();
         expect(await code(issue("gone"))).toBe("forbidden");
+        // A live session that belongs to someone else must not authorize this caller.
         await newUser("other-session");
         await addMember(testDb.db, people.ann!, org, {
             email: "other-session@example.com",
@@ -139,7 +140,7 @@ describe("issuing keys", () => {
                     people["other-session"]!,
                     org,
                     { name: "x", scopes: ["project:read"], expiresInDays: 1 },
-                    session,
+                    await sessionOf("ann"),
                 ),
             ),
         ).toBe("forbidden");
