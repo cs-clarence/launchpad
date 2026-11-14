@@ -2,7 +2,7 @@ import { createHash, randomBytes, randomUUID } from "node:crypto";
 import type { Database } from "@launchpad/database";
 import { type Kysely, sql } from "kysely";
 import { z } from "zod";
-import { canAssignRole, ORGANIZATION_ROLES, type Principal } from "./authorization";
+import { can, canAssignRole, ORGANIZATION_ROLES, type Principal } from "./authorization";
 import { isUniqueViolation, ServiceError } from "./errors";
 import { nameSchema, parseInput, recordAudit, requireMembership } from "./organizations";
 
@@ -45,12 +45,13 @@ export async function createInvitation(
     input: unknown,
     deps: InvitationDeps,
 ) {
-    const actorRole = await requireMembership(db, principal, organizationId, "member:manage");
+    // Fail fast, outside the transaction; the authority is re-read under lock below.
+    const earlyRole = await requireMembership(db, principal, organizationId, "member:manage");
     if (!deps.enabled || !deps.mailer) {
         throw new ServiceError("not-found", "Invitations are not enabled.");
     }
     const data = parseInput(createInvitationSchema, input);
-    if (!canAssignRole(actorRole, data.role)) {
+    if (!canAssignRole(earlyRole, data.role)) {
         throw new ServiceError("forbidden", `Your role cannot assign the ${data.role} role.`);
     }
     const organization = await db
@@ -73,6 +74,25 @@ export async function createInvitation(
     let id: string;
     try {
         id = await db.transaction().execute(async (trx) => {
+            // The lock removeMember and addMember take: if the caller is removed or
+            // demoted while this request waits, they must not still invite as before.
+            const members = await trx
+                .selectFrom("member")
+                .select(["userId", "role"])
+                .where("organizationId", "=", organizationId)
+                .forUpdate()
+                .execute();
+            const actor = members.find((m) => m.userId === principal.userId);
+            if (!actor || !can(actor.role, "member:manage")) {
+                throw new ServiceError("not-found", "Organization not found.");
+            }
+            const actorRole = actor.role;
+            if (!canAssignRole(actorRole, data.role)) {
+                throw new ServiceError(
+                    "forbidden",
+                    `Your role cannot assign the ${data.role} role.`,
+                );
+            }
             // One writer per organization at a time, so the daily cap and the replace
             // step below cannot be raced by concurrent requests for other addresses.
             await sql`select pg_advisory_xact_lock(hashtextextended(${`invitations:${organizationId}`}, 0))`.execute(
@@ -191,7 +211,7 @@ export async function revokeInvitation(
     organizationId: string,
     invitationId: string,
 ) {
-    const actorRole = await requireMembership(db, principal, organizationId, "member:manage");
+    await requireMembership(db, principal, organizationId, "member:manage");
     if (!z.uuid().safeParse(invitationId).success) {
         throw new ServiceError("not-found", "Invitation not found.");
     }
@@ -203,10 +223,21 @@ export async function revokeInvitation(
     if (!invitation) {
         throw new ServiceError("not-found", "Invitation not found.");
     }
-    if (!canAssignRole(actorRole, invitation.role)) {
-        throw new ServiceError("forbidden", "Your role cannot revoke that invitation.");
-    }
     await db.transaction().execute(async (trx) => {
+        // Re-read the caller's authority under the membership lock (see createInvitation).
+        const members = await trx
+            .selectFrom("member")
+            .select(["userId", "role"])
+            .where("organizationId", "=", organizationId)
+            .forUpdate()
+            .execute();
+        const actor = members.find((m) => m.userId === principal.userId);
+        if (!actor || !can(actor.role, "member:manage")) {
+            throw new ServiceError("not-found", "Organization not found.");
+        }
+        if (!canAssignRole(actor.role, invitation.role)) {
+            throw new ServiceError("forbidden", "Your role cannot revoke that invitation.");
+        }
         const updated = await trx
             .updateTable("organization_invitation")
             .set({ revoked_at: new Date() })

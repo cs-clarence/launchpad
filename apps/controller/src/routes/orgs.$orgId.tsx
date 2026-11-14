@@ -37,7 +37,7 @@ function useAction() {
             }
             // Still pending until the refreshed data is in: a second click during a
             // slow refresh would send a replacement invitation.
-            await router.invalidate();
+            await router.invalidate({ sync: true });
             return true;
         } finally {
             setPending(false);

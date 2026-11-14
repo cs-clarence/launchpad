@@ -102,6 +102,18 @@ describe("specifier parsing", () => {
         expect([...found]).toEqual(["real"]);
     });
 
+    it("keeps imports that follow a string containing comment delimiters", () => {
+        const found = importedPackages(`
+            const route = "/api/*";
+            const other = '//not-a-comment';
+            const tpl = \`/* nor this */\`;
+            await import("zod");
+            /* a real block comment */
+            import real from "real";
+        `);
+        expect([...found].toSorted()).toEqual(["real", "zod"]);
+    });
+
     it("reads Omni dependency lists in both forms", () => {
         expect(omniDependencyNames(["a", "b"])).toEqual(["a", "b"]);
         expect(omniDependencyNames({ append: ["b"], prepend: ["a"] })).toEqual(["a", "b"]);

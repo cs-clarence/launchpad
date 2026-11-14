@@ -10,6 +10,7 @@ import {
     listInvitations,
     MAX_INVITATIONS_PER_DAY,
     previewInvitation,
+    removeMember,
     revokeInvitation,
     ServiceError,
     type Principal,
@@ -45,6 +46,16 @@ async function newUser(name: string, role: "user" | "operator" = "user") {
     await testDb.db
         .insertInto("user")
         .values({ id, name, email, emailVerified: false, image: null, role })
+        .execute();
+    // Operator-provisioned, so it may receive access by email.
+    await testDb.db
+        .insertInto("audit_event")
+        .values({
+            actor: "operator-cli",
+            action: "user.provisioned",
+            target_type: "user",
+            target_id: id,
+        })
         .execute();
     people[name] = { userId: id, instanceRole: role, email };
 }
@@ -648,5 +659,49 @@ describe("races, caps and verification", () => {
                 ),
             ),
         ).toBe("ok");
+    });
+
+    it("does not let an owner who is removed while waiting still send invitations", async () => {
+        const db = testDb.db;
+        for (let round = 0; round < 6; round++) {
+            await newUser(`ia${round}`);
+            await newUser(`ib${round}`);
+            const raced = (
+                await createOrganization(db, people.root!, {
+                    name: `Inv ${round}`,
+                    slug: `inv-race-${round}`,
+                    ownerEmail: `ia${round}@example.com`,
+                })
+            ).id;
+            await addMember(db, people[`ia${round}`]!, raced, {
+                email: `ib${round}@example.com`,
+                role: "owner",
+            });
+            const before = sent.length;
+            const [removed, invited] = await Promise.all([
+                code(removeMember(db, people[`ib${round}`]!, raced, people[`ia${round}`]!.userId)),
+                code(
+                    createInvitation(
+                        db,
+                        people[`ia${round}`]!,
+                        raced,
+                        { email: `friend${round}@example.com`, role: "owner" },
+                        deps,
+                    ),
+                ),
+            ]);
+            expect(removed, `round ${round}`).toBe("ok");
+            const pendingRows = await listInvitations(db, people[`ib${round}`]!, raced);
+            if (invited === "ok") {
+                // The invitation was created before the removal committed: that is allowed.
+                expect(pendingRows.some((i) => i.email === `friend${round}@example.com`)).toBe(
+                    true,
+                );
+            } else {
+                expect(invited, `round ${round}`).toBe("not-found");
+                expect(pendingRows).toHaveLength(0);
+                expect(sent.length, `round ${round}`).toBe(before);
+            }
+        }
     });
 });

@@ -119,6 +119,16 @@ beforeAll(async () => {
             .insertInto("user")
             .values({ id, name: email, email, emailVerified: false, image: null, role: "user" })
             .execute();
+        // Operator-provisioned (what `admin create-user` records), so it may be granted access.
+        await testDb.db
+            .insertInto("audit_event")
+            .values({
+                actor: "operator-cli",
+                action: "user.provisioned",
+                target_type: "user",
+                target_id: id,
+            })
+            .execute();
         await testDb.db
             .insertInto("account")
             .values({

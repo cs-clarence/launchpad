@@ -17,13 +17,31 @@ import {
 let testDb: Awaited<ReturnType<typeof createTestDatabase>>;
 const people: Record<string, Principal & { email: string }> = {};
 
-async function newUser(name: string, instanceRole: "user" | "operator" = "user") {
+// By default a user is operator-provisioned (the audit event `admin create-user` writes),
+// which is what may receive access by email. `selfRegistered` is an account that signed
+// itself up: unverified, with no provisioning record.
+async function newUser(
+    name: string,
+    instanceRole: "user" | "operator" = "user",
+    options: { selfRegistered?: boolean } = {},
+) {
     const id = randomUUID();
     const email = `${name}@example.com`;
     await testDb.db
         .insertInto("user")
         .values({ id, name, email, emailVerified: false, image: null, role: instanceRole })
         .execute();
+    if (!options.selfRegistered) {
+        await testDb.db
+            .insertInto("audit_event")
+            .values({
+                actor: "operator-cli",
+                action: "user.provisioned",
+                target_type: "user",
+                target_id: id,
+            })
+            .execute();
+    }
     people[name] = { userId: id, instanceRole, email };
     return people[name]!;
 }
@@ -344,12 +362,10 @@ describe("concurrency and audit", () => {
     });
 });
 
-describe("grants by email when public sign-up is on", () => {
-    const open = { publicSignup: true };
-
-    it("refuses accounts that registered themselves and were never verified or provisioned", async () => {
+describe("grants by email", () => {
+    it("refuses a self-registered, unverified account, whatever the sign-up setting is now", async () => {
         const db = testDb.db;
-        await newUser("squatter"); // inserted directly: no provisioning audit, unverified
+        await newUser("squatter", "user", { selfRegistered: true });
         const guarded = (
             await createOrganization(db, people.root!, {
                 name: "Guarded G",
@@ -359,26 +375,21 @@ describe("grants by email when public sign-up is on", () => {
         ).id;
         expect(
             await code(
-                addMember(
-                    db,
-                    people.ann!,
-                    guarded,
-                    { email: "squatter@example.com", role: "viewer" },
-                    open,
-                ),
+                addMember(db, people.ann!, guarded, {
+                    email: "squatter@example.com",
+                    role: "viewer",
+                }),
             ),
         ).toBe("invalid");
         expect(
             await code(
-                createOrganization(
-                    db,
-                    people.root!,
-                    { name: "Squat", slug: "squat", ownerEmail: "squatter@example.com" },
-                    open,
-                ),
+                createOrganization(db, people.root!, {
+                    name: "Squat",
+                    slug: "squat",
+                    ownerEmail: "squatter@example.com",
+                }),
             ),
         ).toBe("invalid");
-        // Nothing was granted.
         const rows = await db
             .selectFrom("member")
             .select("userId")
@@ -389,56 +400,26 @@ describe("grants by email when public sign-up is on", () => {
 
     it("allows operator-provisioned and verified accounts", async () => {
         const db = testDb.db;
-        await newUser("provisioned");
-        await newUser("verified");
-        await db
-            .insertInto("audit_event")
-            .values({
-                actor: "operator-cli",
-                action: "user.provisioned",
-                target_type: "user",
-                target_id: people.provisioned!.userId,
-            })
-            .execute();
+        await newUser("verified", "user", { selfRegistered: true });
         await db
             .updateTable("user")
             .set({ emailVerified: true })
             .where("id", "=", people.verified!.userId)
             .execute();
-        const org = (
-            await createOrganization(
-                db,
-                people.root!,
-                { name: "Open G", slug: "open-g", ownerEmail: "provisioned@example.com" },
-                open,
-            )
-        ).id;
-        expect(
-            await code(
-                addMember(
-                    db,
-                    people.provisioned!,
-                    org,
-                    { email: "verified@example.com", role: "viewer" },
-                    open,
-                ),
-            ),
-        ).toBe("ok");
-    });
-
-    it("keeps the default (public sign-up off) unchanged for any existing account", async () => {
-        const db = testDb.db;
-        await newUser("plain");
+        await newUser("provisioned");
         const org = (
             await createOrganization(db, people.root!, {
-                name: "Closed G",
-                slug: "closed-g",
-                ownerEmail: "ann@example.com",
+                name: "Open G",
+                slug: "open-g",
+                ownerEmail: "provisioned@example.com",
             })
         ).id;
         expect(
             await code(
-                addMember(db, people.ann!, org, { email: "plain@example.com", role: "viewer" }),
+                addMember(db, people.provisioned!, org, {
+                    email: "verified@example.com",
+                    role: "viewer",
+                }),
             ),
         ).toBe("ok");
     });

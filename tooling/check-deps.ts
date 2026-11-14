@@ -38,11 +38,36 @@ export function packageOf(specifier: string): string | null {
     return bare.startsWith("@") ? parts.slice(0, 2).join("/") : parts[0]!;
 }
 
-// Removes comments so `// import "retired"` is not an import. String contents are kept
-// because an import specifier is itself a string; the scan only matches the import
-// syntax around it, and a quoted import-like line inside a template literal is rare.
+// Removes comments without touching comment-like text inside string or template
+// literals (`"/api/*"` is a string, not the start of a block comment). Strings are
+// kept whole: an import specifier is itself a string, and the scan that follows only
+// matches the import syntax around it. Regular expression literals are not parsed; a
+// quote inside one can mislead the scanner, which is acceptable for dependency checks.
 export function stripComments(source: string): string {
-    return source.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:"'`\\])\/\/[^\n]*/g, "$1");
+    let out = "";
+    let i = 0;
+    while (i < source.length) {
+        const c = source[i]!;
+        const next = source[i + 1];
+        if (c === '"' || c === "'" || c === "`") {
+            let j = i + 1;
+            while (j < source.length && source[j] !== c) {
+                j += source[j] === "\\" ? 2 : 1;
+            }
+            out += source.slice(i, j + 1);
+            i = j + 1;
+        } else if (c === "/" && next === "/") {
+            while (i < source.length && source[i] !== "\n") i++;
+        } else if (c === "/" && next === "*") {
+            const end = source.indexOf("*/", i + 2);
+            i = end === -1 ? source.length : end + 2;
+            out += " ";
+        } else {
+            out += c;
+            i++;
+        }
+    }
+    return out;
 }
 
 export function importedPackages(source: string): Set<string> {

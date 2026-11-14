@@ -75,7 +75,21 @@ function AcceptInvitation() {
                             className="anchor"
                             type="button"
                             onClick={async () => {
-                                await authClient.signOut();
+                                setError(null);
+                                try {
+                                    const result = await authClient.signOut();
+                                    if (result.error) {
+                                        setError("Could not sign out. Try again.");
+                                        return;
+                                    }
+                                } catch {
+                                    setError(
+                                        "Could not reach the server. Check your connection and retry.",
+                                    );
+                                    return;
+                                }
+                                // Only after the session is really gone: the login page sends an
+                                // already signed-in user straight back here.
                                 await navigate({
                                     to: "/login",
                                     search: {

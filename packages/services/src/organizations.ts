@@ -110,19 +110,13 @@ export const createOrganizationSchema = z.object({
 
 // Only the instance operator creates organizations, and must name an existing
 // user as the first owner; the operator gets no membership from this.
-export interface GrantPolicy {
-    // With public sign-up on, anyone can register any address first, so an account
-    // found by email is not necessarily its owner's.
-    publicSignup: boolean;
-}
-
-// Access granted by email goes to whoever holds that account. Where strangers can
-// register accounts, only an account whose address was verified (by accepting an
-// emailed invitation) or that the operator provisioned may receive it.
-async function requireGrantable(db: Db, userId: string, policy: GrantPolicy) {
-    if (!policy.publicSignup) {
-        return;
-    }
+// Access granted by email goes to whoever holds that account. An account found by
+// address may belong to a stranger who registered it first (public sign-up, now or
+// earlier), so only an account whose address was verified (by accepting an emailed
+// invitation) or that the operator provisioned may receive such a grant. This does
+// not depend on the current sign-up setting: turning sign-up off does not make an
+// account that was registered while it was on any more trustworthy.
+async function requireGrantable(db: Db, userId: string) {
     const user = await db
         .selectFrom("user")
         .select("emailVerified")
@@ -141,17 +135,12 @@ async function requireGrantable(db: Db, userId: string, policy: GrantPolicy) {
     if (!provisioned) {
         throw new ServiceError(
             "invalid",
-            "That account registered itself and its email address is not verified, so it cannot be granted access by email. Invite the address instead.",
+            "That account's email address is not verified and the operator did not provision it, so it cannot be granted access by email. Invite the address instead.",
         );
     }
 }
 
-export async function createOrganization(
-    db: Db,
-    principal: Principal,
-    input: unknown,
-    policy: GrantPolicy = { publicSignup: false },
-) {
+export async function createOrganization(db: Db, principal: Principal, input: unknown) {
     if (principal.instanceRole !== "operator") {
         throw new ServiceError("forbidden", "Only the instance operator can create organizations.");
     }
@@ -166,7 +155,7 @@ export async function createOrganization(
             if (!owner) {
                 throw new ServiceError("invalid", "The owner must be an existing user.");
             }
-            await requireGrantable(trx, owner.id, policy);
+            await requireGrantable(trx, owner.id);
             const id = randomUUID();
             const now = new Date();
             await trx
@@ -230,7 +219,6 @@ export async function addMember(
     principal: Principal,
     organizationId: string,
     input: unknown,
-    policy: GrantPolicy = { publicSignup: false },
 ) {
     // Fail fast, outside the transaction; the real check is repeated under the lock.
     await requireMembership(db, principal, organizationId, "member:manage");
@@ -243,7 +231,7 @@ export async function addMember(
     if (!user) {
         throw new ServiceError("invalid", "No user has that email address.");
     }
-    await requireGrantable(db, user.id, policy);
+    await requireGrantable(db, user.id);
     try {
         await db.transaction().execute(async (trx) => {
             // The same lock removeMember takes: without it, a concurrent removal of the
