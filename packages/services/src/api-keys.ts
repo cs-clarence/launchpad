@@ -156,6 +156,8 @@ export async function revokeApiKey(
 
 export interface ApiKeyPrincipal {
     keyId: string;
+    name: string;
+    expiresAt: Date;
     organizationId: string;
     // The key's creator, whose membership bounds everything the key can do.
     principal: Principal;
@@ -179,6 +181,8 @@ export async function authenticateApiKey(db: Db, secret: string): Promise<ApiKey
         .innerJoin("user", "user.id", "api_key.created_by")
         .select([
             "api_key.id",
+            "api_key.name",
+            "api_key.expires_at",
             "api_key.organization_id",
             "api_key.created_by",
             "api_key.scopes",
@@ -207,9 +211,23 @@ export async function authenticateApiKey(db: Db, secret: string): Promise<ApiKey
     }
     return {
         keyId: row.id,
+        name: row.name,
+        expiresAt: row.expires_at,
         organizationId: row.organization_id,
         principal: { userId: row.created_by, instanceRole: row.instanceRole },
         scopes,
         projectIds: row.project_ids,
     };
+}
+
+// What a key may do is decided here, before any service runs: the organization is the
+// key's own (another one is indistinguishable from one that does not exist) and the
+// scope was granted. The service that then runs still checks the creator's role.
+export function requireKeyAccess(key: ApiKeyPrincipal, organizationId: string, scope: ApiKeyScope) {
+    if (organizationId !== key.organizationId) {
+        throw new ServiceError("not-found", "Organization not found.");
+    }
+    if (!key.scopes.includes(scope)) {
+        throw new ServiceError("forbidden", "This API key does not have that permission.");
+    }
 }

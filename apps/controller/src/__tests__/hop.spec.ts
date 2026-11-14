@@ -4,7 +4,10 @@ import { createAuth, loadAuthConfig, setupFirstOperator } from "@launchpad/auth"
 import {
     acceptedInvitationSchema,
     addedMemberSchema,
+    createdApiKeySchema,
     createdInvitationSchema,
+    keyInfoSchema,
+    apiKeySummarySchema,
     createdOrganizationSchema,
     createdProjectSchema,
     errorSchema,
@@ -526,6 +529,185 @@ describe("hardening", () => {
     });
 });
 
+describe("API keys over HTTP", () => {
+    const bearer = (key: string, path: string, init: { method?: string; body?: unknown } = {}) =>
+        fetch(`${proxied.base}/api/v1${path}`, {
+            method: init.method ?? "GET",
+            headers: {
+                authorization: `Bearer ${key}`,
+                ...(init.body === undefined ? {} : { "content-type": "application/json" }),
+            },
+            body: init.body === undefined ? undefined : JSON.stringify(init.body),
+        });
+    let owner = "";
+    let orgId = "";
+    let otherOrgId = "";
+    let projectId = "";
+    let readKey = "";
+    let writeKey = "";
+
+    it("is issued by a signed-in owner, shown once, and listed without its secret", async () => {
+        const operator = await login("op@example.com", PASSWORD, "198.51.100.20");
+        owner = await login("user@example.com", USER_PASSWORD, "198.51.100.21");
+        const make = async (name: string, slug: string) =>
+            createdOrganizationSchema.parse(
+                await (
+                    await api(operator, "/organizations", {
+                        method: "POST",
+                        body: { name, slug, ownerEmail: "user@example.com" },
+                    })
+                ).json(),
+            ).id;
+        orgId = await make("Keys One", "keys-one");
+        otherOrgId = await make("Keys Two", "keys-two");
+        projectId = createdProjectSchema.parse(
+            await (
+                await api(owner, `/organizations/${orgId}/projects`, {
+                    method: "POST",
+                    body: { name: "P", slug: "p" },
+                })
+            ).json(),
+        ).id;
+        await api(owner, `/organizations/${orgId}/projects`, {
+            method: "POST",
+            body: { name: "Q", slug: "q" },
+        });
+
+        const read = await api(owner, `/organizations/${orgId}/api-keys`, {
+            method: "POST",
+            body: {
+                name: "reader",
+                scopes: ["project:read", "organization:read"],
+                expiresInDays: 7,
+            },
+        });
+        expect(read.status).toBe(201);
+        readKey = createdApiKeySchema.parse(await read.json()).secret;
+        const write = await api(owner, `/organizations/${orgId}/api-keys`, {
+            method: "POST",
+            body: { name: "writer", scopes: ["project:create", "project:read"], expiresInDays: 7 },
+        });
+        writeKey = createdApiKeySchema.parse(await write.json()).secret;
+
+        const listed = await (await api(owner, `/organizations/${orgId}/api-keys`)).text();
+        expect(listed).not.toContain(readKey);
+        expect(z.array(apiKeySummarySchema).parse(JSON.parse(listed))).toHaveLength(2);
+    });
+
+    it("authenticates as its creator, limited to its organization and scopes", async () => {
+        const info = keyInfoSchema.parse(await (await bearer(readKey, "/key")).json());
+        expect(info).toMatchObject({ organizationId: orgId, name: "reader" });
+        expect(meSchema.parse(await (await bearer(readKey, "/me")).json()).email).toBe(
+            "user@example.com",
+        );
+        const orgs = z
+            .array(organizationSummarySchema)
+            .parse(await (await bearer(readKey, "/organizations")).json());
+        expect(orgs.map((o) => o.id)).toEqual([orgId]); // the owner is also in another org
+        expect(
+            z
+                .array(projectSchema)
+                .parse(await (await bearer(readKey, `/organizations/${orgId}/projects`)).json()),
+        ).toHaveLength(2);
+        // another organization of the same user: indistinguishable from absent
+        expect((await bearer(readKey, `/organizations/${otherOrgId}/projects`)).status).toBe(404);
+        // a scope it was not given
+        expect((await bearer(readKey, `/organizations/${orgId}/members`)).status).toBe(403);
+        const denied = await bearer(readKey, `/organizations/${orgId}/projects`, {
+            method: "POST",
+            body: { name: "No", slug: "no" },
+        });
+        expect(denied.status).toBe(403);
+        expect(
+            (
+                await bearer(writeKey, `/organizations/${orgId}/projects`, {
+                    method: "POST",
+                    body: { name: "Yes", slug: "yes" },
+                })
+            ).status,
+        ).toBe(201);
+    });
+
+    it("cannot manage keys, members, invitations or organizations, nor see /key as a session", async () => {
+        const body = { name: "x", scopes: ["project:read"], expiresInDays: 1 };
+        for (const [method, path, payload] of [
+            ["GET", `/organizations/${orgId}/api-keys`, undefined],
+            ["POST", `/organizations/${orgId}/api-keys`, body],
+            [
+                "POST",
+                `/organizations/${orgId}/members`,
+                { email: "other@example.com", role: "viewer" },
+            ],
+            ["GET", `/organizations/${orgId}/invitations`, undefined],
+            ["POST", "/organizations", { name: "N", slug: "n", ownerEmail: "user@example.com" }],
+        ] as const) {
+            const response = await bearer(readKey, path, { method, body: payload });
+            expect(response.status, `${method} ${path}`).toBe(403);
+        }
+        expect((await api(owner, "/key")).status).toBe(403);
+    });
+
+    it("limits a key to named projects and cannot widen itself by creating one", async () => {
+        const limited = createdApiKeySchema.parse(
+            await (
+                await api(owner, `/organizations/${orgId}/api-keys`, {
+                    method: "POST",
+                    body: {
+                        name: "one-project",
+                        scopes: ["project:read", "project:create"],
+                        projectIds: [projectId],
+                        expiresInDays: 1,
+                    },
+                })
+            ).json(),
+        ).secret;
+        const seen = z
+            .array(projectSchema)
+            .parse(await (await bearer(limited, `/organizations/${orgId}/projects`)).json());
+        expect(seen.map((p) => p.id)).toEqual([projectId]);
+        const create = await bearer(limited, `/organizations/${orgId}/projects`, {
+            method: "POST",
+            body: { name: "Wide", slug: "wide" },
+        });
+        expect(create.status).toBe(403);
+    });
+
+    it("rejects bad credentials with 401 and never falls back to the cookie", async () => {
+        expect((await bearer("lp_nope", "/organizations")).status).toBe(401);
+        expect(
+            (
+                await fetch(`${proxied.base}/api/v1/organizations`, {
+                    headers: { authorization: "Basic abc", cookie: owner },
+                })
+            ).status,
+        ).toBe(401);
+        expect(
+            (
+                await fetch(`${proxied.base}/api/v1/organizations`, {
+                    headers: { authorization: "Bearer lp_nope", cookie: owner },
+                })
+            ).status,
+        ).toBe(401);
+    });
+
+    it("stops working when revoked, and when its creator leaves the organization", async () => {
+        const list = z
+            .array(apiKeySummarySchema)
+            .parse(await (await api(owner, `/organizations/${orgId}/api-keys`)).json());
+        const reader = list.find((k) => k.name === "reader")!;
+        expect(
+            (
+                await api(owner, `/organizations/${orgId}/api-keys/${reader.id}`, {
+                    method: "DELETE",
+                })
+            ).status,
+        ).toBe(200);
+        expect((await bearer(readKey, "/organizations")).status).toBe(401);
+        // Revoking one key leaves the others valid; this one simply lacks organization:read.
+        expect((await bearer(writeKey, "/organizations")).status).toBe(403);
+    });
+});
+
 describe("OpenAPI reference", () => {
     const operations = [
         "get /api/v1/me",
@@ -542,6 +724,10 @@ describe("OpenAPI reference", () => {
         "post /api/v1/invitations/accept",
         "get /api/v1/organizations/{orgId}/projects",
         "post /api/v1/organizations/{orgId}/projects",
+        "get /api/v1/key",
+        "get /api/v1/organizations/{orgId}/api-keys",
+        "post /api/v1/organizations/{orgId}/api-keys",
+        "delete /api/v1/organizations/{orgId}/api-keys/{keyId}",
     ];
 
     it("documents exactly the public v1 operations, without internals", async () => {
@@ -560,7 +746,10 @@ describe("OpenAPI reference", () => {
             Object.keys(methods).map((method) => `${method} ${path}`),
         );
         expect(documented.toSorted()).toEqual(operations.toSorted());
-        expect(Object.keys(spec.components.securitySchemes)).toEqual(["sessionCookie"]);
+        expect(Object.keys(spec.components.securitySchemes)).toEqual([
+            "sessionCookie",
+            "bearerKey",
+        ]);
         // Authentication requirements are accurate: only the token endpoints are public.
         expect(spec.paths["/api/v1/invitations/accept"]!.post!.security).toEqual([]);
         expect(spec.paths["/api/v1/invitations/preview"]!.post!.security).toEqual([]);

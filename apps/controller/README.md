@@ -107,3 +107,12 @@ Run checks from the repository root as described in
 [CONTRIBUTING.md](../../CONTRIBUTING.md). Milestone 1's independent security review is
 complete; keep `LAUNCHPAD_API_DOCS=false` on internet-facing installs unless you want
 the API shape public, and put the controller behind HTTPS before exposing it.
+
+## API keys
+
+An owner or admin issues organization API keys from the API (`POST
+/api/v1/organizations/{orgId}/api-keys`, signed in). The secret is shown once. Automation
+sends `Authorization: Bearer lp_…`. A key is limited to its organization, to the scopes it
+was given (read and project actions only), optionally to named projects, and never exceeds
+its creator's current role; it stops working when it expires, is revoked, or its creator
+leaves the organization. Keys cannot manage keys, members, invitations or organizations.

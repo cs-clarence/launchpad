@@ -4,6 +4,13 @@ import type { Kysely } from "kysely";
 import {
     acceptInvitation,
     addMember,
+    type ApiKeyPrincipal,
+    type ApiKeyScope,
+    authenticateApiKey,
+    createApiKey,
+    listApiKeys,
+    requireKeyAccess,
+    revokeApiKey,
     createInvitation,
     createOrganization,
     createProject,
@@ -85,7 +92,7 @@ export function createApi(deps: {
         );
     }
 
-    async function principalOf(request: Request): Promise<Principal | null> {
+    async function sessionPrincipal(request: Request): Promise<Principal | null> {
         if (!request.headers.has("cookie")) {
             return null;
         }
@@ -95,6 +102,21 @@ export function createApi(deps: {
         }
         const role = (session.user as { role?: string }).role;
         return { userId: session.user.id, instanceRole: role === "operator" ? "operator" : "user" };
+    }
+
+    // A request is authenticated by a bearer key or by a session cookie, never both: if
+    // an Authorization header is present it alone decides, so a bad key is a 401 and
+    // cannot fall back to ambient browser credentials.
+    type Caller = { principal: Principal; key: ApiKeyPrincipal | null };
+    async function callerOf(request: Request): Promise<Caller | null> {
+        const header = request.headers.get("authorization");
+        if (header !== null) {
+            const match = /^Bearer (\S+)$/i.exec(header);
+            const key = match ? await authenticateApiKey(db, match[1]!) : null;
+            return key ? { principal: key.principal, key } : null;
+        }
+        const principal = await sessionPrincipal(request);
+        return principal ? { principal, key: null } : null;
     }
 
     const STATUS = {
@@ -127,18 +149,42 @@ export function createApi(deps: {
 
     // Authenticates, runs one service call, and maps expected failures to stable
     // machine-readable errors. Unexpected failures are never described to clients.
+    // `access` names what an API key needs for this route; without it the route is
+    // session-only and any key is refused.
+    interface Access {
+        organizationId?: string; // omitted: the key's own organization
+        scope: ApiKeyScope;
+    }
     async function respond(
         request: Request,
         set: { status?: number | string },
-        run: (principal: Principal) => Promise<unknown>,
+        access: Access | null,
+        run: (principal: Principal, key: ApiKeyPrincipal | null) => Promise<unknown>,
         successStatus = 200,
     ) {
-        const principal = await principalOf(request);
-        if (!principal) {
+        const caller = await callerOf(request);
+        if (!caller) {
             set.status = 401;
             return { code: "unauthenticated", status: 401, title: "Unauthorized" };
         }
-        return execute(set, () => run(principal), successStatus);
+        const { principal, key } = caller;
+        return execute(
+            set,
+            async () => {
+                if (key) {
+                    if (!access) {
+                        throw new ServiceError("forbidden", "API keys cannot use this endpoint.");
+                    }
+                    requireKeyAccess(
+                        key,
+                        access.organizationId ?? key.organizationId,
+                        access.scope,
+                    );
+                }
+                return run(principal, key);
+            },
+            successStatus,
+        );
     }
 
     // For endpoints a token holder may call without an account.
@@ -148,7 +194,7 @@ export function createApi(deps: {
         run: (principal: Principal | null) => Promise<unknown>,
         successStatus = 200,
     ) {
-        const principal = await principalOf(request);
+        const principal = await sessionPrincipal(request);
         return execute(set, () => run(principal), successStatus);
     }
 
@@ -223,61 +269,107 @@ export function createApi(deps: {
             .get("/health", { detail: { hide: true } }, getControllerInfo)
             .all("/auth/*", { detail: { hide: true } }, ({ request }) => auth.handler(request))
             .get("/v1/me", { detail: docs.me }, async ({ request, set }) => {
-                if (!request.headers.has("cookie")) {
+                const caller = await callerOf(request);
+                if (!caller) {
                     set.status = 401;
                     return { code: "unauthenticated", status: 401, title: "Unauthorized" };
                 }
-                const session = await auth.api.getSession({ headers: request.headers });
-                if (!session) {
+                const user = await db
+                    .selectFrom("user")
+                    .select(["id", "email", "name", "role"])
+                    .where("id", "=", caller.principal.userId)
+                    .executeTakeFirstOrThrow();
+                return user;
+            })
+            .get("/v1/key", { detail: docs.keyInfo }, async ({ request, set }) => {
+                const caller = await callerOf(request);
+                if (!caller) {
                     set.status = 401;
                     return { code: "unauthenticated", status: 401, title: "Unauthorized" };
                 }
-                const { id, email, name } = session.user;
-                const role = (session.user as { role?: string }).role ?? "user";
-                return { id, email, name, role };
+                if (!caller.key) {
+                    set.status = 403;
+                    return { code: "forbidden", status: 403, title: "Not an API key request." };
+                }
+                const {
+                    keyId: id,
+                    name,
+                    organizationId,
+                    scopes,
+                    projectIds,
+                    expiresAt,
+                } = caller.key;
+                return { id, name, organizationId, scopes, projectIds, expiresAt };
             })
             .get("/v1/organizations", { detail: docs.listOrganizations }, ({ request, set }) =>
-                respond(request, set, (p) => listMyOrganizations(db, p)),
+                respond(request, set, { scope: "organization:read" }, async (p, key) => {
+                    const all = await listMyOrganizations(db, p);
+                    return key ? all.filter((o) => o.id === key.organizationId) : all;
+                }),
             )
             .post(
                 "/v1/organizations",
                 { detail: docs.createOrganization },
                 async ({ request, set }) => {
                     const input = await body(request);
-                    return respond(request, set, (p) => createOrganization(db, p, input), 201);
+                    return respond(
+                        request,
+                        set,
+                        null,
+                        (p) => createOrganization(db, p, input),
+                        201,
+                    );
                 },
             )
             .get(
                 "/v1/organizations/:orgId",
                 { detail: docs.getOrganization },
                 ({ request, set, params }) =>
-                    respond(request, set, (p) => getOrganization(db, p, params.orgId)),
+                    respond(
+                        request,
+                        set,
+                        { organizationId: params.orgId, scope: "organization:read" },
+                        (p) => getOrganization(db, p, params.orgId),
+                    ),
             )
             .get(
                 "/v1/organizations/:orgId/members",
                 { detail: docs.listMembers },
                 ({ request, set, params }) =>
-                    respond(request, set, (p) => listMembers(db, p, params.orgId)),
+                    respond(
+                        request,
+                        set,
+                        { organizationId: params.orgId, scope: "member:read" },
+                        (p) => listMembers(db, p, params.orgId),
+                    ),
             )
             .post(
                 "/v1/organizations/:orgId/members",
                 { detail: docs.addMember },
                 async ({ request, set, params }) => {
                     const input = await body(request);
-                    return respond(request, set, (p) => addMember(db, p, params.orgId, input), 201);
+                    return respond(
+                        request,
+                        set,
+                        null,
+                        (p) => addMember(db, p, params.orgId, input),
+                        201,
+                    );
                 },
             )
             .delete(
                 "/v1/organizations/:orgId/members/:userId",
                 { detail: docs.removeMember },
                 ({ request, set, params }) =>
-                    respond(request, set, (p) => removeMember(db, p, params.orgId, params.userId)),
+                    respond(request, set, null, (p) =>
+                        removeMember(db, p, params.orgId, params.userId),
+                    ),
             )
             .get(
                 "/v1/organizations/:orgId/invitations",
                 { detail: docs.listInvitations },
                 ({ request, set, params }) =>
-                    respond(request, set, (p) => listInvitations(db, p, params.orgId)),
+                    respond(request, set, null, (p) => listInvitations(db, p, params.orgId)),
             )
             .post(
                 "/v1/organizations/:orgId/invitations",
@@ -287,6 +379,7 @@ export function createApi(deps: {
                     return respond(
                         request,
                         set,
+                        null,
                         (p) => createInvitation(db, p, params.orgId, input, invitations),
                         201,
                     );
@@ -296,7 +389,7 @@ export function createApi(deps: {
                 "/v1/organizations/:orgId/invitations/:invitationId",
                 { detail: docs.revokeInvitation },
                 ({ request, set, params }) =>
-                    respond(request, set, (p) =>
+                    respond(request, set, null, (p) =>
                         revokeInvitation(db, p, params.orgId, params.invitationId),
                     ),
             )
@@ -325,7 +418,12 @@ export function createApi(deps: {
                 "/v1/organizations/:orgId/projects",
                 { detail: docs.listProjects },
                 ({ request, set, params }) =>
-                    respond(request, set, (p) => listProjects(db, p, params.orgId)),
+                    respond(
+                        request,
+                        set,
+                        { organizationId: params.orgId, scope: "project:read" },
+                        (p, key) => listProjects(db, p, params.orgId, key?.projectIds),
+                    ),
             )
             .post(
                 "/v1/organizations/:orgId/projects",
@@ -335,10 +433,48 @@ export function createApi(deps: {
                     return respond(
                         request,
                         set,
-                        (p) => createProject(db, p, params.orgId, input),
+                        { organizationId: params.orgId, scope: "project:create" },
+                        (p, key) => {
+                            // A project-limited key cannot widen its own reach by creating one.
+                            if (key?.projectIds) {
+                                throw new ServiceError(
+                                    "forbidden",
+                                    "A project-limited API key cannot create projects.",
+                                );
+                            }
+                            return createProject(db, p, params.orgId, input);
+                        },
                         201,
                     );
                 },
+            )
+            .get(
+                "/v1/organizations/:orgId/api-keys",
+                { detail: docs.listApiKeys },
+                ({ request, set, params }) =>
+                    respond(request, set, null, (p) => listApiKeys(db, p, params.orgId)),
+            )
+            .post(
+                "/v1/organizations/:orgId/api-keys",
+                { detail: docs.createApiKey },
+                async ({ request, set, params }) => {
+                    const input = await body(request);
+                    return respond(
+                        request,
+                        set,
+                        null,
+                        (p) => createApiKey(db, p, params.orgId, input),
+                        201,
+                    );
+                },
+            )
+            .delete(
+                "/v1/organizations/:orgId/api-keys/:keyId",
+                { detail: docs.revokeApiKey },
+                ({ request, set, params }) =>
+                    respond(request, set, null, (p) =>
+                        revokeApiKey(db, p, params.orgId, params.keyId),
+                    ),
             )
             // Last: the plugin's types would otherwise hide the handler context above.
             .use(openApiPlugin(withDocs))

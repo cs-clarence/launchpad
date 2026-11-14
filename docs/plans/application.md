@@ -320,9 +320,15 @@ Milestone 2 slices (one PR each):
       one-time reveal, list, revoke, `authenticateApiKey`); scopes exclude member, key
       and organization management; a key never exceeds its creator's current role and
       stops when the creator leaves; secrets stored as SHA-256 hashes.
-- [ ] M2-2: bearer-key authentication in the HTTP API (clamped to org, scopes and
-      projects; scope checks in every service a key can reach), `/api/v1` key
-      endpoints, and the credential generation that closes the sign-in/reset race.
+- [x] M2-2: `Authorization: Bearer` keys in `/api/v1`: an allow-list of key-usable
+      routes (me, key, own organization, members read, projects list/create), each
+      with a required scope; everything else, including key, member, invitation and
+      organization management, is session-only. Project-limited keys list only their
+      projects and cannot create projects. A bad Authorization header is a 401 and
+      never falls back to the cookie. Key issue/list/revoke endpoints (session only).
+      Not done: the credential generation for the sign-in/reset race (it needs
+      Better Auth's password check and session insert in one transaction; keep it
+      listed as accepted).
 - [ ] M2-3: versioned browser-safe SDK on `contracts.ts` and the shared client core
       (profiles, mode-600 credential file).
 - [ ] M2-4: CLI (`login --key`, `whoami`, org selection, `projects list`, `--json`)
@@ -343,7 +349,8 @@ Milestone 1 is complete except these known, accepted items:
 - A sign-in whose password check began before an operator password reset can still
   create a session after the reset commits (a millisecond window, and only for someone
   who already knows the old password). Closing it needs a credential generation that
-  sessions and the reset share; plan it with API-key sessions in milestone 2.
+  sessions and the reset share. API keys do not touch it (they are not sessions);
+  it stays an accepted gap and needs Better Auth's check and insert in one transaction.
 - Session-refresh cookies are forwarded to the browser for pages, not for direct
   `/api/v1` calls; API clients authenticate with keys from milestone 2.
 - Reset-password, sign-in and invitation endpoints rely on the throttles described in

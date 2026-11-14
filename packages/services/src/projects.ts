@@ -20,14 +20,23 @@ export const createProjectSchema = z.object({
 
 // Every query names the organization; a project in another organization is
 // indistinguishable from one that does not exist.
-export async function listProjects(db: Db, principal: Principal, organizationId: string) {
+// `restrictTo` is an API key's project allow-list; null or absent means all projects.
+export async function listProjects(
+    db: Db,
+    principal: Principal,
+    organizationId: string,
+    restrictTo?: string[] | null,
+) {
     await requireMembership(db, principal, organizationId, "project:read");
-    return db
+    if (restrictTo && restrictTo.length === 0) return [];
+    let query = db
         .selectFrom("project")
         .select(["id", "slug", "name", "created_at as createdAt"])
-        .where("organization_id", "=", organizationId)
-        .orderBy("created_at")
-        .execute();
+        .where("organization_id", "=", organizationId);
+    if (restrictTo) {
+        query = query.where("id", "in", restrictTo);
+    }
+    return query.orderBy("created_at").execute();
 }
 
 export async function createProject(
