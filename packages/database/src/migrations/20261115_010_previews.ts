@@ -59,6 +59,7 @@ export async function up(db: Kysely<any>): Promise<void> {
         updated_at timestamptz not null default now(),
         finished_at timestamptz,
         unique (organization_id, id),
+        unique (organization_id, preview_id, id),
         foreign key (organization_id, preview_id)
             references preview (organization_id, id) on delete restrict,
         foreign key (organization_id, artifact_id)
@@ -75,8 +76,10 @@ export async function up(db: Kysely<any>): Promise<void> {
     );
 
     await sql`alter table preview add column active_deployment_id uuid`.execute(db);
-    await sql`alter table preview add foreign key (organization_id, active_deployment_id)
-        references deployment (organization_id, id) on delete restrict`.execute(db);
+    // The active deployment must belong to this very preview, not merely to the same
+    // organization. A null active_deployment_id is not checked (MATCH SIMPLE).
+    await sql`alter table preview add foreign key (organization_id, id, active_deployment_id)
+        references deployment (organization_id, preview_id, id) on delete restrict`.execute(db);
 
     await sql`create table deployment_event (
         id bigint generated always as identity primary key,

@@ -78,11 +78,13 @@ const COLUMNS = [
     "created_at",
 ] as const;
 
+// Keyset pagination in (created_at, id) order. `after` is the id of the last preview
+// of the previous page (the `nextCursor` it returned); every preview is reachable.
 export async function listPreviews(
     db: Db,
     principal: Principal,
     organizationId: string,
-    projectId?: string,
+    options: { projectId?: string; after?: string } = {},
 ) {
     await requireMembership(db, principal, organizationId, "preview:read");
     let query = db
@@ -90,12 +92,25 @@ export async function listPreviews(
         .select(COLUMNS)
         .where("organization_id", "=", organizationId)
         .where("desired_state", "!=", "deleted");
-    if (projectId !== undefined) {
-        if (!z.uuid().safeParse(projectId).success) return [];
-        query = query.where("project_id", "=", projectId);
+    if (options.projectId !== undefined) {
+        if (!z.uuid().safeParse(options.projectId).success) return { items: [], nextCursor: null };
+        query = query.where("project_id", "=", options.projectId);
     }
-    const rows = await query.orderBy("created_at").orderBy("id").limit(LIST_LIMIT).execute();
-    return rows.map(shape);
+    if (options.after !== undefined) {
+        if (!z.uuid().safeParse(options.after).success) {
+            throw new ServiceError("invalid", "The cursor is not valid.");
+        }
+        query = query.where(
+            sql<boolean>`(created_at, id) > (select created_at, id from preview where id = ${options.after} and organization_id = ${organizationId})`,
+        );
+    }
+    const rows = await query
+        .orderBy("created_at")
+        .orderBy("id")
+        .limit(LIST_LIMIT + 1)
+        .execute();
+    const items = rows.slice(0, LIST_LIMIT).map(shape);
+    return { items, nextCursor: rows.length > LIST_LIMIT ? items[items.length - 1]!.id : null };
 }
 
 export async function getPreview(
@@ -132,6 +147,11 @@ export async function createPreview(
     idempotencyKey?: string,
 ) {
     await requireMembership(db, principal, organizationId, "preview:create");
+    // A bad cap must fail loudly: NaN or Infinity would silently remove it.
+    const maxPreviews = deps.maxPreviews ?? MAX_PREVIEWS_PER_ORGANIZATION;
+    if (!Number.isSafeInteger(maxPreviews) || maxPreviews < 1) {
+        throw new Error("maxPreviews must be a positive integer.");
+    }
     if (!DOMAIN.test(deps.previewDomain)) {
         throw new Error("The preview domain is not a valid lowercase domain name.");
     }
@@ -208,7 +228,7 @@ export async function createPreview(
             .where("organization_id", "=", organizationId)
             .where("desired_state", "=", "active")
             .executeTakeFirstOrThrow();
-        if (Number(live.n) >= (deps.maxPreviews ?? MAX_PREVIEWS_PER_ORGANIZATION)) {
+        if (Number(live.n) >= maxPreviews) {
             throw new ServiceError("conflict", "This organization has too many live previews.");
         }
 

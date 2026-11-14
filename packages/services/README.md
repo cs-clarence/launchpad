@@ -38,3 +38,5 @@ organization, enforces the live-preview cap (default 10) and supports an
 idempotency key bound to organization, principal and endpoint. The database
 refuses cross-organization references and more than one unfinished deployment
 per preview. Viewers read previews; deployers and above create and deploy.
+
+`listPreviews` pages with a keyset cursor (the last id of the previous page, returned as `nextCursor`), so every preview within the cap is reachable. A deployment can only be made active for the preview it belongs to, and `maxPreviews` must be a positive integer.

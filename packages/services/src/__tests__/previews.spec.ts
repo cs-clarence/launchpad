@@ -129,7 +129,7 @@ describe("creating previews", () => {
         expect(await code(create("zoe", "outsider-try"))).toBe("not-found");
         expect(await code(create("root", "operator-try"))).toBe("not-found");
         expect(await code(create("ben", "admin-ok"))).toBe("ok");
-        expect(await listPreviews(testDb.db, people.vic!, org)).not.toHaveLength(0);
+        expect((await listPreviews(testDb.db, people.vic!, org)).items).not.toHaveLength(0);
         expect(await code(listPreviews(testDb.db, people.zoe!, org))).toBe("not-found");
         expect(await code(listPreviews(testDb.db, people.root!, org))).toBe("not-found");
     });
@@ -193,10 +193,13 @@ describe("reading previews", () => {
             { slug: "theirs" },
             deps,
         );
-        const listed = await listPreviews(testDb.db, people.vic!, org);
+        const listed = (await listPreviews(testDb.db, people.vic!, org)).items;
         expect(listed.map((p) => p.id)).not.toContain(other.id);
         expect(await code(getPreview(testDb.db, people.vic!, org, other.id))).toBe("not-found");
-        expect(await listPreviews(testDb.db, people.vic!, org, "nope")).toEqual([]);
+        expect(await listPreviews(testDb.db, people.vic!, org, { projectId: "nope" })).toEqual({
+            items: [],
+            nextCursor: null,
+        });
     });
 });
 
@@ -228,6 +231,72 @@ describe("the live-preview cap", () => {
         );
         expect(results.filter((r) => r === "ok")).toHaveLength(MAX_PREVIEWS_PER_ORGANIZATION);
         expect(results.filter((r) => r === "conflict")).toHaveLength(4);
+    });
+});
+
+describe("listing past one page", () => {
+    it("reaches every preview through the cursor, in a stable order", async () => {
+        const bigOrg = (
+            await createOrganization(testDb.db, people.root!, {
+                name: "Big",
+                slug: "big-org",
+                ownerEmail: "ann@example.com",
+            })
+        ).id;
+        const bigProject = (
+            await createProject(testDb.db, people.ann!, bigOrg, { name: "B", slug: "b" })
+        ).id;
+        const created: string[] = [];
+        for (let i = 0; i < 105; i++) {
+            created.push(
+                (
+                    await createPreview(
+                        testDb.db,
+                        people.ann!,
+                        bigOrg,
+                        bigProject,
+                        { slug: `n-${i}` },
+                        { ...deps, maxPreviews: 150 },
+                    )
+                ).id,
+            );
+        }
+        const seen: string[] = [];
+        let after: string | undefined;
+        const sizes: number[] = [];
+        do {
+            const page = await listPreviews(testDb.db, people.ann!, bigOrg, { after });
+            sizes.push(page.items.length);
+            seen.push(...page.items.map((p) => p.id));
+            after = page.nextCursor ?? undefined;
+        } while (after);
+        expect(sizes).toEqual([100, 5]);
+        expect(new Set(seen).size).toBe(105);
+        expect(seen.toSorted()).toEqual(created.toSorted());
+        // A malformed cursor is invalid; one from another organization finds nothing.
+        expect(await code(listPreviews(testDb.db, people.ann!, bigOrg, { after: "nope" }))).toBe(
+            "invalid",
+        );
+        const foreign = await listPreviews(testDb.db, people.ann!, bigOrg, { after: randomUUID() });
+        expect(foreign.items).toEqual([]);
+    });
+});
+
+describe("the configured cap", () => {
+    it("rejects a value that would silently remove or distort it", async () => {
+        for (const maxPreviews of [Number.NaN, Infinity, 1.5, 0, -1, 2 ** 60]) {
+            await expect(
+                createPreview(
+                    testDb.db,
+                    people.ann!,
+                    org,
+                    project,
+                    { slug: "cap-bad" },
+                    { ...deps, maxPreviews },
+                ),
+                String(maxPreviews),
+            ).rejects.toThrow(/maxPreviews/);
+        }
     });
 });
 
@@ -362,6 +431,35 @@ describe("database invariants", () => {
             .where("status", "=", "reconciliation-needed")
             .execute();
         await expect(start("queued")).resolves.toBeDefined();
+    });
+
+    it("cannot make another preview's deployment active, even within one organization", async () => {
+        const first = await create("ann", "active-a");
+        const second = await create("ann", "active-b");
+        const artifact = await artifactIn(org, "ann");
+        const deployment = await testDb.db
+            .insertInto("deployment")
+            .values({
+                organization_id: org,
+                preview_id: first.id,
+                artifact_id: artifact.id,
+                status: "succeeded",
+                image_tag: null,
+                failure_code: null,
+                failure_message: null,
+                finished_at: null,
+                requested_by: people.ann!.userId,
+            })
+            .returning("id")
+            .executeTakeFirstOrThrow();
+        const activate = (previewId: string) =>
+            testDb.db
+                .updateTable("preview")
+                .set({ active_deployment_id: deployment.id })
+                .where("id", "=", previewId)
+                .execute();
+        await expect(activate(second.id)).rejects.toThrow();
+        await expect(activate(first.id)).resolves.toBeDefined();
     });
 
     it("deduplicates artifacts within an organization only, and rejects malformed digests", async () => {
