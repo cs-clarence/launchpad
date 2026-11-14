@@ -2,7 +2,7 @@ import tailwindcss from "@tailwindcss/vite";
 import { tanstackStart } from "@tanstack/react-start/plugin/vite";
 import react from "@vitejs/plugin-react";
 import { nitro } from "nitro/vite";
-import { copyFileSync, mkdirSync, readFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import path from "node:path";
 import { defineConfig } from "vite";
@@ -10,19 +10,41 @@ import { defineConfig } from "vite";
 // Scalar's single-file browser bundle, published from this origin so no
 // third-party script ever runs next to the session cookie. The version is pinned
 // by the lockfile; only the one file is copied.
-const scalarPackage = createRequire(import.meta.url).resolve("@scalar/api-reference/package.json");
-const scalarVersion = (JSON.parse(readFileSync(scalarPackage, "utf8")) as { version: string })
-    .version;
+// Resolve by the package's exported entry, then walk up to its package.json: Node
+// enforces the `exports` map, which does not expose `package.json` itself (Bun does
+// not enforce it, so a direct `package.json` lookup only fails under Node, as in CI).
+function packageManifest(name: string): { dir: string; version: string } {
+    let dir = path.dirname(createRequire(import.meta.url).resolve(name));
+    for (;;) {
+        const file = path.join(dir, "package.json");
+        if (existsSync(file)) {
+            const manifest = JSON.parse(readFileSync(file, "utf8")) as {
+                name?: string;
+                version: string;
+            };
+            if (manifest.name === name) return { dir, version: manifest.version };
+        }
+        const parent = path.dirname(dir);
+        if (parent === dir) throw new Error(`Cannot find the package root of ${name}`);
+        dir = parent;
+    }
+}
+const scalar = packageManifest("@scalar/api-reference");
+const scalarVersion = scalar.version;
 // Versioned path: the file is cached for a year, so an upgrade must change its URL.
 const scalarDir = path.resolve(import.meta.dirname, "node_modules/.cache/scalar");
 mkdirSync(path.join(scalarDir, scalarVersion), { recursive: true });
 copyFileSync(
-    path.join(path.dirname(scalarPackage), "dist/browser/standalone.js"),
+    path.join(scalar.dir, "dist/browser/standalone.js"),
     path.join(scalarDir, scalarVersion, "standalone.js"),
 );
 
 export default defineConfig({
     define: { __SCALAR_VERSION__: JSON.stringify(scalarVersion) },
+    // The server runs on Bun and imports `bun` (Bun SQL) from the workspace sources it
+    // bundles. Node-based builds (CI) cannot resolve it, so it stays a run-time import.
+    ssr: { external: ["bun"] },
+    build: { rolldownOptions: { external: ["bun", /^bun:/] } },
     plugins: [
         tailwindcss(),
         tanstackStart(),

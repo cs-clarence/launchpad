@@ -72,6 +72,13 @@ without a `name` that the newer local build accepted. Before relying on a local 
 download the pinned release (`omni-v<version>-x86_64-unknown-linux-gnu.zip` from
 [omni-oss/omni releases](https://github.com/omni-oss/omni/releases)) and run the CI
 commands with it first on the PATH.
+**CI also runs Node; this machine does not.** Bun resolves `bun` and ignores package `exports`
+restrictions that Node enforces, so a build can pass here and fail in CI (it did twice: the
+very first Node build failed on `import "bun"` and on a `package.json` subpath). To check,
+run the jobs in a Node container as your own user, e.g. `docker run --rm --network host --user
+"$(id -u):$(id -g)" -v "$PWD":/work -v <omni-release-dir>:/omni:ro node:lts-trixie` with
+Bun installed (`npm i -g --prefix /tmp/npm bun@<packageManager version>`) and `/omni` on the
+PATH; `omni` needs a recent glibc, so Debian bookworm images are too old.
 There is no way to run GitHub Actions locally; each job's commands were run against a
 pristine checkout instead (no `node_modules`, `.omni` or git-ignored files).
 
