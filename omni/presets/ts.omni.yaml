@@ -1,0 +1,25 @@
+name: ts
+tasks:
+  build:
+    exec: bun run build
+  check:types:
+    exec: bun run check:types
+  check:lint:
+    exec: bun x oxlint src
+  check:format:
+    exec: bun x oxfmt --check .
+  check:
+    dependencies:
+      - check:types
+      - check:lint
+      - check:format
+  test:unit:
+    exec: bun run test:unit
+  test:integration:
+    exec: bun run test:integration
+  test:
+    dependencies:
+      - test:unit
+      - test:integration
+  publish:
+    enabled: false

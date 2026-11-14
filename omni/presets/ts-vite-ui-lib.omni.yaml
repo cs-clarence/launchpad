@@ -1,0 +1,4 @@
+extends: ["./ts.omni.yaml"]
+tasks:
+  test:component:
+    exec: bun x vitest run --config vitest.config.component.ts

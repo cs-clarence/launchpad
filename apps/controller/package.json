@@ -1,0 +1,40 @@
+{
+    "name": "@launchpad/controller",
+    "version": "0.0.0",
+    "private": true,
+    "description": "Launchpad dashboard and controller API",
+    "type": "module",
+    "scripts": {
+        "dev": "vite dev --host 127.0.0.1",
+        "build": "vite build",
+        "start": "bun .output/server/index.mjs",
+        "test:unit": "vitest run",
+        "check:types": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.node.json"
+    },
+    "dependencies": {
+        "@launchpad/database": "workspace:^",
+        "@launchpad/dokku": "workspace:^",
+        "@launchpad/services": "workspace:^",
+        "@tanstack/react-router": "catalog:",
+        "@tanstack/react-start": "catalog:",
+        "elysia": "catalog:",
+        "react": "catalog:",
+        "react-dom": "catalog:"
+    },
+    "devDependencies": {
+        "@launchpad/tsconfig": "workspace:^",
+        "@launchpad/vite-config": "workspace:^",
+        "@launchpad/vitest-config": "workspace:^",
+        "@skeletonlabs/skeleton": "catalog:",
+        "@skeletonlabs/skeleton-react": "catalog:",
+        "@tailwindcss/vite": "catalog:",
+        "@types/react": "catalog:",
+        "@types/react-dom": "catalog:",
+        "@vitejs/plugin-react": "catalog:",
+        "nitro": "catalog:",
+        "tailwindcss": "catalog:",
+        "typescript": "catalog:",
+        "vite": "catalog:",
+        "vitest": "catalog:"
+    }
+}

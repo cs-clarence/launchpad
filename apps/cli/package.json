@@ -1,0 +1,25 @@
+{
+    "name": "@launchpad/cli",
+    "version": "0.0.0",
+    "private": true,
+    "description": "A TypeScript Package",
+    "bin": {
+        "launchpad": "./src/index.ts"
+    },
+    "type": "module",
+    "scripts": {
+        "build": "bun build src/index.ts --target=bun --outdir=dist",
+        "check:types": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.node.json"
+    },
+    "dependencies": {
+        "commander": "catalog:"
+    },
+    "devDependencies": {
+        "@launchpad/tsconfig": "workspace:^",
+        "@launchpad/vite-config": "workspace:^",
+        "@launchpad/vitest-config": "workspace:^",
+        "typescript": "catalog:",
+        "vite": "catalog:",
+        "vitest": "catalog:"
+    }
+}

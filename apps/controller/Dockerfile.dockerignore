@@ -1,0 +1,12 @@
+.git
+.data
+.omni
+.agents
+docs
+**/node_modules
+**/dist
+**/.output
+**/.tanstack
+**/.env*
+**/*.pem
+**/*.key

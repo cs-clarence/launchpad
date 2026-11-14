@@ -1,0 +1,66 @@
+# Adapted from Pureform's cog.toml at
+# 70232808fa9190da9733510d4efc0d272fa2abe6 (MIT; see
+# omni/generators/ts-package/LICENSE).
+from_latest_tag = false
+ignore_merge_commits = true
+ignore_fixup_commits = true
+disable_changelog = false
+disable_bump_commit = false
+generate_mono_repository_global_tag = false
+generate_mono_repository_package_tags = true
+branch_whitelist = []
+skip_ci = "[skip ci]"
+skip_untracked = false
+pre_bump_hooks = []
+post_bump_hooks = []
+# Pureform's package-version update script is not present in Launchpad.
+# Add version/lockfile synchronization before using cog bump for releases.
+pre_package_bump_hooks = []
+# Never push automatically as a side effect of bumping.
+post_package_bump_hooks = []
+tag_prefix = "v"
+
+# Install locally with cog install-hook --all.
+[git_hooks.commit-msg]
+script = """#!/bin/sh
+set -e
+cog verify --file "$1"
+# An unborn branch has no history for cog check to inspect.
+if git rev-parse --verify HEAD >/dev/null 2>&1; then
+    cog check
+fi
+"""
+
+[commit_types]
+
+[changelog]
+path = "CHANGELOG.md"
+authors = []
+
+[bump_profiles]
+
+# Shared-version controller libraries.
+[monorepo.packages.core]
+path = "."
+changelog_path = "CHANGELOG.md"
+include = [
+    "packages/services/**",
+    "packages/database/**",
+    "packages/dokku/**",
+    # @anchor:new-core-package
+]
+
+# Tooling is versioned independently.
+[monorepo.packages."@launchpad/tsconfig"]
+path = "packages/tsconfig"
+include = ["packages/tsconfig/**"]
+
+[monorepo.packages."@launchpad/vite-config"]
+path = "packages/vite-config"
+include = ["packages/vite-config/**"]
+
+[monorepo.packages."@launchpad/vitest-config"]
+path = "packages/vitest-config"
+include = ["packages/vitest-config/**"]
+
+#@anchor:new-typescript-package

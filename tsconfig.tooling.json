@@ -1,0 +1,9 @@
+{
+    "extends": "./packages/tsconfig/base.json",
+    "compilerOptions": { "types": ["bun"] },
+    "include": [
+        "*.config.ts",
+        "packages/vite-config/src/**/*.ts",
+        "packages/vitest-config/src/**/*.ts"
+    ]
+}

@@ -1,0 +1,10 @@
+extends: ["./ts.omni.yaml"]
+tasks:
+  test:unit:
+    enabled: false
+  test:integration:
+    enabled: false
+  test:service:
+    exec: bun x vitest run --config vitest.config.service.ts
+  test:e2e:
+    exec: bun x vitest run --config vitest.config.e2e.ts
