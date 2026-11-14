@@ -253,6 +253,21 @@ describe("running ssh", () => {
         }
     });
 
+    it("closes the input even when the source's return() throws synchronously", async () => {
+        const source = {
+            [Symbol.asyncIterator]: () => ({
+                next: async () => ({ done: true as const, value: undefined }),
+                return: (() => {
+                    throw new Error("boom");
+                }) as never,
+            }),
+        };
+        const started = Date.now();
+        const result = await run("cat > /dev/null; exit 0", { stdin: source });
+        expect(result.exitCode).toBe(0);
+        expect(Date.now() - started).toBeLessThan(5000);
+    });
+
     it("survives an input source that fails", async () => {
         async function* broken() {
             yield Buffer.from("partial");

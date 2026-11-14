@@ -188,6 +188,8 @@ export class SshTransport implements Transport {
 // Writes the stream to the child with backpressure, then closes its input. The source
 // is released as soon as the child is gone, even while a read is still waiting for
 // its next chunk: the producer must not be kept alive by a process that has ended.
+// `gone` is subscribed to once; each wait is a fresh promise that the single
+// subscription can wake, so nothing accumulates on a long-lived promise.
 async function pump(
     source: AsyncIterable<Uint8Array> | undefined,
     sink: NodeJS.WritableStream & { destroyed?: boolean },
@@ -198,37 +200,57 @@ async function pump(
         sink.end();
         return;
     }
-    const ended = gone.then(() => "gone" as const);
+    let over = false;
+    let wake: (() => void) | undefined;
+    void gone.then(() => {
+        over = true;
+        wake?.();
+    });
+    const waitable = <T>(inner: Promise<T>): Promise<T | undefined> =>
+        new Promise<T | undefined>((resolve, reject) => {
+            if (over) return resolve(undefined);
+            wake = () => resolve(undefined);
+            inner.then(resolve, reject);
+        }).finally(() => {
+            wake = undefined;
+        });
     let iterator: AsyncIterator<Uint8Array> | undefined;
     try {
         iterator = source[Symbol.asyncIterator]();
         for (;;) {
-            const next = await Promise.race([iterator.next(), ended]);
-            if (next === "gone" || next.done || sink.destroyed) break;
+            const next = await waitable(iterator.next());
+            if (over || !next || next.done || sink.destroyed) break;
             sent.bytes += next.value.byteLength;
             if (!sink.write(next.value)) {
-                await Promise.race([
+                let done: (() => void) | undefined;
+                await waitable(
                     new Promise<void>((resolve) => {
-                        const done = () => {
-                            sink.off("drain", done);
-                            sink.off("close", done);
-                            resolve();
-                        };
+                        done = () => resolve();
                         sink.once("drain", done);
                         sink.once("close", done);
                     }),
-                    ended,
-                ]);
+                );
+                if (done) {
+                    sink.off("drain", done);
+                    sink.off("close", done);
+                }
             }
         }
     } catch {
         // The source failed: close the input; the exit status reports the outcome.
     } finally {
         // A read still waiting is released by return(); do not wait on it forever.
+        let timer: ReturnType<typeof setTimeout> | undefined;
         await Promise.race([
-            Promise.resolve(iterator?.return?.()).catch(() => {}),
-            new Promise<void>((resolve) => setTimeout(resolve, 1000).unref?.()),
+            Promise.resolve()
+                .then(() => iterator?.return?.())
+                .catch(() => {}),
+            new Promise<void>((resolve) => {
+                timer = setTimeout(resolve, 1000);
+                timer.unref?.();
+            }),
         ]);
+        clearTimeout(timer);
         sink.end();
     }
 }
