@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { createTestDatabase } from "@launchpad/database/testing";
+import { sql } from "kysely";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
     addMember,
@@ -47,13 +48,28 @@ async function newUser(name: string, role: "user" | "operator" = "user") {
     people[name] = { userId: id, instanceRole: role };
 }
 
-const issue = (who: string, extra: Record<string, unknown> = {}, organization = org) =>
-    createApiKey(testDb.db, people[who]!, organization, {
-        name: "ci",
-        scopes: ["project:read"],
-        expiresInDays: 30,
-        ...extra,
-    });
+// A live session per user, as a signed-in caller has.
+const sessions: Record<string, string> = {};
+async function sessionOf(who: string) {
+    if (!sessions[who]) {
+        const id = randomUUID();
+        await sql`insert into "session" ("id", "token", "userId", "expiresAt", "updatedAt")
+            values (${id}, ${id}, ${people[who]!.userId}, now() + interval '1 day', now())`.execute(
+            testDb.db,
+        );
+        sessions[who] = id;
+    }
+    return sessions[who]!;
+}
+
+const issue = async (who: string, extra: Record<string, unknown> = {}, organization = org) =>
+    createApiKey(
+        testDb.db,
+        people[who]!,
+        organization,
+        { name: "ci", scopes: ["project:read"], expiresInDays: 30, ...extra },
+        await sessionOf(who),
+    );
 
 beforeAll(async () => {
     testDb = await createTestDatabase();
@@ -103,6 +119,30 @@ describe("issuing keys", () => {
             .where("target_id", "=", key.id)
             .execute();
         expect(audit.map((a) => a.action)).toEqual(["api_key.created"]);
+    });
+
+    it("is refused when the caller's session is gone, as after operator recovery", async () => {
+        await newUser("gone");
+        await addMember(testDb.db, people.ann!, org, { email: "gone@example.com", role: "admin" });
+        const session = await sessionOf("gone");
+        await testDb.db.deleteFrom("session").where("id", "=", session).execute();
+        expect(await code(issue("gone"))).toBe("forbidden");
+        await newUser("other-session");
+        await addMember(testDb.db, people.ann!, org, {
+            email: "other-session@example.com",
+            role: "admin",
+        });
+        expect(
+            await code(
+                createApiKey(
+                    testDb.db,
+                    people["other-session"]!,
+                    org,
+                    { name: "x", scopes: ["project:read"], expiresInDays: 1 },
+                    session,
+                ),
+            ),
+        ).toBe("forbidden");
     });
 
     it("limits who can manage keys and hides the org from outsiders", async () => {
@@ -232,11 +272,13 @@ describe("authenticating keys", () => {
             ownerEmail: "ann@example.com",
         });
         await addMember(db, people.ann!, admin.id, { email: "root@example.com", role: "admin" });
-        const key = await createApiKey(db, people.root!, admin.id, {
-            name: "op",
-            scopes: ["project:create"],
-            expiresInDays: 1,
-        });
+        const key = await createApiKey(
+            db,
+            people.root!,
+            admin.id,
+            { name: "op", scopes: ["project:create"], expiresInDays: 1 },
+            await sessionOf("root"),
+        );
         const auth = (await authenticateApiKey(db, key.secret))!;
         expect(auth.principal.instanceRole).toBe("user");
         const project = await createProject(db, auth.principal, admin.id, { name: "K", slug: "k" });

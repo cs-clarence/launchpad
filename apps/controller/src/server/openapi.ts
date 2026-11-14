@@ -50,6 +50,7 @@ interface Operation {
     description?: string;
     public?: boolean;
     keys?: boolean;
+    keyOnly?: boolean;
     path?: string[];
     body?: z.ZodType;
     ok: { status?: number; description: string; schema?: z.ZodType };
@@ -86,9 +87,11 @@ export function operation(op: Operation): DocumentDecoration {
         responses: responses as DocumentDecoration["responses"],
         security: op.public
             ? []
-            : op.keys
-              ? [{ sessionCookie: [] }, { bearerKey: [] }]
-              : [{ sessionCookie: [] }],
+            : op.keyOnly
+              ? [{ bearerKey: [] }]
+              : op.keys
+                ? [{ sessionCookie: [] }, { bearerKey: [] }]
+                : [{ sessionCookie: [] }],
     };
 }
 
@@ -233,7 +236,7 @@ export const docs = {
         errors: [401, 403, 404, 409, 422],
     }),
     keyInfo: operation({
-        keys: true,
+        keyOnly: true,
         tags: ["Session"],
         summary: "Current API key",
         description: "Only for a request authenticated with an API key.",

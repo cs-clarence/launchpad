@@ -98,7 +98,7 @@ export function createApi(deps: {
 
     async function sessionPrincipal(
         request: Request,
-    ): Promise<(Principal & { sessionCreatedAt: Date }) | null> {
+    ): Promise<(Principal & { sessionCreatedAt: Date; sessionId: string }) | null> {
         if (!request.headers.has("cookie")) {
             return null;
         }
@@ -111,6 +111,7 @@ export function createApi(deps: {
             userId: session.user.id,
             instanceRole: role === "operator" ? "operator" : "user",
             sessionCreatedAt: new Date(session.session.createdAt),
+            sessionId: session.session.id,
         };
     }
 
@@ -121,6 +122,7 @@ export function createApi(deps: {
         principal: Principal;
         key: ApiKeyPrincipal | null;
         sessionCreatedAt?: Date;
+        sessionId?: string;
     };
     async function callerOf(request: Request): Promise<Caller | null> {
         const header = request.headers.get("authorization");
@@ -131,8 +133,8 @@ export function createApi(deps: {
         }
         const session = await sessionPrincipal(request);
         if (!session) return null;
-        const { sessionCreatedAt, ...principal } = session;
-        return { principal, key: null, sessionCreatedAt };
+        const { sessionCreatedAt, sessionId, ...principal } = session;
+        return { principal, key: null, sessionCreatedAt, sessionId };
     }
 
     const STATUS = {
@@ -175,7 +177,11 @@ export function createApi(deps: {
         request: Request,
         set: { status?: number | string },
         access: Access | null,
-        run: (principal: Principal, key: ApiKeyPrincipal | null) => Promise<unknown>,
+        run: (
+            principal: Principal,
+            key: ApiKeyPrincipal | null,
+            sessionId?: string,
+        ) => Promise<unknown>,
         successStatus = 200,
         options: { fresh?: boolean } = {},
     ) {
@@ -204,7 +210,7 @@ export function createApi(deps: {
                         access.scope,
                     );
                 }
-                return run(principal, key);
+                return run(principal, key, caller.sessionId);
             },
             successStatus,
         );
@@ -504,7 +510,8 @@ export function createApi(deps: {
                         request,
                         set,
                         null,
-                        (p) => createApiKey(db, p, params.orgId, input),
+                        (p, _key, sessionId) =>
+                            createApiKey(db, p, params.orgId, input, sessionId ?? ""),
                         201,
                         { fresh: true },
                     );

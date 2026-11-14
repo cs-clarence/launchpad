@@ -28,6 +28,10 @@ export async function createApiKey(
     principal: Principal,
     organizationId: string,
     input: unknown,
+    // The caller's session. It is locked for the length of the insert, so operator
+    // recovery (which deletes sessions, then revokes keys) either finishes first, and
+    // issuing is refused, or waits and then revokes the key issued here.
+    sessionId: string,
 ) {
     await requireMembership(db, principal, organizationId, "apikey:manage");
     const data = parseInput(createApiKeySchema, input);
@@ -42,6 +46,16 @@ export async function createApiKey(
         await sql`select pg_advisory_xact_lock(hashtextextended(${`api-keys:${organizationId}`}, 0))`.execute(
             trx,
         );
+        const session = await trx
+            .selectFrom("session")
+            .select("id")
+            .where("id", "=", sessionId)
+            .where("userId", "=", principal.userId)
+            .forShare()
+            .executeTakeFirst();
+        if (!session) {
+            throw new ServiceError("forbidden", "Sign in again to do this.");
+        }
         // Re-read the creator's membership under a share lock, so a concurrent removal
         // either finishes first (no key) or waits for this one (the key is then nulled).
         const member = await trx
