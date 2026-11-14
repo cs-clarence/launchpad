@@ -14,17 +14,17 @@ Keep this page current when the entry points or runtime change.
 
 ## Configuration
 
-| Variable                  | Meaning                                                                                                                                                                                                |
-| ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `DATABASE_URL`            | PostgreSQL connection string (required)                                                                                                                                                                |
-| `LAUNCHPAD_AUTH_SECRET`   | Random secret, at least 32 characters (required)                                                                                                                                                       |
-| `LAUNCHPAD_BASE_URL`      | Public controller URL; its origin is the only trusted origin (required)                                                                                                                                |
-| `LAUNCHPAD_ENROLLMENT`    | `operator` (default) or `invitation` (requires SMTP)                                                                                                                                                   |
-| `LAUNCHPAD_PUBLIC_SIGNUP` | `false` by default; sign-up is a separate policy from SMTP                                                                                                                                             |
-| `LAUNCHPAD_SMTP_URL`      | Optional; set with `LAUNCHPAD_EMAIL_FROM` to enable email recovery and invitations. `smtps://` or `smtp://` (STARTTLS required unless loopback); no query options                                      |
-| `HOST` / `PORT`           | Listen address and port of the built server (default `127.0.0.1`-style host, port `3000`)                                                                                                              |
-| `LAUNCHPAD_API_DOCS`      | `true` (default) serves the OpenAPI document and Scalar reference; `false` removes them                                                                                                                |
-| `LAUNCHPAD_TRUSTED_PROXY` | `false` (default): the TCP peer address is the client address. `true`: exactly one trusted proxy that appends to `X-Forwarded-For`; its rightmost entry is used. Never set `true` without such a proxy |
+| Variable                  | Meaning                                                                                                                                                                                                            |
+| ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `DATABASE_URL`            | PostgreSQL connection string (required)                                                                                                                                                                            |
+| `LAUNCHPAD_AUTH_SECRET`   | Random secret, at least 32 characters (required)                                                                                                                                                                   |
+| `LAUNCHPAD_BASE_URL`      | Public controller URL; its origin is the only trusted origin (required)                                                                                                                                            |
+| `LAUNCHPAD_ENROLLMENT`    | `operator` (default) or `invitation` (requires SMTP)                                                                                                                                                               |
+| `LAUNCHPAD_PUBLIC_SIGNUP` | `false` by default; sign-up is a separate policy from SMTP. When `true`, access granted by email (owner or member) only goes to accounts that are verified or operator-provisioned, never to a self-registered one |
+| `LAUNCHPAD_SMTP_URL`      | Optional; set with `LAUNCHPAD_EMAIL_FROM` to enable email recovery and invitations. `smtps://` or `smtp://` (STARTTLS required unless loopback); no query options                                                  |
+| `HOST` / `PORT`           | Listen address and port of the built server (default `127.0.0.1`-style host, port `3000`)                                                                                                                          |
+| `LAUNCHPAD_API_DOCS`      | `true` (default) serves the OpenAPI document and Scalar reference; `false` removes them                                                                                                                            |
+| `LAUNCHPAD_TRUSTED_PROXY` | `false` (default): the TCP peer address is the client address. `true`: exactly one trusted proxy that appends to `X-Forwarded-For`; its rightmost entry is used. Never set `true` without such a proxy             |
 
 ## API reference
 

@@ -58,6 +58,7 @@ export function createApi(deps: {
 }) {
     const { auth, db, origin, invitations } = deps;
     const withDocs = deps.docs ?? false;
+    const grants = { publicSignup: invitations.publicSignup };
     const emailOf = (request: Request) =>
         request
             .clone()
@@ -244,7 +245,12 @@ export function createApi(deps: {
                 { detail: docs.createOrganization },
                 async ({ request, set }) => {
                     const input = await body(request);
-                    return respond(request, set, (p) => createOrganization(db, p, input), 201);
+                    return respond(
+                        request,
+                        set,
+                        (p) => createOrganization(db, p, input, grants),
+                        201,
+                    );
                 },
             )
             .get(
@@ -264,7 +270,12 @@ export function createApi(deps: {
                 { detail: docs.addMember },
                 async ({ request, set, params }) => {
                     const input = await body(request);
-                    return respond(request, set, (p) => addMember(db, p, params.orgId, input), 201);
+                    return respond(
+                        request,
+                        set,
+                        (p) => addMember(db, p, params.orgId, input, grants),
+                        201,
+                    );
                 },
             )
             .delete(
