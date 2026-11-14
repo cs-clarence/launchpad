@@ -25,8 +25,15 @@ function refuse(operation: string, what: string): never {
     });
 }
 
+// A global or sticky expression remembers where its last match ended, which would make
+// the same valid name pass once and fail the next time. Each check uses a fresh,
+// stateless copy.
+const stateless = (pattern: RegExp) =>
+    new RegExp(pattern.source, pattern.flags.replace(/[gy]/g, ""));
+
 export function appName(operation: string, value: unknown, pattern = DEFAULT_APP_NAME): string {
-    if (typeof value !== "string" || !pattern.test(value)) refuse(operation, "that app name");
+    if (typeof value !== "string" || !stateless(pattern).test(value))
+        refuse(operation, "that app name");
     return value as string;
 }
 

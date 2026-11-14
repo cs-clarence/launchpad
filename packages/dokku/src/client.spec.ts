@@ -1,6 +1,6 @@
 import { promises as fs } from "node:fs";
 import { afterEach, describe, expect, it } from "vitest";
-import { classify, createDokkuClient } from "./client";
+import { classify, createDokkuClient, failedBeforeConnecting } from "./client";
 import * as publicApi from "./index";
 import { DokkuError, needsReconciliation, sanitizeDetail } from "./errors";
 import { fakeSsh, workspace, type Workspace } from "./testing";
@@ -21,6 +21,7 @@ const result = (over: Partial<TransportResult> = {}): TransportResult => ({
     truncated: false,
     timedOut: false,
     aborted: false,
+    stdinBytes: 0,
     ...over,
 });
 
@@ -66,12 +67,13 @@ describe("the vocabulary", () => {
             ports: ["set"],
             ps: ["report"],
         });
-        // The package exports no generic runner either.
+        // The package exports no generic runner either, and not the real transport: with
+        // it a caller could send commands the client would never build.
+        expect("SshTransport" in publicApi).toBe(false);
         expect(Object.keys(publicApi).toSorted()).toEqual(
             [
                 "DEFAULT_APP_NAME",
                 "DokkuError",
-                "SshTransport",
                 "classify",
                 "createDokkuClient",
                 "needsReconciliation",
@@ -175,6 +177,24 @@ describe("refused input", () => {
     });
 });
 
+describe("app name patterns", () => {
+    it("give the same answer every time, even with a global or sticky flag", async () => {
+        ws = await workspace();
+        const stub = fake();
+        for (const flags of ["g", "y", "gy"]) {
+            const client = createDokkuClient(ws.connection, {
+                transport: stub.transport,
+                appNamePattern: new RegExp("^lp-test-[a-z0-9]{6}$", flags),
+            });
+            for (let i = 0; i < 4; i++) await client.apps.create("lp-test-abc123");
+            expect((await caught(client.apps.create("lp-test-ABC123"))).kind).toBe(
+                "invalid-argument",
+            );
+        }
+        expect(stub.calls).toHaveLength(12);
+    });
+});
+
 describe("trust comes first", () => {
     it("sends nothing when the host key is not pinned, and says why", async () => {
         const { client, calls, ws: w } = await setup();
@@ -221,24 +241,74 @@ describe("what a finished command means", () => {
         );
     });
 
-    it("is not-started only for a connection that failed before a session existed", () => {
+    it("is not-started only on ssh's own words, with nothing else said or sent", () => {
         for (const stderr of [
             "Host key verification failed.",
-            "@@@ WARNING: REMOTE HOST IDENTIFICATION HAS CHANGED! @@@",
             "dokku@h: Permission denied (publickey).",
             "ssh: connect to host h port 22: Connection refused",
             "ssh: Could not resolve hostname h: Name or service not known",
             "ssh: connect to host h port 22: Connection timed out",
             "ssh: connect to host h port 22: No route to host",
             "ssh: connect to host h port 22: Network is unreachable",
-            "no matching host key type found.",
-            "ssh could not be started",
+            "Unable to negotiate with 1.2.3.4 port 22: no matching host key type found. Their offer: ssh-rsa",
             'Load key "/k": invalid format',
+            "ssh could not be started",
+            // The full warning for a pinned key that no longer matches.
+            [
+                "@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@",
+                "@    WARNING: REMOTE HOST IDENTIFICATION HAS CHANGED!     @",
+                "@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@",
+                "IT IS POSSIBLE THAT SOMEONE IS DOING SOMETHING NASTY!",
+                "Someone could be eavesdropping on you right now (man-in-the-middle attack)!",
+                "It is also possible that a host key has just been changed.",
+                "The fingerprint for the ED25519 key sent by the remote host is",
+                "SHA256:abc123.",
+                "Please contact your system administrator.",
+                "Add correct host key in /k/known_hosts to get rid of this message.",
+                "Offending ED25519 key in /k/known_hosts:1",
+                "Host key for [h]:3022 has changed and you have requested strict checking.",
+                "Host key verification failed.",
+            ].join("\n"),
         ]) {
             expect((outcome(true, { exitCode: 255, stderr }) as DokkuError).kind, stderr).toBe(
                 "not-started",
             );
         }
+    });
+
+    it("does not take remote words for evidence that nothing ran", () => {
+        const lost = { exitCode: 255 };
+        // The remote started work, printed this, then the connection dropped.
+        for (const stderr of [
+            "registry connection refused",
+            "Error: could not resolve hostname for the registry",
+            "pull failed: Connection timed out",
+            "Permission denied while reading /var/lib/dokku",
+            "Host key verification failed.\nthen the remote kept going",
+            "docker: Host key verification failed. retrying",
+            "xssh: connect to host h port 22: Connection refused",
+        ]) {
+            expect((outcome(true, { ...lost, stderr }) as DokkuError).kind, stderr).toBe(
+                "uncertain",
+            );
+        }
+        // Even ssh's exact words are not enough once anything was received or sent.
+        const refusal = "ssh: connect to host h port 22: Connection refused";
+        expect(
+            (outcome(true, { ...lost, stderr: refusal, stdout: "-----> Deploying" }) as DokkuError)
+                .kind,
+        ).toBe("uncertain");
+        expect(
+            (outcome(true, { ...lost, stderr: refusal, stdinBytes: 1 }) as DokkuError).kind,
+        ).toBe("uncertain");
+        expect(
+            (outcome(true, { ...lost, stderr: refusal, truncated: true }) as DokkuError).kind,
+        ).toBe("uncertain");
+        expect(failedBeforeConnecting(result({ exitCode: 255, stderr: refusal }))).toBe(true);
+        // A mutation whose outcome is uncertain must be reconciled.
+        expect(
+            needsReconciliation(outcome(true, { ...lost, stderr: "registry connection refused" })),
+        ).toBe(true);
     });
 
     it("is uncertain when the connection was lost, because the command may have run", () => {
@@ -270,7 +340,7 @@ describe("what a finished command means", () => {
         const failed = outcome(true, { exitCode: 1 }) as DokkuError;
         const refused = outcome(true, {
             exitCode: 255,
-            stderr: "Connection refused",
+            stderr: "ssh: connect to host h port 22: Connection refused",
         }) as DokkuError;
         expect([lost, lostRead, failed, refused].map(needsReconciliation)).toEqual([
             true,
@@ -300,6 +370,18 @@ describe("operations that read", () => {
         const missing = await setup({ exitCode: 1, stderr: ` !     App ${APP} does not exist` });
         expect(await missing.client.apps.exists(APP)).toBe(false);
         await missing.ws.cleanup();
+        const config = await setup({
+            exitCode: 2,
+            stderr: `configuration file does not exist; App ${APP} does not exist`,
+        });
+        expect((await caught(config.client.apps.exists(APP))).kind).toBe("failed");
+        await config.ws.cleanup();
+        const other = await setup({
+            exitCode: 1,
+            stderr: " !     App lp-zzzzzzzzzz does not exist",
+        });
+        expect((await caught(other.client.apps.exists(APP))).kind).toBe("failed");
+        await other.ws.cleanup();
         const broken = await setup({ exitCode: 1, stderr: "permission problem" });
         expect((await caught(broken.client.apps.exists(APP))).kind).toBe("failed");
         await broken.ws.cleanup();

@@ -3,6 +3,7 @@ import { promises as fs } from "node:fs";
 import path from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { SshTransport, sshArguments } from "./transport";
+import type { TransportRequest } from "./transport";
 import { fakeSsh, workspace, type Workspace } from "./testing";
 
 let ws: Workspace;
@@ -177,6 +178,79 @@ describe("running ssh", () => {
         expect(result.exitCode).toBe(7);
         expect(Date.now() - started).toBeLessThan(8000);
         await expect.poll(() => released, { timeout: 5000 }).toBe(true);
+    });
+
+    it("reports how much input reached the remote command", async () => {
+        async function* some() {
+            yield Buffer.alloc(1000, 1);
+            yield Buffer.alloc(234, 2);
+        }
+        const sent = await run("cat > /dev/null", { stdin: some() });
+        expect(sent.stdinBytes).toBe(1234);
+        expect((await run("exit 0")).stdinBytes).toBe(0);
+    });
+
+    // An iterator whose next() stays pending until return() frees it, as a producer
+    // waiting on a slow upstream does.
+    function pendingSource() {
+        const state = { released: false, release: undefined as undefined | (() => void) };
+        const iterator: AsyncIterator<Uint8Array> = {
+            next: () =>
+                new Promise((resolve) => {
+                    state.release = () => resolve({ done: true, value: undefined });
+                }),
+            return: async () => {
+                state.released = true;
+                state.release?.();
+                return { done: true, value: undefined };
+            },
+        };
+        return { state, source: { [Symbol.asyncIterator]: () => iterator } };
+    }
+
+    it("releases a source that is still waiting for data when ssh exits", async () => {
+        const { state, source } = pendingSource();
+        const started = Date.now();
+        const result = await run("exit 7", { stdin: source });
+        expect(result.exitCode).toBe(7);
+        expect(Date.now() - started).toBeLessThan(5000);
+        await expect.poll(() => state.released, { timeout: 5000 }).toBe(true);
+    });
+
+    it("releases a waiting source when the command times out or is cancelled", async () => {
+        const timedOut = pendingSource();
+        expect(
+            (await run("exec sleep 30", { stdin: timedOut.source, timeoutMs: 300 })).timedOut,
+        ).toBe(true);
+        await expect.poll(() => timedOut.state.released, { timeout: 5000 }).toBe(true);
+        const cancelled = pendingSource();
+        const controller = new AbortController();
+        const pending = run("exec sleep 30", {
+            stdin: cancelled.source,
+            signal: controller.signal,
+        });
+        setTimeout(() => controller.abort(), 200);
+        expect((await pending).aborted).toBe(true);
+        await expect.poll(() => cancelled.state.released, { timeout: 5000 }).toBe(true);
+    });
+
+    it("does not crash when the source cannot even produce an iterator", async () => {
+        const unhandled: unknown[] = [];
+        const record = (reason: unknown) => unhandled.push(reason);
+        process.on("unhandledRejection", record);
+        try {
+            const source = {
+                [Symbol.asyncIterator]() {
+                    throw new Error("no iterator for you");
+                },
+            } as unknown as TransportRequest["stdin"];
+            const result = await run("cat > /dev/null; exit 0", { stdin: source });
+            expect(result.exitCode).toBe(0);
+            await new Promise((resolve) => setTimeout(resolve, 100));
+            expect(unhandled).toEqual([]);
+        } finally {
+            process.off("unhandledRejection", record);
+        }
     });
 
     it("survives an input source that fails", async () => {

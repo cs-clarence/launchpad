@@ -23,21 +23,47 @@ export interface DokkuClientOptions {
 
 const DEFAULT_TIMEOUTS = { quick: 15_000, mutate: 60_000, load: 10 * 60_000 };
 
-// Local ssh failures that happen before any session exists: the command did not run.
-const NOT_STARTED = [
-    /host key verification failed/i,
-    /remote host identification has changed/i,
-    /no (matching|supported) host key/i,
-    /permission denied \(/i,
-    /connection refused/i,
-    /could not resolve hostname/i,
-    /connection timed out/i,
-    /no route to host/i,
-    /network is unreachable/i,
-    /identity file .* not accessible/i,
-    /load key .*: /i,
-    /ssh could not be started/i,
+// ssh's own diagnostics for a failure before any session existed. Remote output shares
+// the same stream, so a mere substring is no evidence: a line counts only when it has
+// ssh's exact form, anchored at both ends.
+const DECISIVE = [
+    /^Host key verification failed\.$/,
+    /^ssh: connect to host \S+ port \d+: (Connection refused|Connection timed out|No route to host|Network is unreachable)$/,
+    /^ssh: Could not resolve hostname \S+: .+$/,
+    /^\S+@\S+: Permission denied \(.+\)\.?$/,
+    /^Unable to negotiate with \S+ port \d+: no matching host key type found\..*$/,
+    /^Load key ".+": .+$/,
+    /^ssh could not be started$/,
 ];
+// The rest of the warning ssh prints when a pinned key no longer matches.
+const BANNER = [
+    /^@+.*@+$/,
+    /^IT IS POSSIBLE THAT/,
+    /^Someone could be eavesdropping/,
+    /^It is also possible that/,
+    /^The fingerprint for the \S+ key sent by the remote host is/,
+    /^SHA256:\S+\.?$/,
+    /^Please contact your system administrator\.$/,
+    /^Add correct host key in \S+ to get rid of this message\.$/,
+    /^Offending \S+ key in \S+:\d+$/,
+    /^Host key for \S+ has changed and you have requested strict checking\.$/,
+    /^The \S+ host key for \S+ has changed/,
+];
+
+// True only when the command certainly never ran: ssh reported a local connection
+// failure in its exact words, said nothing else, and the remote produced no output
+// and received no input.
+export function failedBeforeConnecting(result: TransportResult): boolean {
+    if (result.stdout !== "" || result.stdinBytes > 0 || result.truncated) return false;
+    const lines = result.stderr
+        .split(/\r?\n/)
+        .map((l) => l.trim())
+        .filter(Boolean);
+    return (
+        lines.some((l) => DECISIVE.some((p) => p.test(l))) &&
+        lines.every((l) => DECISIVE.some((p) => p.test(l)) || BANNER.some((p) => p.test(l)))
+    );
+}
 
 // Decides what a finished run means. ssh itself exits 255 for its own failures, which
 // is the only exit status that is not the remote command's.
@@ -63,7 +89,7 @@ export function classify(
         return fail("uncertain", `Dokku ${operation} ended without an exit status.`);
     }
     if (result.exitCode === 255) {
-        return NOT_STARTED.some((pattern) => pattern.test(result.stderr))
+        return failedBeforeConnecting(result)
             ? fail("not-started", `Dokku ${operation} could not connect.`)
             : fail("uncertain", `The connection for Dokku ${operation} was lost.`);
     }
@@ -123,10 +149,14 @@ export function createDokkuClient(connection: DokkuConnection, options: DokkuCli
                     await execute("apps:exists", false, ["apps:exists", name], "quick", { signal });
                     return true;
                 } catch (error) {
+                    // Exit status 1 and this app named in the message: other failures that
+                    // happen to say "does not exist" (a missing config file, say) are errors.
+                    const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
                     if (
                         error instanceof DokkuError &&
                         error.kind === "failed" &&
-                        /does not exist/i.test(error.detail)
+                        error.exitCode === 1 &&
+                        new RegExp(`\\bApp ${escaped} does not exist`, "i").test(error.detail)
                     ) {
                         return false;
                     }

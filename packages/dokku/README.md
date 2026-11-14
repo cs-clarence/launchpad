@@ -22,7 +22,7 @@ await dokku.apps.create("lp-abcde12345");
 `apps.create | exists | destroy`, `domains.set`, `ports.set`, `git.loadImage` (streams a
 `docker save` archive to `git:load-image`) and `ps.report`. **There is deliberately no
 generic command runner**: a new operation is a new validated function in `client.ts`,
-and the package exports none (a test pins the exported surface).
+and the package exports none (a test pins the exported surface). The real `SshTransport` is not exported either: with it a caller could send commands the client would never build. Only the `Transport` types are, so a fake can be injected.
 
 ## Why it is safe to call
 
@@ -56,6 +56,8 @@ and the package exports none (a test pins the exported surface).
 | `not-started`      | Connection failed before a session existed (host key rejected, auth, refused, DNS, timeout connecting) | Safe to retry                                                                                |
 | `failed`           | The remote command ran and reported failure                                                            | Handle as a normal failure                                                                   |
 | `uncertain`        | Timeout, cancellation or a dropped connection: it may or may not have run                              | **Reconcile, never blindly retry** (`needsReconciliation(error)` is true for a mutating one) |
+
+`not-started` needs positive evidence: remote output shares ssh's stderr, so a substring match proves nothing. Anything else on a lost connection, including any output received or any input sent, is `uncertain`.
 
 `error.message` is fixed text. Remote output is in `error.detail` (printable, bounded)
 for operator logs only; do not return it to API clients.
