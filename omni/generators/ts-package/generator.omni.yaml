@@ -217,3 +217,5 @@ actions:
     files:
       - "**/*.ts"
       - "**/*.json"
+      - "**/*.md"
+      - "**/*.yaml"

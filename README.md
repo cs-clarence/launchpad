@@ -2,8 +2,11 @@
 
 Custom Dokku image with the `http-auth` plugin for local preview deployments.
 
-The controller/CLI monorepo is **bootstrap only**. See
-[Controller scaffold](#controller-scaffold) below; the Docker commands in the
+The controller has operator login, organizations, members, projects, optional
+email invitations and recovery, and an OpenAPI reference. It does **not deploy
+anything yet**: uploads, jobs and the Dokku worker are later milestones (see
+[the plan](docs/plans/application.md)). See [Controller](#controller) below and
+[the controller README](apps/controller/README.md). The Docker commands in the
 earlier sections manage the existing Dokku engine, not the controller.
 
 ## Configuration
@@ -100,7 +103,7 @@ cannot enter a sibling container's PID namespace. The demo passed the uptime
 check and HTTP verification, but that warning means the port check did not run.
 Sharing the host PID namespace would expand host access and is not enabled here.
 
-## Controller scaffold
+## Controller
 
 Launchpad is being shaped as a controller and dashboard around Dokku, with a CLI
 that talks to the controller. The workspace follows Pureform's Bun/Omni layout:
@@ -108,17 +111,19 @@ that talks to the controller. The workspace follows Pureform's Bun/Omni layout:
 ```text
 apps/
   controller/      TanStack Start + React, mounted Elysia 2 RC API, Skeleton 5
-  cli/             Bun CLI scaffold
+  cli/             Bun CLI (help/version only so far)
 packages/
-  services/        Framework-independent application services
-  database/        Kysely/PostgreSQL factory; no schema yet
+  auth/            Better Auth configuration, operator setup and recovery, mailer
+  services/        Framework-independent services, authorization and API contracts
+  database/        Kysely on Bun SQL, forward-only migrations
   dokku/           Dokku connection boundary; no SSH execution yet
   tsconfig/        Shared TypeScript configuration
   vite-config/     Shared package build configuration
   vitest-config/   Shared test configuration
 omni/
   generators/      TypeScript scaffolding copied/adapted from Pureform
-  presets/         Shared project tasks
+  presets/         Shared Omni project tasks
+tooling/           Repository-wide Omni tasks and checks (dependency consistency, test database)
 ```
 
 The workspace also reserves `tests/*` for future cross-package test projects.
@@ -126,20 +131,22 @@ Dependencies, docs and skills can be installed without launching anything:
 
 ```sh
 bun install --frozen-lockfile
-bun run setup:agents
-bun run build
-bun run check:types
-bun run test
+omni remote-sources install && omni projection sync
+omni -i run check test build
 ```
+
+Omni is the entrypoint for every task (build, checks, tests, the dev server, operator
+commands, the disposable test database); see [CONTRIBUTING.md](CONTRIBUTING.md#tasks).
 
 Build generates the ignored TanStack route tree and production Bun output; it
 does not start the app. The controller Dockerfile is in
 `apps/controller/Dockerfile`, separate from the root Dokku image.
 
-Only a placeholder page, metadata endpoint, and CLI help/version are scaffolded.
-Authentication, deployment commands, uploads/jobs, database schema/migrations,
-and SSH connectivity are not implemented. No controller or PostgreSQL service
-has been added to Compose, and no runtime was started for this bootstrap.
+Authentication, organizations, projects and email flows are implemented and
+tested against a disposable PostgreSQL; see the controller README for
+configuration and first run. Deployment commands, uploads/jobs and SSH
+connectivity are not implemented. No controller or PostgreSQL service has been
+added to Compose.
 
 See [CONTRIBUTING.md](CONTRIBUTING.md), [tooling](docs/tooling.md), and
 [package patterns](docs/patterns/README.md). Keep these docs current when setup

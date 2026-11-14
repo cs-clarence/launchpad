@@ -5,6 +5,7 @@ projects:
   - packages/**
   - apps/**
   - tests/**
+  - tooling/**
 
 generators:
   - source: local

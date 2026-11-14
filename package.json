@@ -9,12 +9,15 @@
     "type": "module",
     "scripts": {
         "setup:agents": "omni remote-sources install && omni projection sync",
-        "check:types": "tsc --noEmit -p tsconfig.tooling.json && bun run --filter '*' check:types",
-        "check:lint": "oxlint apps packages",
-        "check:format": "oxfmt --check",
-        "format": "oxfmt",
-        "test": "bun run --filter '*' test:unit",
-        "build": "bun run --filter '*' build"
+        "build": "omni -i run build",
+        "check": "omni -i run check",
+        "check:types": "omni -i run check:types",
+        "check:lint": "omni -i run check:lint",
+        "check:format": "omni -i run check:format",
+        "check:deps": "omni -i run check:deps",
+        "format": "omni -i run format",
+        "test": "omni -i run test",
+        "test:integration": "omni -i run test:integration"
     },
     "devDependencies": {
         "@types/bun": "catalog:",
@@ -39,7 +42,6 @@
         "unplugin-dts": "1.1.2",
         "@vitest/browser-playwright": "5.1.0",
         "playwright": "1.64.1",
-        "@omni-oss/log": "0.1.1",
         "zod": "4.6.7",
         "commander": "15.1.0",
         "@commander-js/extra-typings": "15.1.0",
@@ -57,7 +59,10 @@
         "@tailwindcss/vite": "4.3.5",
         "nitro": "3.0.261103-rc",
         "kysely": "0.29.9",
-        "pg": "8.23.1",
-        "@types/pg": "8.23.1"
+        "better-auth": "1.7.23",
+        "nodemailer": "10.5.0",
+        "@elysia/openapi": "2.0.0-rc.1",
+        "@scalar/api-reference": "1.78.1",
+        "@types/nodemailer": "8.0.2"
     }
 }

@@ -10,24 +10,65 @@ dependencies:
     - "@launchpad/vite-config"
     - "@launchpad/vitest-config"
     - "@launchpad/services"
+    - "@launchpad/auth"
     - "@launchpad/database"
-    - "@launchpad/dokku"
 
 tasks:
   test:unit:
     enabled: true
 
+  # The built server is what the integration tests drive over HTTP.
   test:integration:
-    enabled: false
+    enabled: true
+    dependencies:
+      append:
+        - build
 
   test:
     enabled: true
 
+  # The route tree (src/routeTree.gen.ts) is generated and git-ignored, so type
+  # checking needs a build first; its output is cached with the build.
   build:
     enabled: true
+    cache:
+      key:
+        files:
+          append:
+            - "public/**/*"
+      output:
+        files:
+          append:
+            - ".output/**/*"
+            - "src/routeTree.gen.ts"
 
-  publish:
-    enabled: false
+  check:types:
+    dependencies:
+      append:
+        - build
+
+  dev:
+    description: Start the dashboard dev server on 127.0.0.1 (needs a configured environment)
+    exec: bun run dev
+    persistent: true
+    cache:
+      enabled: false
+
+  # Operator commands. Omni's --arg is KEY=value, so the command and its options
+  # are named arguments:
+  #   omni -i run admin -p @launchpad/controller -a command=migrate
+  #   printf '%s' "$PASSWORD" | omni -i run admin -p @launchpad/controller \
+  #     -a command=setup -a "options=--email you@example.com"
+  # Needs DATABASE_URL (and the LAUNCHPAD_* settings for setup / reset-password).
+  admin:
+    description: Run an operator command (migrate, setup, create-user, reset-password)
+    exec: bun run admin {{ args.command }} {{ args.options }}
+    args:
+      command: "--help"
+      options: ""
+    interactive: true
+    cache:
+      enabled: false
 
 meta:
   publish: false

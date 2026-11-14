@@ -1,25 +1,96 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/omni-oss/json-schemas/refs/heads/main/project.json
 name: ts
+
+# Omni's default cache key does not include sources: without these files a task
+# stays "cached" after the code it checks has changed. Every file a TypeScript
+# task can read must be listed here or in the task's own key.
+cache:
+  key:
+    files:
+      - "package.json"
+      - "tsconfig*.json"
+      - "*.config.ts"
+      - "*.config.*.ts"
+      - "src/**/*"
+      - "@workspace/package.json"
+      - "@workspace/bun.lock"
+      - "@workspace/packages/tsconfig/*.json"
+
 tasks:
+  # `^build` orders a task after its upstream projects' builds and folds their
+  # outputs into this task's cache key, so a change in a dependency re-runs its
+  # dependents. Keep project dependencies in project.omni.yaml in step with
+  # package.json: `omni -i run check:deps` enforces it.
   build:
     exec: bun run build
+    dependencies:
+      - ^build
+    cache:
+      key:
+        files:
+          append:
+            - "@workspace/packages/vite-config/src/**/*"
+      output:
+        files:
+          - "dist/**/*"
+
   check:types:
     exec: bun run check:types
+    dependencies:
+      - ^build
+
   check:lint:
-    exec: bun x oxlint src
+    # Run from the repository root so oxlint.config.ts applies to every project.
+    exec: sh -c 'project="$PWD" && cd "$(git rev-parse --show-toplevel)" && bun x oxlint --deny-warnings "$project/src" "$project"/*.ts'
+    cache:
+      key:
+        files:
+          append:
+            - "@workspace/oxlint.config.ts"
+
   check:format:
     exec: bun x oxfmt --check .
+    cache:
+      key:
+        files:
+          append:
+            - "*.{json,md,yaml,yml,css,html}"
+            - "@workspace/oxfmt.config.ts"
+
   check:
+    description: Types, lint and formatting
+    exec: ""
     dependencies:
       - check:types
       - check:lint
       - check:format
+
   test:unit:
     exec: bun run test:unit
+    dependencies:
+      - ^build
+    cache:
+      key:
+        files:
+          append:
+            - "@workspace/packages/vitest-config/src/**/*"
+
+  # Needs a disposable PostgreSQL (`omni -i run test:db:up`); never part of `test`.
+  # TEST_DATABASE_URL may be exported to point elsewhere. Not cached: the result
+  # depends on external state.
   test:integration:
-    exec: bun run test:integration
+    exec: sh -c 'export TEST_DATABASE_URL="${TEST_DATABASE_URL:-postgres://postgres:dev@127.0.0.1:55432/postgres}"; exec bun run test:integration'
+    dependencies:
+      - ^build
+    cache:
+      enabled: false
+
+  # Unit tests only, so `omni -i run test` needs no database, server or Docker.
   test:
+    description: Unit tests
+    exec: ""
     dependencies:
       - test:unit
-      - test:integration
+
   publish:
     enabled: false

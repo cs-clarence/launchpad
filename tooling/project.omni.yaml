@@ -1,0 +1,62 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/omni-oss/json-schemas/refs/heads/main/project.json
+name: "@launchpad/tooling"
+description: Repository-wide tasks that belong to no single package.
+
+# These tasks read the whole repository and finish in well under a second, so they
+# are never cached: a stale result is worse than the time saved.
+cache:
+  enabled: false
+
+tasks:
+  check:format:
+    description: Format check of the whole repository, including docs and root files
+    exec: sh -c 'cd "$(git rev-parse --show-toplevel)" && bun x oxfmt --check'
+
+  format:
+    description: Format the whole repository
+    exec: sh -c 'cd "$(git rev-parse --show-toplevel)" && bun x oxfmt'
+
+  check:types:
+    description: Type-check the shared tooling (config files, vite and vitest configs, scripts)
+    exec: sh -c 'cd "$(git rev-parse --show-toplevel)" && bun x tsc --noEmit -p tsconfig.tooling.json'
+
+  check:lint:
+    description: Lint the shared tooling
+    exec: sh -c 'cd "$(git rev-parse --show-toplevel)" && bun x oxlint --deny-warnings tooling packages/vite-config packages/vitest-config *.config.ts'
+
+  check:deps:
+    description: Package, Omni graph, import and catalog dependencies agree
+    exec: sh -c 'cd "$(git rev-parse --show-toplevel)" && bun tooling/check-deps.ts'
+
+  check:compose:
+    description: Validate the Dokku Compose file (needs the Docker CLI)
+    # Omni loads .env.local into task environments (unexpanded), which would override
+    # the example file; unset exactly the variables the example defines.
+    exec: sh -c 'cd "$(git rev-parse --show-toplevel)" && export PWD && unset $(sed -n "s/^\([A-Z_]*\)=.*/\1/p" .env.local.example) && docker compose --env-file .env.local.example config --quiet'
+
+  check:
+    description: Types, lint, format and dependency consistency
+    exec: ""
+    dependencies:
+      - check:types
+      - check:lint
+      - check:format
+      - check:deps
+
+  test:unit:
+    description: Tests of the repository tooling
+    exec: sh -c 'cd "$(git rev-parse --show-toplevel)" && bun test tooling'
+
+  test:
+    description: Unit tests
+    exec: ""
+    dependencies:
+      - test:unit
+
+  test:db:up:
+    description: Start a disposable PostgreSQL for integration tests (needs Docker)
+    exec: sh -c 'cd "$(git rev-parse --show-toplevel)" && bun tooling/test-db.ts up'
+
+  test:db:down:
+    description: Stop the disposable PostgreSQL
+    exec: sh -c 'cd "$(git rev-parse --show-toplevel)" && bun tooling/test-db.ts down'

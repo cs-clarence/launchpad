@@ -9,13 +9,14 @@ dependencies:
     - "@launchpad/tsconfig"
     - "@launchpad/vite-config"
     - "@launchpad/vitest-config"
+    - "@launchpad/database"
 
 tasks:
   test:unit:
     enabled: true
 
   test:integration:
-    enabled: false
+    enabled: true
 
   test:
     enabled: true

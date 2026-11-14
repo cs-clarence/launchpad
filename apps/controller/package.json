@@ -8,23 +8,32 @@
         "dev": "vite dev --host 127.0.0.1",
         "build": "vite build",
         "start": "bun .output/server/index.mjs",
-        "test:unit": "vitest run",
-        "check:types": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.node.json"
+        "test:unit": "bun --bun vitest run",
+        "check:types": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.node.json",
+        "admin": "bun src/admin/main.ts",
+        "test:integration": "bun --bun vitest run --config vitest.config.integration.ts"
     },
     "dependencies": {
+        "@commander-js/extra-typings": "catalog:",
+        "@elysia/openapi": "catalog:",
+        "@launchpad/auth": "workspace:^",
         "@launchpad/database": "workspace:^",
-        "@launchpad/dokku": "workspace:^",
         "@launchpad/services": "workspace:^",
         "@tanstack/react-router": "catalog:",
         "@tanstack/react-start": "catalog:",
+        "better-auth": "catalog:",
+        "commander": "catalog:",
         "elysia": "catalog:",
+        "kysely": "catalog:",
         "react": "catalog:",
-        "react-dom": "catalog:"
+        "react-dom": "catalog:",
+        "zod": "catalog:"
     },
     "devDependencies": {
         "@launchpad/tsconfig": "workspace:^",
         "@launchpad/vite-config": "workspace:^",
         "@launchpad/vitest-config": "workspace:^",
+        "@scalar/api-reference": "catalog:",
         "@skeletonlabs/skeleton": "catalog:",
         "@skeletonlabs/skeleton-react": "catalog:",
         "@tailwindcss/vite": "catalog:",

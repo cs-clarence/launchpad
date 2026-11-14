@@ -1,0 +1,179 @@
+# Adapted from Pureform's ci.yaml and Omni's CI gatekeeper; provenance and MIT
+# notices are in .github/NOTICE.md. Every job runs Omni tasks, the same commands
+# as local development (see CONTRIBUTING.md).
+name: CI
+
+on:
+  merge_group:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  # Never cancel merge queue runs; PRs and pushes still cancel superseded runs.
+  cancel-in-progress: ${{ github.event_name != 'merge_group' }}
+
+jobs:
+  commits:
+    name: Check Commits
+    if: ${{ github.event_name == 'pull_request' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Conventional Commits Check
+        uses: cocogitto/cocogitto-action@v4.2.0
+        with:
+          command: check
+          # Only this PR's commits; the repository has no SemVer tag for --from-latest-tag.
+          args: ${{ github.event.pull_request.base.sha }}..${{ github.event.pull_request.head.sha }}
+
+  check:
+    name: Check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Setup Workspace
+        uses: ./.github/actions/setup-workspace
+        with:
+          cache-key-prefix: check
+          cache-restore-key-prefixes: |
+            build
+            test
+
+      # Types, lint (warnings fail), format and dependency consistency for every
+      # project and the repository tooling, plus the Dokku Compose file.
+      - name: Check
+        run: omni -i run -f=failed check check:compose
+
+      - name: Prune stale caches
+        run: omni -i cache prune -sy -o="7d"
+
+  build:
+    name: Build
+    needs: [check]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Setup Workspace
+        uses: ./.github/actions/setup-workspace
+        with:
+          cache-key-prefix: build
+          cache-restore-key-prefixes: |
+            check
+            test
+
+      - name: Build
+        run: omni -i run -f=failed build
+
+      - name: Prune stale caches
+        run: omni -i cache prune -sy -o="7d"
+
+  test:
+    name: Test
+    needs: [build]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Setup Workspace
+        uses: ./.github/actions/setup-workspace
+        with:
+          cache-key-prefix: test
+          cache-restore-key-prefixes: |
+            build
+            check
+
+      # Unit tests only: no database, server or Docker.
+      - name: Test
+        run: omni -i run -f=failed test
+
+      - name: Prune stale caches
+        run: omni -i cache prune -sy -o="7d"
+
+  # Integration tests need a disposable PostgreSQL. The same Omni tasks as local
+  # development start it (Docker is available on the runner) and run the suites.
+  integration:
+    name: Integration
+    needs: [test]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Setup Workspace
+        uses: ./.github/actions/setup-workspace
+        with:
+          cache-key-prefix: integration
+          cache-restore-key-prefixes: |
+            test
+            build
+            check
+
+      - name: Start disposable PostgreSQL
+        run: omni -i run test:db:up -p '@launchpad/tooling'
+
+      - name: Integration tests
+        run: omni -i run -f=failed test:integration
+
+      - name: Prune stale caches
+        run: omni -i cache prune -sy -o="7d"
+
+  # The ONLY status check to require in the `main` branch protection / ruleset.
+  # GitHub cannot match job names that change, and a required job that is skipped
+  # never reports, so every job collapses into this one stable check.
+  #
+  # The job set is static, so the gate is stricter than a dynamic plan needs to be:
+  # `check`, `build`, `test` and `integration` must each be exactly `success` (a job
+  # skipped by mistake must not let a merge through), and `commits`, which only runs
+  # on pull requests, must be `success` there and `skipped` everywhere else.
+  ci-gatekeeper:
+    name: CI Passed
+    needs: [commits, check, build, test, integration]
+    # Always run, so the check reports even when upstream jobs fail or are skipped.
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Evaluate upstream job results
+        uses: actions/github-script@v8
+        # Pass only each job's small `.result` string, never `toJSON(needs)`, whose
+        # outputs can overflow the process environment (E2BIG).
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          RESULTS_JSON: |
+            {
+              "commits": "${{ needs.commits.result }}",
+              "check": "${{ needs.check.result }}",
+              "build": "${{ needs.build.result }}",
+              "test": "${{ needs.test.result }}",
+              "integration": "${{ needs.integration.result }}"
+            }
+        with:
+          script: |
+            const results = JSON.parse(process.env.RESULTS_JSON);
+            const expected = {
+              commits: process.env.EVENT_NAME === 'pull_request' ? 'success' : 'skipped',
+              check: 'success',
+              build: 'success',
+              test: 'success',
+              integration: 'success',
+            };
+            const problems = [];
+            for (const [name, want] of Object.entries(expected)) {
+              const got = results[name];
+              core.info(`${name}: ${got} (expected ${want})`);
+              if (got !== want) problems.push(`${name}: ${got}, expected ${want}`);
+            }
+            if (problems.length > 0) {
+              core.setFailed(`Upstream jobs did not pass:\n${problems.join('\n')}`);
+            } else {
+              core.info('All jobs passed.');
+            }

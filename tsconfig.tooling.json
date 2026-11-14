@@ -1,8 +1,11 @@
 {
     "extends": "./packages/tsconfig/base.json",
-    "compilerOptions": { "types": ["bun"] },
+    "compilerOptions": {
+        "types": ["bun"]
+    },
     "include": [
         "*.config.ts",
+        "tooling/**/*.ts",
         "packages/vite-config/src/**/*.ts",
         "packages/vitest-config/src/**/*.ts"
     ]

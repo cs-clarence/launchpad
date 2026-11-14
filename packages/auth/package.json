@@ -1,0 +1,53 @@
+{
+    "name": "@launchpad/auth",
+    "version": "0.0.0",
+    "private": true,
+    "description": "Better Auth configuration and environment parsing",
+    "type": "module",
+    "exports": {
+        ".": {
+            "types": "./src/index.ts",
+            "import": {
+                "development": "./src/index.ts",
+                "default": "./src/index.ts"
+            },
+            "require": {
+                "development": "./src/index.ts",
+                "default": "./src/index.ts"
+            }
+        },
+        "./testing": {
+            "types": "./src/testing/index.ts",
+            "import": {
+                "development": "./src/testing/index.ts",
+                "default": "./src/testing/index.ts"
+            },
+            "require": {
+                "development": "./src/testing/index.ts",
+                "default": "./src/testing/index.ts"
+            }
+        }
+    },
+    "scripts": {
+        "build": "vite build",
+        "check:types": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.node.json",
+        "test:unit": "bun --bun vitest run --config vitest.config.unit.ts",
+        "test:integration": "bun --bun vitest run --config vitest.config.integration.ts"
+    },
+    "dependencies": {
+        "@launchpad/database": "workspace:^",
+        "better-auth": "catalog:",
+        "kysely": "catalog:",
+        "nodemailer": "catalog:",
+        "zod": "catalog:"
+    },
+    "devDependencies": {
+        "@launchpad/tsconfig": "workspace:^",
+        "@launchpad/vite-config": "workspace:^",
+        "@launchpad/vitest-config": "workspace:^",
+        "@types/nodemailer": "catalog:",
+        "typescript": "catalog:",
+        "vite": "catalog:",
+        "vitest": "catalog:"
+    }
+}

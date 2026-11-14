@@ -22,8 +22,9 @@ implemented. Design and boundaries are in [application design](../design/applica
 - **Collaboration/time:** first resolve contracts and run risk spikes with one
   owner; then bounded milestones. Estimate after the spikes, not a promised
   calendar duration. No agents launched for this plan.
-- **Chosen next step:** review the remaining design, then authorize only
-  milestone 0. Do not begin application implementation from this draft.
+- **Chosen next step:** milestone 0 is partly done (see the readiness gate).
+  Finish the deferred gates before the milestone that needs each, then start
+  milestone 1 only with the user's go-ahead.
 - **Reassessment triggers:** hostile tenants/builds, multi-host orchestration,
   public signup, OAuth-provider expansion, hosted MCP, automatic Git-provider PR
   builds, or a different deployment engine.
@@ -254,6 +255,8 @@ document which metadata/URLs can be restored.
 - Explicit Compose services/profiles for controller, worker, PostgreSQL and
   Dokku. Document socket privilege and container/host path mapping. Preserve
   current repo-local state; migrate only with explicit backup/approval.
+- Ship `packages/database/src/migrations` with any compiled admin/controller
+  artifact: migrations are discovered from that folder at run time.
 - Finish actual controller/worker image recipes, secret mounts, dependency
   readiness and migration/setup steps. No implicit public admin exposure.
 - Compile/package npm CLI/MCP/SDK with proper JS/declarations, dependency ranges,
@@ -286,6 +289,52 @@ immutable: deprecate/fix forward instead of assuming unpublish is possible.
 These are a roadmap, not v1 acceptance requirements or authorization to build
 speculatively. Reassess each before implementation.
 
+## Progress
+
+Milestone 1 (uncommitted at time of writing):
+
+- [x] Slice 1: auth package, Start→Elysia→Better Auth→PostgreSQL hop, shared Kysely
+      on Bun SQL, reviewed frozen auth schema.
+- [x] Slice 2: forward-only migrations and `bun run admin migrate`.
+- [x] Slice 3: race-safe first-operator setup (`admin setup`, password on stdin).
+- [x] Slice 4: login, logout, protected page, origin guard, per-client, per-email
+      sign-in throttling, session revocation.
+- [x] Slice 7: offline operator recovery (`admin reset-password`) with session
+      revocation and audit event.
+- [x] Independent security review of slices 1–4 and 7; findings fixed.
+- [x] Slice 5: operator-only organization creation, memberships, roles and the
+      organization selector; decisions in
+      [organization roles](../decisions/organization-roles-and-operator-access.md).
+- [x] Slice 6: projects with cross-organization constraints and tests.
+- [x] Slice 8: SMTP invitations and email recovery, with no-SMTP, valid-SMTP,
+      unreachable-SMTP and mode-switching tests.
+- [x] OpenAPI reference (Scalar, self-hosted) for the `/api/v1` API, with strict
+      response contracts in `packages/services` parsed against live responses. The
+      automation SDK (milestone 2) should build on these contracts.
+- [x] Slice 9: hardening (headers, body limits, throttle cleanup), docs sweep, and
+      the final independent review; its must-fix findings are applied.
+
+Milestone 1 is complete except these known, accepted items:
+
+- No interactive browser check of the UI (no desktop browser was available); the
+  UI is covered by server-rendered tests and types only. Run a click-through and a
+  Lighthouse accessibility audit when a browser is available.
+- Multipart bodies and streamed responses through the Start hop (milestone 3).
+- Request-size limits for TanStack server functions (`/_serverFn`); add one in
+  Nitro or the proxy before milestone 3 uploads.
+- The controller image is not built or run with the current controller, and the
+  admin commands and migration files are not packaged (milestone 6).
+- Error responses 411, 413 and 429 are not listed per operation in the OpenAPI
+  document, and the document is 3.1 while schemas target 3.0.
+- A sign-in whose password check began before an operator password reset can still
+  create a session after the reset commits (a millisecond window, and only for someone
+  who already knows the old password). Closing it needs a credential generation that
+  sessions and the reset share; plan it with API-key sessions in milestone 2.
+- Session-refresh cookies are forwarded to the browser for pages, not for direct
+  `/api/v1` calls; API clients authenticate with keys from milestone 2.
+- Reset-password, sign-in and invitation endpoints rely on the throttles described in
+  the controller README, including the accepted per-email lockout trade-off.
+
 ## Verification and collaboration policy
 
 Keep existing checks: build, type checks, lint, formatting and unit tests.
@@ -312,10 +361,18 @@ at integrated release milestones. Record skipped checks and remaining risks.
 - [x] Namespace public-profile checks recorded without claiming ownership.
 - [x] User approved configurable offline/SMTP enrollment and recovery, with
       offline defaults and independently disabled public signup.
-- [ ] User approves the remaining architecture.
-- [ ] Milestone 0 is separately authorized; spikes and independent review complete.
+- [x] User approved the remaining architecture (see [decision](../decisions/controller-worker-client-core-architecture.md)).
+- [x] Milestone 0 authorized by the user, including disposable infrastructure.
+- [ ] Milestone 0 spikes partly complete; see
+      [results](../decisions/milestone-0-spike-results.md). Deferred gates, each
+      to pass before the milestone that depends on it: Start→Elysia session,
+      body and stream hop, and Kysely/auth pool sharing (before milestone 1);
+      scheduling, Bun worker death, controller-container→worker→Dokku network,
+      worker image, and bounded progress through the intended ingress (before
+      milestone 3).
+- [x] Independent review of the milestone 0 results; findings applied.
 - [ ] Product license and authenticated registry ownership verified before release.
 
-No feature code or runtime was changed for this plan. The design is ready for
-review, not approval to implement the whole roadmap. After review, preserve
-accepted decisions in `docs/decisions/` and start only the approved first slice.
+No feature code was changed. The design is not approval to implement the whole
+roadmap. Preserve accepted decisions in `docs/decisions/` and start only the
+approved next slice once the deferred gates for it have passed.
