@@ -89,6 +89,19 @@ describe("specifier parsing", () => {
         expect([...found].toSorted()).toEqual(["@s/b", "a", "c", "d", "e", "side-effect"]);
     });
 
+    it("ignores imports that appear only in comments", () => {
+        const found = importedPackages(`
+            // import "retired-package";
+            /* import x from "block-comment"; */
+            /**
+             * require("doc-comment")
+             */
+            import real from "real"; // import "trailing-comment"
+            const url = "https://example.com/not-a-comment";
+        `);
+        expect([...found]).toEqual(["real"]);
+    });
+
     it("reads Omni dependency lists in both forms", () => {
         expect(omniDependencyNames(["a", "b"])).toEqual(["a", "b"]);
         expect(omniDependencyNames({ append: ["b"], prepend: ["a"] })).toEqual(["a", "b"]);

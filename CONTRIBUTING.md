@@ -13,35 +13,36 @@ bun install --frozen-lockfile
 omni remote-sources install && omni projection sync     # or: bun run setup:agents
 ```
 
-Run tasks with `omni run <task>...`. Omni orders them by the project graph
+Run tasks with `omni -i run <task>...` (`-i` passes your shell environment, such as
+`DATABASE_URL` or `TEST_DATABASE_URL`, to tasks; the released Omni drops it without `-i`). Omni orders them by the project graph
 (`^build`: a project's upstream dependencies build first), runs independent ones in
 parallel, and caches results keyed on each project's sources, so a second run of an
 unchanged project is instant and a changed dependency re-runs its dependents.
-`-p <project>` limits a run to one project (`omni run check -p @launchpad/auth`),
+`-p <project>` limits a run to one project (`omni -i run check -p @launchpad/auth`),
 `--no-cache` forces a fresh run, and `-d` prints what would run.
 The `bun run <name>` scripts in the root `package.json` are only aliases for the
 same Omni tasks; package-level scripts are the commands Omni executes.
 
 These tasks need no server, Docker, PostgreSQL or Dokku:
 
-| Command                     | Coverage                                                                     |
-| --------------------------- | ---------------------------------------------------------------------------- |
-| `omni run build`            | Controller's production Bun output, CLI, library builds and declarations     |
-| `omni run check`            | `check:types`, `check:lint` (warnings fail), `check:format` and `check:deps` |
-| `omni run check:deps`       | Package, Omni-graph, import and catalog dependencies agree                   |
-| `omni run test`             | Unit tests only: services, auth, the Elysia adapter and the tooling          |
-| `omni run format`           | Format the whole repository                                                  |
-| `omni run check:compose`    | Existing Dokku Compose syntax (needs the Docker CLI)                         |
-| `omni run check test build` | The full local gate, in one graph                                            |
+| Command                        | Coverage                                                                     |
+| ------------------------------ | ---------------------------------------------------------------------------- |
+| `omni -i run build`            | Controller's production Bun output, CLI, library builds and declarations     |
+| `omni -i run check`            | `check:types`, `check:lint` (warnings fail), `check:format` and `check:deps` |
+| `omni -i run check:deps`       | Package, Omni-graph, import and catalog dependencies agree                   |
+| `omni -i run test`             | Unit tests only: services, auth, the Elysia adapter and the tooling          |
+| `omni -i run format`           | Format the whole repository                                                  |
+| `omni -i run check:compose`    | Existing Dokku Compose syntax (needs the Docker CLI)                         |
+| `omni -i run check test build` | The full local gate, in one graph                                            |
 
 `check:types` for the controller builds it first: the route tree is generated and
 git-ignored. Integration tests need a disposable PostgreSQL and are never part of
 `test`:
 
 ```sh
-omni run test:db:up            # disposable postgres:17-alpine on 127.0.0.1:55432 (Docker)
-omni run test:integration      # auth, services and controller, against that database
-omni run test:db:down
+omni -i run test:db:up            # disposable postgres:17-alpine on 127.0.0.1:55432 (Docker)
+omni -i run test:integration      # auth, services and controller, against that database
+omni -i run test:db:down
 ```
 
 `test:integration` defaults `TEST_DATABASE_URL` to that container; export it to point
@@ -53,27 +54,27 @@ database. Integration results are never cached.
 Operator and development tasks live in the controller project:
 
 ```sh
-omni run dev -p @launchpad/controller                  # dev server (uses apps/controller/.env.local)
-omni run admin -p @launchpad/controller -a command=migrate
+omni -i run dev -p @launchpad/controller                  # dev server (uses apps/controller/.env.local)
+omni -i run admin -p @launchpad/controller -a command=migrate
 ```
 
 Omni loads `.env.local` files from the repository root and from the project into task
 environments, unexpanded. Keep only values you want every task to see in the root file.
 
 Adding a package: use the Omni generator (see [tooling](docs/tooling.md)); it produces
-a package that passes `omni run check test build` as generated. ## CI
+a package that passes `omni -i run check test build` as generated. ## CI
 
 `.github/workflows/ci.yaml` runs the same Omni tasks you run locally, as a chain of
 jobs on pushes to `main`, pull requests and the merge queue:
 
-| Job           | Runs                                                                        |
-| ------------- | --------------------------------------------------------------------------- |
-| `commits`     | Conventional Commits check of the pull request's commits (PRs only)         |
-| `check`       | `omni run check check:compose`: types, lint, format, dependency consistency |
-| `build`       | `omni run build`                                                            |
-| `test`        | `omni run test` (unit tests)                                                |
-| `integration` | `omni run test:db:up`, then `omni run test:integration`                     |
-| `CI Passed`   | The gatekeeper: runs last and always, and fails unless every job passed     |
+| Job           | Runs                                                                           |
+| ------------- | ------------------------------------------------------------------------------ |
+| `commits`     | Conventional Commits check of the pull request's commits (PRs only)            |
+| `check`       | `omni -i run check check:compose`: types, lint, format, dependency consistency |
+| `build`       | `omni -i run build`                                                            |
+| `test`        | `omni -i run test` (unit tests)                                                |
+| `integration` | `omni -i run test:db:up`, then `omni -i run test:integration`                  |
+| `CI Passed`   | The gatekeeper: runs last and always, and fails unless every job passed        |
 
 **Require only `CI Passed`** in the `main` branch protection or ruleset. GitHub cannot
 match job names that change, and a required job that is skipped never reports, so the

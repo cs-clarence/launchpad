@@ -11,5 +11,5 @@ response contracts (`contracts.ts`). Every function takes the caller (a
 non-members as not-found. Elysia handlers and TanStack server functions delegate
 to services, not the other way around.
 
-Integration tests (`omni run test:integration`) need a disposable PostgreSQL; see
+Integration tests (`omni -i run test:integration`) need a disposable PostgreSQL; see
 [CONTRIBUTING.md](../../CONTRIBUTING.md) and [patterns](../../docs/patterns/README.md).

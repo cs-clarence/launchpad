@@ -1,6 +1,7 @@
-import { createFileRoute, Link, useRouter } from "@tanstack/react-router";
+import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useState } from "react";
 import { apiRequest } from "../lib/api";
+import { authClient } from "../lib/auth-client";
 import { getInvitationPreviewFn } from "../server/data";
 
 export const Route = createFileRoute("/accept-invitation")({
@@ -15,7 +16,7 @@ export const Route = createFileRoute("/accept-invitation")({
 function AcceptInvitation() {
     const { token } = Route.useSearch();
     const invitation = Route.useLoaderData();
-    const router = useRouter();
+    const navigate = useNavigate();
     const [error, setError] = useState<string | null>(null);
     const [pending, setPending] = useState(false);
     const [done, setDone] = useState<"joined" | "created" | null>(null);
@@ -39,8 +40,9 @@ function AcceptInvitation() {
             setError(result.message);
             return;
         }
+        // No refresh: an accepted invitation is no longer valid, so reloading the
+        // preview would replace this success state with "not valid".
         setDone(invitation?.accountExists ? "joined" : "created");
-        await router.invalidate();
     }
 
     return (
@@ -66,6 +68,25 @@ function AcceptInvitation() {
                     >
                         {pending ? "Joining…" : "Accept invitation"}
                     </button>
+                ) : invitation.signedIn ? (
+                    <p>
+                        You are signed in as a different user.{" "}
+                        <button
+                            className="anchor"
+                            type="button"
+                            onClick={async () => {
+                                await authClient.signOut();
+                                await navigate({
+                                    to: "/login",
+                                    search: {
+                                        next: `/accept-invitation?token=${encodeURIComponent(token)}`,
+                                    },
+                                });
+                            }}
+                        >
+                            Sign out and continue as {invitation.email}
+                        </button>
+                    </p>
                 ) : (
                     <p>
                         Sign in as {invitation.email} to accept.{" "}

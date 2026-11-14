@@ -10,6 +10,10 @@ export function safeNext(value: unknown): string | undefined {
         if (resolved.origin !== "http://launchpad.invalid") {
             return undefined;
         }
+        // `/a/..//evil.com` normalizes to `//evil.com`, a protocol-relative reference.
+        if (resolved.pathname.startsWith("//")) {
+            return undefined;
+        }
         return resolved.pathname + resolved.search + resolved.hash;
     } catch {
         return undefined;

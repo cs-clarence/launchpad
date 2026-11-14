@@ -189,11 +189,9 @@ export async function addMember(
     organizationId: string,
     input: unknown,
 ) {
-    const actorRole = await requireMembership(db, principal, organizationId, "member:manage");
+    // Fail fast, outside the transaction; the real check is repeated under the lock.
+    await requireMembership(db, principal, organizationId, "member:manage");
     const data = parseInput(addMemberSchema, input);
-    if (!canAssignRole(actorRole, data.role)) {
-        throw new ServiceError("forbidden", `Your role cannot assign the ${data.role} role.`);
-    }
     const user = await db
         .selectFrom("user")
         .select("id")
@@ -204,6 +202,25 @@ export async function addMember(
     }
     try {
         await db.transaction().execute(async (trx) => {
+            // The same lock removeMember takes: without it, a concurrent removal of the
+            // actor could land between the permission check and the insert, and a
+            // removed owner could add themselves back.
+            const members = await trx
+                .selectFrom("member")
+                .select(["userId", "role"])
+                .where("organizationId", "=", organizationId)
+                .forUpdate()
+                .execute();
+            const actor = members.find((m) => m.userId === principal.userId);
+            if (!actor || !can(actor.role, "member:manage")) {
+                throw new ServiceError("not-found", "Organization not found.");
+            }
+            if (!canAssignRole(actor.role, data.role)) {
+                throw new ServiceError(
+                    "forbidden",
+                    `Your role cannot assign the ${data.role} role.`,
+                );
+            }
             await trx
                 .insertInto("member")
                 .values({

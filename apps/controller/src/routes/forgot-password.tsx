@@ -20,8 +20,13 @@ function ForgotPassword() {
         event.preventDefault();
         const data = new FormData(event.currentTarget);
         setPending(true);
-        await authClient.requestPasswordReset({ email: String(data.get("email") ?? "") });
-        setPending(false);
+        try {
+            await authClient.requestPasswordReset({ email: String(data.get("email") ?? "") });
+        } catch {
+            // Treated like any other outcome: the page never reveals what happened.
+        } finally {
+            setPending(false);
+        }
         // Identical whether or not the address exists or can receive mail.
         setSent(true);
     }

@@ -56,6 +56,9 @@ export default defineConfig({
             // (clickjacking) or content-sniffed. No script-restricting CSP yet: the
             // API reference needs inline scripts.
             routeRules: {
+                // Responses carry identity and organization data; a shared cache must never
+                // serve one account's response to another.
+                "/api/**": { headers: { "cache-control": "no-store" } },
                 "/**": {
                     headers: {
                         "referrer-policy": "no-referrer",

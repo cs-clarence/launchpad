@@ -15,6 +15,7 @@ describe("safeNext", () => {
             "/\\/evil.com",
             "/\t/evil.com",
             "/\n/evil.com",
+            "/a/..//evil.com",
             "https://evil.com",
             "javascript:alert(1)",
             "evil.com",

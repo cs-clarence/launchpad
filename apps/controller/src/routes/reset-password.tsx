@@ -20,11 +20,18 @@ function ResetPassword() {
         const data = new FormData(event.currentTarget);
         setPending(true);
         setError(null);
-        const result = await authClient.resetPassword({
-            newPassword: String(data.get("password") ?? ""),
-            token,
-        });
-        setPending(false);
+        let result: Awaited<ReturnType<typeof authClient.resetPassword>>;
+        try {
+            result = await authClient.resetPassword({
+                newPassword: String(data.get("password") ?? ""),
+                token,
+            });
+        } catch {
+            setError("Could not reach the server. Check your connection and retry.");
+            return;
+        } finally {
+            setPending(false);
+        }
         if (result.error) {
             setError(
                 "This reset link is invalid or has expired, or the password is not acceptable.",

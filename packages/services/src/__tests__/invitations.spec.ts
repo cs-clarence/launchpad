@@ -329,7 +329,7 @@ describe("accepting invitations", () => {
         }
     });
 
-    it("limits revocation by role and records the audit trail", async () => {
+    it("limits revocation by role", async () => {
         const db = testDb.db;
         await createInvitation(
             db,
@@ -344,11 +344,59 @@ describe("accepting invitations", () => {
         expect(await code(revokeInvitation(db, people.ben!, org, adm.id))).toBe("forbidden");
         expect(await code(revokeInvitation(db, people.dee!, org, adm.id))).toBe("forbidden");
         expect(await code(revokeInvitation(db, people.ann!, org, "not-a-uuid"))).toBe("not-found");
+    });
+
+    // Creates every event it asserts on, so it also works when run on its own.
+    it("records the whole invitation lifecycle in the audit trail", async () => {
+        const db = testDb.db;
+        const audited = (
+            await createOrganization(db, people.root!, {
+                name: "Audited",
+                slug: "audited",
+                ownerEmail: "ann@example.com",
+            })
+        ).id;
+        await createInvitation(
+            db,
+            people.ann!,
+            audited,
+            { email: "life1@example.com", role: "viewer" },
+            deps,
+        );
+        const accepted = tokenOf(sent.at(-1)!);
+        await acceptInvitation(
+            db,
+            null,
+            { token: accepted, name: "L", password: "a-long-password-1" },
+            deps,
+        );
+        await createInvitation(
+            db,
+            people.ann!,
+            audited,
+            { email: "life2@example.com", role: "viewer" },
+            deps,
+        );
+        const pending = (await listInvitations(db, people.ann!, audited)).find(
+            (i) => i.email === "life2@example.com",
+        )!;
+        await revokeInvitation(db, people.ann!, audited, pending.id);
+        failDelivery = true;
+        await code(
+            createInvitation(
+                db,
+                people.ann!,
+                audited,
+                { email: "life3@example.com", role: "viewer" },
+                deps,
+            ),
+        );
+        failDelivery = false;
         const actions = (
             await db
                 .selectFrom("audit_event")
                 .select("action")
-                .where("organization_id", "=", org)
+                .where("organization_id", "=", audited)
                 .execute()
         ).map((a) => a.action);
         expect(actions).toEqual(
@@ -473,5 +521,97 @@ describe("races, caps and verification", () => {
             .where("email", "=", "squat@example.com")
             .executeTakeFirstOrThrow();
         expect(row.emailVerified).toBe(false);
+    });
+
+    it("serializes the daily cap across concurrent invitations to different addresses", async () => {
+        const db = testDb.db;
+        const capped = (
+            await createOrganization(db, people.root!, {
+                name: "Cap Race",
+                slug: "cap-race",
+                ownerEmail: "ann@example.com",
+            })
+        ).id;
+        await db
+            .insertInto("organization_invitation")
+            .values(
+                Array.from({ length: MAX_INVITATIONS_PER_DAY - 2 }, (_, i) => ({
+                    organization_id: capped,
+                    email: `pre${i}@example.com`,
+                    role: "viewer" as const,
+                    token_hash: `pre-hash-${i}`,
+                    invited_by: people.ann!.userId,
+                    expires_at: new Date(Date.now() + 60_000),
+                })),
+            )
+            .execute();
+        const results = await Promise.all(
+            Array.from({ length: 6 }, (_, i) =>
+                code(
+                    createInvitation(
+                        db,
+                        people.ann!,
+                        capped,
+                        { email: `burst${i}@example.com`, role: "viewer" },
+                        deps,
+                    ),
+                ),
+            ),
+        );
+        expect(results.filter((r) => r === "ok")).toHaveLength(2);
+        expect(results.filter((r) => r === "conflict")).toHaveLength(4);
+        const total = await db
+            .selectFrom("organization_invitation")
+            .select((eb) => eb.fn.countAll<string>().as("n"))
+            .where("organization_id", "=", capped)
+            .executeTakeFirstOrThrow();
+        expect(Number(total.n)).toBe(MAX_INVITATIONS_PER_DAY);
+    });
+
+    it("does not let a caller replace an invitation they could not revoke", async () => {
+        const db = testDb.db;
+        const guarded = (
+            await createOrganization(db, people.root!, {
+                name: "Guarded",
+                slug: "guarded",
+                ownerEmail: "ann@example.com",
+            })
+        ).id;
+        await addMember(db, people.ann!, guarded, { email: "ben@example.com", role: "admin" });
+        await createInvitation(
+            db,
+            people.ann!,
+            guarded,
+            { email: "target@example.com", role: "owner" },
+            deps,
+        );
+        // An admin may not assign owner, so may not overwrite the pending owner invitation.
+        expect(
+            await code(
+                createInvitation(
+                    db,
+                    people.ben!,
+                    guarded,
+                    { email: "target@example.com", role: "viewer" },
+                    deps,
+                ),
+            ),
+        ).toBe("forbidden");
+        const still = await listInvitations(db, people.ann!, guarded);
+        expect(still.filter((i) => i.email === "target@example.com").map((i) => i.role)).toEqual([
+            "owner",
+        ]);
+        // The owner can replace it.
+        expect(
+            await code(
+                createInvitation(
+                    db,
+                    people.ann!,
+                    guarded,
+                    { email: "target@example.com", role: "viewer" },
+                    deps,
+                ),
+            ),
+        ).toBe("ok");
     });
 });

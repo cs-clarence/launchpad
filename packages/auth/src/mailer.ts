@@ -12,6 +12,9 @@ export interface Mailer {
     send(message: MailMessage): Promise<void>;
 }
 
+// URL hostnames keep IPv6 brackets ("[::1]"); Nodemailer needs the bare address.
+export const bareHostname = (hostname: string) => hostname.replace(/^\[(.*)\]$/, "$1");
+
 const LOOPBACK = new Set(["localhost", "127.0.0.1", "[::1]", "::1"]);
 
 // SMTP URLs are `smtps://` (implicit TLS) or `smtp://` (STARTTLS required). A
@@ -23,7 +26,7 @@ export function createSmtpMailer(smtp: { url: string; from: string }): Mailer {
     // Options come from the parsed URL, never passed through as a URL, so nothing
     // in it can switch TLS requirements off or turn on debug logging.
     const transport = nodemailer.createTransport({
-        host: url.hostname,
+        host: bareHostname(url.hostname),
         port: url.port ? Number(url.port) : secure ? 465 : 587,
         secure,
         requireTLS: !secure && !LOOPBACK.has(url.hostname),

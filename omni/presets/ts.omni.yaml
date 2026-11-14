@@ -20,7 +20,7 @@ tasks:
   # `^build` orders a task after its upstream projects' builds and folds their
   # outputs into this task's cache key, so a change in a dependency re-runs its
   # dependents. Keep project dependencies in project.omni.yaml in step with
-  # package.json: `omni run check:deps` enforces it.
+  # package.json: `omni -i run check:deps` enforces it.
   build:
     exec: bun run build
     dependencies:
@@ -75,7 +75,7 @@ tasks:
           append:
             - "@workspace/packages/vitest-config/src/**/*"
 
-  # Needs a disposable PostgreSQL (`omni run test:db:up`); never part of `test`.
+  # Needs a disposable PostgreSQL (`omni -i run test:db:up`); never part of `test`.
   # TEST_DATABASE_URL may be exported to point elsewhere. Not cached: the result
   # depends on external state.
   test:integration:
@@ -85,7 +85,7 @@ tasks:
     cache:
       enabled: false
 
-  # Unit tests only, so `omni run test` needs no database, server or Docker.
+  # Unit tests only, so `omni -i run test` needs no database, server or Docker.
   test:
     description: Unit tests
     exec: ""

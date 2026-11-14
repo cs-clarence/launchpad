@@ -37,6 +37,7 @@ describe("migrations", () => {
     });
 
     it("rejects an unknown role and a second operator at the database level", async () => {
+        await testDb.migrate(); // idempotent: this test must not rely on the one above
         const insert = (id: string, role: string) =>
             sql`insert into "user" (id, name, email, "emailVerified", role) values (${id}, ${id}, ${id + "@example.com"}, false, ${role})`.execute(
                 testDb.db,

@@ -5,11 +5,20 @@ export async function apiRequest(
     path: string,
     body?: unknown,
 ): Promise<{ ok: true } | { ok: false; message: string }> {
-    const response = await fetch(`/api/v1${path}`, {
-        method,
-        headers: { "content-type": "application/json" },
-        body: body === undefined ? undefined : JSON.stringify(body),
-    });
+    let response: Response;
+    try {
+        response = await fetch(`/api/v1${path}`, {
+            method,
+            headers: { "content-type": "application/json" },
+            body: body === undefined ? undefined : JSON.stringify(body),
+        });
+    } catch {
+        // A dropped connection rejects instead of returning a response.
+        return {
+            ok: false,
+            message: "Could not reach the server. Check your connection and retry.",
+        };
+    }
     if (response.ok) {
         return { ok: true };
     }

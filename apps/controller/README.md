@@ -19,9 +19,9 @@ Keep this page current when the entry points or runtime change.
 | `DATABASE_URL`            | PostgreSQL connection string (required)                                                                                                                                                                |
 | `LAUNCHPAD_AUTH_SECRET`   | Random secret, at least 32 characters (required)                                                                                                                                                       |
 | `LAUNCHPAD_BASE_URL`      | Public controller URL; its origin is the only trusted origin (required)                                                                                                                                |
-| `LAUNCHPAD_ENROLLMENT`    | `operator` (default) or `invitation` (needs SMTP; not implemented yet)                                                                                                                                 |
+| `LAUNCHPAD_ENROLLMENT`    | `operator` (default) or `invitation` (requires SMTP)                                                                                                                                                   |
 | `LAUNCHPAD_PUBLIC_SIGNUP` | `false` by default; sign-up is a separate policy from SMTP                                                                                                                                             |
-| `LAUNCHPAD_SMTP_URL`      | Optional; set with `LAUNCHPAD_EMAIL_FROM`. Email flows are not built yet                                                                                                                               |
+| `LAUNCHPAD_SMTP_URL`      | Optional; set with `LAUNCHPAD_EMAIL_FROM` to enable email recovery and invitations. `smtps://` or `smtp://` (STARTTLS required unless loopback); no query options                                      |
 | `HOST` / `PORT`           | Listen address and port of the built server (default `127.0.0.1`-style host, port `3000`)                                                                                                              |
 | `LAUNCHPAD_API_DOCS`      | `true` (default) serves the OpenAPI document and Scalar reference; `false` removes them                                                                                                                |
 | `LAUNCHPAD_TRUSTED_PROXY` | `false` (default): the TCP peer address is the client address. `true`: exactly one trusted proxy that appends to `X-Forwarded-For`; its rightmost entry is used. Never set `true` without such a proxy |
@@ -54,10 +54,10 @@ Passwords come from a file only you can read (mode 600) or from piped stdin, nev
 an argument or the environment. Omni does not forward piped stdin, so use a file:
 
 ```sh
-omni run admin -p @launchpad/controller -a command=migrate           # forward-only, explicit
-omni run admin -p @launchpad/controller -a command=setup \
+omni -i run admin -p @launchpad/controller -a command=migrate           # forward-only, explicit
+omni -i run admin -p @launchpad/controller -a command=setup \
   -a "options=--email you@example.com --password-file /run/secrets/launchpad-operator"
-omni run dev -p @launchpad/controller                                 # dev server
+omni -i run dev -p @launchpad/controller                                 # dev server
 ```
 
 Run directly, from this directory, the same commands are `bun run admin migrate` and
@@ -74,7 +74,7 @@ The controller never migrates on startup. There is no default password.
 Provision people and organizations offline:
 
 ```sh
-omni run admin -p @launchpad/controller -a command=create-user \
+omni -i run admin -p @launchpad/controller -a command=create-user \
   -a "options=--email ann@example.com --name Ann --password-file /run/secrets/ann"
 ```
 

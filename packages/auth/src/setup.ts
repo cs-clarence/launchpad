@@ -2,25 +2,15 @@ import { randomUUID } from "node:crypto";
 import type { Database } from "@launchpad/database";
 import { type Kysely, sql } from "kysely";
 import type { Auth } from "./create-auth";
+import { normalizeEmail } from "./email";
+import { InvalidSetupInputError, OperatorExistsError } from "./errors";
+
+export { InvalidSetupInputError, OperatorExistsError };
 
 // Arbitrary constant: all first-operator setups contend for one lock.
 const SETUP_LOCK_KEY = 7_201_411_001;
 export const MIN_PASSWORD_LENGTH = 12;
 export const MAX_PASSWORD_LENGTH = 128;
-
-export class OperatorExistsError extends Error {
-    constructor() {
-        super("An operator already exists; use the recovery command instead.");
-        this.name = "OperatorExistsError";
-    }
-}
-
-export class InvalidSetupInputError extends Error {
-    constructor(message: string) {
-        super(message);
-        this.name = "InvalidSetupInputError";
-    }
-}
 
 export interface SetupOperatorInput {
     email: string;
@@ -34,10 +24,7 @@ export async function setupFirstOperator(
     deps: { db: Kysely<Database>; auth: Auth },
     input: SetupOperatorInput,
 ): Promise<{ id: string; email: string }> {
-    const email = input.email.trim().toLowerCase();
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
-        throw new InvalidSetupInputError("A valid email address is required.");
-    }
+    const email = normalizeEmail(input.email);
     if (input.password.length < MIN_PASSWORD_LENGTH) {
         throw new InvalidSetupInputError(
             `The password must be at least ${MIN_PASSWORD_LENGTH} characters.`,

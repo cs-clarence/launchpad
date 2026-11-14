@@ -1,5 +1,6 @@
 import { SQL } from "bun";
 import {
+    AbortedTransactionError,
     CompiledQuery,
     type DatabaseConnection,
     type Dialect,
@@ -19,6 +20,12 @@ class BunSqlConnection implements DatabaseConnection {
     constructor(private readonly reserved: Awaited<ReturnType<SQL["reserve"]>>) {}
 
     async executeQuery<R>(compiled: CompiledQuery): Promise<QueryResult<R>> {
+        const { command: _command, ...result } = await this.execute<R>(compiled);
+        return result;
+    }
+
+    // Like executeQuery, but also returns PostgreSQL's command tag.
+    async execute<R>(compiled: CompiledQuery): Promise<QueryResult<R> & { command?: string }> {
         const result = await this.reserved.unsafe(compiled.sql, [...compiled.parameters]);
         const command = (result as { command?: string }).command;
         const count = (result as { count?: number }).count;
@@ -26,6 +33,7 @@ class BunSqlConnection implements DatabaseConnection {
         return {
             rows: [...result] as R[],
             numAffectedRows: writes && count !== undefined ? BigInt(count) : undefined,
+            command,
         };
     }
 
@@ -78,7 +86,13 @@ class BunSqlDriver implements Driver {
     }
 
     async commitTransaction(connection: DatabaseConnection): Promise<void> {
-        await connection.executeQuery(CompiledQuery.raw("commit"));
+        // PostgreSQL answers COMMIT with ROLLBACK when the transaction already failed
+        // (for example a statement error the caller caught). Kysely requires that to
+        // surface as an error, or the caller would believe its writes were saved.
+        const result = await (connection as BunSqlConnection).execute(CompiledQuery.raw("commit"));
+        if (result.command === "ROLLBACK") {
+            throw new AbortedTransactionError();
+        }
     }
 
     async rollbackTransaction(connection: DatabaseConnection): Promise<void> {

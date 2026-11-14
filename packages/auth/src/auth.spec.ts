@@ -1,6 +1,6 @@
 import { createDatabase } from "@launchpad/database";
 import { describe, expect, it } from "vitest";
-import { createAuth, loadAuthConfig } from "./index";
+import { bareHostname, createAuth, loadAuthConfig } from "./index";
 
 const env = { LAUNCHPAD_AUTH_SECRET: "unit-secret-".repeat(4) };
 const db = createDatabase("postgres://unused@127.0.0.1:1/unused");
@@ -22,7 +22,9 @@ describe("authentication configuration", () => {
             db,
             config: loadAuthConfig({ ...env, LAUNCHPAD_BASE_URL: "http://127.0.0.1:3000" }),
         });
-        expect((await auth.$context).skipOriginCheck).toBe(false);
+        const context = await auth.$context;
+        expect(context.skipOriginCheck).toBe(false);
+        expect(context.skipCSRFCheck).toBe(false);
     });
 
     it("rejects invalid settings and SMTP-dependent combinations", () => {
@@ -58,5 +60,11 @@ describe("authentication configuration", () => {
                 LAUNCHPAD_SMTP_URL: "smtps://user:p%40ss@mail.example.com:465",
             }).smtp,
         ).not.toBeNull();
+    });
+
+    it("passes IPv6 SMTP hosts to Nodemailer without brackets", () => {
+        expect(bareHostname(new URL("smtp://[::1]:2525").hostname)).toBe("::1");
+        expect(bareHostname("mail.example.com")).toBe("mail.example.com");
+        expect(bareHostname("127.0.0.1")).toBe("127.0.0.1");
     });
 });

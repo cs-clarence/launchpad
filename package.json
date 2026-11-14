@@ -9,15 +9,15 @@
     "type": "module",
     "scripts": {
         "setup:agents": "omni remote-sources install && omni projection sync",
-        "build": "omni run build",
-        "check": "omni run check",
-        "check:types": "omni run check:types",
-        "check:lint": "omni run check:lint",
-        "check:format": "omni run check:format",
-        "check:deps": "omni run check:deps",
-        "format": "omni run format",
-        "test": "omni run test",
-        "test:integration": "omni run test:integration"
+        "build": "omni -i run build",
+        "check": "omni -i run check",
+        "check:types": "omni -i run check:types",
+        "check:lint": "omni -i run check:lint",
+        "check:format": "omni -i run check:format",
+        "check:deps": "omni -i run check:deps",
+        "format": "omni -i run format",
+        "test": "omni -i run test",
+        "test:integration": "omni -i run test:integration"
     },
     "devDependencies": {
         "@types/bun": "catalog:",

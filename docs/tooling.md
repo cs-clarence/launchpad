@@ -32,7 +32,7 @@ Rules that keep the graph correct:
 - **Project dependencies mirror `package.json`.** A workspace dependency must appear in
   both `package.json` (`workspace:^`) and the project's `dependencies:` in
   `project.omni.yaml`, otherwise Omni will not order or invalidate its tasks after the
-  dependency. `omni run check:deps` (`tooling/check-deps.ts`) enforces this, plus: every
+  dependency. `omni -i run check:deps` (`tooling/check-deps.ts`) enforces this, plus: every
   imported package is declared, no runtime dependency is dead (peers of other
   dependencies excepted), versions come from the root catalog (`catalog:`) or the
   workspace, and every catalog entry is used by a package or a generator template.
@@ -47,7 +47,7 @@ Rules that keep the graph correct:
   files (the controller's route tree) lists its `build` as a dependency and its
   generated files as build outputs.
 - **`test` is unit tests only.** `test:integration` is explicit and needs a disposable
-  PostgreSQL (`omni run test:db:up`).
+  PostgreSQL (`omni -i run test:db:up`).
 - **Omni loads `.env.local`** from the repository root and the project into task
   environments without expanding variables, and task `env.vars` override the shell. For
   a default that the shell may override, apply it in the command
@@ -108,7 +108,7 @@ omni gen run --name ts-package --output packages/my-package \
   --use-defaults --value package_name=my-package \
   --value integration_test=false --save-session=false
 bun install
-omni run check:deps check test build -p @launchpad/my-package
+omni -i run check:deps check test build -p @launchpad/my-package
 ```
 
 Generated files are formatted by the generator, and a generated package passes the

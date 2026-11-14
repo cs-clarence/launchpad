@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import type { Database } from "@launchpad/database";
 import type { Kysely } from "kysely";
 import type { Auth } from "./create-auth";
+import { normalizeEmail } from "./email";
 import { InvalidSetupInputError, MAX_PASSWORD_LENGTH, MIN_PASSWORD_LENGTH } from "./setup";
 
 // Offline provisioning of an ordinary account by the operator. The address is not
@@ -10,10 +11,7 @@ export async function provisionUser(
     deps: { db: Kysely<Database>; auth: Auth },
     input: { email: string; name: string; password: string; actor: string },
 ): Promise<{ id: string; email: string }> {
-    const email = input.email.trim().toLowerCase();
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
-        throw new InvalidSetupInputError("A valid email address is required.");
-    }
+    const email = normalizeEmail(input.email);
     if (
         input.password.length < MIN_PASSWORD_LENGTH ||
         input.password.length > MAX_PASSWORD_LENGTH

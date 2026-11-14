@@ -132,7 +132,7 @@ Dependencies, docs and skills can be installed without launching anything:
 ```sh
 bun install --frozen-lockfile
 omni remote-sources install && omni projection sync
-omni run check test build
+omni -i run check test build
 ```
 
 Omni is the entrypoint for every task (build, checks, tests, the dev server, operator

@@ -26,6 +26,12 @@ const load = (file: string) =>
 const ci = load("ci.yaml");
 const gate = ci.jobs["ci-gatekeeper"]!;
 
+// True when an `omni ... run` command lists exactly this task (not a qualified one).
+const runs = (commands: string, task: string) =>
+    commands
+        .split("\n")
+        .some((line) => new RegExp(`omni -i run\\b.*(^|\\s)${task}(\\s|$)`).test(line));
+
 describe("CI workflow", () => {
     // Adding a job without adding it to the gate would let it fail unnoticed.
     it("makes the gatekeeper depend on every other job", () => {
@@ -63,8 +69,12 @@ describe("CI workflow", () => {
             "test:integration",
             "test:db:up",
         ]) {
-            expect(all, task).toMatch(new RegExp(`omni -i run [^\\n]*\\b${task}\\b`));
+            expect(runs(all, task), task).toBe(true);
         }
+        // `test` must not be satisfied by `test:integration`, nor `check` by `check:compose`.
+        expect(runs("omni -i run test:integration", "test")).toBe(false);
+        expect(runs("omni -i run check:compose", "check")).toBe(false);
+        expect(runs("omni -i run -f=failed check check:compose", "check")).toBe(true);
     });
 
     it("pins the Omni version used by the setup action", () => {

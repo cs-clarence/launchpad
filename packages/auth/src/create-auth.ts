@@ -26,6 +26,19 @@ export function createAuth(options: {
             minPasswordLength: 12,
             revokeSessionsOnPasswordReset: true,
             resetPasswordTokenExpiresIn: 60 * 60,
+            // A reset by emailed token is a password change like the operator's, so it is
+            // audited too. Neither the token nor the password is recorded.
+            onPasswordReset: async ({ user }: { user: { id: string } }) => {
+                await db
+                    .insertInto("audit_event")
+                    .values({
+                        actor: `user:${user.id}`,
+                        action: "user.password_reset_by_email",
+                        target_type: "user",
+                        target_id: user.id,
+                    })
+                    .execute();
+            },
             // Email recovery exists only when a mailer is configured. Without one,
             // Better Auth rejects the request and the operator command is the path.
             ...(mailer

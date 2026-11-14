@@ -1,7 +1,9 @@
 import type { Database } from "@launchpad/database";
 import type { Kysely } from "kysely";
 import type { Auth } from "./create-auth";
-import { InvalidSetupInputError, MAX_PASSWORD_LENGTH, MIN_PASSWORD_LENGTH } from "./setup";
+import { normalizeEmail } from "./email";
+import { InvalidSetupInputError } from "./errors";
+import { MAX_PASSWORD_LENGTH, MIN_PASSWORD_LENGTH } from "./setup";
 
 export class UnknownUserError extends Error {
     constructor() {
@@ -26,7 +28,7 @@ export async function resetPassword(
             `The password must be at most ${MAX_PASSWORD_LENGTH} characters.`,
         );
     }
-    const email = input.email.trim().toLowerCase();
+    const email = normalizeEmail(input.email);
     const passwordHash = await (await deps.auth.$context).password.hash(input.password);
 
     return deps.db.transaction().execute(async (trx) => {
@@ -47,6 +49,13 @@ export async function resetPassword(
         if (Number(updated.numUpdatedRows) === 0) {
             throw new UnknownUserError();
         }
+        // An unused emailed reset token must not outlive the operator's reset: Better
+        // Auth stores it as `reset-password:<token>` with the user id as its value.
+        await trx
+            .deleteFrom("verification")
+            .where("identifier", "like", "reset-password:%")
+            .where("value", "=", user.id)
+            .execute();
         const revoked = await trx
             .deleteFrom("session")
             .where("userId", "=", user.id)

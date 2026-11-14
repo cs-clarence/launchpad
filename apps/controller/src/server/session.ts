@@ -1,5 +1,4 @@
 import { createServerFn } from "@tanstack/react-start";
-import { getRequest } from "@tanstack/react-start/server";
 
 export interface CurrentUser {
     id: string;
@@ -13,9 +12,8 @@ export interface CurrentUser {
 export const getCurrentUser = createServerFn({ method: "GET" }).handler(
     async (): Promise<CurrentUser | null> => {
         const { getRuntime } = await import("./runtime");
-        const session = await getRuntime().auth.api.getSession({
-            headers: getRequest().headers,
-        });
+        const { readSession } = await import("./auth-session");
+        const session = await readSession(getRuntime().auth);
         if (!session) {
             return null;
         }

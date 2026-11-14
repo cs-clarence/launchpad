@@ -5,3 +5,4 @@ export * from "./recovery";
 export * from "./login-throttle";
 export * from "./provision";
 export * from "./mailer";
+export * from "./errors";

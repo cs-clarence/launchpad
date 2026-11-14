@@ -38,9 +38,16 @@ export function packageOf(specifier: string): string | null {
     return bare.startsWith("@") ? parts.slice(0, 2).join("/") : parts[0]!;
 }
 
+// Removes comments so `// import "retired"` is not an import. String contents are kept
+// because an import specifier is itself a string; the scan only matches the import
+// syntax around it, and a quoted import-like line inside a template literal is rare.
+export function stripComments(source: string): string {
+    return source.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:"'`\\])\/\/[^\n]*/g, "$1");
+}
+
 export function importedPackages(source: string): Set<string> {
     const found = new Set<string>();
-    for (const match of source.matchAll(IMPORT)) {
+    for (const match of stripComments(source).matchAll(IMPORT)) {
         const name = packageOf(match[1]!);
         if (name) found.add(name);
     }

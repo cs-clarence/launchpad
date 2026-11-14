@@ -326,6 +326,12 @@ Milestone 1 is complete except these known, accepted items:
   admin commands and migration files are not packaged (milestone 6).
 - Error responses 411, 413 and 429 are not listed per operation in the OpenAPI
   document, and the document is 3.1 while schemas target 3.0.
+- A sign-in whose password check began before an operator password reset can still
+  create a session after the reset commits (a millisecond window, and only for someone
+  who already knows the old password). Closing it needs a credential generation that
+  sessions and the reset share; plan it with API-key sessions in milestone 2.
+- Session-refresh cookies are forwarded to the browser for pages, not for direct
+  `/api/v1` calls; API clients authenticate with keys from milestone 2.
 - Reset-password, sign-in and invitation endpoints rely on the throttles described in
   the controller README, including the accepted per-email lockout trade-off.
 

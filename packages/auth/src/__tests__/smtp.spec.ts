@@ -130,8 +130,11 @@ describe("email password recovery", () => {
             LAUNCHPAD_EMAIL_FROM: "launchpad@example.com",
         });
         const auth = createAuth({ db: testDb.db, config, mailer: createMailer(config) });
+        // Its own verified user: a missing one would take the unknown-user path and pass
+        // without ever attempting delivery.
+        await addUser(auth, "unreachable@example.com", true);
         const response = await post(auth, "/request-password-reset", {
-            email: "verified@example.com",
+            email: "unreachable@example.com",
         });
         expect(response.status).toBe(200);
     });

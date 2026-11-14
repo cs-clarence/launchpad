@@ -89,7 +89,15 @@ export interface InvitationTable {
     revoked_at: Date | null;
 }
 
+export interface VerificationTable {
+    id: string;
+    identifier: string;
+    value: string;
+    expiresAt: Date;
+}
+
 export interface Database {
+    verification: VerificationTable;
     organization_invitation: InvitationTable;
     organization: OrganizationTable;
     member: MemberTable;

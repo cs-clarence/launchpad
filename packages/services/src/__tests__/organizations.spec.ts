@@ -284,11 +284,62 @@ describe("concurrency and audit", () => {
 
     it("rejects control and bidi characters in display names", async () => {
         const db = testDb.db;
+        // Its own organization and owner: not whatever earlier tests left behind.
+        await newUser("namer");
+        const names = (
+            await createOrganization(db, people.root!, {
+                name: "Names",
+                slug: "names",
+                ownerEmail: "namer@example.com",
+            })
+        ).id;
         expect(
-            await code(createProject(db, people.zed!, acme, { name: "a\u202Eb", slug: "bidi" })),
+            await code(createProject(db, people.namer!, names, { name: "a\u202Eb", slug: "bidi" })),
         ).toBe("invalid");
         expect(
-            await code(createProject(db, people.zed!, acme, { name: "tab\tname", slug: "tab" })),
+            await code(createProject(db, people.namer!, names, { name: "tab\tname", slug: "tab" })),
         ).toBe("invalid");
+        expect(
+            await code(createProject(db, people.namer!, names, { name: "Fine", slug: "fine" })),
+        ).toBe("ok");
+    });
+
+    // A removed owner must not be able to add themselves back with a permission
+    // check that was valid before their removal landed.
+    it("does not let a concurrently removed owner re-add themselves", async () => {
+        const db = testDb.db;
+        for (let round = 0; round < 8; round++) {
+            await newUser(`ra${round}`);
+            await newUser(`rb${round}`);
+            const org = (
+                await createOrganization(db, people.root!, {
+                    name: `Race ${round}`,
+                    slug: `race-add-${round}`,
+                    ownerEmail: `ra${round}@example.com`,
+                })
+            ).id;
+            await addMember(db, people[`ra${round}`]!, org, {
+                email: `rb${round}@example.com`,
+                role: "owner",
+            });
+            const [removed, added] = await Promise.all([
+                code(removeMember(db, people[`rb${round}`]!, org, people[`ra${round}`]!.userId)),
+                code(
+                    addMember(db, people[`ra${round}`]!, org, {
+                        email: `ra${round}@example.com`,
+                        role: "owner",
+                    }),
+                ),
+            ]);
+            expect(removed, `round ${round}`).toBe("ok");
+            expect(["conflict", "not-found"], `round ${round}: ${added}`).toContain(added);
+            const still = await db
+                .selectFrom("member")
+                .select("userId")
+                .where("organizationId", "=", org)
+                .where("userId", "=", people[`ra${round}`]!.userId)
+                .execute();
+            expect(still, `round ${round}`).toHaveLength(0);
+        }
     });
 });

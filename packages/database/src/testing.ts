@@ -19,7 +19,12 @@ export async function createTestDatabase() {
     // Small pools: test files run in parallel across projects, each with its own pools.
     const admin = new SQL({ url: testDatabaseUrl(), max: 1 });
     const name = `lp_test_${randomUUID().replaceAll("-", "")}`;
-    await admin.unsafe(`create database ${name}`);
+    try {
+        await admin.unsafe(`create database ${name}`);
+    } catch (error) {
+        await admin.close();
+        throw error;
+    }
     const url = new URL(testDatabaseUrl());
     url.pathname = `/${name}`;
     const db = createDatabase(url.toString(), { max: 4 });
@@ -28,9 +33,12 @@ export async function createTestDatabase() {
         url: url.toString(),
         migrate: () => migrateToLatest(db),
         async destroy() {
-            await db.destroy();
-            await admin.unsafe(`drop database ${name} with (force)`);
-            await admin.close();
+            try {
+                await db.destroy();
+                await admin.unsafe(`drop database ${name} with (force)`);
+            } finally {
+                await admin.close();
+            }
         },
     };
 }

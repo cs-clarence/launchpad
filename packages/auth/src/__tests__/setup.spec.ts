@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createAuth, loadAuthConfig } from "../index";
 import { provisionUser } from "../provision";
@@ -57,18 +58,38 @@ describe("first operator setup", () => {
         await expect(
             setupFirstOperator(
                 { db: testDb.db, auth },
+                { email: "op..name@example.com", name: "a", password: "correct-horse-battery" },
+            ),
+        ).rejects.toBeInstanceOf(InvalidSetupInputError);
+        await expect(
+            setupFirstOperator(
+                { db: testDb.db, auth },
                 { email: "nope", name: "a", password: "correct-horse-battery" },
             ),
         ).rejects.toBeInstanceOf(InvalidSetupInputError);
     });
 
-    it("resets a password, revokes sessions, audits, and does not enumerate through HTTP", async () => {
+    it("resets a password, revokes sessions, audits, and invalidates pending reset tokens", async () => {
         const auth = createAuth({ db: testDb.db, config });
-        const operator = await testDb.db
-            .selectFrom("user")
-            .select("email")
-            .where("role", "=", "operator")
-            .executeTakeFirstOrThrow();
+        // Its own user, so the test does not depend on what sibling tests created.
+        const user = await provisionUser(
+            { db: testDb.db, auth },
+            {
+                email: "rec@example.com",
+                name: "Rec",
+                password: "correct-horse-battery",
+                actor: "test",
+            },
+        );
+        const other = await provisionUser(
+            { db: testDb.db, auth },
+            {
+                email: "rec-other@example.com",
+                name: "Other",
+                password: "correct-horse-battery",
+                actor: "test",
+            },
+        );
         const signIn = (password: string) =>
             auth.handler(
                 new Request("http://127.0.0.1:3000/api/auth/sign-in/email", {
@@ -76,31 +97,67 @@ describe("first operator setup", () => {
                     headers: {
                         "content-type": "application/json",
                         origin: "http://127.0.0.1:3000",
+                        "x-launchpad-client-ip": `10.9.0.${Math.floor(Math.random() * 250) + 1}`,
                     },
-                    body: JSON.stringify({ email: operator.email, password }),
+                    body: JSON.stringify({ email: "rec@example.com", password }),
                 }),
             );
-        const first = await signIn("correct-horse-battery");
-        expect(first.status).toBe(200);
-        const before = await testDb.db.selectFrom("session").select("id").execute();
-        expect(before.length).toBeGreaterThan(0);
+        expect((await signIn("correct-horse-battery")).status).toBe(200);
+        const sessions = await testDb.db
+            .selectFrom("session")
+            .select("id")
+            .where("userId", "=", user.id)
+            .execute();
+        expect(sessions.length).toBeGreaterThan(0);
+
+        // An emailed reset token issued before the operator's reset, and another user's.
+        const expiresAt = new Date(Date.now() + 3600_000);
+        await testDb.db
+            .insertInto("verification")
+            .values([
+                {
+                    id: randomUUID(),
+                    identifier: "reset-password:stale-token",
+                    value: user.id,
+                    expiresAt,
+                },
+                {
+                    id: randomUUID(),
+                    identifier: "reset-password:other-token",
+                    value: other.id,
+                    expiresAt,
+                },
+            ])
+            .execute();
 
         const result = await resetPassword(
             { db: testDb.db, auth },
-            {
-                email: operator.email.toUpperCase(),
-                password: "a-brand-new-password",
-                actor: "operator-cli",
-            },
+            { email: "REC@example.com", password: "a-brand-new-password", actor: "operator-cli" },
         );
-        expect(result.revokedSessions).toBe(before.length);
-        expect(await testDb.db.selectFrom("session").select("id").execute()).toHaveLength(0);
+        expect(result.revokedSessions).toBe(sessions.length);
+        expect(
+            await testDb.db
+                .selectFrom("session")
+                .select("id")
+                .where("userId", "=", user.id)
+                .execute(),
+        ).toHaveLength(0);
         expect((await signIn("correct-horse-battery")).status).toBe(401);
         expect((await signIn("a-brand-new-password")).status).toBe(200);
-        const audit = await testDb.db.selectFrom("audit_event").select("action").execute();
-        expect(audit.map((a) => a.action)).toEqual(
-            expect.arrayContaining(["operator.created", "user.password_reset"]),
-        );
+
+        const remaining = await testDb.db
+            .selectFrom("verification")
+            .select("identifier")
+            .where("identifier", "like", "reset-password:%")
+            .execute();
+        expect(remaining.map((r) => r.identifier)).toEqual(["reset-password:other-token"]);
+
+        const audit = await testDb.db
+            .selectFrom("audit_event")
+            .select("action")
+            .where("target_id", "=", user.id)
+            .execute();
+        expect(audit.map((a) => a.action)).toContain("user.password_reset");
         await expect(
             resetPassword(
                 { db: testDb.db, auth },
@@ -114,9 +171,28 @@ describe("first operator setup", () => {
         await expect(
             resetPassword(
                 { db: testDb.db, auth },
-                { email: operator.email, password: "short", actor: "x" },
+                { email: "rec@example.com", password: "short", actor: "x" },
             ),
         ).rejects.toBeInstanceOf(InvalidSetupInputError);
+    });
+
+    it("rejects addresses that Better Auth's sign-in would reject, in both provisioning paths", async () => {
+        const auth = createAuth({ db: testDb.db, config });
+        for (const bad of [
+            "op..name@example.com",
+            "a b@example.com",
+            ".lead@example.com",
+            "no-at-sign",
+            "a@b",
+        ]) {
+            await expect(
+                provisionUser(
+                    { db: testDb.db, auth },
+                    { email: bad, name: "x", password: "correct-horse-battery", actor: "t" },
+                ),
+                bad,
+            ).rejects.toBeInstanceOf(InvalidSetupInputError);
+        }
     });
 
     it("provisions an ordinary user who can sign in but is not an operator", async () => {

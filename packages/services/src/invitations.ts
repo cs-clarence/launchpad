@@ -1,6 +1,6 @@
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import type { Database } from "@launchpad/database";
-import type { Kysely } from "kysely";
+import { type Kysely, sql } from "kysely";
 import { z } from "zod";
 import { canAssignRole, ORGANIZATION_ROLES, type Principal } from "./authorization";
 import { isUniqueViolation, ServiceError } from "./errors";
@@ -69,32 +69,54 @@ export async function createInvitation(
         throw new ServiceError("conflict", "That user is already a member.");
     }
 
-    const recent = await db
-        .selectFrom("organization_invitation")
-        .select((eb) => eb.fn.countAll<string>().as("count"))
-        .where("organization_id", "=", organizationId)
-        .where("created_at", ">", new Date(Date.now() - 24 * 60 * 60 * 1000))
-        .executeTakeFirstOrThrow();
-    if (Number(recent.count) >= MAX_INVITATIONS_PER_DAY) {
-        throw new ServiceError(
-            "conflict",
-            "This organization has reached its daily invitation limit.",
-        );
-    }
-
     const token = randomBytes(32).toString("base64url");
     let id: string;
     try {
         id = await db.transaction().execute(async (trx) => {
-            // A newer invitation to the same address replaces the older one.
-            await trx
-                .updateTable("organization_invitation")
-                .set({ revoked_at: new Date() })
+            // One writer per organization at a time, so the daily cap and the replace
+            // step below cannot be raced by concurrent requests for other addresses.
+            await sql`select pg_advisory_xact_lock(hashtextextended(${`invitations:${organizationId}`}, 0))`.execute(
+                trx,
+            );
+            const recent = await trx
+                .selectFrom("organization_invitation")
+                .select((eb) => eb.fn.countAll<string>().as("count"))
+                .where("organization_id", "=", organizationId)
+                .where("created_at", ">", new Date(Date.now() - 24 * 60 * 60 * 1000))
+                .executeTakeFirstOrThrow();
+            if (Number(recent.count) >= MAX_INVITATIONS_PER_DAY) {
+                throw new ServiceError(
+                    "conflict",
+                    "This organization has reached its daily invitation limit.",
+                );
+            }
+            // A newer invitation to the same address replaces the older one, but only if
+            // the caller could revoke that one: replacing is revoking.
+            const replaced = await trx
+                .selectFrom("organization_invitation")
+                .select(["id", "role"])
                 .where("organization_id", "=", organizationId)
                 .where("email", "=", data.email)
                 .where("accepted_at", "is", null)
                 .where("revoked_at", "is", null)
                 .execute();
+            if (replaced.some((old) => !canAssignRole(actorRole, old.role))) {
+                throw new ServiceError(
+                    "forbidden",
+                    "Your role cannot replace the pending invitation to that address.",
+                );
+            }
+            if (replaced.length > 0) {
+                await trx
+                    .updateTable("organization_invitation")
+                    .set({ revoked_at: new Date() })
+                    .where(
+                        "id",
+                        "in",
+                        replaced.map((old) => old.id),
+                    )
+                    .execute();
+            }
             const row = await trx
                 .insertInto("organization_invitation")
                 .values({

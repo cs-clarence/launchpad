@@ -29,14 +29,19 @@ function useAction() {
     async function run(call: () => ReturnType<typeof apiRequest>) {
         setPending(true);
         setError(null);
-        const result = await call();
-        setPending(false);
-        if (!result.ok) {
-            setError(result.message);
-            return false;
+        try {
+            const result = await call();
+            if (!result.ok) {
+                setError(result.message);
+                return false;
+            }
+            // Still pending until the refreshed data is in: a second click during a
+            // slow refresh would send a replacement invitation.
+            await router.invalidate();
+            return true;
+        } finally {
+            setPending(false);
         }
-        await router.invalidate();
-        return true;
     }
     return { error, pending, run };
 }

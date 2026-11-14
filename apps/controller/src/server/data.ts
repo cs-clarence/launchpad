@@ -1,5 +1,4 @@
 import { createServerFn } from "@tanstack/react-start";
-import { getRequest } from "@tanstack/react-start/server";
 import { z } from "zod";
 
 // Server functions read through the same authorized services as the HTTP API.
@@ -7,7 +6,8 @@ import { z } from "zod";
 async function principal() {
     const { getRuntime } = await import("./runtime");
     const runtime = getRuntime();
-    const session = await runtime.auth.api.getSession({ headers: getRequest().headers });
+    const { readSession } = await import("./auth-session");
+    const session = await readSession(runtime.auth);
     if (!session) {
         throw new Error("unauthenticated");
     }
@@ -75,8 +75,10 @@ export const getInvitationPreviewFn = createServerFn({ method: "POST" })
         if (!preview) {
             return null;
         }
-        const session = await runtime.auth.api.getSession({ headers: getRequest().headers });
+        const { readSession } = await import("./auth-session");
+        const session = await readSession(runtime.auth);
         return {
+            signedIn: Boolean(session),
             organizationName: preview.organizationName,
             role: preview.role,
             email: preview.email,

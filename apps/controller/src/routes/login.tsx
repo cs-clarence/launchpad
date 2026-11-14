@@ -31,11 +31,18 @@ function Login() {
         const form = new FormData(event.currentTarget);
         setPending(true);
         setError(null);
-        const result = await authClient.signIn.email({
-            email: String(form.get("email") ?? ""),
-            password: String(form.get("password") ?? ""),
-        });
-        setPending(false);
+        let result: Awaited<ReturnType<typeof authClient.signIn.email>>;
+        try {
+            result = await authClient.signIn.email({
+                email: String(form.get("email") ?? ""),
+                password: String(form.get("password") ?? ""),
+            });
+        } catch {
+            setError("Could not reach the server. Check your connection and retry.");
+            return;
+        } finally {
+            setPending(false);
+        }
         if (result.error) {
             // Generic on purpose: do not reveal whether the account exists.
             setError(

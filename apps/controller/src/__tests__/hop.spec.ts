@@ -39,11 +39,15 @@ let proxied: Instance; // one trusted proxy hop
 let mailed: Instance; // trusted proxy, SMTP and invitation enrollment
 let smtp: FakeSmtp;
 
+// A random base so concurrent test runs on one machine rarely overlap.
+let nextPort = 43100 + Math.floor(Math.random() * 600) * 3;
+
 async function start(
     trustedProxy: boolean,
     extraEnv: Record<string, string> = {},
 ): Promise<Instance> {
-    const port = 43100 + Math.floor(Math.random() * 800);
+    // Distinct per instance: three servers start in one run, and two random ports can collide.
+    const port = nextPort++;
     const base = `http://127.0.0.1:${port}`;
     // Inherit the PATH but none of vitest's own variables (VITEST, NODE_ENV, ...).
     const env = {
@@ -71,6 +75,8 @@ async function start(
         } catch {}
         await new Promise((r) => setTimeout(r, 200));
     }
+    // Do not leave the child running when startup fails: afterAll may never see it.
+    proc.kill("SIGTERM");
     throw new Error(`controller did not start:\n${instance.logs}`);
 }
 
@@ -486,6 +492,13 @@ describe("hardening", () => {
                 "frame-ancestors 'none'",
             );
             expect(response.headers.get("referrer-policy"), path).toBe("no-referrer");
+        }
+    });
+
+    it("marks API responses no-store, so a shared cache never serves one account's data to another", async () => {
+        for (const path of ["/api/v1/me", "/api/v1/organizations", "/api/health"]) {
+            const response = await fetch(`${proxied.base}${path}`);
+            expect(response.headers.get("cache-control"), path).toBe("no-store");
         }
     });
 

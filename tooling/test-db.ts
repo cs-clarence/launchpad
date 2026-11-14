@@ -19,9 +19,36 @@ async function docker(...args: string[]) {
 
 const running = async () => (await docker("ps", "-q", "-f", `name=^${NAME}$`)).out !== "";
 
+async function ready(): Promise<void> {
+    for (let attempt = 0; attempt < 60; attempt++) {
+        // Over TCP: on a fresh container the image first runs a temporary, socket-only
+        // server for initialization and then restarts, so a socket probe succeeds too early.
+        const probe = await docker(
+            "exec",
+            NAME,
+            "pg_isready",
+            "-h",
+            "127.0.0.1",
+            "-p",
+            "5432",
+            "-U",
+            "postgres",
+        );
+        if (probe.code === 0) {
+            console.log(
+                `PostgreSQL is ready. TEST_DATABASE_URL=postgres://postgres:dev@127.0.0.1:${PORT}/postgres`,
+            );
+            return;
+        }
+        await Bun.sleep(500);
+    }
+    throw new Error(`${NAME} did not become ready within 30 seconds.`);
+}
+
 async function up() {
     if (await running()) {
-        console.log(`${NAME} is already running.`);
+        console.log(`${NAME} is already running; waiting until it is ready.`);
+        await ready();
         return;
     }
     const started = await docker(
@@ -43,16 +70,7 @@ async function up() {
     if (started.code !== 0) {
         throw new Error(`Could not start ${IMAGE}: ${started.err}`);
     }
-    for (let attempt = 0; attempt < 60; attempt++) {
-        if ((await docker("exec", NAME, "pg_isready", "-U", "postgres")).code === 0) {
-            console.log(
-                `PostgreSQL is ready. TEST_DATABASE_URL=postgres://postgres:dev@127.0.0.1:${PORT}/postgres`,
-            );
-            return;
-        }
-        await Bun.sleep(500);
-    }
-    throw new Error(`${NAME} did not become ready within 30 seconds.`);
+    await ready();
 }
 
 async function down() {
