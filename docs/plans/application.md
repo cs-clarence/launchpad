@@ -339,7 +339,9 @@ Milestone 2 slices (one PR each):
 - [x] M2-4b implementation: organization-page key administration, safe metadata
       loader, one-time reveal, explicit revoke confirmation, recent-session
       guidance and uncertain-issuance recovery without automatic retries.
-- [ ] Final independent Opus review of milestone 2 and dashboard PR/CI/merge.
+- [x] Final independent Opus review of milestone 2; dashboard merged in PR #10.
+      Milestone 3 plan: [milestone-3-static-preview.md](milestone-3-static-preview.md)
+      (proposed, awaiting approval).
       No interactive browser click-through has been run; helper/unit and
       built-server integration tests cover logic, SSR visibility and cache headers.
 
