@@ -51,7 +51,8 @@ existing `/api/v1/organizations/:orgId/api-keys` endpoints.
    an implemented endpoint; disable `project:create` when limited to projects,
    and limit the picker to 50. Collapse non-active keys separately. Format dates
    as UTC ISO to avoid hydration differences. The loader reports session freshness;
-   stale sessions get a checked sign-out action and login link with a return path,
+   plus the remaining lifetime measured on the server (never compare browser and
+   server clocks). Stale sessions get a checked sign-out action and login link with a return path,
    rather than a login link that immediately redirects the signed-in user back.
 4. Issue through POST, validate the creation response, and hold the secret only in
    local component state. Show it once with a clear save-now warning and a dismiss
@@ -66,8 +67,9 @@ existing `/api/v1/organizations/:orgId/api-keys` endpoints.
    never services/client-core/the bearer-only SDK.
 5. Classify attempts in a tested helper as issued, rejected or uncertain. Include
    a timeout. A network failure, 5xx or malformed success is uncertain: never retry
-   automatically, GET the list and identify recent keys of the attempted name
-   with a revoke action. Parse a successful reveal with a loose schema so an added
+   automatically, GET the list and identify same-name IDs absent from the pre-submit
+   snapshot with a revoke action. Names alone are not identity: show creator,
+   prefix and timestamps for verification. Parse a successful reveal with a loose schema so an added
    response field cannot discard the secret. Server 4xx errors remain rejected;
    use freshness from the loader, not error-title matching, for sign-in guidance.
 6. Add tests for inputs, safe metadata rendering, unauthorized visibility,
@@ -93,7 +95,28 @@ publishing and milestone 3 are not authorized by this plan.
 - Opus reviewed the milestone boundary and this plan; no new exploitable
   credential-boundary hole was found. Incorporated its required plan feedback.
 - Lifecycle metadata prerequisite merged in PR #6 as `9b579e3` after the full Omni
-  gate, PostgreSQL integration and CI/review passed. Page implementation not started.
+  gate, PostgreSQL integration and CI/review passed.
+- Page implemented on `feat/dashboard-key-management`: explicit safe loader
+  projection; issue/reject/uncertain helper; key list, scopes, project selection,
+  freshness guidance, checked re-login, one-time reveal/copy/dismiss and explicit
+  revocation. The component remounts per org and clears/aborts on pagehide and
+  bfcache restoration. Other mutation forms pause while issuing/revealing a key.
+- Local Omni check/test/build/compose and full PostgreSQL integration passed.
+  Tests cover helper failure paths, administrator/viewer/non-member SSR, absence
+  of full key values/hashes in HTML, freshness guidance and no-store headers.
+  No interactive browser/DOM interaction test has been run. Independent final
+  Opus review and PR/CI/merge remain pending.
+
+## Final Opus review (page)
+
+No blocking findings. Four should-fix findings are fixed: freshness now uses a
+server-measured remaining duration (no browser/server clock comparison); the key
+list follows refreshed loader data; an interrupted reveal keeps only id/name/prefix
+and refreshes after bfcache restore, requiring a successful refresh before another
+attempt; uncertain-issue candidates come from a pre-submit id snapshot, not clocks.
+Polish also applied: no `AbortSignal.any/timeout`, timeouts on revoke/sign-out,
+reveal element removed synchronously on pagehide, form state reset on dismissal.
+Still untested: interactive DOM/bfcache behavior (no browser run).
 
 ## Opus follow-up queue (before declaring milestone 2 complete)
 
@@ -102,7 +125,7 @@ Keep client hardening separate from the lifecycle/dashboard change:
 - [x] Both password-reset paths revoke API keys and audit counts. The email hook
       commits revocation before auditing because Better Auth has already changed the
       password. Callback failure and remaining non-atomic behavior are documented and
-      tested. Awaiting PR review/CI.
+      tested. Merged in PR #9 as `3ce3de3`.
 - [x] Reject half-configured environment credentials rather than silently selecting a
       saved profile. Let environment-only project listing discover its key's org, or
       clearly document required org IDs; keep org-selection precedence explicit.
@@ -119,5 +142,6 @@ Keep client hardening separate from the lifecycle/dashboard change:
 - [x] Fix stale role, `/me` and Better Auth key-plugin descriptions in the design,
       plan and ADR. Recovery audits include key counts; membership removal audits
       deactivation of active keys in the same transaction.
-- [ ] Record residual and untested behavior explicitly; do not mark these complete
-      merely because the dashboard prerequisite PR passes.
+- [x] Record residual and untested behavior explicitly: no manual browser
+      click-through; memory/clipboard erasure is not promised; accepted sign-in/reset
+      race remains. Final review/CI/merge is still a separate completion gate.

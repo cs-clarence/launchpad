@@ -17,6 +17,7 @@
         "@commander-js/extra-typings": "catalog:",
         "@elysia/openapi": "catalog:",
         "@launchpad/auth": "workspace:^",
+        "@launchpad/contracts": "workspace:^",
         "@launchpad/database": "workspace:^",
         "@launchpad/services": "workspace:^",
         "@tanstack/react-router": "catalog:",

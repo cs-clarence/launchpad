@@ -4,6 +4,7 @@ export async function apiRequest(
     method: "POST" | "DELETE",
     path: string,
     body?: unknown,
+    signal?: AbortSignal,
 ): Promise<{ ok: true } | { ok: false; message: string }> {
     let response: Response;
     try {
@@ -11,6 +12,7 @@ export async function apiRequest(
             method,
             headers: { "content-type": "application/json" },
             body: body === undefined ? undefined : JSON.stringify(body),
+            signal,
         });
     } catch {
         // A dropped connection rejects instead of returning a response.

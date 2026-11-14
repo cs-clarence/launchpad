@@ -59,6 +59,9 @@ export default defineConfig({
                 // Responses carry identity and organization data; a shared cache must never
                 // serve one account's response to another.
                 "/api/**": { headers: { "cache-control": "no-store" } },
+                "/": { headers: { "cache-control": "no-store" } },
+                "/orgs/**": { headers: { "cache-control": "no-store" } },
+                "/_serverFn/**": { headers: { "cache-control": "no-store" } },
                 "/**": {
                     headers: {
                         "referrer-policy": "no-referrer",

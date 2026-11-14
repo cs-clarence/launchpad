@@ -111,6 +111,28 @@ the API shape public, and put the controller behind HTTPS before exposing it.
 
 ## API keys
 
+Owners and admins manage keys on the organization page. Choose explicit scopes,
+expiry (at most 365 days) and optional project restrictions. The default is
+organization/project read access. `member:read` includes all members' email
+addresses; the UI does not offer the reserved `project:delete` scope.
+
+Issuing requires a sign-in from the last 15 minutes. Freshness uses the server's
+flag and remaining duration, not a comparison with the browser's clock. The page provides checked
+sign-out and sign-in guidance for an old session. A successful issue reveals the
+key once: save it before selecting **I saved it — dismiss**. Copying requires an
+explicit click. Key values are held only in component state, not loader data,
+URLs or browser storage, and are removed from the field on pagehide; erasure
+from all JavaScript memory or the clipboard is not guaranteed.
+
+If issuance cannot be confirmed (network failure, server error or invalid reveal),
+the page does not retry. Refresh the metadata list and inspect same-name keys
+whose IDs were absent before the attempt. Names are not unique: verify the prefix,
+creator and creation time before revoking. Returning from bfcache refreshes the
+list; an interrupted reveal retains only its ID/name/prefix as a notice, never its
+value. A successful refresh is required before acknowledging another attempt.
+Revocation asks for confirmation with the name and key prefix.
+Authenticated organization pages and server-function responses are `no-store`.
+
 An owner or admin issues organization API keys from the API (`POST
 /api/v1/organizations/{orgId}/api-keys`, signed in). The secret is shown once. Automation
 sends `Authorization: Bearer lp_…`. A key is limited to its organization, to the scopes it
