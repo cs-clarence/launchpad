@@ -14,6 +14,7 @@ import {
     ServiceError,
     sweepStaleUploads,
     uploadArtifact,
+    writeFully,
     type ArtifactDeps,
     type Principal,
 } from "../index";
@@ -367,6 +368,34 @@ describe("limits and failures leave nothing behind", () => {
         expect(await leftovers()).toEqual([]);
     });
 
+    it("stops at once when the caller was already gone before the upload began", async () => {
+        const controller = new AbortController();
+        controller.abort();
+        let cancelled = false;
+        const body = new ReadableStream<Uint8Array>({
+            pull: () => new Promise(() => {}),
+            cancel() {
+                cancelled = true;
+            },
+        });
+        const started = Date.now();
+        const result = await code(
+            uploadArtifact(
+                testDb.db,
+                people.dee!,
+                org,
+                body,
+                { contentLength: 100 },
+                deps(),
+                controller.signal,
+            ),
+        );
+        expect(result).toBe("timeout");
+        expect(Date.now() - started).toBeLessThan(2000);
+        expect(cancelled).toBe(true);
+        expect(await leftovers()).toEqual([]);
+    });
+
     it("stops when the caller goes away", async () => {
         const controller = new AbortController();
         const body = new ReadableStream<Uint8Array>({ pull: () => new Promise(() => {}) });
@@ -448,6 +477,27 @@ describe("the artifact quota", () => {
                 upload("ann", site([{ name: "q0.txt", content: "0" }]), { org: quotaOrg, limits }),
             ),
         ).toBe("conflict");
+    });
+});
+
+describe("writing the staging file", () => {
+    it("writes a whole chunk even when the file system accepts it in parts", async () => {
+        const written: number[] = [];
+        const handle = {
+            write: async (buffer: Uint8Array, offset: number, length: number) => {
+                const take = Math.min(3, length);
+                written.push(...buffer.subarray(offset, offset + take));
+                return { bytesWritten: take };
+            },
+        };
+        await writeFully(handle, Buffer.from("0123456789"));
+        expect(Buffer.from(written).toString()).toBe("0123456789");
+    });
+
+    it("fails instead of dropping data when no progress is made", async () => {
+        const stuck = { write: async () => ({ bytesWritten: 0 }) };
+        await expect(writeFully(stuck, Buffer.from("abc"))).rejects.toThrow(/stopped accepting/);
+        await expect(writeFully(stuck, Buffer.alloc(0))).resolves.toBeUndefined();
     });
 });
 

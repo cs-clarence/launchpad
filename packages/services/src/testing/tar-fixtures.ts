@@ -7,7 +7,7 @@ import { gzipSync, createGzip } from "node:zlib";
 
 export interface FixtureEntry {
     name: string;
-    type?: "file" | "dir" | "symlink" | "hardlink" | "char" | "block" | "fifo";
+    type?: "file" | "dir" | "symlink" | "hardlink" | "char" | "block" | "fifo" | "sparse";
     content?: Buffer | string;
     link?: string;
     // Carry the name in a pax extended header, so it can exceed the ustar limit.
@@ -22,6 +22,7 @@ const TYPE_FLAG = {
     char: "3",
     block: "4",
     fifo: "6",
+    sparse: "S",
 } as const;
 
 function octal(value: number, width: number): string {

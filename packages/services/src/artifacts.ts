@@ -63,6 +63,26 @@ export function resolveArtifactPath(dataDir: string, storageKey: string): string
     return path.join(dataDir, storageKey);
 }
 
+// FileHandle.write may write less than it was given. Writes the whole chunk, and
+// fails if the file system stops making progress rather than dropping the rest.
+export async function writeFully(
+    handle: {
+        write(
+            buffer: Uint8Array,
+            offset: number,
+            length: number,
+        ): Promise<{ bytesWritten: number }>;
+    },
+    chunk: Uint8Array,
+): Promise<void> {
+    let offset = 0;
+    while (offset < chunk.byteLength) {
+        const { bytesWritten } = await handle.write(chunk, offset, chunk.byteLength - offset);
+        if (bytesWritten <= 0) throw new Error("The staging file stopped accepting data.");
+        offset += bytesWritten;
+    }
+}
+
 const tmpDir = (dataDir: string) => path.join(dataDir, "tmp");
 
 // Removes upload leftovers from a process that died mid-upload. Only `.part` files
@@ -176,6 +196,8 @@ async function receive(
     const stop = () => void reader.cancel().catch(() => {});
     signal.addEventListener("abort", stop, { once: true });
     try {
+        // An abort that happened before the listener was added would never fire it.
+        if (signal.aborted) stop();
         for (;;) {
             let result: Awaited<ReturnType<typeof reader.read>>;
             try {
@@ -199,7 +221,7 @@ async function receive(
                 throw new ServiceError("too-large", "The upload is larger than the allowed size.");
             }
             hash.update(result.value);
-            await handle.write(result.value);
+            await writeFully(handle, result.value);
         }
     } finally {
         signal.removeEventListener("abort", stop);

@@ -1054,6 +1054,24 @@ describe("artifact upload over HTTP", () => {
         );
         expect(anonymous.status).toBe(401);
         expect(anonymous.elapsedMs).toBeLessThan(3000);
+        // A path that merely contains an auth route's name must not reach the JSON
+        // readers of the password-reset and sign-in throttles, which would buffer an
+        // upload-sized body before authentication.
+        for (const name of ["request-password-reset", "sign-in/email"]) {
+            const lookalike = await rawUpload(
+                proxied,
+                {
+                    Origin: proxied.base,
+                    "Content-Type": "application/gzip",
+                    "Content-Length": "4000000",
+                    Connection: "close",
+                },
+                (socket) => socket.write(randomBytes(1000)),
+                `/api/v1/organizations/${encodeURIComponent(name)}/artifacts`,
+            );
+            expect(lookalike.status, name).toBe(401);
+            expect(lookalike.elapsedMs, name).toBeLessThan(3000);
+        }
         expect(await tmpFiles()).toEqual([]);
     });
 

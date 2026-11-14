@@ -52,6 +52,21 @@ function rawPath(request: Request): string {
 
 // Normalizes encoding, repeated slashes and case before matching, so no spelling
 // of the path reaches Better Auth's organization routes.
+// The auth namespace path after decoding, collapsing repeated slashes and lowering
+// the case, or null when it is not under /api/auth. Throttles that read a request
+// body match here, never by searching the whole path: a substring search would also
+// match an unrelated route whose name contains it, such as an upload.
+function authPath(path: string): string | null {
+    let decoded = path;
+    try {
+        decoded = decodeURIComponent(path);
+    } catch {
+        return path.toLowerCase().startsWith("/api/auth/") ? path.toLowerCase() : null;
+    }
+    const normalized = decoded.replace(/\/{2,}/g, "/").toLowerCase();
+    return normalized.startsWith("/api/auth/") ? normalized : null;
+}
+
 function isOrganizationPath(path: string): boolean {
     let decoded = path;
     try {
@@ -264,9 +279,11 @@ export function createApi(deps: {
                     isArtifactUpload(request.method, path) ? uploadLimit : MAX_BODY_BYTES,
                 );
                 if (problem) return framingResponse(problem);
+                const auth = authPath(path);
                 if (
                     request.method === "POST" &&
-                    path.toLowerCase().includes("request-password-reset")
+                    auth !== null &&
+                    auth.includes("request-password-reset")
                 ) {
                     const email = await emailOf(request);
                     if (!(await allowResetRequest(db, email))) {
@@ -276,7 +293,7 @@ export function createApi(deps: {
                         );
                     }
                 }
-                if (request.method === "POST" && path.toLowerCase().includes("sign-in/email")) {
+                if (request.method === "POST" && auth !== null && auth.includes("sign-in/email")) {
                     const throttled = await throttleSignIn(request);
                     if (throttled) {
                         return throttled;

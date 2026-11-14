@@ -186,6 +186,11 @@ export async function validateArchive(
             fail(error instanceof Error ? error : new ArchiveError("Invalid archive."));
         }
     });
+    // The parser skips some entry types (sparse files, for one) without calling the
+    // `entry` handler or raising a warning. Nothing may slip past the allowlist.
+    parser.on("ignoredEntry", (entry: ReadEntry) => {
+        fail(new ArchiveError(`${show(entry.path)} is a ${entry.type}; it cannot be deployed.`));
+    });
     parser.on("warn", (_code: string, message: string | Error) => {
         fail(new ArchiveError(`The archive is malformed: ${String(message).slice(0, 120)}`));
     });
@@ -198,24 +203,42 @@ export async function validateArchive(
     source.on("error", (error) => gunzip.destroy(error));
     source.pipe(gunzip);
     let decompressed = 0;
-    let first = true;
+    // The first bytes are held until they are enough to tell whether the stream is
+    // itself compressed: a short first chunk must not hide an inner layer.
+    let prefix: Buffer[] = [];
+    let prefixLength = 0;
+    let started = false;
+    const feed = async (chunk: Buffer) => {
+        if (!parser.write(chunk)) {
+            await new Promise<void>((resolve) => parser.once("drain", resolve));
+        }
+        if (violation) throw violation;
+    };
     try {
         for await (const chunk of gunzip as AsyncIterable<Buffer>) {
-            if (first) {
-                first = false;
-                if (startsCompressed(chunk)) {
-                    throw new ArchiveError("The archive contains a nested compressed layer.");
-                }
-            }
             decompressed += chunk.length;
             // Headers and padding count too: the whole decompressed stream is bounded.
             if (decompressed > limits.maxExpandedBytes + limits.maxEntries * 1024 + 4096) {
                 throw new ArchiveError("The archive expands beyond the allowed size.");
             }
-            if (!parser.write(chunk)) {
-                await new Promise<void>((resolve) => parser.once("drain", resolve));
+            if (!started) {
+                prefix.push(chunk);
+                prefixLength += chunk.length;
+                if (prefixLength < 4) continue;
+                const head = Buffer.concat(prefix);
+                if (startsCompressed(head)) {
+                    throw new ArchiveError("The archive contains a nested compressed layer.");
+                }
+                started = true;
+                prefix = [];
+                await feed(head);
+                continue;
             }
-            if (violation) throw violation;
+            await feed(chunk);
+        }
+        if (!started && prefixLength > 0) {
+            // Fewer than four bytes can never be a tar archive.
+            throw new ArchiveError("The file is not a valid gzip-compressed tar archive.");
         }
         parser.end();
         if (violation) throw violation;
@@ -225,7 +248,7 @@ export async function validateArchive(
         if (error instanceof ArchiveError) throw error;
         throw new ArchiveError("The file is not a valid gzip-compressed tar archive.");
     }
-    if (first) throw new ArchiveError("The archive is empty.");
+    if (!started) throw new ArchiveError("The archive is empty.");
     if (!tree.hasFile("index.html")) {
         throw new ArchiveError("The archive must contain index.html at its root.");
     }

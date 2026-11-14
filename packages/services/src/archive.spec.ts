@@ -176,6 +176,24 @@ describe("hostile archives", () => {
         await expect(check(gzipSync(tarGz(SITE)))).rejects.toThrow(/nested compressed/);
     });
 
+    it("refuses a nested layer even when the first decompressed chunk is a single byte", async () => {
+        // Two gzip members: the first decompresses to one byte (the start of the inner
+        // gzip signature), the second to the rest. A check of only the first chunk
+        // would see a lone 0x1f and let the tar parser decompress the inner layer.
+        const inner = tarGz(SITE);
+        const split = Buffer.concat([gzipSync(inner.subarray(0, 1)), gzipSync(inner.subarray(1))]);
+        await expect(check(split)).rejects.toThrow(/nested compressed/);
+        // A tiny stream can never be a tar archive.
+        await expect(check(gzipSync(Buffer.from("ab")))).rejects.toThrow(/valid gzip/);
+    });
+
+    it("refuses entry types the parser would skip without comment", async () => {
+        await rejects(
+            [INDEX, { name: "sparse.bin", type: "sparse" }],
+            /cannot be deployed|only files and directories|malformed/,
+        );
+    });
+
     it("stops an archive that expands far beyond its size, without storing it", async () => {
         const file = path.join(dir, "bomb.tar.gz");
         await writeBombTarGz(file, 64 * 1024 * 1024);
