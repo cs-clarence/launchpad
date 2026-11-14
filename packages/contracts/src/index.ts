@@ -49,6 +49,9 @@ export const createApiKeySchema = z
         message: "A project-limited API key cannot create projects.",
     });
 
+export const createPreviewSchema = z.object({ slug: slugSchema });
+export const previewStateSchema = z.enum(["active", "deleting", "deleted"]);
+
 const role = z.enum(ORGANIZATION_ROLES);
 const timestamp = z.string().meta({ format: "date-time" });
 
@@ -111,6 +114,16 @@ export const createdProjectSchema = z.strictObject({
     id: z.uuid(),
     slug: z.string(),
     name: z.string(),
+});
+
+export const previewSchema = z.strictObject({
+    id: z.uuid(),
+    projectId: z.uuid(),
+    slug: z.string(),
+    hostname: z.string(),
+    state: previewStateSchema,
+    activeDeploymentId: z.uuid().nullable(),
+    createdAt: timestamp,
 });
 
 export const invitationSchema = z.strictObject({

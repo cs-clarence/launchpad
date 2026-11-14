@@ -106,6 +106,81 @@ export interface ApiKeyTable {
     last_used_at: Date | null;
 }
 
+export interface ArtifactTable {
+    id: Generated<string>;
+    organization_id: string;
+    digest: string;
+    size_bytes: string | number;
+    expanded_bytes: string | number;
+    entry_count: number;
+    storage_key: string;
+    created_by: string;
+    created_at: Generated<Date>;
+}
+
+export interface PreviewTable {
+    id: Generated<string>;
+    organization_id: string;
+    project_id: string;
+    slug: string;
+    app_name: string;
+    hostname: string;
+    desired_state: Generated<"active" | "deleting" | "deleted">;
+    active_deployment_id: string | null;
+    created_by: string;
+    created_at: Generated<Date>;
+}
+
+export type DeploymentStatus =
+    | "queued"
+    | "preparing"
+    | "building"
+    | "deploying"
+    | "verifying"
+    | "succeeded"
+    | "failed"
+    | "cancelled"
+    | "reconciliation-needed";
+
+export interface DeploymentTable {
+    id: Generated<string>;
+    organization_id: string;
+    preview_id: string;
+    artifact_id: string;
+    spa: Generated<boolean>;
+    status: Generated<DeploymentStatus>;
+    attempt: Generated<number>;
+    image_tag: string | null;
+    failure_code: string | null;
+    failure_message: string | null;
+    requested_by: string;
+    created_at: Generated<Date>;
+    updated_at: Generated<Date>;
+    finished_at: Date | null;
+}
+
+export interface DeploymentEventTable {
+    id: Generated<string>;
+    organization_id: string;
+    deployment_id: string;
+    seq: number;
+    phase: string;
+    level: Generated<"info" | "warn" | "error">;
+    message: string;
+    created_at: Generated<Date>;
+}
+
+export interface IdempotencyKeyTable {
+    organization_id: string;
+    principal: string;
+    endpoint: string;
+    key: string;
+    request_hash: string;
+    resource_id: string | null;
+    created_at: Generated<Date>;
+    expires_at: Date;
+}
+
 export interface VerificationTable {
     id: string;
     identifier: string;
@@ -117,6 +192,11 @@ export interface Database {
     verification: VerificationTable;
     organization_invitation: InvitationTable;
     api_key: ApiKeyTable;
+    artifact: ArtifactTable;
+    preview: PreviewTable;
+    deployment: DeploymentTable;
+    deployment_event: DeploymentEventTable;
+    idempotency_key: IdempotencyKeyTable;
     organization: OrganizationTable;
     member: MemberTable;
     project: ProjectTable;

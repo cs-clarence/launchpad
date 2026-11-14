@@ -11,10 +11,23 @@ export type OrganizationAction =
     | "project:read"
     | "project:create"
     | "project:delete"
+    | "preview:read"
+    | "preview:create"
+    | "preview:deploy"
     | "apikey:manage";
 
-const VIEWER: OrganizationAction[] = ["organization:read", "member:read", "project:read"];
-const DEPLOYER: OrganizationAction[] = [...VIEWER, "project:create"];
+const VIEWER: OrganizationAction[] = [
+    "organization:read",
+    "member:read",
+    "project:read",
+    "preview:read",
+];
+const DEPLOYER: OrganizationAction[] = [
+    ...VIEWER,
+    "project:create",
+    "preview:create",
+    "preview:deploy",
+];
 const ADMIN: OrganizationAction[] = [
     ...DEPLOYER,
     "member:manage",
