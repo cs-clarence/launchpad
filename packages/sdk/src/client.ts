@@ -30,7 +30,7 @@ export interface ClientOptions {
 
 const API_KEY_FORMAT = /^lp_[A-Za-z0-9_-]{20,200}$/;
 const LOOPBACK = new Set(["localhost", "127.0.0.1", "[::1]"]);
-const MAX_BODY_CHARS = 1024 * 1024;
+const MAX_BODY_BYTES = 1024 * 1024;
 
 export function normalizeBaseUrl(input: string): string {
     let url: URL;
@@ -58,6 +58,37 @@ export function normalizeBaseUrl(input: string): string {
 const loose = <S extends z.ZodObject>(schema: S) =>
     schema.loose() as unknown as z.ZodType<z.infer<S>>;
 
+// Reads at most MAX_BODY_BYTES, stopping (and cancelling the stream) as soon as the limit
+// is passed, so an oversized or endless answer is never buffered whole.
+async function readBounded(response: Response): Promise<string> {
+    const tooLarge = () =>
+        new LaunchpadTransportError(
+            "invalid-response",
+            "The controller's answer is larger than this SDK accepts.",
+        );
+    const declared = Number(response.headers.get("content-length"));
+    if (Number.isFinite(declared) && declared > MAX_BODY_BYTES) {
+        await response.body?.cancel().catch(() => {});
+        throw tooLarge();
+    }
+    if (!response.body) return "";
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let received = 0;
+    let text = "";
+    for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        received += value.byteLength;
+        if (received > MAX_BODY_BYTES) {
+            await reader.cancel().catch(() => {});
+            throw tooLarge();
+        }
+        text += decoder.decode(value, { stream: true });
+    }
+    return text + decoder.decode();
+}
+
 export function createClient(options: ClientOptions) {
     const base = normalizeBaseUrl(options.baseUrl);
     const apiKey = options.apiKey;
@@ -75,6 +106,7 @@ export function createClient(options: ClientOptions) {
         body?: unknown,
     ): Promise<T> {
         let response: Response;
+        let text: string;
         try {
             response = await doFetch(`${base}/api/v1${path}`, {
                 method,
@@ -90,7 +122,10 @@ export function createClient(options: ClientOptions) {
                 cache: "no-store",
                 signal: AbortSignal.timeout(timeoutMs),
             });
+            // The timeout also covers the body: a stalled stream must not hang the caller.
+            text = await readBounded(response);
         } catch (error) {
+            if (error instanceof LaunchpadTransportError) throw error;
             const name = (error as { name?: string })?.name;
             if (name === "TimeoutError" || name === "AbortError") {
                 throw new LaunchpadTransportError(
@@ -107,10 +142,9 @@ export function createClient(options: ClientOptions) {
             throw new LaunchpadTransportError("unreachable", "Could not reach the controller.");
         }
 
-        const text = await response.text().catch(() => "");
         let json: unknown;
         try {
-            json = text.length > 0 && text.length <= MAX_BODY_CHARS ? JSON.parse(text) : undefined;
+            json = text.length > 0 ? JSON.parse(text) : undefined;
         } catch {
             json = undefined;
         }

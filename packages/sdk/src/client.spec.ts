@@ -162,6 +162,57 @@ describe("errors", () => {
         expect(JSON.stringify({ message: error.message, ...error })).not.toContain(KEY);
     });
 
+    it("stops reading an oversized answer, with or without a declared length", async () => {
+        let cancelled = false;
+        const endless = new ReadableStream<Uint8Array>({
+            pull(controller) {
+                controller.enqueue(new Uint8Array(256 * 1024).fill(32));
+            },
+            cancel() {
+                cancelled = true;
+            },
+        });
+        const stream = recording(() => new Response(endless, { status: 200 }));
+        await expect(stream.client.organizations.list()).rejects.toMatchObject({
+            name: "LaunchpadTransportError",
+            reason: "invalid-response",
+        });
+        expect(cancelled).toBe(true);
+        const declared = recording(
+            () =>
+                new Response("[]", {
+                    status: 200,
+                    headers: { "content-length": String(50 * 1024 * 1024) },
+                }),
+        );
+        await expect(declared.client.organizations.list()).rejects.toMatchObject({
+            reason: "invalid-response",
+        });
+    });
+
+    it("reports a stalled or broken body as a timeout or an unreachable controller, not a bad answer", async () => {
+        const failing = (error: unknown) =>
+            recording(
+                () =>
+                    new Response(
+                        new ReadableStream({
+                            start(controller) {
+                                controller.error(error);
+                            },
+                        }),
+                        { status: 200 },
+                    ),
+            );
+        const timedOut = await failing(new DOMException("t", "TimeoutError"))
+            .client.organizations.list()
+            .catch((e) => e);
+        expect(timedOut.reason).toBe("timeout");
+        const broken = await failing(new TypeError("terminated"))
+            .client.organizations.list()
+            .catch((e) => e);
+        expect(broken.reason).toBe("unreachable");
+    });
+
     it("distinguishes unreachable, timeout and redirect failures", async () => {
         const failing = (error: unknown) =>
             createClient({

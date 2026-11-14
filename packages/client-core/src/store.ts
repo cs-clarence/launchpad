@@ -1,5 +1,5 @@
 import { randomBytes } from "node:crypto";
-import { promises as fs } from "node:fs";
+import { constants as fsConstants, promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { z } from "zod";
@@ -43,35 +43,89 @@ export class CredentialStore {
         this.file = path.join(directory, FILE);
     }
 
-    async load(): Promise<Config> {
+    // The directory is the trust anchor: it must be a real directory (not a link), ours,
+    // and closed to others. Its ancestors are not inspected: they are the user's own, and
+    // links in them (a symlinked home, /tmp) are legitimate.
+    private async checkDirectory(create: boolean): Promise<boolean> {
         let stat;
         try {
-            stat = await fs.lstat(this.file);
+            stat = await fs.lstat(this.directory);
         } catch (error) {
-            if ((error as NodeJS.ErrnoException).code === "ENOENT") return emptyConfig();
-            throw error;
+            if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+            if (!create) return false;
+            await fs.mkdir(this.directory, { recursive: true, mode: 0o700 });
+            stat = await fs.lstat(this.directory);
         }
-        if (!stat.isFile()) {
-            throw new ClientCoreError("insecure-store", `${this.file} is not a regular file.`);
+        if (!stat.isDirectory()) {
+            throw new ClientCoreError(
+                "insecure-store",
+                `${this.directory} is not a real directory (a link or a file).`,
+            );
         }
         if (process.platform !== "win32") {
             const owner = process.getuid?.();
             if (owner !== undefined && stat.uid !== owner) {
                 throw new ClientCoreError(
                     "insecure-store",
-                    `${this.file} is owned by another user.`,
+                    `${this.directory} is owned by another user.`,
                 );
             }
             if ((stat.mode & 0o077) !== 0) {
-                throw new ClientCoreError(
-                    "insecure-store",
-                    `${this.file} is readable by others. Run: chmod 600 ${this.file}`,
-                );
+                if (!create) {
+                    throw new ClientCoreError(
+                        "insecure-store",
+                        `${this.directory} is open to others. Run: chmod 700 ${this.directory}`,
+                    );
+                }
+                await fs.chmod(this.directory, 0o700);
             }
+        }
+        return true;
+    }
+
+    async load(): Promise<Config> {
+        if (!(await this.checkDirectory(false))) return emptyConfig();
+        // Open without following a link, then judge the file that was actually opened, so
+        // nothing can be swapped in between the check and the read.
+        let handle;
+        try {
+            handle = await fs.open(this.file, fsConstants.O_RDONLY | (fsConstants.O_NOFOLLOW ?? 0));
+        } catch (error) {
+            const code = (error as NodeJS.ErrnoException).code;
+            if (code === "ENOENT") return emptyConfig();
+            if (code === "ELOOP") {
+                throw new ClientCoreError("insecure-store", `${this.file} is a symbolic link.`);
+            }
+            throw error;
+        }
+        let text: string;
+        try {
+            const stat = await handle.stat();
+            if (!stat.isFile()) {
+                throw new ClientCoreError("insecure-store", `${this.file} is not a regular file.`);
+            }
+            if (process.platform !== "win32") {
+                const owner = process.getuid?.();
+                if (owner !== undefined && stat.uid !== owner) {
+                    throw new ClientCoreError(
+                        "insecure-store",
+                        `${this.file} is owned by another user.`,
+                    );
+                }
+                if ((stat.mode & 0o077) !== 0) {
+                    throw new ClientCoreError(
+                        "insecure-store",
+                        `${this.file} is readable by others. Run: chmod 600 ${this.file}`,
+                    );
+                }
+            }
+            text = await handle.readFile("utf8");
+        } finally {
+            await handle.close();
         }
         let raw: unknown;
         try {
-            raw = JSON.parse(await fs.readFile(this.file, "utf8"));
+            raw = JSON.parse(text);
         } catch {
             throw new ClientCoreError(
                 "corrupt-store",
@@ -97,8 +151,7 @@ export class CredentialStore {
 
     // Read-modify-write under a lock, so two commands cannot lose each other's change.
     async update<T>(change: (config: Config) => T): Promise<T> {
-        await fs.mkdir(this.directory, { recursive: true, mode: 0o700 });
-        if (process.platform !== "win32") await fs.chmod(this.directory, 0o700);
+        await this.checkDirectory(true);
         const release = await this.lock();
         try {
             const config = await this.load();

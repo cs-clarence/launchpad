@@ -38,7 +38,8 @@ export async function resolve(ctx: Context, profileName?: string): Promise<Resol
     }
     const config = await ctx.store.load();
     const name = profileName ?? ctx.env.LAUNCHPAD_PROFILE ?? config.currentProfile;
-    const profile = name ? config.profiles[name] : undefined;
+    const profile =
+        name && Object.hasOwn(config.profiles, name) ? config.profiles[name] : undefined;
     if (!name || !profile) {
         throw new ClientCoreError(
             "not-logged-in",
@@ -97,7 +98,7 @@ export async function login(
 export async function logout(ctx: Context, profileName?: string) {
     const config = await ctx.store.load();
     const name = profileName ?? ctx.env.LAUNCHPAD_PROFILE ?? config.currentProfile;
-    if (!name || !config.profiles[name]) {
+    if (!name || !Object.hasOwn(config.profiles, name)) {
         throw new ClientCoreError("not-logged-in", "Nothing to log out of.");
     }
     await ctx.store.update((current) => {
@@ -124,7 +125,7 @@ export async function listProfiles(ctx: Context) {
 
 export async function useProfile(ctx: Context, name: string) {
     await ctx.store.update((config) => {
-        if (!config.profiles[name]) {
+        if (!Object.hasOwn(config.profiles, name)) {
             throw new ClientCoreError("not-logged-in", `No profile named "${name}".`);
         }
         config.currentProfile = name;
@@ -152,8 +153,23 @@ export async function useOrganization(ctx: Context, organization: string, profil
     }
     if (resolved.profile) {
         await ctx.store.update((config) => {
-            const profile = config.profiles[resolved.profile!];
-            if (profile) profile.organizationId = match.id;
+            const name = resolved.profile!;
+            const profile = Object.hasOwn(config.profiles, name)
+                ? config.profiles[name]
+                : undefined;
+            // The profile may have been replaced (another login) while the controller was
+            // asked; a choice made for the old credentials must not land on the new ones.
+            if (
+                !profile ||
+                profile.controller !== resolved.controller ||
+                profile.apiKey !== resolved.apiKey
+            ) {
+                throw new ClientCoreError(
+                    "bad-input",
+                    "The profile changed while the organization was being selected. Try again.",
+                );
+            }
+            profile.organizationId = match.id;
         });
     }
     return { organization: match };

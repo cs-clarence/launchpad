@@ -200,6 +200,63 @@ describe("using credentials", () => {
     });
 });
 
+describe("hardening", () => {
+    it("treats only saved profiles as profiles, not inherited names", async () => {
+        for (const name of ["constructor", "toString", "__proto__"]) {
+            await expect(useProfile(ctx(), name), name).rejects.toMatchObject({
+                code: "not-logged-in",
+            });
+            await expect(resolve(ctx(), name), name).rejects.toMatchObject({
+                code: "not-logged-in",
+            });
+            await expect(logout(ctx(), name), name).rejects.toMatchObject({
+                code: "not-logged-in",
+            });
+        }
+        await expect(fs.readdir(dir)).resolves.toEqual([]);
+    });
+
+    it("rejects a stale organization choice when the profile was replaced meanwhile", async () => {
+        await login(ctx(), { controller: CONTROLLER, apiKey: KEY });
+        let release!: () => void;
+        const gate = new Promise<void>((resolveGate) => (release = resolveGate));
+        const slow = createContext(
+            { LAUNCHPAD_CONFIG_DIR: dir },
+            {
+                fetch: (async (url: string, init: RequestInit) => {
+                    await gate;
+                    return controller(url, init);
+                }) as unknown as typeof fetch,
+            },
+        );
+        const choice = useOrganization(slow, "acme");
+        await login(ctx(), { controller: CONTROLLER, apiKey: KEY2 }); // replaces the profile
+        release();
+        await expect(choice).rejects.toMatchObject({ code: "bad-input" });
+        expect((await listProfiles(ctx())).profiles[0]).toMatchObject({ organizationId: ORG });
+    });
+
+    it("refuses a credential directory that is a link or open to others, and does not use it", async () => {
+        const target = await fs.mkdtemp(path.join(os.tmpdir(), "launchpad-target-"));
+        const link = path.join(dir, "linked");
+        await fs.symlink(target, link);
+        const through = createContext({ LAUNCHPAD_CONFIG_DIR: link }, { fetch: controller });
+        await expect(login(through, { controller: CONTROLLER, apiKey: KEY })).rejects.toMatchObject(
+            { code: "insecure-store" },
+        );
+        await expect(whoami(through)).rejects.toMatchObject({ code: "insecure-store" });
+        expect(await fs.readdir(target)).toEqual([]);
+        await fs.rm(target, { recursive: true });
+
+        await login(ctx(), { controller: CONTROLLER, apiKey: KEY });
+        await fs.chmod(dir, 0o755);
+        await expect(whoami(ctx())).rejects.toMatchObject({ code: "insecure-store" });
+        // Writing repairs a directory we own, since nothing is exposed by tightening it.
+        await login(ctx(), { controller: CONTROLLER, apiKey: KEY2, profile: "second" });
+        expect((await fs.stat(dir)).mode & 0o777).toBe(0o700);
+    });
+});
+
 describe("redact", () => {
     it("hides anything shaped like a key", () => {
         expect(redact(`failed with ${KEY} and ${KEY2}`)).toBe(
