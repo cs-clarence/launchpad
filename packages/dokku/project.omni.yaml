@@ -12,7 +12,7 @@ dependencies:
 
 tasks:
   test:unit:
-    enabled: false
+    enabled: true
 
   test:integration:
     enabled: false

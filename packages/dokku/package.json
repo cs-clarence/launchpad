@@ -2,7 +2,7 @@
     "name": "@launchpad/dokku",
     "version": "0.0.0",
     "private": true,
-    "description": "Dokku adapter boundary; SSH execution is not implemented",
+    "description": "Typed, allowlisted Dokku operations over pinned SSH",
     "type": "module",
     "exports": {
         ".": {
@@ -19,12 +19,14 @@
     },
     "scripts": {
         "build": "vite build",
-        "check:types": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.node.json"
+        "check:types": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.node.json",
+        "test:unit": "vitest run --config vitest.config.unit.ts"
     },
     "devDependencies": {
         "@launchpad/tsconfig": "workspace:^",
         "@launchpad/vite-config": "workspace:^",
         "@launchpad/vitest-config": "workspace:^",
+        "@types/bun": "catalog:",
         "typescript": "catalog:",
         "vite": "catalog:",
         "vitest": "catalog:"
