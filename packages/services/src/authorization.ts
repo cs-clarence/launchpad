@@ -1,6 +1,7 @@
+import { API_KEY_SCOPES as KEY_SCOPES, ORGANIZATION_ROLES as ROLES } from "@launchpad/contracts";
 import type { OrganizationRole } from "@launchpad/database";
 
-export const ORGANIZATION_ROLES = ["owner", "admin", "deployer", "viewer"] as const;
+export const ORGANIZATION_ROLES = ROLES;
 
 export type OrganizationAction =
     | "organization:read"
@@ -42,15 +43,9 @@ export function canAssignRole(actor: OrganizationRole, target: OrganizationRole)
     return false;
 }
 
-// What an API key may be granted. Deliberately excludes managing members, keys and
-// the organization itself: a key can never mint or widen credentials.
-export const API_KEY_SCOPES = [
-    "organization:read",
-    "member:read",
-    "project:read",
-    "project:create",
-    "project:delete",
-] as const satisfies readonly OrganizationAction[];
+// What an API key may be granted (the list lives in the contracts); a compile-time
+// check that each scope is a real action.
+export const API_KEY_SCOPES = KEY_SCOPES satisfies readonly OrganizationAction[];
 export type ApiKeyScope = (typeof API_KEY_SCOPES)[number];
 
 // Principals are identities already verified by the transport adapter. The

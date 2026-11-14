@@ -1,22 +1,11 @@
+import { createProjectSchema } from "@launchpad/contracts";
 import type { Database } from "@launchpad/database";
 import type { Kysely } from "kysely";
-import { z } from "zod";
 import type { Principal } from "./authorization";
 import { isUniqueViolation, ServiceError } from "./errors";
-import {
-    nameSchema,
-    parseInput,
-    recordAudit,
-    requireMembership,
-    slugSchema,
-} from "./organizations";
+import { parseInput, recordAudit, requireMembership } from "./organizations";
 
 type Db = Kysely<Database>;
-
-export const createProjectSchema = z.object({
-    name: nameSchema,
-    slug: slugSchema,
-});
 
 // Every query names the organization; a project in another organization is
 // indistinguishable from one that does not exist.

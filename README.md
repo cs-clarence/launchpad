@@ -114,7 +114,10 @@ apps/
   cli/             Bun CLI (help/version only so far)
 packages/
   auth/            Better Auth configuration, operator setup and recovery, mailer
-  services/        Framework-independent services, authorization and API contracts
+  contracts/       Versioned API shapes (zod only, browser-safe)
+  sdk/             Browser-safe HTTP client for the API, authenticated with an API key
+  client-core/     Profiles and the credential file shared by the CLI and MCP
+  services/        Framework-independent services and authorization
   database/        Kysely on Bun SQL, forward-only migrations
   dokku/           Dokku connection boundary; no SSH execution yet
   tsconfig/        Shared TypeScript configuration

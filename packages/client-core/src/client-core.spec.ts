@@ -1,0 +1,210 @@
+import { promises as fs } from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import {
+    ClientCoreError,
+    createContext,
+    listProjects,
+    listProfiles,
+    login,
+    logout,
+    redact,
+    resolve,
+    useOrganization,
+    useProfile,
+    whoami,
+} from "./index";
+
+const KEY = "lp_" + "a".repeat(43);
+const KEY2 = "lp_" + "b".repeat(43);
+const ORG = "org-one";
+const CONTROLLER = "https://control.example.com";
+let dir = "";
+
+const json = (body: unknown, status = 200) =>
+    new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
+
+// A controller that knows one key (and accepts either of two).
+const controller = ((url: string, init: RequestInit) => {
+    const auth = (init.headers as Record<string, string>).authorization;
+    if (auth !== `Bearer ${KEY}` && auth !== `Bearer ${KEY2}`) {
+        return Promise.resolve(
+            json({ code: "unauthenticated", status: 401, title: "Unauthorized" }, 401),
+        );
+    }
+    const path = new URL(url).pathname;
+    if (path === "/api/v1/key") {
+        return Promise.resolve(
+            json({
+                id: crypto.randomUUID(),
+                name: "ci",
+                organizationId: ORG,
+                scopes: ["project:read", "organization:read"],
+                projectIds: null,
+                expiresAt: new Date().toISOString(),
+            }),
+        );
+    }
+    if (path === "/api/v1/organizations") {
+        return Promise.resolve(json([{ id: ORG, name: "Acme", slug: "acme", role: "admin" }]));
+    }
+    if (path === `/api/v1/organizations/${ORG}/projects`) {
+        return Promise.resolve(
+            json([
+                {
+                    id: crypto.randomUUID(),
+                    slug: "site",
+                    name: "Site",
+                    createdAt: new Date().toISOString(),
+                },
+            ]),
+        );
+    }
+    return Promise.resolve(json({ code: "not-found", status: 404, title: "Not Found" }, 404));
+}) as unknown as typeof fetch;
+
+const ctx = (env: Record<string, string> = {}) =>
+    createContext({ LAUNCHPAD_CONFIG_DIR: dir, ...env }, { fetch: controller });
+
+beforeEach(async () => {
+    dir = await fs.mkdtemp(path.join(os.tmpdir(), "launchpad-cc-"));
+});
+afterEach(async () => {
+    await fs.rm(dir, { recursive: true, force: true });
+});
+
+describe("login and the credential file", () => {
+    it("verifies the key, selects its organization and stores it owner-only", async () => {
+        const result = await login(ctx(), { controller: `${CONTROLLER}/`, apiKey: KEY });
+        expect(result).toMatchObject({ profile: "default", controller: CONTROLLER });
+        expect(JSON.stringify(result)).not.toContain(KEY);
+        expect((await fs.stat(dir)).mode & 0o777).toBe(0o700);
+        expect((await fs.stat(path.join(dir, "credentials.json"))).mode & 0o777).toBe(0o600);
+        const files = await fs.readdir(dir);
+        expect(files).toEqual(["credentials.json"]); // no temp or lock files left behind
+        expect(await listProfiles(ctx())).toMatchObject({
+            current: "default",
+            profiles: [{ name: "default", organizationId: ORG }],
+        });
+        expect(JSON.stringify(await listProfiles(ctx()))).not.toContain(KEY);
+    });
+
+    it("saves nothing when the controller rejects the key or the input is bad", async () => {
+        await expect(
+            login(ctx(), { controller: CONTROLLER, apiKey: "lp_" + "z".repeat(43) }),
+        ).rejects.toMatchObject({ status: 401 });
+        await expect(
+            login(ctx(), { controller: "http://control.example.com", apiKey: KEY }),
+        ).rejects.toThrow();
+        await expect(
+            login(ctx(), { controller: CONTROLLER, apiKey: KEY, profile: "../x" }),
+        ).rejects.toBeInstanceOf(ClientCoreError);
+        await expect(fs.readdir(dir)).resolves.toEqual([]);
+    });
+
+    it("does not lose changes made by concurrent logins", async () => {
+        await Promise.all(
+            ["a", "b", "c", "d", "e"].map((name) =>
+                login(ctx(), { controller: CONTROLLER, apiKey: KEY, profile: name }),
+            ),
+        );
+        const { profiles } = await listProfiles(ctx());
+        expect(profiles.map((p) => p.name).toSorted()).toEqual(["a", "b", "c", "d", "e"]);
+    });
+
+    it("refuses a file others can read, a symlink and another format, and never rewrites them", async () => {
+        await login(ctx(), { controller: CONTROLLER, apiKey: KEY });
+        const file = path.join(dir, "credentials.json");
+        await fs.chmod(file, 0o644);
+        await expect(whoami(ctx())).rejects.toMatchObject({ code: "insecure-store" });
+        await expect(
+            login(ctx(), { controller: CONTROLLER, apiKey: KEY2, profile: "x" }),
+        ).rejects.toMatchObject({ code: "insecure-store" });
+        await fs.chmod(file, 0o600);
+
+        const real = path.join(dir, "real.json");
+        await fs.rename(file, real);
+        await fs.symlink(real, file);
+        await expect(whoami(ctx())).rejects.toMatchObject({ code: "insecure-store" });
+        await fs.rm(file);
+        await fs.rename(real, file);
+
+        const future = JSON.stringify({ version: 2, profiles: {} });
+        await fs.writeFile(file, future, { mode: 0o600 });
+        await expect(whoami(ctx())).rejects.toMatchObject({ code: "unsupported-store" });
+        await expect(
+            login(ctx(), { controller: CONTROLLER, apiKey: KEY, profile: "y" }),
+        ).rejects.toMatchObject({ code: "unsupported-store" });
+        expect(await fs.readFile(file, "utf8")).toBe(future);
+
+        await fs.writeFile(file, "{not json", { mode: 0o600 });
+        await expect(whoami(ctx())).rejects.toMatchObject({ code: "corrupt-store" });
+        expect(await fs.readFile(file, "utf8")).toBe("{not json");
+    });
+});
+
+describe("using credentials", () => {
+    it("resolves explicit profile, then environment profile, then the current one", async () => {
+        await login(ctx(), { controller: CONTROLLER, apiKey: KEY, profile: "one" });
+        await login(ctx(), {
+            controller: "https://other.example.com",
+            apiKey: KEY2,
+            profile: "two",
+        });
+        expect((await resolve(ctx())).profile).toBe("one");
+        expect((await resolve(ctx({ LAUNCHPAD_PROFILE: "two" }))).controller).toBe(
+            "https://other.example.com",
+        );
+        expect((await resolve(ctx({ LAUNCHPAD_PROFILE: "two" }), "one")).profile).toBe("one");
+        await useProfile(ctx(), "two");
+        expect((await resolve(ctx())).profile).toBe("two");
+        await expect(resolve(ctx(), "missing")).rejects.toMatchObject({ code: "not-logged-in" });
+    });
+
+    it("works from the environment alone, without touching the store", async () => {
+        const env = ctx({
+            LAUNCHPAD_CONTROLLER: CONTROLLER,
+            LAUNCHPAD_API_KEY: KEY,
+            LAUNCHPAD_ORG: ORG,
+        });
+        expect((await whoami(env)).key.organizationId).toBe(ORG);
+        expect(await listProjects(env)).toHaveLength(1);
+        expect(await fs.readdir(dir)).toEqual([]);
+    });
+
+    it("reports who the key is and lists its projects", async () => {
+        await expect(whoami(ctx())).rejects.toMatchObject({ code: "not-logged-in" });
+        await login(ctx(), { controller: CONTROLLER, apiKey: KEY });
+        expect((await whoami(ctx())).key).toMatchObject({ organizationId: ORG, name: "ci" });
+        expect(await listProjects(ctx())).toMatchObject([{ slug: "site" }]);
+    });
+
+    it("selects an organization by slug or id, and refuses one the key cannot see", async () => {
+        await login(ctx(), { controller: CONTROLLER, apiKey: KEY });
+        expect((await useOrganization(ctx(), "acme")).organization.id).toBe(ORG);
+        expect((await useOrganization(ctx(), ORG)).organization.slug).toBe("acme");
+        await expect(useOrganization(ctx(), "beta")).rejects.toMatchObject({
+            code: "no-organization",
+        });
+    });
+
+    it("logs out one profile and moves the current one", async () => {
+        await login(ctx(), { controller: CONTROLLER, apiKey: KEY, profile: "one" });
+        await login(ctx(), { controller: CONTROLLER, apiKey: KEY2, profile: "two" });
+        await logout(ctx(), "one");
+        expect(await listProfiles(ctx())).toMatchObject({ current: "two" });
+        await logout(ctx());
+        expect(await listProfiles(ctx())).toEqual({ current: null, profiles: [] });
+        await expect(logout(ctx())).rejects.toMatchObject({ code: "not-logged-in" });
+    });
+});
+
+describe("redact", () => {
+    it("hides anything shaped like a key", () => {
+        expect(redact(`failed with ${KEY} and ${KEY2}`)).toBe(
+            "failed with lp_[redacted] and lp_[redacted]",
+        );
+        expect(redact("nothing here")).toBe("nothing here");
+    });
+});

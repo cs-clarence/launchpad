@@ -329,8 +329,11 @@ Milestone 2 slices (one PR each):
       Not done: the credential generation for the sign-in/reset race (it needs
       Better Auth's password check and session insert in one transaction; keep it
       listed as accepted).
-- [ ] M2-3: versioned browser-safe SDK on `contracts.ts` and the shared client core
-      (profiles, mode-600 credential file).
+- [x] M2-3: `packages/contracts` (zod-only shapes moved out of services),
+      `packages/sdk` (bearer-key HTTP client: https or loopback only, no cookies, no
+      redirects, tolerant of added fields, no key in errors) and `packages/client-core`
+      (profiles, mode-600 credential file under a lock, env credentials for CI, key
+      verified at login, redaction).
 - [ ] M2-4: CLI (`login --key`, `whoami`, org selection, `projects list`, `--json`)
       and the dashboard page to create and revoke keys.
 
