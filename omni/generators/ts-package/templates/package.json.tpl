@@ -45,10 +45,8 @@
     "dependencies": {
         {% if inputs.package_type == "script" %}
         "commander": "catalog:",
-        "@commander-js/extra-typings": "catalog:",
+        "@commander-js/extra-typings": "catalog:"
         {% endif %}
-        "@omni-oss/log": "catalog:",
-        "zod": "catalog:"
     },
     "devDependencies": {
         "@{{ vars.scope_name }}/tsconfig": "workspace:^",
