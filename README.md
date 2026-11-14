@@ -111,7 +111,7 @@ that talks to the controller. The workspace follows Pureform's Bun/Omni layout:
 ```text
 apps/
   controller/      TanStack Start + React, mounted Elysia 2 RC API, Skeleton 5
-  cli/             Bun CLI (help/version only so far)
+  cli/             Bun CLI: login, whoami, profiles, orgs, projects (API-key client)
 packages/
   auth/            Better Auth configuration, operator setup and recovery, mailer
   contracts/       Versioned API shapes (zod only, browser-safe)

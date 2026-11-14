@@ -243,6 +243,20 @@ describe("hardening", () => {
         expect((await listProfiles(ctx())).profiles[0]).toMatchObject({ organizationId: ORG });
     });
 
+    it.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
+        "reports an unreadable file as an unavailable store",
+        async () => {
+            await login(ctx(), { controller: CONTROLLER, apiKey: KEY });
+            const file = path.join(dir, "credentials.json");
+            await fs.chmod(file, 0o000);
+            await expect(whoami(ctx())).rejects.toMatchObject({ code: "store-unavailable" });
+            await expect(
+                login(ctx(), { controller: CONTROLLER, apiKey: KEY2, profile: "x" }),
+            ).rejects.toMatchObject({ code: "store-unavailable" });
+            await fs.chmod(file, 0o600);
+        },
+    );
+
     it.skipIf(process.platform === "win32")("refuses a FIFO instead of waiting on it", async () => {
         await promisify(execFile)("mkfifo", [path.join(dir, "credentials.json")]);
         await expect(whoami(ctx())).rejects.toMatchObject({ code: "insecure-store" });

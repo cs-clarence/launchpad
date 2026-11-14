@@ -1,10 +1,32 @@
 # CLI
 
-For contributors to the Bun-based `launchpad` CLI. Keep this page current when
-commands change.
+The `launchpad` command talks to a controller with an organization API key. It never
+talks to Dokku. Keep this page current when commands change.
 
-`src/index.ts` currently provides help/version only. Deployment, login,
-configuration storage, and controller communication are not implemented.
-The CLI will call the controller rather than invoking Dokku directly.
+```text
+launchpad login --controller <url> [--profile <name>] [--key-file <path> | --key-stdin]
+launchpad logout
+launchpad whoami
+launchpad profile list | use <name>
+launchpad org list | use <slug-or-id>
+launchpad projects list
+```
+
+Global options: `--json` (machine-readable output; errors become `{"error":{"code","message"}}` on stderr)
+and `--profile <name>`.
+
+- **The key is never an argument.** `login` reads it from `--key-file`, `--key-stdin`, or a hidden terminal
+  prompt, so it does not end up in shell history or the process list. Without a terminal and without one of
+  those options, it fails. `login` checks the key with the controller before saving it, and selects the
+  key's organization.
+- **Credentials** live in `~/.config/launchpad/credentials.json` (mode 600; see `packages/client-core`).
+  For CI, set `LAUNCHPAD_CONTROLLER` and `LAUNCHPAD_API_KEY` (and optionally `LAUNCHPAD_ORG`) instead; the
+  file is not touched.
+- **Exit codes:** 0 success, 1 other failure, 2 usage, 3 not logged in or the key is rejected (401/403),
+  4 not found, 5 controller unreachable, timed out or unexpected answer, 6 credential file or profile unusable.
+- Output and errors are passed through a redactor that hides anything shaped like a key.
+
+`src/program.ts` holds the commands behind an `Io` interface (`src/io.ts`), so tests drive `run(argv, io)` with a
+fake terminal, a temporary config directory and a fake controller. `src/index.ts` is the Bun entry point.
 
 Build and check commands are in [CONTRIBUTING.md](../../CONTRIBUTING.md).

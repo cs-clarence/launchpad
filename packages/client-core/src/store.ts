@@ -83,7 +83,27 @@ export class CredentialStore {
         return true;
     }
 
-    async load(): Promise<Config> {
+    // Filesystem failures (permissions, a directory where the file should be, ...) are
+    // reported as one typed error, so callers can tell "your credentials are unusable"
+    // from a bug.
+    private async guard<T>(action: () => Promise<T>): Promise<T> {
+        try {
+            return await action();
+        } catch (error) {
+            const code = (error as NodeJS.ErrnoException)?.code;
+            if (error instanceof ClientCoreError || typeof code !== "string") throw error;
+            throw new ClientCoreError(
+                "store-unavailable",
+                `Cannot use the credential store at ${this.directory} (${code}).`,
+            );
+        }
+    }
+
+    load(): Promise<Config> {
+        return this.guard(() => this.read());
+    }
+
+    private async read(): Promise<Config> {
         if (!(await this.checkDirectory(false))) return emptyConfig();
         // Open without following a link, then judge the file that was actually opened, so
         // nothing can be swapped in between the check and the read.
@@ -157,11 +177,15 @@ export class CredentialStore {
     }
 
     // Read-modify-write under a lock, so two commands cannot lose each other's change.
-    async update<T>(change: (config: Config) => T): Promise<T> {
+    update<T>(change: (config: Config) => T): Promise<T> {
+        return this.guard(() => this.write(change));
+    }
+
+    private async write<T>(change: (config: Config) => T): Promise<T> {
         await this.checkDirectory(true);
         const release = await this.lock();
         try {
-            const config = await this.load();
+            const config = await this.read();
             const result = change(config);
             const temp = path.join(this.directory, `.${FILE}.${randomBytes(6).toString("hex")}`);
             const handle = await fs.open(temp, "wx", 0o600);

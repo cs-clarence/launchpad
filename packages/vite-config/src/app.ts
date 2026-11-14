@@ -1,1 +1,1 @@
-export { createConfig } from "./library";
+export { createConfig } from "./library.ts";

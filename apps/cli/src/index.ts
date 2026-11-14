@@ -1,9 +1,5 @@
 #!/usr/bin/env bun
-import { Command } from "@commander-js/extra-typings";
+import { realIo } from "./io";
+import { run } from "./program";
 
-const program = new Command()
-    .name("launchpad")
-    .description("Launchpad CLI scaffold; deployment commands are not implemented")
-    .version("0.0.0");
-
-program.parse();
+process.exitCode = await run(process.argv.slice(2), realIo());

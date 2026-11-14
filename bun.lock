@@ -23,12 +23,15 @@
       },
       "dependencies": {
         "@commander-js/extra-typings": "catalog:",
+        "@launchpad/client-core": "workspace:^",
+        "@launchpad/sdk": "workspace:^",
         "commander": "catalog:",
       },
       "devDependencies": {
         "@launchpad/tsconfig": "workspace:^",
         "@launchpad/vite-config": "workspace:^",
         "@launchpad/vitest-config": "workspace:^",
+        "@types/bun": "catalog:",
         "typescript": "catalog:",
         "vite": "catalog:",
         "vitest": "catalog:",
