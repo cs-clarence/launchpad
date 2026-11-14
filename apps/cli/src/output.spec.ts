@@ -18,6 +18,16 @@ describe("terminal output", () => {
         expect(printed).toContain("[redacted]");
     });
 
+    it("does not expose the suffix of a partially redacted, control-split key", () => {
+        const body = "a".repeat(8) + "b".repeat(35);
+        for (const split of [8, 9, 16, 32, 42]) {
+            for (const control of ["\u0007", "\u001b[31m", "\u009b31m"]) {
+                const value = `lp_${body.slice(0, split)}${control}${body.slice(split)}`;
+                expect(safeOutput(`token: ${value}`)).toBe("token: lp_[redacted]");
+            }
+        }
+    });
+
     it("removes escape sequences and control bytes but preserves newlines and tabs", () => {
         expect(safeOutput("\u001b[31mname\u001b[0m\u0007\r\n\tvalue\u009b")).toBe("name\n\tvalue");
         expect(safeOutput("\u001b]8;;https://evil.example.com\u0007label\u001b]8;;\u0007")).toBe(
