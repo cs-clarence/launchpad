@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createTestDatabase } from "@launchpad/database/testing";
+import { sql } from "kysely";
 import { createAuth, createMailer, loadAuthConfig } from "../index";
 import { type FakeSmtp, mailText, startFakeSmtp } from "../testing";
 
@@ -27,6 +28,57 @@ async function addUser(auth: ReturnType<typeof createAuth>, email: string, verif
         })
         .execute();
     return id;
+}
+
+async function addKeyFixtures(userId: string, otherUserId: string) {
+    const db = testDb.db;
+    const orgId = randomUUID();
+    await db
+        .insertInto("organization")
+        .values({
+            id: orgId,
+            name: "Recovery keys",
+            slug: `recovery-${orgId.slice(0, 12)}`,
+            logo: null,
+            metadata: null,
+            createdAt: new Date(),
+        })
+        .execute();
+    const memberIds = [randomUUID(), randomUUID()];
+    await db
+        .insertInto("member")
+        .values(
+            [userId, otherUserId].map((id, index) => ({
+                id: memberIds[index]!,
+                organizationId: orgId,
+                userId: id,
+                role: "admin" as const,
+                createdAt: new Date(),
+            })),
+        )
+        .execute();
+    const ids = Array.from({ length: 4 }, () => randomUUID());
+    const revokedAt = new Date("2026-01-01T00:00:00.000Z");
+    await db
+        .insertInto("api_key")
+        .values(
+            ids.map((id, index) => ({
+                id,
+                organization_id: orgId,
+                created_by: index === 3 ? otherUserId : userId,
+                member_id: memberIds[index === 3 ? 1 : 0]!,
+                name: "recovery fixture",
+                prefix: "lp_abcdef",
+                secret_hash: randomUUID(),
+                scopes: ["project:read"],
+                project_ids: null,
+                expires_at: new Date(Date.now() + 86_400_000),
+                revoked_at: index === 2 ? revokedAt : null,
+                last_used_at: null,
+            })),
+        )
+        .execute();
+    return { ids, revokedAt };
 }
 
 // Each call gets its own client address, so Better Auth's per-address limits do
@@ -69,8 +121,9 @@ describe("email password recovery", () => {
             LAUNCHPAD_EMAIL_FROM: "launchpad@example.com",
         });
         const auth = createAuth({ db: testDb.db, config, mailer: createMailer(config) });
-        await addUser(auth, "verified@example.com", true);
-        await addUser(auth, "provisioned@example.com", false);
+        const userId = await addUser(auth, "verified@example.com", true);
+        const otherUserId = await addUser(auth, "provisioned@example.com", false);
+        const keys = await addKeyFixtures(userId, otherUserId);
 
         const answers = [];
         for (const email of [
@@ -100,6 +153,22 @@ describe("email password recovery", () => {
             token,
         });
         expect(reset.status).toBe(200);
+        const after = await testDb.db
+            .selectFrom("api_key")
+            .select(["id", "revoked_at"])
+            .where("id", "in", keys.ids)
+            .execute();
+        expect(after.find((row) => row.id === keys.ids[0])?.revoked_at).toBeInstanceOf(Date);
+        expect(after.find((row) => row.id === keys.ids[1])?.revoked_at).toBeInstanceOf(Date);
+        expect(after.find((row) => row.id === keys.ids[2])?.revoked_at).toEqual(keys.revokedAt);
+        expect(after.find((row) => row.id === keys.ids[3])?.revoked_at).toBeNull();
+        const audit = await testDb.db
+            .selectFrom("audit_event")
+            .select("detail")
+            .where("target_id", "=", userId)
+            .where("action", "=", "user.password_reset_by_email")
+            .executeTakeFirstOrThrow();
+        expect(JSON.parse(audit.detail!)).toEqual({ revokedKeys: 2 });
         expect(await testDb.db.selectFrom("session").select("id").execute()).toHaveLength(0);
         expect(
             (
@@ -121,6 +190,69 @@ describe("email password recovery", () => {
             (await post(auth, "/reset-password", { newPassword: "another-new-pass-1", token }))
                 .status,
         ).toBe(400);
+    });
+
+    it("does not restore revoked keys if email-reset auditing fails after the password change", async () => {
+        const config = loadAuthConfig({
+            ...env,
+            LAUNCHPAD_SMTP_URL: smtp.url,
+            LAUNCHPAD_EMAIL_FROM: "launchpad@example.com",
+        });
+        const auth = createAuth({ db: testDb.db, config, mailer: createMailer(config) });
+        const userId = await addUser(auth, "audit-reset@example.com", true);
+        const otherId = await addUser(auth, "audit-reset-other@example.com", false);
+        const keys = await addKeyFixtures(userId, otherId);
+        const before = smtp.messages.length;
+        expect(
+            (
+                await post(auth, "/request-password-reset", {
+                    email: "audit-reset@example.com",
+                })
+            ).status,
+        ).toBe(200);
+        await expect.poll(() => smtp.messages.length, { timeout: 8000 }).toBe(before + 1);
+        const token = /reset-password\?token=([^\s]+)/.exec(mailText(smtp.messages[before]!))?.[1];
+        expect(token).toBeTruthy();
+        await sql`alter table audit_event add constraint reject_email_reset_test
+            check (action <> 'user.password_reset_by_email') not valid`.execute(testDb.db);
+        try {
+            const reset = await post(auth, "/reset-password", {
+                newPassword: "recovered-password-123",
+                token,
+            });
+            expect(reset.status).toBe(500);
+            const rows = await testDb.db
+                .selectFrom("api_key")
+                .select(["id", "revoked_at"])
+                .where("id", "in", keys.ids)
+                .execute();
+            expect(rows.find((row) => row.id === keys.ids[0])?.revoked_at).toBeInstanceOf(Date);
+            expect(rows.find((row) => row.id === keys.ids[1])?.revoked_at).toBeInstanceOf(Date);
+            expect(rows.find((row) => row.id === keys.ids[2])?.revoked_at).toEqual(keys.revokedAt);
+            expect(rows.find((row) => row.id === keys.ids[3])?.revoked_at).toBeNull();
+            // Better Auth committed this before running the callback. A retry with
+            // the consumed token fails, but the new password is usable.
+            expect(
+                (
+                    await post(auth, "/reset-password", {
+                        newPassword: "another-password-123",
+                        token,
+                    })
+                ).status,
+            ).toBe(400);
+            expect(
+                (
+                    await post(auth, "/sign-in/email", {
+                        email: "audit-reset@example.com",
+                        password: "recovered-password-123",
+                    })
+                ).status,
+            ).toBe(200);
+        } finally {
+            await sql`alter table audit_event drop constraint reject_email_reset_test`.execute(
+                testDb.db,
+            );
+        }
     });
 
     it("answers the same when SMTP is unreachable", async () => {

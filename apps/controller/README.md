@@ -69,7 +69,8 @@ accepted trade-off); Better Auth
 also limits each client address. `setup` creates the one instance operator, once, with the password from stdin.
 `reset-password --email <email>` (new password from `--password-file` or stdin) is the
 local recovery path: it replaces the password, revokes all of that user's
-sessions and writes an audit event. It is a host command, not an HTTP endpoint.
+sessions and API keys, and writes an audit event with revoked-session/key counts.
+It is a host command, not an HTTP endpoint.
 The controller never migrates on startup. There is no default password.
 Provision people and organizations offline:
 
@@ -116,3 +117,11 @@ sends `Authorization: Bearer lp_…`. A key is limited to its organization, to t
 was given (read and project actions only), optionally to named projects, and never exceeds
 its creator's current role; it stops working when it expires, is revoked, or its creator
 leaves the organization. Keys cannot manage keys, members, invitations or organizations.
+
+Project-restricted keys cannot be issued with `project:create`. Both email and
+operator password recovery revoke the user's API keys; removing a member also
+deactivates and audits their active keys. Recovery audit events count revoked keys.
+The emailed-reset callback runs after Better Auth commits its password change.
+If the callback fails, the response reports failure but the password/token change
+may already have committed. Key revocation precedes its audit insert, so audit
+failure does not restore keys. Use operator recovery if necessary.

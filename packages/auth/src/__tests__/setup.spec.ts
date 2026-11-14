@@ -203,10 +203,16 @@ describe("first operator setup", () => {
 
         const audit = await testDb.db
             .selectFrom("audit_event")
-            .select("action")
+            .select(["action", "detail"])
             .where("target_id", "=", user.id)
             .execute();
         expect(audit.map((a) => a.action)).toContain("user.password_reset");
+        expect(
+            JSON.parse(audit.find((row) => row.action === "user.password_reset")!.detail!),
+        ).toEqual({
+            revokedSessions: sessions.length,
+            revokedKeys: 1,
+        });
         await expect(
             resetPassword(
                 { db: testDb.db, auth },

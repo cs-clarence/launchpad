@@ -8,8 +8,9 @@ developer, viewer; read-only roles are explicit) and its separate preview domain
 
 - Organization roles are `owner`, `admin`, `deployer` and `viewer`:
     - viewer reads organization, members and projects;
-    - deployer also creates projects and (later) deploys and creates API keys;
-    - admin also manages members (assigning only deployer or viewer) and deletes projects;
+    - deployer also creates projects and (later) deploys;
+    - admin also manages members (assigning only deployer or viewer), deletes projects,
+      and issues/revokes API keys;
     - owner also assigns any role, including owner, and deletes the organization.
 - The instance operator creates organizations and recovers accounts. The
   operator has no automatic access inside any organization; reading or changing
@@ -39,9 +40,21 @@ key and organization management, so a key cannot mint or widen credentials. At i
 every scope must be permitted to the creator's role; on each use the scopes are
 narrowed to the creator's current role, and a key whose creator left the organization
 is dead for good: a key is bound to the creator's membership row, so adding the same user
-back later does not revive it. Operator password recovery revokes the user's keys along
-with their sessions. Admins can list and revoke any key in the organization, including an
+back later does not revive it. Both operator and emailed password recovery revoke the
+user's keys along with their sessions; recovery audit events include revoked-key counts.
+Removing a member audits deactivation of their active keys in the removal transaction.
+Admins can list and revoke any key in the organization, including an
 owner's. Issuing a key needs a session created in the last 15 minutes. A key never carries
 the operator flag, and audit events name the key (`api_key:<id>`) with the creator in the
 detail. A request authenticated just before a revocation commits still completes. Expiry is mandatory (at most 365 days), secrets are revealed once and stored
 as hashes, and issuing and revoking are audited.
+
+A project-restricted key cannot include `project:create`; issuance rejects that
+combination. The HTTP restriction also remains for older keys already carrying it.
+
+Better Auth invokes the emailed-reset hook after committing its password/token/session
+change. The hook revokes credentials before inserting its audit event, so an audit
+failure cannot undo key revocation. A hook failure returns an error, but the password
+may already have changed and the reset token may already be consumed; use operator
+recovery if necessary. This is not atomic with Better Auth's password update and does
+not close the documented sign-in/reset race.

@@ -97,8 +97,11 @@ not as part of this plan.
 
 ### Better Auth integration
 
-Use Better Auth's local database-backed email/password login, organization
-plugin, and separate `@better-auth/api-key` plugin. Username login is optional;
+Use Better Auth's local database-backed email/password login. Organization
+membership/enrollment and API keys live in Launchpad services, not Better Auth's
+organization or API-key plugins; the milestone 0 plugin spike is historical.
+See [organization roles and keys](../decisions/organization-roles-and-operator-access.md).
+Username login is optional;
 "local" does not require an external identity provider, but does not imply
 password-reset/invitation email works without a mail/provisioning policy.
 
@@ -124,11 +127,12 @@ principal = { actorType, actorId, organizationId, scopes, credentialId? }
 
 - Browser: server-validated Better Auth session plus current organization
   membership. A browser's active organization is a convenience, not authorization.
-- User API key: current user membership intersected with the key's granted
-  permissions and optional project restriction.
-- Organization API key: org-owned service principal, limited by its explicit
-  permissions, expiry and org/project constraints. Its lifetime is governed by
-  organization policy, not an assumption that it is a user's browser session.
+- API key (milestone 2): org-owned credential bound to its creator's original
+  membership. Effective permissions are the intersection of the granted scopes
+  and the creator's current role, plus optional project restrictions. Removing
+  and re-adding the creator never revives the key. Keys do not inherit an instance
+  operator role and are not browser sessions. Separate user-key and independent
+  service-account credential types are not implemented.
 - No missing-credential fallback, even over localhost.
 
 Proposed organization roles: owner, admin, deployer, viewer. Instance operator is
@@ -136,8 +140,9 @@ a separate installation role controlling hosts and enrollment, not an automatic
 cross-organization browsing role. Define and test the action matrix before
 exposing membership APIs.
 
-Scopes include `projects:read`, `previews:read`, `previews:deploy`,
-`previews:delete`, and `logs:read`. Membership/key administration requires
+Milestone 2 scopes use the service actions `organization:read`, `member:read`,
+`project:read`, `project:create` and `project:delete` (reserved until its endpoint
+exists). Later preview/log actions will extend that list. Membership/key administration requires
 dedicated elevated permissions and browser-session reauthentication as needed.
 Keys cannot mint more powerful keys or bypass project restrictions.
 
@@ -147,10 +152,17 @@ Enforce resource authorization inside services so workers or future transports
 cannot silently bypass it. Workers execute persisted authorized intentions and
 recheck applicable revocation/membership policy before starting queued work.
 
-Keys are shown once, stored hashed through the auth plugin, individually
+Keys are shown once, stored as SHA-256 hashes by Launchpad services, individually
 revocable and expiring. Keep key values, cookies and passwords out of logs and
 job payloads. Test every enabled auth/plugin route, not just product endpoints,
 for scope escalation or unintended account creation.
+
+Both email and operator password recovery revoke the user's API keys. Operator
+recovery performs its password change, credential revocation and audit in one
+transaction. Better Auth's email hook runs after its password transaction; it
+revokes credentials before auditing so audit failure does not restore keys.
+Hook failure is reported, but may require operator recovery because the password
+change and token consumption may already have committed.
 
 ### Enrollment and interactive CLI login
 

@@ -99,8 +99,10 @@ publishing and milestone 3 are not authorized by this plan.
 
 Keep client hardening separate from the lifecycle/dashboard change:
 
-- [ ] Decide and document email-password-reset key revocation; operator reset already
-      revokes keys. If email reset revokes them, audit and test the callback.
+- [x] Both password-reset paths revoke API keys and audit counts. The email hook
+      commits revocation before auditing because Better Auth has already changed the
+      password. Callback failure and remaining non-atomic behavior are documented and
+      tested. Awaiting PR review/CI.
 - [x] Reject half-configured environment credentials rather than silently selecting a
       saved profile. Let environment-only project listing discover its key's org, or
       clearly document required org IDs; keep org-selection precedence explicit.
@@ -111,11 +113,11 @@ Keep client hardening separate from the lifecycle/dashboard change:
       busy-store error rather than claiming contention is file corruption.
 - [x] Add real loopback SDK redirect/stream-timeout tests, not just mocked fetch.
       Four integration cases passed under real Bun and Node fetch; the default unit
-      task stays listener-free. Awaiting PR CI/review.
-- [ ] Reject project-limited `project:create` at issuance rather than issuing a key
-      whose create scope can never be used.
-- [ ] Fix stale role, `/me` and Better Auth key-plugin descriptions in the design,
-      plan and ADR. Record key counts in recovery audits and document/audit
-      membership-driven deactivation.
+      task stays listener-free. Merged in PR #8 as `19b420c`.
+- [x] Reject project-limited `project:create` at issuance (422); preserve and test
+      HTTP enforcement for legacy rows.
+- [x] Fix stale role, `/me` and Better Auth key-plugin descriptions in the design,
+      plan and ADR. Recovery audits include key counts; membership removal audits
+      deactivation of active keys in the same transaction.
 - [ ] Record residual and untested behavior explicitly; do not mark these complete
       merely because the dashboard prerequisite PR passes.

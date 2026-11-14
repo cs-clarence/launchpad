@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { nameSchema, slugSchema } from "@launchpad/contracts";
 import type { Database, OrganizationRole } from "@launchpad/database";
-import type { Kysely } from "kysely";
+import { type Kysely, sql } from "kysely";
 import { z } from "zod";
 import {
     can,
@@ -297,7 +297,7 @@ export async function removeMember(
     await db.transaction().execute(async (trx) => {
         const members = await trx
             .selectFrom("member")
-            .select(["userId", "role"])
+            .select(["id", "userId", "role"])
             .where("organizationId", "=", organizationId)
             .forUpdate()
             .execute();
@@ -316,11 +316,29 @@ export async function removeMember(
         if (target.role === "owner" && members.filter((m) => m.role === "owner").length === 1) {
             throw new ServiceError("conflict", "An organization must keep at least one owner.");
         }
+        const deactivated = await trx
+            .selectFrom("api_key")
+            .select("id")
+            .where("organization_id", "=", organizationId)
+            .where("member_id", "=", target.id)
+            .where("revoked_at", "is", null)
+            .where("expires_at", ">", sql<Date>`now()`)
+            .execute();
         await trx
             .deleteFrom("member")
             .where("organizationId", "=", organizationId)
             .where("userId", "=", userId)
             .execute();
+        for (const key of deactivated) {
+            await recordAudit(trx, {
+                actor: principal,
+                action: "api_key.deactivated",
+                targetType: "api_key",
+                targetId: key.id,
+                organizationId,
+                detail: "reason=membership-removed",
+            });
+        }
         await recordAudit(trx, {
             actor: principal,
             action: "member.removed",

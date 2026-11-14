@@ -33,6 +33,19 @@ describe("contracts", () => {
             false,
         );
         expect(createApiKeySchema.safeParse({ ...key, expiresInDays: 366 }).success).toBe(false);
+        expect(
+            createApiKeySchema.safeParse({
+                ...key,
+                scopes: ["project:create"],
+                projectIds: [crypto.randomUUID()],
+            }).success,
+        ).toBe(false);
+        expect(
+            createApiKeySchema.safeParse({
+                ...key,
+                projectIds: [crypto.randomUUID()],
+            }).success,
+        ).toBe(true);
     });
 
     it("describes responses strictly, so the controller cannot drift from them", () => {

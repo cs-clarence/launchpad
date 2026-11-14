@@ -250,7 +250,7 @@ export const docs = {
         tags: ["API keys"],
         summary: "Issue an API key",
         description:
-            "Needs admin or owner and a session created in the last 15 minutes (sign in again otherwise); a key cannot issue keys. The secret is returned once.",
+            "Needs admin or owner and a session created in the last 15 minutes (sign in again otherwise); a key cannot issue keys. The secret is returned once. Project restrictions cannot be combined with project:create.",
         path: ["orgId"],
         body: createApiKeySchema,
         ok: { status: 201, description: "Issued.", schema: createdApiKeySchema },
