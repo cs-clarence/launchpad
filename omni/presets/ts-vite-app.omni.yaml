@@ -1,1 +1,2 @@
+name: ts-vite-app
 extends: ["./ts.omni.yaml"]

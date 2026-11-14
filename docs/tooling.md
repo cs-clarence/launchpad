@@ -66,6 +66,12 @@ guards the workflow: the gatekeeper must need every other job and always run, it
 script is executed against every pass and fail scenario, and no job may bypass Omni with
 a package script. Lint the workflow files with
 `docker run --rm -v "$PWD":/repo -w /repo rhysd/actionlint:latest` after editing them.
+**CI installs the released Omni** (pinned in the setup action), which can be older than
+a local `cargo install` build of Omni's main branch. The first CI run failed on a preset
+without a `name` that the newer local build accepted. Before relying on a local result,
+download the pinned release (`omni-v<version>-x86_64-unknown-linux-gnu.zip` from
+[omni-oss/omni releases](https://github.com/omni-oss/omni/releases)) and run the CI
+commands with it first on the PATH.
 There is no way to run GitHub Actions locally; each job's commands were run against a
 pristine checkout instead (no `node_modules`, `.omni` or git-ignored files).
 

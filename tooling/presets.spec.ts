@@ -6,6 +6,7 @@ const dir = path.resolve(import.meta.dirname, "../omni/presets");
 type Task = Record<string, any>;
 const load = (name: string) =>
     Bun.YAML.parse(readFileSync(path.join(dir, name), "utf8")) as {
+        name?: string;
         extends?: string[];
         cache?: { key?: { files?: string[] } };
         tasks?: Record<string, Task>;
@@ -42,6 +43,14 @@ describe("Omni presets", () => {
 
     it("makes lint warnings fail the check", () => {
         expect(ts.tasks?.["check:lint"]?.exec).toContain("--deny-warnings");
+    });
+
+    // The released Omni (the version CI installs) rejects a preset without a name, while
+    // a newer local build accepts it, so only CI noticed.
+    it("names every preset", () => {
+        for (const file of readdirSync(dir)) {
+            expect(load(file).name, file).toBeTruthy();
+        }
     });
 
     it("has every other preset extend the base TypeScript preset", () => {

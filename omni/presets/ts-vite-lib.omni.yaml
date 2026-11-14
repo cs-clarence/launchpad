@@ -1,1 +1,2 @@
+name: ts-vite-lib
 extends: ["./ts.omni.yaml"]

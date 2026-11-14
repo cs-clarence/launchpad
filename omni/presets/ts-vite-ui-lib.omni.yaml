@@ -1,3 +1,4 @@
+name: ts-vite-ui-lib
 extends: ["./ts.omni.yaml"]
 tasks:
   test:component:
