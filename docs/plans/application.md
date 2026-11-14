@@ -46,7 +46,7 @@ registration is included in this planning request.
 ## Finish line and worked example
 
 An instance operator provisions the installation and organizations Acme and
-Beta. An authorized Acme deployer creates a project and a scoped API key, then:
+Beta. An authorized Acme deployer creates a project; an Acme admin or owner issues a scoped API key, then:
 
 ```sh
 launchpad deploy ./dist --project website --name review --spa --ttl 24h
@@ -314,6 +314,26 @@ Milestone 1 (uncommitted at time of writing):
 - [x] Slice 9: hardening (headers, body limits, throttle cleanup), docs sweep, and
       the final independent review; its must-fix findings are applied.
 
+Milestone 2 slices (one PR each):
+
+- [x] M2-1: org-owned API keys in `packages/services` (`api_key` table, issue with
+      one-time reveal, list, revoke, `authenticateApiKey`); scopes exclude member, key
+      and organization management; a key never exceeds its creator's current role and
+      stops when the creator leaves; secrets stored as SHA-256 hashes.
+- [x] M2-2: `Authorization: Bearer` keys in `/api/v1`: an allow-list of key-usable
+      routes (me, key, own organization, members read, projects list/create), each
+      with a required scope; everything else, including key, member, invitation and
+      organization management, is session-only. Project-limited keys list only their
+      projects and cannot create projects. A bad Authorization header is a 401 and
+      never falls back to the cookie. Key issue/list/revoke endpoints (session only).
+      Not done: the credential generation for the sign-in/reset race (it needs
+      Better Auth's password check and session insert in one transaction; keep it
+      listed as accepted).
+- [ ] M2-3: versioned browser-safe SDK on `contracts.ts` and the shared client core
+      (profiles, mode-600 credential file).
+- [ ] M2-4: CLI (`login --key`, `whoami`, org selection, `projects list`, `--json`)
+      and the dashboard page to create and revoke keys.
+
 Milestone 1 is complete except these known, accepted items:
 
 - No interactive browser check of the UI (no desktop browser was available); the
@@ -329,7 +349,8 @@ Milestone 1 is complete except these known, accepted items:
 - A sign-in whose password check began before an operator password reset can still
   create a session after the reset commits (a millisecond window, and only for someone
   who already knows the old password). Closing it needs a credential generation that
-  sessions and the reset share; plan it with API-key sessions in milestone 2.
+  sessions and the reset share. API keys are revoked by operator recovery, but they are not sessions, so they
+  do not affect it; it stays an accepted gap and needs Better Auth's check and insert in one transaction.
 - Session-refresh cookies are forwarded to the browser for pages, not for direct
   `/api/v1` calls; API clients authenticate with keys from milestone 2.
 - Reset-password, sign-in and invitation endpoints rely on the throttles described in

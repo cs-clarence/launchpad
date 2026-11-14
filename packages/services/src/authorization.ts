@@ -9,11 +9,17 @@ export type OrganizationAction =
     | "member:manage"
     | "project:read"
     | "project:create"
-    | "project:delete";
+    | "project:delete"
+    | "apikey:manage";
 
 const VIEWER: OrganizationAction[] = ["organization:read", "member:read", "project:read"];
 const DEPLOYER: OrganizationAction[] = [...VIEWER, "project:create"];
-const ADMIN: OrganizationAction[] = [...DEPLOYER, "member:manage", "project:delete"];
+const ADMIN: OrganizationAction[] = [
+    ...DEPLOYER,
+    "member:manage",
+    "project:delete",
+    "apikey:manage",
+];
 const OWNER: OrganizationAction[] = [...ADMIN, "organization:delete"];
 
 // The single source of organization authorization. See
@@ -36,9 +42,22 @@ export function canAssignRole(actor: OrganizationRole, target: OrganizationRole)
     return false;
 }
 
+// What an API key may be granted. Deliberately excludes managing members, keys and
+// the organization itself: a key can never mint or widen credentials.
+export const API_KEY_SCOPES = [
+    "organization:read",
+    "member:read",
+    "project:read",
+    "project:create",
+    "project:delete",
+] as const satisfies readonly OrganizationAction[];
+export type ApiKeyScope = (typeof API_KEY_SCOPES)[number];
+
 // Principals are identities already verified by the transport adapter. The
 // instance role grants no access inside an organization.
 export interface Principal {
     userId: string;
     instanceRole: "user" | "operator";
+    // Set when the caller is an API key; audit events then name the key.
+    credentialId?: string;
 }

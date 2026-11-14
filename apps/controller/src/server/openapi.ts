@@ -5,6 +5,10 @@ import {
     acceptInvitationSchema,
     addedMemberSchema,
     addMemberSchema,
+    apiKeySummarySchema,
+    createApiKeySchema,
+    createdApiKeySchema,
+    keyInfoSchema,
     createdInvitationSchema,
     createdOrganizationSchema,
     createdProjectSchema,
@@ -45,6 +49,8 @@ interface Operation {
     summary: string;
     description?: string;
     public?: boolean;
+    keys?: boolean;
+    keyOnly?: boolean;
     path?: string[];
     body?: z.ZodType;
     ok: { status?: number; description: string; schema?: z.ZodType };
@@ -79,7 +85,13 @@ export function operation(op: Operation): DocumentDecoration {
         })),
         ...(op.body ? { requestBody: { required: true, content: content(op.body, "input") } } : {}),
         responses: responses as DocumentDecoration["responses"],
-        security: op.public ? [] : [{ sessionCookie: [] }],
+        security: op.public
+            ? []
+            : op.keyOnly
+              ? [{ bearerKey: [] }]
+              : op.keys
+                ? [{ sessionCookie: [] }, { bearerKey: [] }]
+                : [{ sessionCookie: [] }],
     };
 }
 
@@ -107,13 +119,16 @@ export function openApiPlugin(enabled: boolean) {
                     "Launchpad controller API. Requests are authenticated by the browser session " +
                     "cookie; mutating requests from a browser must come from the controller's own " +
                     "origin. Sign-in, sign-out and password reset are Better Auth endpoints under " +
-                    "`/api/auth` and are not documented here. API-key authentication arrives with " +
-                    "the automation client.",
+                    "`/api/auth` and are not documented here. Automation clients send an " +
+                    "organization API key as `Authorization: Bearer <key>`; operations marked with " +
+                    "the bearer scheme accept one, limited to the key's organization, scopes and " +
+                    "projects. Keys cannot manage keys, members, invitations or organizations.",
             },
             tags: [
                 { name: "Session", description: "The signed-in user." },
                 { name: "Organizations", description: "Organizations and membership." },
                 { name: "Projects", description: "Organization-owned projects." },
+                { name: "API keys", description: "Organization-owned automation keys." },
                 {
                     name: "Invitations",
                     description: "Email invitations (invitation enrollment only).",
@@ -128,6 +143,11 @@ export function openApiPlugin(enabled: boolean) {
                         description:
                             "Set by sign-in. Over HTTPS the cookie name carries a `__Secure-` prefix.",
                     },
+                    bearerKey: {
+                        type: "http",
+                        scheme: "bearer",
+                        description: "An organization API key (`lp_…`).",
+                    },
                 },
             },
         },
@@ -138,17 +158,19 @@ export const docs = {
     me: operation({
         tags: ["Session"],
         summary: "Current user",
+        description: "Session only; an API key gets 403 and reads /v1/key instead.",
         ok: { description: "The signed-in user.", schema: meSchema },
-        errors: [401],
+        errors: [401, 403],
     }),
     listOrganizations: operation({
+        keys: true,
         tags: ["Organizations"],
         summary: "List the caller's organizations",
         ok: {
             description: "Organizations the caller belongs to.",
             schema: z.array(organizationSummarySchema),
         },
-        errors: [401],
+        errors: [401, 403],
     }),
     createOrganization: operation({
         tags: ["Organizations"],
@@ -160,6 +182,7 @@ export const docs = {
         errors: [401, 403, 409, 422],
     }),
     getOrganization: operation({
+        keys: true,
         tags: ["Organizations"],
         summary: "Get an organization",
         path: ["orgId"],
@@ -167,14 +190,15 @@ export const docs = {
             description: "The organization and the caller's role.",
             schema: organizationSummarySchema,
         },
-        errors: [401, 404],
+        errors: [401, 403, 404],
     }),
     listMembers: operation({
+        keys: true,
         tags: ["Organizations"],
         summary: "List members",
         path: ["orgId"],
         ok: { description: "Members.", schema: z.array(memberSchema) },
-        errors: [401, 404],
+        errors: [401, 403, 404],
     }),
     addMember: operation({
         tags: ["Organizations"],
@@ -194,13 +218,15 @@ export const docs = {
         errors: [401, 403, 404, 409],
     }),
     listProjects: operation({
+        keys: true,
         tags: ["Projects"],
         summary: "List projects",
         path: ["orgId"],
         ok: { description: "Projects.", schema: z.array(projectSchema) },
-        errors: [401, 404],
+        errors: [401, 403, 404],
     }),
     createProject: operation({
+        keys: true,
         tags: ["Projects"],
         summary: "Create a project",
         description: "Needs deployer or higher.",
@@ -208,6 +234,45 @@ export const docs = {
         body: createProjectSchema,
         ok: { status: 201, description: "Created.", schema: createdProjectSchema },
         errors: [401, 403, 404, 409, 422],
+    }),
+    keyInfo: operation({
+        keyOnly: true,
+        tags: ["Session"],
+        summary: "Current API key",
+        description: "Only for a request authenticated with an API key.",
+        ok: {
+            description: "The key's organization, scopes and project limits.",
+            schema: keyInfoSchema,
+        },
+        errors: [401, 403],
+    }),
+    createApiKey: operation({
+        tags: ["API keys"],
+        summary: "Issue an API key",
+        description:
+            "Needs admin or owner and a session created in the last 15 minutes (sign in again otherwise); a key cannot issue keys. The secret is returned once.",
+        path: ["orgId"],
+        body: createApiKeySchema,
+        ok: { status: 201, description: "Issued.", schema: createdApiKeySchema },
+        errors: [401, 403, 404, 409, 422],
+    }),
+    listApiKeys: operation({
+        tags: ["API keys"],
+        summary: "List API keys",
+        description: "Never includes secrets.",
+        path: ["orgId"],
+        ok: {
+            description: "Keys, including revoked and expired.",
+            schema: z.array(apiKeySummarySchema),
+        },
+        errors: [401, 403, 404],
+    }),
+    revokeApiKey: operation({
+        tags: ["API keys"],
+        summary: "Revoke an API key",
+        path: ["orgId", "keyId"],
+        ok: { description: "Revoked (idempotent).", schema: okSchema },
+        errors: [401, 403, 404],
     }),
     listInvitations: operation({
         tags: ["Invitations"],

@@ -13,11 +13,11 @@ export class UnknownUserError extends Error {
 }
 
 // Local operator recovery. It is a host-level command, not an HTTP endpoint, and
-// does not depend on email. It revokes every session of the user and is audited.
+// does not depend on email. It revokes every session and API key of the user and is audited.
 export async function resetPassword(
     deps: { db: Kysely<Database>; auth: Auth },
     input: { email: string; password: string; actor: string },
-): Promise<{ id: string; email: string; revokedSessions: number }> {
+): Promise<{ id: string; email: string; revokedSessions: number; revokedKeys: number }> {
     if (input.password.length < MIN_PASSWORD_LENGTH) {
         throw new InvalidSetupInputError(
             `The password must be at least ${MIN_PASSWORD_LENGTH} characters.`,
@@ -60,6 +60,13 @@ export async function resetPassword(
             .deleteFrom("session")
             .where("userId", "=", user.id)
             .executeTakeFirst();
+        // A compromised account may have issued keys; they are credentials of the account.
+        const keys = await trx
+            .updateTable("api_key")
+            .set({ revoked_at: new Date() })
+            .where("created_by", "=", user.id)
+            .where("revoked_at", "is", null)
+            .executeTakeFirst();
         await trx
             .insertInto("audit_event")
             .values({
@@ -69,6 +76,11 @@ export async function resetPassword(
                 target_id: user.id,
             })
             .execute();
-        return { id: user.id, email: user.email, revokedSessions: Number(revoked.numDeletedRows) };
+        return {
+            id: user.id,
+            email: user.email,
+            revokedSessions: Number(revoked.numDeletedRows),
+            revokedKeys: Number(keys.numUpdatedRows),
+        };
     });
 }

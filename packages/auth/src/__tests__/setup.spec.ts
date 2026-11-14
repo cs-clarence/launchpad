@@ -130,11 +130,60 @@ describe("first operator setup", () => {
             ])
             .execute();
 
+        // API keys are credentials of the account: one for this user, one for another.
+        const orgId = randomUUID();
+        await testDb.db
+            .insertInto("organization")
+            .values({
+                id: orgId,
+                name: "Keys",
+                slug: `keys-${orgId.slice(0, 8)}`,
+                logo: null,
+                metadata: null,
+                createdAt: new Date(),
+            })
+            .execute();
+        const keyRows = [];
+        for (const owner of [user.id, other.id]) {
+            const memberId = randomUUID();
+            await testDb.db
+                .insertInto("member")
+                .values({
+                    id: memberId,
+                    organizationId: orgId,
+                    userId: owner,
+                    role: "admin",
+                    createdAt: new Date(),
+                })
+                .execute();
+            keyRows.push({
+                organization_id: orgId,
+                created_by: owner,
+                member_id: memberId,
+                name: "k",
+                prefix: "lp_abcdef",
+                secret_hash: randomUUID(),
+                scopes: ["project:read"],
+                project_ids: null,
+                expires_at: expiresAt,
+                revoked_at: null,
+                last_used_at: null,
+            });
+        }
+        await testDb.db.insertInto("api_key").values(keyRows).execute();
+
         const result = await resetPassword(
             { db: testDb.db, auth },
             { email: "REC@example.com", password: "a-brand-new-password", actor: "operator-cli" },
         );
         expect(result.revokedSessions).toBe(sessions.length);
+        expect(result.revokedKeys).toBe(1);
+        const live = await testDb.db
+            .selectFrom("api_key")
+            .select("created_by")
+            .where("revoked_at", "is", null)
+            .execute();
+        expect(live.map((k) => k.created_by)).toEqual([other.id]);
         expect(
             await testDb.db
                 .selectFrom("session")

@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { ORGANIZATION_ROLES } from "./authorization";
+import { API_KEY_SCOPES, ORGANIZATION_ROLES } from "./authorization";
 
 // The shapes of the public HTTP API's responses. They are the single description
 // used for the OpenAPI document, and integration tests parse real responses with
@@ -8,6 +8,7 @@ import { ORGANIZATION_ROLES } from "./authorization";
 export { addMemberSchema, createOrganizationSchema } from "./organizations";
 export { createProjectSchema } from "./projects";
 export { acceptInvitationSchema, createInvitationSchema } from "./invitations";
+export { createApiKeySchema } from "./api-keys";
 
 const role = z.enum(ORGANIZATION_ROLES);
 const timestamp = z.string().meta({ format: "date-time" });
@@ -96,6 +97,39 @@ export const acceptedInvitationSchema = z.strictObject({
     organizationId: z.string(),
     userId: z.string(),
     createdAccount: z.boolean(),
+});
+
+const apiKeyScope = z.enum(API_KEY_SCOPES);
+
+export const createdApiKeySchema = z.strictObject({
+    id: z.uuid(),
+    name: z.string(),
+    secret: z.string().meta({ description: "Shown once; it cannot be retrieved later." }),
+    scopes: z.array(apiKeyScope),
+    projectIds: z.array(z.uuid()).nullable(),
+    expiresAt: timestamp,
+});
+
+export const apiKeySummarySchema = z.strictObject({
+    id: z.uuid(),
+    name: z.string(),
+    prefix: z.string(),
+    scopes: z.array(apiKeyScope),
+    projectIds: z.array(z.uuid()).nullable(),
+    createdBy: z.string(),
+    createdAt: timestamp,
+    expiresAt: timestamp,
+    revokedAt: timestamp.nullable(),
+    lastUsedAt: timestamp.nullable(),
+});
+
+export const keyInfoSchema = z.strictObject({
+    id: z.uuid(),
+    name: z.string(),
+    organizationId: z.string(),
+    scopes: z.array(apiKeyScope),
+    projectIds: z.array(z.uuid()).nullable(),
+    expiresAt: timestamp,
 });
 
 export const okSchema = z.strictObject({ ok: z.literal(true) });

@@ -29,3 +29,19 @@ developer, viewer; read-only roles are explicit) and its separate preview domain
   Launchpad's API. Invitations (SMTP mode) will reopen specific endpoints
   deliberately in their own change.
 - The last owner of an organization cannot be removed.
+
+## API keys
+
+Keys are org-owned rows in `api_key`, not Better Auth's key plugin, so authorization
+stays in `packages/services`. Admins and owners (`apikey:manage`) issue and revoke
+them. A key's scopes are a subset of read/create/delete actions that excludes member,
+key and organization management, so a key cannot mint or widen credentials. At issue,
+every scope must be permitted to the creator's role; on each use the scopes are
+narrowed to the creator's current role, and a key whose creator left the organization
+is dead for good: a key is bound to the creator's membership row, so adding the same user
+back later does not revive it. Operator password recovery revokes the user's keys along
+with their sessions. Admins can list and revoke any key in the organization, including an
+owner's. Issuing a key needs a session created in the last 15 minutes. A key never carries
+the operator flag, and audit events name the key (`api_key:<id>`) with the creator in the
+detail. A request authenticated just before a revocation commits still completes. Expiry is mandatory (at most 365 days), secrets are revealed once and stored
+as hashes, and issuing and revoking are audited.
