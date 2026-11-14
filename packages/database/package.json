@@ -2,7 +2,7 @@
     "name": "@launchpad/database",
     "version": "0.0.0",
     "private": true,
-    "description": "Kysely PostgreSQL connection factory",
+    "description": "Kysely PostgreSQL access on Bun SQL, and migrations",
     "type": "module",
     "exports": {
         ".": {
@@ -15,6 +15,17 @@
                 "development": "./src/index.ts",
                 "default": "./src/index.ts"
             }
+        },
+        "./testing": {
+            "types": "./src/testing.ts",
+            "import": {
+                "development": "./src/testing.ts",
+                "default": "./src/testing.ts"
+            },
+            "require": {
+                "development": "./src/testing.ts",
+                "default": "./src/testing.ts"
+            }
         }
     },
     "scripts": {
@@ -22,14 +33,13 @@
         "check:types": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.node.json"
     },
     "dependencies": {
-        "kysely": "catalog:",
-        "pg": "catalog:"
+        "kysely": "catalog:"
     },
     "devDependencies": {
         "@launchpad/tsconfig": "workspace:^",
         "@launchpad/vite-config": "workspace:^",
         "@launchpad/vitest-config": "workspace:^",
-        "@types/pg": "catalog:",
+        "@types/bun": "catalog:",
         "typescript": "catalog:",
         "vite": "catalog:",
         "vitest": "catalog:"

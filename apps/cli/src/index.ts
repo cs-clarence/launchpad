@@ -1,5 +1,5 @@
 #!/usr/bin/env bun
-import { Command } from "commander";
+import { Command } from "@commander-js/extra-typings";
 
 const program = new Command()
     .name("launchpad")

@@ -35,3 +35,11 @@ Both offline and SMTP configurations, failures and mode transitions must be
 tested. The auth integration spike must prove the framework can enforce these
 policies without marking unverified email addresses verified. SMTP transport
 configuration alone must never enable invitations or public signup.
+
+Implementation note: v1 allows exactly one instance operator, enforced by a unique
+database index. Supporting several operators needs a new migration and a decision.
+
+Implementation note: email recovery mail goes only to verified addresses. An
+address is verified by accepting an emailed invitation, never by operator
+provisioning, so a mistyped provisioned address cannot be used to take over an
+account. The reset response is identical for every address.
