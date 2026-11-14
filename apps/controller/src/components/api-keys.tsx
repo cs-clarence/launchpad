@@ -1,11 +1,16 @@
 import { useEffect, useRef, useState } from "react";
+import { flushSync } from "react-dom";
 import { useNavigate } from "@tanstack/react-router";
 import { apiRequest } from "../lib/api";
 import {
     issueKey,
     keyInput,
     readKeys,
-    recentAttempt,
+    attemptCandidate,
+    snapshotAttempt,
+    revealNotice,
+    requestSignal,
+    type KeyAttempt,
     type KeySummary,
     type RevealedKey,
 } from "../lib/api-keys";
@@ -17,13 +22,14 @@ const SCOPES = [
     ["project:create", "Create projects (unrestricted keys only)"],
     ["member:read", "Read all organization members, including their email addresses"],
 ] as const;
+const DEFAULT_SCOPES = ["organization:read", "project:read"];
 
 export function ApiKeys(props: {
     organizationId: string;
     keys: KeySummary[];
     projects: { id: string; name: string }[];
     fresh: boolean;
-    freshUntil: number;
+    freshForMs: number;
     paused: boolean;
     onSensitiveChange(locked: boolean): void;
 }) {
@@ -31,40 +37,55 @@ export function ApiKeys(props: {
     const [keys, setKeys] = useState(props.keys);
     const [fresh, setFresh] = useState(props.fresh);
     const [revealed, setRevealed] = useState<RevealedKey | null>(null);
-    const [uncertain, setUncertain] = useState<{ name: string; since: number } | null>(null);
+    const [uncertain, setUncertain] = useState<KeyAttempt | null>(null);
+    const [restoreRefresh, setRestoreRefresh] = useState(false);
+    const [reviewReady, setReviewReady] = useState(true);
     const [error, setError] = useState<string | null>(null);
     const [busy, setBusy] = useState(false);
     const [limited, setLimited] = useState(false);
+    const [scopes, setScopes] = useState(DEFAULT_SCOPES);
     const [projects, setProjects] = useState<string[]>([]);
     const [confirm, setConfirm] = useState<KeySummary | null>(null);
     const [copied, setCopied] = useState(false);
     const working = useRef(false);
     const epoch = useRef(0);
     const request = useRef<AbortController | null>(null);
-    const attempt = useRef<{ name: string; since: number } | null>(null);
+    const attempt = useRef<KeyAttempt | null>(null);
+    const shown = useRef<KeyAttempt | null>(null);
     const secretField = useRef<HTMLInputElement>(null);
 
     useEffect(() => {
-        props.onSensitiveChange(busy || revealed !== null);
+        props.onSensitiveChange(busy || revealed !== null || restoreRefresh);
         return () => props.onSensitiveChange(false);
-    }, [busy, revealed, props.onSensitiveChange]);
+    }, [busy, revealed, restoreRefresh, props.onSensitiveChange]);
+    useEffect(() => setKeys(props.keys), [props.keys]);
     useEffect(() => {
-        setFresh(Date.now() < props.freshUntil);
-        const timer = setTimeout(() => setFresh(false), Math.max(0, props.freshUntil - Date.now()));
+        setFresh(props.fresh);
+        const timer = setTimeout(() => setFresh(false), props.freshForMs);
         return () => clearTimeout(timer);
-    }, [props.freshUntil]);
+    }, [props.fresh, props.freshForMs]);
     useEffect(() => {
         function clear() {
             epoch.current++;
             request.current?.abort();
-            // Clear the DOM synchronously before bfcache can snapshot the page.
-            if (secretField.current) secretField.current.value = "";
-            setRevealed(null);
-            setCopied(false);
-            if (attempt.current) setUncertain(attempt.current);
+            const abandoned = shown.current ?? attempt.current;
+            shown.current = null;
+            // Remove the controlled element (including its value attribute)
+            // synchronously before bfcache can snapshot the page.
+            flushSync(() => {
+                setRevealed(null);
+                setCopied(false);
+                if (abandoned) {
+                    setUncertain(abandoned);
+                    setReviewReady(false);
+                }
+            });
         }
         const show = (event: PageTransitionEvent) => {
-            if (event.persisted) clear();
+            if (event.persisted) {
+                clear();
+                setRestoreRefresh(true);
+            }
         };
         window.addEventListener("pagehide", clear);
         window.addEventListener("pageshow", show);
@@ -75,10 +96,17 @@ export function ApiKeys(props: {
             window.removeEventListener("pageshow", show);
         };
     }, []);
+    useEffect(() => {
+        if (!restoreRefresh || busy || props.paused) return;
+        setRestoreRefresh(false);
+        void act(refresh);
+    }, [restoreRefresh, busy, props.paused]);
 
     async function refresh() {
+        setReviewReady(false);
         try {
             setKeys(await readKeys(props.organizationId));
+            setReviewReady(true);
         } catch {
             setError("Could not refresh the key list. Use Refresh keys to try again.");
         }
@@ -99,7 +127,7 @@ export function ApiKeys(props: {
     }
     const active = keys.filter((key) => key.status === "active");
     const other = keys.filter((key) => key.status !== "active");
-    const locked = busy || revealed !== null || props.paused;
+    const locked = busy || revealed !== null || props.paused || restoreRefresh;
     function row(key: KeySummary) {
         return (
             <li key={key.id} className="space-y-2 rounded border p-3">
@@ -111,12 +139,12 @@ export function ApiKeys(props: {
                     .
                 </p>
                 <p>
-                    Created: {key.createdAt}. Expires: {key.expiresAt}.
+                    Creator: {key.createdBy}. Created: {key.createdAt}. Expires: {key.expiresAt}.
                 </p>
-                {uncertain && recentAttempt(key, uncertain) ? (
+                {uncertain && attemptCandidate(key, uncertain) ? (
                     <p>
-                        Possible result of the unconfirmed attempt. Revoke it if you did not save
-                        its key.
+                        Candidate for the interrupted reveal. Check the prefix, creator and creation
+                        time before revoking; a matching name alone is not proof.
                     </p>
                 ) : null}
                 <button
@@ -184,8 +212,12 @@ export function ApiKeys(props: {
                         className="btn preset-filled"
                         onClick={() => {
                             if (secretField.current) secretField.current.value = "";
+                            shown.current = null;
                             setRevealed(null);
                             setCopied(false);
+                            setLimited(false);
+                            setScopes(DEFAULT_SCOPES);
+                            setProjects([]);
                             void act(refresh);
                         }}
                     >
@@ -206,7 +238,15 @@ export function ApiKeys(props: {
                                 disabled={busy || props.paused}
                                 onClick={() =>
                                     void act(async () => {
-                                        const result = await authClient.signOut();
+                                        const lifetime = requestSignal();
+                                        let result: Awaited<ReturnType<typeof authClient.signOut>>;
+                                        try {
+                                            result = await authClient.signOut({
+                                                fetchOptions: { signal: lifetime.signal },
+                                            });
+                                        } finally {
+                                            lifetime.dispose();
+                                        }
                                         if (result.error) {
                                             setError("Could not sign out. Try again.");
                                             return;
@@ -227,14 +267,22 @@ export function ApiKeys(props: {
                     {uncertain ? (
                         <div className="space-y-2" role="alert">
                             <p>
-                                Issuance of “{uncertain.name}” could not be confirmed. It may have
-                                succeeded. Check recent keys below and revoke any key you did not
-                                save before trying again. No automatic retry was made.
+                                {uncertain.keyId
+                                    ? `The reveal for “${uncertain.name}” (${uncertain.prefix}…) was cleared when you left.`
+                                    : `Issuance of “${uncertain.name}” could not be confirmed. It may have succeeded.`}{" "}
+                                Inspect the candidate keys below and revoke your unsaved key before
+                                trying again. No automatic retry was made.
                             </p>
+                            {!reviewReady ? (
+                                <p>
+                                    Refresh the key list successfully before allowing another
+                                    attempt.
+                                </p>
+                            ) : null}
                             <button
                                 type="button"
                                 className="btn preset-tonal"
-                                disabled={busy}
+                                disabled={busy || props.paused || restoreRefresh || !reviewReady}
                                 onClick={() => setUncertain(null)}
                             >
                                 I checked the list — allow another attempt
@@ -245,7 +293,14 @@ export function ApiKeys(props: {
                         className="space-y-3"
                         onSubmit={async (event) => {
                             event.preventDefault();
-                            if (working.current || props.paused || uncertain || !fresh) return;
+                            if (
+                                working.current ||
+                                props.paused ||
+                                restoreRefresh ||
+                                uncertain ||
+                                !fresh
+                            )
+                                return;
                             let input: ReturnType<typeof keyInput>;
                             try {
                                 input = keyInput(new FormData(event.currentTarget));
@@ -256,7 +311,7 @@ export function ApiKeys(props: {
                                 return;
                             }
                             const current = epoch.current;
-                            const pending = { name: input.name, since: Date.now() };
+                            const pending = snapshotAttempt(input.name, keys);
                             attempt.current = pending;
                             request.current = new AbortController();
                             await act(async () => {
@@ -269,6 +324,7 @@ export function ApiKeys(props: {
                                 if (current !== epoch.current) return;
                                 if (result.kind === "issued") {
                                     // No loader invalidation or GET before this reveal is dismissed.
+                                    shown.current = revealNotice(pending, result.key);
                                     setRevealed(result.key);
                                     setConfirm(null);
                                 } else if (result.kind === "rejected") {
@@ -277,6 +333,7 @@ export function ApiKeys(props: {
                                         setFresh(false);
                                 } else {
                                     setUncertain(pending);
+                                    setReviewReady(false);
                                     await refresh();
                                 }
                             });
@@ -286,7 +343,13 @@ export function ApiKeys(props: {
                     >
                         <fieldset
                             className="space-y-3"
-                            disabled={busy || props.paused || !fresh || uncertain !== null}
+                            disabled={
+                                busy ||
+                                props.paused ||
+                                restoreRefresh ||
+                                !fresh ||
+                                uncertain !== null
+                            }
                         >
                             <legend className="h4">Issue an API key</legend>
                             <p>
@@ -305,10 +368,15 @@ export function ApiKeys(props: {
                                             type="checkbox"
                                             name="scopes"
                                             value={scope}
-                                            defaultChecked={
-                                                scope === "organization:read" ||
-                                                scope === "project:read"
-                                            }
+                                            checked={scopes.includes(scope)}
+                                            onChange={(event) => {
+                                                const checked = event.target.checked;
+                                                setScopes((old) =>
+                                                    checked
+                                                        ? [...old, scope]
+                                                        : old.filter((value) => value !== scope),
+                                                );
+                                            }}
                                             disabled={limited && scope === "project:create"}
                                         />
                                         {label}
@@ -330,7 +398,14 @@ export function ApiKeys(props: {
                                     type="checkbox"
                                     name="limit"
                                     checked={limited}
-                                    onChange={(event) => setLimited(event.target.checked)}
+                                    onChange={(event) => {
+                                        const checked = event.target.checked;
+                                        setLimited(checked);
+                                        if (checked)
+                                            setScopes((old) =>
+                                                old.filter((scope) => scope !== "project:create"),
+                                            );
+                                    }}
                                 />
                                 Restrict to selected projects (up to 50)
                             </label>
@@ -354,13 +429,14 @@ export function ApiKeys(props: {
                                                     projects.length >= 50 &&
                                                     !projects.includes(project.id)
                                                 }
-                                                onChange={(event) =>
+                                                onChange={(event) => {
+                                                    const checked = event.target.checked;
                                                     setProjects((old) =>
-                                                        event.target.checked
+                                                        checked
                                                             ? [...old, project.id]
                                                             : old.filter((id) => id !== project.id),
-                                                    )
-                                                }
+                                                    );
+                                                }}
                                             />
                                             {project.name}
                                         </label>
@@ -401,10 +477,18 @@ export function ApiKeys(props: {
                         disabled={locked}
                         onClick={() =>
                             void act(async () => {
-                                const result = await apiRequest(
-                                    "DELETE",
-                                    `/organizations/${encodeURIComponent(props.organizationId)}/api-keys/${encodeURIComponent(confirm.id)}`,
-                                );
+                                const lifetime = requestSignal();
+                                let result: Awaited<ReturnType<typeof apiRequest>>;
+                                try {
+                                    result = await apiRequest(
+                                        "DELETE",
+                                        `/organizations/${encodeURIComponent(props.organizationId)}/api-keys/${encodeURIComponent(confirm.id)}`,
+                                        undefined,
+                                        lifetime.signal,
+                                    );
+                                } finally {
+                                    lifetime.dispose();
+                                }
                                 if (!result.ok) {
                                     setError(result.message);
                                     return;

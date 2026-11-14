@@ -1,5 +1,15 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { issueKey, keyInput, readKeys, recentAttempt, type KeySummary } from "./api-keys";
+import {
+    issueKey,
+    keyInput,
+    readKeys,
+    attemptCandidate,
+    snapshotAttempt,
+    revealNotice,
+    keySessionFreshness,
+    type KeySummary,
+    requestSignal,
+} from "./api-keys";
 
 const input = {
     name: "ci",
@@ -28,9 +38,49 @@ const summary: KeySummary = {
 };
 const json = (body: unknown, status: number) => new Response(JSON.stringify(body), { status });
 const fetcher = (response: Response) => vi.fn(async () => response);
-afterEach(() => vi.restoreAllMocks());
+afterEach(() => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+});
 
 describe("dashboard key issuance", () => {
+    it("composes cancellation and timeouts without AbortSignal static helpers and cleans up", () => {
+        vi.useFakeTimers();
+        vi.spyOn(AbortSignal, "any").mockImplementation(() => {
+            throw new Error("Unavailable");
+        });
+        vi.spyOn(AbortSignal, "timeout").mockImplementation(() => {
+            throw new Error("Unavailable");
+        });
+        const parent = new AbortController();
+        const linked = requestSignal(parent.signal);
+        parent.abort();
+        expect(linked.signal.aborted).toBe(true);
+        linked.dispose();
+        expect(vi.getTimerCount()).toBe(0);
+
+        const detachedParent = new AbortController();
+        const detached = requestSignal(detachedParent.signal);
+        detached.dispose();
+        detachedParent.abort();
+        expect(detached.signal.aborted).toBe(false);
+        const timed = requestSignal();
+        vi.advanceTimersByTime(30_000);
+        expect(timed.signal.aborted).toBe(true);
+        timed.dispose();
+        expect(vi.getTimerCount()).toBe(0);
+    });
+
+    it("does not send an issuance request already cancelled before submission", async () => {
+        const parent = new AbortController();
+        parent.abort();
+        const fn = fetcher(json(revealed, 201));
+        expect(
+            await issueKey("org", payload(), fn as unknown as typeof fetch, parent.signal),
+        ).toMatchObject({ kind: "rejected", status: 0 });
+        expect(fn).not.toHaveBeenCalled();
+    });
+
     it("reveals a validated 201 response, tolerates extra fields and never retries", async () => {
         const fn = fetcher(json({ ...revealed, future: true }, 201));
         const result = await issueKey("org/1", payload(), fn as unknown as typeof fetch);
@@ -108,13 +158,46 @@ describe("dashboard key issuance", () => {
         expect(() => keyInput(form)).toThrow();
     });
 
-    it("identifies only recent same-name candidates after an uncertain request", () => {
-        const attempt = { name: "ci", since: Date.parse(summary.createdAt) };
-        expect(recentAttempt(summary, attempt)).toBe(true);
-        expect(recentAttempt({ ...summary, name: "other" }, attempt)).toBe(false);
-        expect(recentAttempt({ ...summary, createdAt: "2020-01-01T00:00:00.000Z" }, attempt)).toBe(
-            false,
-        );
+    it("uses a server-relative freshness duration, independent of the browser wall clock", () => {
+        vi.spyOn(Date, "now").mockReturnValue(100 * 365 * 86_400_000);
+        expect(keySessionFreshness(0, 10 * 60_000)).toEqual({
+            fresh: true,
+            remainingMs: 5 * 60_000,
+        });
+        expect(keySessionFreshness(0, 15 * 60_000)).toEqual({ fresh: false, remainingMs: 0 });
+        expect(keySessionFreshness(0, 16 * 60_000)).toEqual({ fresh: false, remainingMs: 0 });
+        expect(keySessionFreshness(16 * 60_000, 16 * 60_000)).toEqual({
+            fresh: true,
+            remainingMs: 15 * 60_000,
+        });
+    });
+
+    it("uses the pre-submit ID snapshot instead of clocks to identify candidates", () => {
+        const attempt = snapshotAttempt("ci", [summary]);
+        const unseen = {
+            ...summary,
+            id: crypto.randomUUID(),
+            createdAt: "1900-01-01T00:00:00.000Z",
+        };
+        expect(attemptCandidate(summary, attempt)).toBe(false);
+        expect(
+            attemptCandidate({ ...summary, createdAt: "2999-01-01T00:00:00.000Z" }, attempt),
+        ).toBe(false);
+        expect(attemptCandidate(unseen, attempt)).toBe(true);
+        expect(attemptCandidate({ ...unseen, name: "other" }, attempt)).toBe(false);
+        expect(attempt.knownIds).toEqual([summary.id]);
+    });
+
+    it("retains only non-secret identity for an abandoned reveal and marks its exact ID", () => {
+        const notice = revealNotice(snapshotAttempt("ci", []), revealed);
+        expect(notice).toMatchObject({
+            name: "ci",
+            keyId: revealed.id,
+            prefix: revealed.secret.slice(0, 9),
+        });
+        expect(JSON.stringify(notice)).not.toContain(revealed.secret);
+        expect(attemptCandidate(summary, notice)).toBe(true);
+        expect(attemptCandidate({ ...summary, id: crypto.randomUUID() }, notice)).toBe(false);
     });
 
     it("refreshes metadata with GET, validates it and never requests a secret", async () => {

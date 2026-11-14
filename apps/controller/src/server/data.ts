@@ -1,6 +1,7 @@
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 import { apiKeySummarySchema } from "@launchpad/contracts";
+import { keySessionFreshness } from "../lib/api-keys";
 
 // Server functions read through the same authorized services as the HTTP API.
 // Imports are dynamic so server-only code stays out of the client bundle.
@@ -55,7 +56,7 @@ export const getOrganizationViewFn = createServerFn({ method: "GET" })
                   }),
               )
             : null;
-        const keySessionFreshUntil = new Date(sessionCreatedAt).getTime() + 15 * 60 * 1000;
+        const freshness = keySessionFreshness(new Date(sessionCreatedAt).getTime(), Date.now());
         const invitations =
             canManage && runtime.features.invitations
                 ? (await services.listInvitations(runtime.db, who, data.orgId)).map((i) => ({
@@ -67,8 +68,8 @@ export const getOrganizationViewFn = createServerFn({ method: "GET" })
                 : null;
         return {
             apiKeys,
-            keySessionFreshUntil,
-            keySessionFresh: Date.now() < keySessionFreshUntil,
+            keySessionFreshForMs: freshness.remainingMs,
+            keySessionFresh: freshness.fresh,
             invitations,
             organization,
             projects: projects.map((p) => ({ ...p, createdAt: p.createdAt.toISOString() })),

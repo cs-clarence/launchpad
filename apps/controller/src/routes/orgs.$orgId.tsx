@@ -71,13 +71,13 @@ function Organization() {
                     keys={view.apiKeys}
                     projects={view.projects}
                     fresh={view.keySessionFresh}
-                    freshUntil={view.keySessionFreshUntil}
+                    freshForMs={view.keySessionFreshForMs}
                     paused={project.pending || member.pending || invite.pending}
                     onSensitiveChange={setKeysLocked}
                 />
             ) : null}
 
-            <fieldset className="space-y-10" disabled={keysLocked}>
+            <fieldset className="min-w-0 space-y-10" disabled={keysLocked}>
                 <section className="space-y-4">
                     <h2 className="h3">Projects</h2>
                     {view.projects.length === 0 ? (
