@@ -60,7 +60,12 @@ describe("request body limits", () => {
         api.fetch(
             new Request("http://localhost:3000/api/v1/organizations", {
                 method: "POST",
-                headers: { "content-type": "application/json", ...headers },
+                // A real HTTP client declares the body's length; tests override it to probe.
+                headers: {
+                    "content-type": "application/json",
+                    "content-length": String(new TextEncoder().encode(body).length),
+                    ...headers,
+                },
                 body,
             }),
         );
@@ -77,6 +82,34 @@ describe("request body limits", () => {
             expect((await post({ "transfer-encoding": value })).status, value).toBe(411);
         }
         expect((await post({ "content-length": "-5" })).status).toBe(411);
+    });
+
+    it("refuses a body that arrives with no declared length at all", async () => {
+        const stream = new ReadableStream({
+            start(controller) {
+                controller.enqueue(new TextEncoder().encode("{}"));
+                controller.close();
+            },
+        });
+        const response = await api.fetch(
+            new Request("http://localhost:3000/api/v1/organizations", {
+                method: "POST",
+                headers: { "content-type": "application/json" },
+                body: stream,
+                // @ts-expect-error `duplex` is required for streamed bodies but missing from the DOM types
+                duplex: "half",
+            }),
+        );
+        expect(response.status).toBe(411);
+    });
+
+    it("does not require a length for a request that has no body", async () => {
+        const response = await api.fetch(
+            new Request("http://localhost:3000/api/v1/organizations/x/members/y", {
+                method: "DELETE",
+            }),
+        );
+        expect(response.status).toBe(401);
     });
 
     it("lets ordinary small bodies through to authentication", async () => {

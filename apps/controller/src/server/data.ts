@@ -71,7 +71,9 @@ export const getInvitationPreviewFn = createServerFn({ method: "POST" })
         const { previewInvitation } = await import("@launchpad/services");
         const { getRuntime } = await import("./runtime");
         const runtime = getRuntime();
-        const preview = await previewInvitation(runtime.db, data.token).catch(() => null);
+        const preview = await previewInvitation(runtime.db, data.token, runtime.invitations).catch(
+            () => null,
+        );
         if (!preview) {
             return null;
         }

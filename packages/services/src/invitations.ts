@@ -228,7 +228,20 @@ export async function revokeInvitation(
 }
 
 // What the holder of a token may learn before accepting it.
-export async function previewInvitation(db: Db, token: string) {
+// Switching enrollment away from invitations (or removing SMTP) must also stop
+// redemption of invitations already sent, not only the creation of new ones.
+function requireEnabled(deps: Pick<InvitationDeps, "enabled">) {
+    if (!deps.enabled) {
+        throw new ServiceError("not-found", "This invitation is not valid.");
+    }
+}
+
+export async function previewInvitation(
+    db: Db,
+    token: string,
+    deps: Pick<InvitationDeps, "enabled">,
+) {
+    requireEnabled(deps);
     const invitation = await pending(db)
         .innerJoin("organization", "organization.id", "organization_invitation.organization_id")
         .select([
@@ -262,8 +275,9 @@ export async function acceptInvitation(
     db: Db,
     principal: Principal | null,
     input: unknown,
-    deps: Pick<InvitationDeps, "hashPassword" | "publicSignup">,
+    deps: Pick<InvitationDeps, "hashPassword" | "publicSignup" | "enabled">,
 ) {
+    requireEnabled(deps);
     const data = parseInput(acceptInvitationSchema, input);
     try {
         return await db.transaction().execute(async (trx) => {

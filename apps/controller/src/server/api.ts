@@ -165,7 +165,10 @@ export function createApi(deps: {
                     // Any transfer coding means an undeclared length; the limit cannot be
                     // enforced before reading, and legitimate clients send a length.
                     const encoded = request.headers.has("transfer-encoding");
-                    if (encoded || (declared !== null && !/^\d+$/.test(declared))) {
+                    // A body with no declared length (neither header) would reach the JSON
+                    // readers unbounded, so a body must always arrive with a length.
+                    const unframed = request.body !== null && declared === null;
+                    if (encoded || unframed || (declared !== null && !/^\d+$/.test(declared))) {
                         return Response.json(
                             { code: "invalid", status: 411, title: "Length Required" },
                             { status: 411 },
@@ -303,7 +306,9 @@ export function createApi(deps: {
                 async ({ request, set }) => {
                     const input = (await body(request)) as { token?: unknown } | undefined;
                     const token = typeof input?.token === "string" ? input.token : "";
-                    return respondPublic(request, set, () => previewInvitation(db, token));
+                    return respondPublic(request, set, () =>
+                        previewInvitation(db, token, invitations),
+                    );
                 },
             )
             .post(

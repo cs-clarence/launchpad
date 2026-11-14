@@ -162,7 +162,7 @@ describe("creating invitations", () => {
             { email: "fresh@example.com", role: "deployer" },
             deps,
         );
-        expect(await code(previewInvitation(db, token))).toBe("not-found"); // replaced
+        expect(await code(previewInvitation(db, token, deps))).toBe("not-found"); // replaced
         const pendingForFresh = (await listInvitations(db, people.ann!, org)).filter(
             (i) => i.email === "fresh@example.com",
         );
@@ -204,7 +204,7 @@ describe("accepting invitations", () => {
             deps,
         );
         const token = tokenOf(sent.at(-1)!);
-        const preview = await previewInvitation(db, token);
+        const preview = await previewInvitation(db, token, deps);
         expect(preview).toMatchObject({
             organizationName: "Acme",
             role: "viewer",
@@ -274,7 +274,7 @@ describe("accepting invitations", () => {
             deps,
         );
         const token = tokenOf(sent.at(-1)!);
-        expect(await previewInvitation(db, token)).toMatchObject({ accountExists: true });
+        expect(await previewInvitation(db, token, deps)).toMatchObject({ accountExists: true });
         expect(await code(acceptInvitation(db, null, { token }, deps))).toBe("forbidden");
         expect(await code(acceptInvitation(db, people.dee!, { token }, deps))).toBe("forbidden");
         expect(await code(acceptInvitation(db, people.eve!, { token }, deps))).toBe("ok");
@@ -325,7 +325,7 @@ describe("accepting invitations", () => {
                     ),
                 ),
             ).toBe("not-found");
-            expect(await code(previewInvitation(db, token))).toBe("not-found");
+            expect(await code(previewInvitation(db, token, deps))).toBe("not-found");
         }
     });
 
@@ -609,6 +609,41 @@ describe("races, caps and verification", () => {
                     people.ann!,
                     guarded,
                     { email: "target@example.com", role: "viewer" },
+                    deps,
+                ),
+            ),
+        ).toBe("ok");
+    });
+
+    it("stops redemption of pending invitations once invitations are disabled", async () => {
+        const db = testDb.db;
+        await createInvitation(
+            db,
+            people.ann!,
+            org,
+            { email: "later@example.com", role: "viewer" },
+            deps,
+        );
+        const token = tokenOf(sent.at(-1)!);
+        const off = { ...deps, enabled: false };
+        expect(await code(previewInvitation(db, token, off))).toBe("not-found");
+        expect(
+            await code(
+                acceptInvitation(
+                    db,
+                    null,
+                    { token, name: "L", password: "a-long-password-1" },
+                    off,
+                ),
+            ),
+        ).toBe("not-found");
+        // Nothing was consumed: turning invitations back on makes the same token work again.
+        expect(
+            await code(
+                acceptInvitation(
+                    db,
+                    null,
+                    { token, name: "L", password: "a-long-password-1" },
                     deps,
                 ),
             ),
