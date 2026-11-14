@@ -3,6 +3,8 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 import {
     API_KEY_SCOPES,
+    apiKeyStatusSchema,
+    apiKeySummarySchema,
     createApiKeySchema,
     createProjectSchema,
     errorSchema,
@@ -46,6 +48,29 @@ describe("contracts", () => {
         expect(keyInfoSchema.safeParse({ ...info, extra: 1 }).success).toBe(false);
         expect(errorSchema.safeParse({ code: "not-found", status: 404, title: "x" }).success).toBe(
             true,
+        );
+    });
+
+    it("requires a known lifecycle status on key summaries", () => {
+        const summary = {
+            id: crypto.randomUUID(),
+            name: "ci",
+            prefix: "lp_abcdef",
+            scopes: ["project:read"],
+            projectIds: null,
+            createdBy: "user-1",
+            createdAt: "2026-11-14T00:00:00.000Z",
+            expiresAt: "2026-12-14T00:00:00.000Z",
+            revokedAt: null,
+            lastUsedAt: null,
+        };
+        expect(apiKeySummarySchema.safeParse(summary).success).toBe(false);
+        for (const status of ["active", "expired", "revoked", "inactive"]) {
+            expect(apiKeyStatusSchema.safeParse(status).success).toBe(true);
+            expect(apiKeySummarySchema.safeParse({ ...summary, status }).success).toBe(true);
+        }
+        expect(apiKeySummarySchema.safeParse({ ...summary, status: "unknown" }).success).toBe(
+            false,
         );
     });
 

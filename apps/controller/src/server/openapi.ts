@@ -259,7 +259,8 @@ export const docs = {
     listApiKeys: operation({
         tags: ["API keys"],
         summary: "List API keys",
-        description: "Never includes secrets.",
+        description:
+            "Never includes secrets. Status is active, expired, revoked or inactive (creator's original membership removed). Revoked takes precedence over expired, then inactive. Active keys remain limited by their creator's current role.",
         path: ["orgId"],
         ok: {
             description: "Keys, including revoked and expired.",

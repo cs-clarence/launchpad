@@ -1,5 +1,5 @@
 import { createHash, randomBytes } from "node:crypto";
-import { createApiKeySchema } from "@launchpad/contracts";
+import { createApiKeySchema, type ApiKeyStatus } from "@launchpad/contracts";
 import type { Database } from "@launchpad/database";
 import { sql, type Kysely } from "kysely";
 import { z } from "zod";
@@ -84,7 +84,8 @@ export async function createApiKey(
             .select((eb) => eb.fn.countAll<string>().as("n"))
             .where("organization_id", "=", organizationId)
             .where("revoked_at", "is", null)
-            .where("expires_at", ">", new Date())
+            .where("member_id", "is not", null)
+            .where("expires_at", ">", sql<Date>`now()`)
             .executeTakeFirstOrThrow();
         if (Number(active.n) >= MAX_ACTIVE_KEYS_PER_ORGANIZATION) {
             throw new ServiceError("conflict", "This organization has too many active API keys.");
@@ -134,6 +135,15 @@ export async function listApiKeys(db: Db, principal: Principal, organizationId: 
             "expires_at as expiresAt",
             "revoked_at as revokedAt",
             "last_used_at as lastUsedAt",
+            // Use the database clock for both the list and the active-key cap. The
+            // original membership, not today's membership for this user, decides
+            // whether a key is inactive after removal and re-enrollment.
+            sql<ApiKeyStatus>`case
+                when revoked_at is not null then 'revoked'
+                when expires_at <= now() then 'expired'
+                when member_id is null then 'inactive'
+                else 'active'
+            end`.as("status"),
         ])
         .where("organization_id", "=", organizationId)
         .orderBy("created_at", "desc")
