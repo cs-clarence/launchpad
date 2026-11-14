@@ -236,6 +236,8 @@ describe("authenticating keys", () => {
         await removeMember(db, people.ann!, org, people.rex!.userId);
         await addMember(db, people.ann!, org, { email: "rex@example.com", role: "admin" });
         expect(await authenticateApiKey(db, key.secret)).toBeNull();
+        const listed = await listApiKeys(db, people.ann!, org);
+        expect(listed.find((row) => row.id === key.id)?.status).toBe("inactive");
     });
 
     it("cannot be issued by a creator removed meanwhile, however the race resolves", async () => {
@@ -310,6 +312,66 @@ describe("authenticating keys", () => {
         expect((await authenticateApiKey(db, key.secret))?.scopes).toEqual(["project:read"]);
         await removeMember(db, people.ann!, org, people.kim!.userId);
         expect(await authenticateApiKey(db, key.secret)).toBeNull();
+    });
+});
+
+describe("key lifecycle metadata", () => {
+    it("reports server-side status with revoked, expired, inactive, active precedence", async () => {
+        const db = testDb.db;
+        const active = await issue("ann");
+        const expired = await issue("ann");
+        const revoked = await issue("ann");
+        await db
+            .updateTable("api_key")
+            .set({ expires_at: new Date(0), member_id: null })
+            .where("id", "in", [expired.id, revoked.id])
+            .execute();
+        await revokeApiKey(db, people.ann!, org, revoked.id);
+
+        const listed = await listApiKeys(db, people.ann!, org);
+        expect(listed.find((row) => row.id === active.id)?.status).toBe("active");
+        expect(listed.find((row) => row.id === expired.id)?.status).toBe("expired");
+        expect(listed.find((row) => row.id === revoked.id)?.status).toBe("revoked");
+        const serialized = JSON.stringify(listed);
+        for (const secret of [active.secret, expired.secret, revoked.secret]) {
+            expect(serialized).not.toContain(secret);
+        }
+        expect(serialized).not.toContain("secret_hash");
+        expect(serialized).not.toContain("member_id");
+    });
+
+    it("does not count keys with a removed membership toward the active-key cap", async () => {
+        const db = testDb.db;
+        const capOrg = (
+            await createOrganization(db, people.root!, {
+                name: "Inactive cap",
+                slug: "inactive-cap",
+                ownerEmail: "ann@example.com",
+            })
+        ).id;
+        const seed = await issue("ann", {}, capOrg);
+        const template = await db
+            .selectFrom("api_key")
+            .selectAll()
+            .where("id", "=", seed.id)
+            .executeTakeFirstOrThrow();
+        await db
+            .insertInto("api_key")
+            .values(
+                Array.from({ length: MAX_ACTIVE_KEYS_PER_ORGANIZATION }, () => ({
+                    ...template,
+                    id: randomUUID(),
+                    secret_hash: randomUUID(),
+                    member_id: null,
+                })),
+            )
+            .execute();
+        expect(await code(issue("ann", {}, capOrg))).toBe("ok");
+        const listed = await listApiKeys(db, people.ann!, capOrg);
+        expect(listed.filter((row) => row.status === "inactive")).toHaveLength(
+            MAX_ACTIVE_KEYS_PER_ORGANIZATION,
+        );
+        expect(listed.filter((row) => row.status === "active")).toHaveLength(2);
     });
 });
 

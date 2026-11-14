@@ -141,6 +141,9 @@ export const createdApiKeySchema = z.strictObject({
     expiresAt: timestamp,
 });
 
+export const apiKeyStatusSchema = z.enum(["active", "expired", "revoked", "inactive"]);
+export type ApiKeyStatus = z.infer<typeof apiKeyStatusSchema>;
+
 export const apiKeySummarySchema = z.strictObject({
     id: z.uuid(),
     name: z.string(),
@@ -152,6 +155,10 @@ export const apiKeySummarySchema = z.strictObject({
     expiresAt: timestamp,
     revokedAt: timestamp.nullable(),
     lastUsedAt: timestamp.nullable(),
+    status: apiKeyStatusSchema.meta({
+        description:
+            "Revoked takes precedence over expired, then inactive (creator's original membership removed). Active describes credential lifecycle, not permission to perform every granted action.",
+    }),
 });
 
 export const keyInfoSchema = z.strictObject({
