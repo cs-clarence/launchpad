@@ -195,6 +195,54 @@ describe("commands", () => {
     });
 });
 
+describe("redaction", () => {
+    it("hides key-shaped text in anything the server sends, in text and in JSON", async () => {
+        const leaky = "lp_" + "q".repeat(30);
+        const fetchLeaky = (async (url: string, init: RequestInit) => {
+            const route = new URL(url).pathname;
+            if (route === "/api/v1/key") {
+                return json({
+                    id: crypto.randomUUID(),
+                    name: leaky,
+                    organizationId: ORG,
+                    scopes: ["project:read"],
+                    projectIds: null,
+                    expiresAt: "2027-01-01T00:00:00.000Z",
+                });
+            }
+            if (route.endsWith("/projects")) {
+                return json([
+                    {
+                        id: crypto.randomUUID(),
+                        slug: "site",
+                        name: leaky,
+                        createdAt: "2026-01-01T00:00:00.000Z",
+                    },
+                ]);
+            }
+            return controller(url, init);
+        }) as unknown as typeof fetch;
+        const fake = fakeIo();
+        fake.io.context = createContext({ LAUNCHPAD_CONFIG_DIR: dir }, { fetch: fetchLeaky });
+        for (const args of [
+            ["login", "--controller", CONTROLLER, "--key-stdin"],
+            ["whoami"],
+            ["whoami", "--json"],
+            ["projects", "list", "--json"],
+            ["projects", "list"],
+        ]) {
+            const io = { ...fake.io, readStdin: async () => KEY };
+            await run(args, io);
+        }
+        expect(fake.all()).not.toContain(leaky);
+        expect(fake.all()).toContain("lp_[redacted]");
+        const documents = fake.out.filter(
+            (line) => line.trim().startsWith("{") || line.trim().startsWith("["),
+        );
+        for (const doc of documents) expect(() => JSON.parse(doc)).not.toThrow();
+    });
+});
+
 describe("failures", () => {
     it("uses stable exit codes", async () => {
         expect((await cli(["whoami"])).code).toBe(EXIT.unauthorized); // not logged in
@@ -217,6 +265,24 @@ describe("failures", () => {
         const leaking = await cli(["login", "--controller", CONTROLLER, "--json", "--key", KEY]);
         expect(leaking.all).not.toContain(KEY);
     });
+
+    it("writes exactly one JSON document for a usage error, and none for help", async () => {
+        const result = await cli(["nonsense", "--json"]);
+        expect(result.code).toBe(EXIT.usage);
+        expect(JSON.parse(result.err)).toMatchObject({ error: { code: "usage" } });
+        expect(result.out).toBe("");
+    });
+
+    it.skipIf(process.getuid?.() === 0)(
+        "maps an unreadable credential file to the local-error exit code",
+        async () => {
+            await loggedIn();
+            await fs.chmod(path.join(dir, "credentials.json"), 0o000);
+            const result = await cli(["whoami"]);
+            expect(result.code).toBe(EXIT.local);
+            await fs.chmod(path.join(dir, "credentials.json"), 0o600);
+        },
+    );
 
     it("prints help and version successfully", async () => {
         const help = await cli(["--help"]);

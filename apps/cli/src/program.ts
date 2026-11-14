@@ -57,7 +57,11 @@ async function readKey(io: Io, options: { keyFile?: string; keyStdin?: boolean }
     return key;
 }
 
-export function buildProgram(io: Io) {
+export function buildProgram(rawIo: Io) {
+    // Everything that reaches the terminal passes the redactor: names and other fields
+    // come from the server and may contain key-shaped text. Redacting inside a JSON
+    // document keeps it valid JSON.
+    const io: Io = { ...rawIo, out: (t) => rawIo.out(redact(t)), err: (t) => rawIo.err(redact(t)) };
     const program = new Command()
         .name("launchpad")
         .description("Work with a Launchpad controller using an organization API key.")
@@ -66,9 +70,9 @@ export function buildProgram(io: Io) {
         .option("--profile <name>", "use this saved profile instead of the current one")
         .showHelpAfterError(false)
         .configureOutput({
-            writeOut: (s) => io.out(redact(s.replace(/\n$/, ""))),
-            // Commander echoes a stray argument; it may be a key typed in the wrong place.
-            writeErr: (s) => io.err(redact(s.replace(/\n$/, ""))),
+            writeOut: (s) => io.out(s.replace(/\n$/, "")),
+            // Parser errors are reported once, by run(), in the requested format.
+            writeErr: () => {},
         })
         .exitOverride();
 

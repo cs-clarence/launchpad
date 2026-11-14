@@ -3,6 +3,7 @@ export type ClientCoreErrorCode =
     | "insecure-store"
     | "corrupt-store"
     | "unsupported-store"
+    | "store-unavailable"
     | "bad-input"
     | "no-organization";
 
