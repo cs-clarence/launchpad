@@ -657,24 +657,41 @@ describe("API keys over HTTP", () => {
     });
 
     it("limits a key to named projects and cannot widen itself by creating one", async () => {
+        const invalid = await api(owner, `/organizations/${orgId}/api-keys`, {
+            method: "POST",
+            body: {
+                name: "invalid-project-creator",
+                scopes: ["project:create"],
+                projectIds: [projectId],
+                expiresInDays: 1,
+            },
+        });
+        expect(invalid.status).toBe(422);
         const limited = createdApiKeySchema.parse(
             await (
                 await api(owner, `/organizations/${orgId}/api-keys`, {
                     method: "POST",
                     body: {
                         name: "one-project",
-                        scopes: ["project:read", "project:create"],
+                        scopes: ["project:read"],
                         projectIds: [projectId],
                         expiresInDays: 1,
                     },
                 })
             ).json(),
-        ).secret;
+        );
         const seen = z
             .array(projectSchema)
-            .parse(await (await bearer(limited, `/organizations/${orgId}/projects`)).json());
+            .parse(await (await bearer(limited.secret, `/organizations/${orgId}/projects`)).json());
         expect(seen.map((p) => p.id)).toEqual([projectId]);
-        const create = await bearer(limited, `/organizations/${orgId}/projects`, {
+        // Keys issued before input validation tightened can still carry this
+        // combination. Keep the route's project-limit defense for those rows.
+        await testDb.db
+            .updateTable("api_key")
+            .set({ scopes: ["project:read", "project:create"] })
+            .where("id", "=", limited.id)
+            .execute();
+        const create = await bearer(limited.secret, `/organizations/${orgId}/projects`, {
             method: "POST",
             body: { name: "Wide", slug: "wide" },
         });

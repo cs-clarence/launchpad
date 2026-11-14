@@ -169,6 +169,14 @@ describe("issuing keys", () => {
         expect(await code(issue("ann", { projectIds: [otherProject] }))).toBe("invalid");
         expect(await code(issue("ann", { projectIds: [randomUUID()] }))).toBe("invalid");
         expect(await code(issue("ann", { projectIds: [projectA] }))).toBe("ok");
+        expect(
+            await code(
+                issue("ann", {
+                    scopes: ["project:create"],
+                    projectIds: [projectA],
+                }),
+            ),
+        ).toBe("invalid");
     });
 
     it("caps active keys per organization, even under concurrency", async () => {
@@ -192,7 +200,7 @@ describe("issuing keys", () => {
 describe("authenticating keys", () => {
     it("resolves a valid key to its organization, creator, scopes and projects", async () => {
         const key = await issue("ann", {
-            scopes: ["project:read", "project:create"],
+            scopes: ["project:read"],
             projectIds: [projectA],
         });
         const auth = await authenticateApiKey(testDb.db, key.secret);
@@ -200,7 +208,7 @@ describe("authenticating keys", () => {
             keyId: key.id,
             organizationId: org,
             principal: { userId: people.ann!.userId },
-            scopes: ["project:read", "project:create"],
+            scopes: ["project:read"],
             projectIds: [projectA],
         });
         const row = await testDb.db
@@ -238,6 +246,20 @@ describe("authenticating keys", () => {
         expect(await authenticateApiKey(db, key.secret)).toBeNull();
         const listed = await listApiKeys(db, people.ann!, org);
         expect(listed.find((row) => row.id === key.id)?.status).toBe("inactive");
+        const audits = await db
+            .selectFrom("audit_event")
+            .select(["actor", "action", "detail", "organization_id"])
+            .where("target_id", "=", key.id)
+            .where("action", "=", "api_key.deactivated")
+            .execute();
+        expect(audits).toEqual([
+            {
+                actor: `user:${people.ann!.userId}`,
+                action: "api_key.deactivated",
+                detail: "reason=membership-removed",
+                organization_id: org,
+            },
+        ]);
     });
 
     it("cannot be issued by a creator removed meanwhile, however the race resolves", async () => {

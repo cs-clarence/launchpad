@@ -321,11 +321,11 @@ Milestone 2 slices (one PR each):
       and organization management; a key never exceeds its creator's current role and
       stops when the creator leaves; secrets stored as SHA-256 hashes.
 - [x] M2-2: `Authorization: Bearer` keys in `/api/v1`: an allow-list of key-usable
-      routes (me, key, own organization, members read, projects list/create), each
+      routes (key, own organization, members read, projects list/create), each
       with a required scope; everything else, including key, member, invitation and
       organization management, is session-only. Project-limited keys list only their
       projects and cannot create projects. A bad Authorization header is a 401 and
-      never falls back to the cookie. Key issue/list/revoke endpoints (session only).
+      never falls back to the cookie. `/me` and key issue/list/revoke are session-only.
       Not done: the credential generation for the sign-in/reset race (it needs
       Better Auth's password check and session insert in one transaction; keep it
       listed as accepted).

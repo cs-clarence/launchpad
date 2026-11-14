@@ -26,9 +26,22 @@ export function createAuth(options: {
             minPasswordLength: 12,
             revokeSessionsOnPasswordReset: true,
             resetPasswordTokenExpiresIn: 60 * 60,
-            // A reset by emailed token is a password change like the operator's, so it is
-            // audited too. Neither the token nor the password is recorded.
+            // Better Auth commits its password change before this hook. Revoke
+            // credentials first; a later audit failure must not roll that back.
+            // Neither the reset token nor the password/key values are recorded.
             onPasswordReset: async ({ user }: { user: { id: string } }) => {
+                const revokedKeys = await db.transaction().execute(async (trx) => {
+                    // Same order as operator recovery: issuance holds FOR SHARE on
+                    // the issuing session, so its insert cannot escape this cleanup.
+                    await trx.deleteFrom("session").where("userId", "=", user.id).execute();
+                    const result = await trx
+                        .updateTable("api_key")
+                        .set({ revoked_at: new Date() })
+                        .where("created_by", "=", user.id)
+                        .where("revoked_at", "is", null)
+                        .executeTakeFirst();
+                    return Number(result.numUpdatedRows);
+                });
                 await db
                     .insertInto("audit_event")
                     .values({
@@ -36,6 +49,7 @@ export function createAuth(options: {
                         action: "user.password_reset_by_email",
                         target_type: "user",
                         target_id: user.id,
+                        detail: JSON.stringify({ revokedKeys }),
                     })
                     .execute();
             },

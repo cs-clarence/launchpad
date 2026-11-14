@@ -74,6 +74,10 @@ export async function resetPassword(
                 action: "user.password_reset",
                 target_type: "user",
                 target_id: user.id,
+                detail: JSON.stringify({
+                    revokedSessions: Number(revoked.numDeletedRows),
+                    revokedKeys: Number(keys.numUpdatedRows),
+                }),
             })
             .execute();
         return {

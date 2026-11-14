@@ -34,12 +34,20 @@ export const nameSchema = z
 
 export const createProjectSchema = z.object({ name: nameSchema, slug: slugSchema });
 
-export const createApiKeySchema = z.object({
-    name: nameSchema,
-    scopes: z.array(z.enum(API_KEY_SCOPES)).min(1).max(API_KEY_SCOPES.length),
-    projectIds: z.array(z.uuid()).min(1).max(50).optional(),
-    expiresInDays: z.number().int().min(1).max(MAX_KEY_LIFETIME_DAYS),
-});
+export const createApiKeySchema = z
+    .object({
+        name: nameSchema,
+        scopes: z.array(z.enum(API_KEY_SCOPES)).min(1).max(API_KEY_SCOPES.length),
+        projectIds: z.array(z.uuid()).min(1).max(50).optional().meta({
+            description:
+                "Restrict this key to these projects. Cannot be combined with project:create.",
+        }),
+        expiresInDays: z.number().int().min(1).max(MAX_KEY_LIFETIME_DAYS),
+    })
+    .refine((input) => !input.projectIds || !input.scopes.includes("project:create"), {
+        path: ["scopes"],
+        message: "A project-limited API key cannot create projects.",
+    });
 
 const role = z.enum(ORGANIZATION_ROLES);
 const timestamp = z.string().meta({ format: "date-time" });
