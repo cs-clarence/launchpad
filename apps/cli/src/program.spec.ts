@@ -53,8 +53,9 @@ function fakeIo(
     options: {
         stdin?: string;
         interactive?: boolean;
+        stdinIsTTY?: boolean;
         secret?: string;
-        files?: Record<string, { text: string; mode: number }>;
+        files?: Record<string, { text: string; mode: number; regular?: boolean }>;
     } = {},
 ) {
     const out: string[] = [];
@@ -64,6 +65,7 @@ function fakeIo(
         out: (t) => void out.push(t),
         err: (t) => void err.push(t),
         interactive: options.interactive ?? false,
+        stdinIsTTY: options.stdinIsTTY,
         readSecret: async () => options.secret ?? "",
         readStdin: async () => options.stdin ?? "",
         readFile: async (file) => {
@@ -116,6 +118,7 @@ describe("login", () => {
         }
         for (const source of [["--key-stdin"], ["--key-file", "/key"], []]) {
             const terminal = new Terminal();
+            terminal.interactive = source.length === 0;
             expect(await run(["login", "--controller", CONTROLLER, ...source], terminal)).toBe(
                 EXIT.ok,
             );
@@ -153,6 +156,29 @@ describe("login", () => {
         });
         expect(result.code).toBe(EXIT.ok);
         expect(result.err).toContain("readable by others");
+        const special = await cli(["login", "--controller", CONTROLLER, "--key-file", "/k"], {
+            files: { "/k": { text: KEY, mode: 0o644, regular: false } },
+        });
+        expect(special.code).toBe(EXIT.ok);
+        expect(special.err).toBe("");
+    });
+
+    it("refuses interactive --key-stdin so the terminal cannot echo the key", async () => {
+        const result = await cli(["login", "--controller", CONTROLLER, "--key-stdin"], {
+            interactive: true,
+            stdin: KEY,
+        });
+        expect(result.code).toBe(EXIT.usage);
+        expect(result.err).toContain("hidden terminal prompt");
+        expect(result.all).not.toContain(KEY);
+        expect(await fs.readdir(dir)).toEqual([]);
+        // Redirecting stderr must not make an echoing stdin safe.
+        const redirectedError = await cli(["login", "--controller", CONTROLLER, "--key-stdin"], {
+            interactive: false,
+            stdinIsTTY: true,
+            stdin: KEY,
+        });
+        expect(redirectedError.code).toBe(EXIT.usage);
     });
 
     it("has no way to pass the key as an argument", async () => {

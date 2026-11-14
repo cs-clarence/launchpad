@@ -27,6 +27,12 @@ export interface Resolved {
 // LAUNCHPAD_CONTROLLER and LAUNCHPAD_API_KEY together bypass the store entirely (CI).
 export async function resolve(ctx: Context, profileName?: string): Promise<Resolved> {
     const { LAUNCHPAD_CONTROLLER: controller, LAUNCHPAD_API_KEY: apiKey } = ctx.env;
+    if (!profileName && Boolean(controller) !== Boolean(apiKey)) {
+        throw new ClientCoreError(
+            "bad-input",
+            "Set both LAUNCHPAD_CONTROLLER and LAUNCHPAD_API_KEY, or neither; use --profile to explicitly choose saved credentials.",
+        );
+    }
     if (!profileName && controller && apiKey) {
         return {
             profile: null,
@@ -182,11 +188,7 @@ export async function listOrganizations(ctx: Context, profileName?: string) {
 
 export async function listProjects(ctx: Context, profileName?: string) {
     const resolved = await resolve(ctx, profileName);
-    if (!resolved.organizationId) {
-        throw new ClientCoreError(
-            "no-organization",
-            "No organization selected. Run: launchpad org use <slug>",
-        );
-    }
-    return clientFor(ctx, resolved).projects.list(resolved.organizationId);
+    const client = clientFor(ctx, resolved);
+    const organizationId = resolved.organizationId ?? (await client.key.get()).organizationId;
+    return client.projects.list(organizationId);
 }

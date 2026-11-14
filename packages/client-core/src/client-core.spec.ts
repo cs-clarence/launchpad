@@ -3,7 +3,7 @@ import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
     ClientCoreError,
     createContext,
@@ -66,13 +66,14 @@ const controller = ((url: string, init: RequestInit) => {
     return Promise.resolve(json({ code: "not-found", status: 404, title: "Not Found" }, 404));
 }) as unknown as typeof fetch;
 
-const ctx = (env: Record<string, string> = {}) =>
+const ctx = (env: Record<string, string | undefined> = {}) =>
     createContext({ LAUNCHPAD_CONFIG_DIR: dir, ...env }, { fetch: controller });
 
 beforeEach(async () => {
     dir = await fs.mkdtemp(path.join(os.tmpdir(), "launchpad-cc-"));
 });
 afterEach(async () => {
+    vi.restoreAllMocks();
     await fs.rm(dir, { recursive: true, force: true });
 });
 
@@ -147,6 +148,33 @@ describe("login and the credential file", () => {
 });
 
 describe("using credentials", () => {
+    it("rejects a half-configured environment instead of falling back to a saved profile", async () => {
+        await login(ctx(), { controller: CONTROLLER, apiKey: KEY });
+        for (const env of [
+            { LAUNCHPAD_CONTROLLER: "https://staging.example.com" },
+            { LAUNCHPAD_API_KEY: KEY2 },
+        ]) {
+            await expect(resolve(ctx(env))).rejects.toMatchObject({ code: "bad-input" });
+            expect((await resolve(ctx(env), "default")).profile).toBe("default");
+        }
+    });
+
+    it("discovers the key's org for environment-only project listing without writing the store", async () => {
+        const env = ctx({ LAUNCHPAD_CONTROLLER: CONTROLLER, LAUNCHPAD_API_KEY: KEY });
+        expect(await listProjects(env)).toMatchObject([{ slug: "site" }]);
+        expect(await fs.readdir(dir)).toEqual([]);
+        // An explicit organization ID is not silently replaced.
+        await expect(
+            listProjects(
+                ctx({
+                    LAUNCHPAD_CONTROLLER: CONTROLLER,
+                    LAUNCHPAD_API_KEY: KEY,
+                    LAUNCHPAD_ORG: "another-id",
+                }),
+            ),
+        ).rejects.toMatchObject({ status: 404 });
+    });
+
     it("resolves explicit profile, then environment profile, then the current one", async () => {
         await login(ctx(), { controller: CONTROLLER, apiKey: KEY, profile: "one" });
         await login(ctx(), {
@@ -203,6 +231,54 @@ describe("using credentials", () => {
 });
 
 describe("hardening", () => {
+    it("does not steal an old lock, even with multiple waiting writers", async () => {
+        await login(ctx(), { controller: CONTROLLER, apiKey: KEY });
+        const file = path.join(dir, "credentials.json");
+        const before = await fs.readFile(file, "utf8");
+        const lock = `${file}.lock`;
+        await fs.writeFile(lock, "existing-owner", { mode: 0o600 });
+        await fs.utimes(lock, new Date(0), new Date(0));
+        const results = await Promise.allSettled([
+            useProfile(ctx(), "default"),
+            login(ctx(), { controller: CONTROLLER, apiKey: KEY2, profile: "second" }),
+        ]);
+        for (const result of results) {
+            expect(result).toMatchObject({
+                status: "rejected",
+                reason: { code: "store-busy" },
+            });
+        }
+        expect(await fs.readFile(lock, "utf8")).toBe("existing-owner");
+        expect(await fs.readFile(file, "utf8")).toBe(before);
+    });
+
+    it("cleans up a temporary credential file after failed replacement", async () => {
+        await login(ctx(), { controller: CONTROLLER, apiKey: KEY });
+        const file = path.join(dir, "credentials.json");
+        const before = await fs.readFile(file, "utf8");
+        vi.spyOn(fs, "rename").mockRejectedValueOnce(
+            Object.assign(new Error("I/O failure"), { code: "EIO" }),
+        );
+        await expect(
+            login(ctx(), { controller: CONTROLLER, apiKey: KEY2, profile: "second" }),
+        ).rejects.toMatchObject({ code: "store-unavailable" });
+        expect(await fs.readFile(file, "utf8")).toBe(before);
+        expect(await fs.readdir(dir)).toEqual(["credentials.json"]);
+    });
+
+    it("does not release a lock that no longer has its ownership token", async () => {
+        await login(ctx(), { controller: CONTROLLER, apiKey: KEY });
+        const lock = path.join(dir, "credentials.json.lock");
+        const rename = fs.rename.bind(fs);
+        vi.spyOn(fs, "rename").mockImplementationOnce(async (from, to) => {
+            // Simulate an external replacement before the writer releases its lock.
+            await fs.writeFile(lock, "replacement-owner");
+            return rename(from, to);
+        });
+        await useProfile(ctx(), "default");
+        expect(await fs.readFile(lock, "utf8")).toBe("replacement-owner");
+    });
+
     it("treats only saved profiles as profiles, not inherited names", async () => {
         for (const name of ["constructor", "toString", "__proto__"]) {
             await expect(useProfile(ctx(), name), name).rejects.toMatchObject({
