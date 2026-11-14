@@ -174,18 +174,31 @@ clear re-login, never silent credential loss.
 
 **Depends on:** milestones 0–2.
 
+**Deployment safety gate:** before enabling any Dokku-mutating deployment path,
+implement and verify per-preview serialization, stale-worker containment and
+uncertain-SSH reconciliation. Selecting their design in milestone 0 is not
+sufficient; these protections must work in milestone 3, not wait for milestone 5.
+
 - Streaming bounded archive upload from CLI/dashboard, manifest/digest validation,
   org-scoped artifact storage, quotas and interrupted-upload cleanup.
 - Explicit preview creation, generated app/hostname mapping and idempotent
   deployment submission committed with its durable job.
 - Worker uses fixed Nginx templates, optional SPA fallback and unique image tags.
   Stream images through the narrow Dokku SSH adapter and verify proxy readiness.
+- Implement durable operation identity, per-preview serialization, lease/retry
+  ownership and worker restart reconciliation. Contain stale attempts; an
+  ambiguous SSH result blocks further app mutations until reconciled or safely
+  escalated to an operator. Do not blindly retry an external side effect.
 - Status and persisted progress visible in CLI/dashboard; finite timeouts and
   failure records. Start with polling; add SSE only with reconnection tests.
 
 **Verify:** static fixture and SPA route success, non-SPA real 404, malicious/
 oversized archives rejected, organization isolation on artifacts/logs, retry/
 idempotency cases, resource limits and replacement failure preserving uptime.
+Before enabling deployments, exercise concurrent submissions for one preview,
+worker death/restart, expired leases with stale workers, SSH timeout after a
+successful remote mutation, and database loss during execution. Verify no
+overlapping app mutations and no blind retry of an uncertain deployment.
 Run live engine tests only against explicitly disposable apps.
 
 **Undo:** disable new deployment submission and drain/stop workers safely. Revert
@@ -198,8 +211,10 @@ resources created and recorded by these test/deploy operations.
 
 - Stdio MCP executable and shared client-core calls, no CLI subprocess wrapping.
 - Explicit controller/org profiles and allowed roots; read-only tools by default.
-- Opt-in deploy/delete tools with explicit mutation authorization, bounded
+- Opt-in deploy tools with explicit mutation authorization, bounded
   structured output, schema validation and stderr-only diagnostics.
+- Expose deletion tools only after milestone 5 supplies the verified deletion
+  service; otherwise keep them unavailable, not a direct Dokku shortcut.
 - CLI and MCP share packaging, safe errors, auth and idempotency behavior.
 
 **Verify:** a real MCP client can list, deploy the fixture and track completion.
@@ -216,8 +231,10 @@ CLI remain usable. The MCP package has no host-level management credentials.
 
 - TTL selection/extension, durable scheduled expiry, manual deletion and
   ownership-safe artifact/image cleanup.
-- Worker restart reconciliation, per-app serialization, retry budgets,
-  cancellation semantics and visible operator attention for ambiguous outcomes.
+- Extend milestone 3's verified serialization, stale-worker containment and
+  reconciliation to expiry, deletion and cleanup. Add lifecycle cancellation
+  semantics and operator recovery for ambiguous lifecycle outcomes; do not
+  introduce basic deployment safety for the first time here.
 - Runtime logs, durable audit events, dependency readiness, worker heartbeat and
   storage/retention/backlog indicators.
 
