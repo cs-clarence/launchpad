@@ -40,3 +40,13 @@ refuses cross-organization references and more than one unfinished deployment
 per preview. Viewers read previews; deployers and above create and deploy.
 
 `listPreviews` pages with a keyset cursor (the last id of the previous page, returned as `nextCursor`), so every preview within the cap is reachable. A deployment can only be made active for the preview it belongs to, and `maxPreviews` must be a positive integer.
+
+## Artifacts (milestone 3, slice 2)
+
+`archive.ts` validates a `.tar.gz` without extracting it (see the controller README
+for the rules); `artifacts.ts` streams an upload to a private staging file under byte
+and time limits, validates it, and finalizes it atomically under a per-organization
+lock. The caller is authorized before the first byte is read and re-checked under
+the lock. Storage keys are exactly `artifacts/<32 hex>/<64 hex>.tar.gz` (a hash of
+the organization, then the archive digest); `resolveArtifactPath` refuses anything
+else. Test archives (including hostile ones) are built by `@launchpad/services/testing`.

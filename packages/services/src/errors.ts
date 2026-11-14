@@ -3,7 +3,9 @@ export type ServiceErrorCode =
     | "forbidden"
     | "conflict"
     | "invalid"
-    | "delivery-failed";
+    | "delivery-failed"
+    | "too-large"
+    | "timeout";
 
 // Expected, caller-visible failures. Adapters map the code to a transport status;
 // anything else is an unexpected failure and must not leak details.

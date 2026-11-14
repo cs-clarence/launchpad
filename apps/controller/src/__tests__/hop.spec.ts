@@ -1,9 +1,15 @@
 import { randomUUID } from "node:crypto";
 import { type ChildProcess, spawn } from "node:child_process";
+import { promises as fs } from "node:fs";
+import net from "node:net";
+import os from "node:os";
+import path from "node:path";
+import { randomBytes } from "node:crypto";
 import { createAuth, loadAuthConfig, setupFirstOperator } from "@launchpad/auth";
 import {
     acceptedInvitationSchema,
     addedMemberSchema,
+    artifactSchema,
     createdApiKeySchema,
     createdInvitationSchema,
     keyInfoSchema,
@@ -22,6 +28,7 @@ import {
 import { z } from "zod";
 import { type FakeSmtp, mailText, startFakeSmtp } from "@launchpad/auth/testing";
 import { createTestDatabase } from "@launchpad/database/testing";
+import { SITE, tarGz } from "@launchpad/services/testing";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 // Exercises the real built TanStack Start server (Nitro) -> Elysia -> Better Auth
@@ -41,6 +48,9 @@ let direct: Instance; // no trusted proxy
 let proxied: Instance; // one trusted proxy hop
 let mailed: Instance; // trusted proxy, SMTP and invitation enrollment
 let smtp: FakeSmtp;
+// Uploaded archives are staged and stored here for every server instance.
+let dataDir = "";
+const UPLOAD_LIMIT = 8 * 1024 * 1024;
 
 // A random base so concurrent test runs on one machine rarely overlap.
 let nextPort = 43100 + Math.floor(Math.random() * 600) * 3;
@@ -61,6 +71,9 @@ async function start(
         LAUNCHPAD_AUTH_SECRET: "integration-secret-".repeat(3),
         LAUNCHPAD_BASE_URL: base,
         LAUNCHPAD_TRUSTED_PROXY: String(trustedProxy),
+        LAUNCHPAD_DATA_DIR: dataDir,
+        LAUNCHPAD_MAX_UPLOAD_BYTES: String(UPLOAD_LIMIT),
+        LAUNCHPAD_UPLOAD_TIMEOUT_SECONDS: "3",
         HOST: "127.0.0.1",
         PORT: String(port),
         ...extraEnv,
@@ -104,6 +117,7 @@ const signIn = (instance: Instance, email: string, password: string, ip?: string
     );
 
 beforeAll(async () => {
+    dataDir = await fs.mkdtemp(path.join(os.tmpdir(), "launchpad-hop-data-"));
     testDb = await createTestDatabase();
     await testDb.migrate();
     const config = loadAuthConfig({
@@ -160,6 +174,7 @@ afterAll(async () => {
     mailed?.proc.kill("SIGTERM");
     smtp?.stop();
     await testDb?.destroy();
+    if (dataDir) await fs.rm(dataDir, { recursive: true, force: true });
 });
 
 describe("Start -> Elysia -> Better Auth -> PostgreSQL", () => {
@@ -870,6 +885,232 @@ describe("API keys over HTTP", () => {
     });
 });
 
+// Sends one HTTP request over a raw socket, for what fetch will not send: a length
+// that was never delivered, chunked bodies, and connections that drop or stall.
+function rawUpload(
+    instance: Instance,
+    headers: Record<string, string>,
+    send: (socket: net.Socket) => void,
+    target = uploadPath,
+): Promise<{ status: number; elapsedMs: number }> {
+    const url = new URL(instance.base);
+    const started = Date.now();
+    return new Promise((resolve, reject) => {
+        const socket = net.connect(Number(url.port), url.hostname);
+        let head = "";
+        socket.setTimeout(15_000, () => {
+            socket.destroy();
+            reject(new Error("no response"));
+        });
+        socket.on("data", (chunk) => {
+            head += chunk.toString("latin1");
+            const status = /^HTTP\/1\.1 (\d{3})/.exec(head)?.[1];
+            if (status) {
+                socket.destroy();
+                resolve({ status: Number(status), elapsedMs: Date.now() - started });
+            }
+        });
+        socket.on("error", () => {});
+        socket.on("close", () => {
+            if (!/^HTTP\/1\.1 \d{3}/.test(head)) {
+                resolve({ status: 0, elapsedMs: Date.now() - started });
+            }
+        });
+        const lines = [
+            `POST ${target} HTTP/1.1`,
+            `Host: ${url.host}`,
+            ...Object.entries(headers).map(([k, v]) => `${k}: ${v}`),
+            "",
+            "",
+        ];
+        socket.write(lines.join("\r\n"));
+        send(socket);
+    });
+}
+let uploadPath = "";
+const rawUploadTo = (target: string, headers: Record<string, string>) =>
+    rawUpload(proxied, headers, (socket) => socket.write("5\r\nhello\r\n0\r\n\r\n"), target);
+
+describe("artifact upload over HTTP", () => {
+    let owner = "";
+    let viewer = "";
+    let orgId = "";
+    const archive = (extra: { name: string; content: string | Buffer }[] = []) =>
+        tarGz([...SITE, ...extra]);
+    const post = (cookie: string, body: Buffer | string, headers: Record<string, string> = {}) =>
+        fetch(`${proxied.base}/api/v1/organizations/${orgId}/artifacts`, {
+            method: "POST",
+            headers: {
+                cookie,
+                origin: proxied.base,
+                "content-type": "application/gzip",
+                ...headers,
+            },
+            body: body as BodyInit,
+        });
+    const tmpFiles = () => fs.readdir(path.join(dataDir, "tmp")).catch(() => [] as string[]);
+    const rows = () => testDb.db.selectFrom("artifact").select("id").execute();
+    const cookieHeaders = (extra: Record<string, string> = {}) => ({
+        Cookie: owner,
+        Origin: proxied.base,
+        "Content-Type": "application/gzip",
+        Connection: "close",
+        ...extra,
+    });
+
+    it("stores a multi-megabyte archive streamed through the built server", async () => {
+        const operator = await login("op@example.com", PASSWORD, "198.51.100.40");
+        owner = await login("user@example.com", USER_PASSWORD, "198.51.100.41");
+        viewer = await login("other@example.com", USER_PASSWORD, "198.51.100.42");
+        orgId = createdOrganizationSchema.parse(
+            await (
+                await api(operator, "/organizations", {
+                    method: "POST",
+                    body: { name: "Uploads", slug: "uploads", ownerEmail: "user@example.com" },
+                })
+            ).json(),
+        ).id;
+        uploadPath = `/api/v1/organizations/${orgId}/artifacts`;
+        await api(owner, `/organizations/${orgId}/members`, {
+            method: "POST",
+            body: { email: "other@example.com", role: "viewer" },
+        });
+
+        // Incompressible, so the stored archive is genuinely several megabytes.
+        const bytes = archive([{ name: "assets/big.bin", content: randomBytes(5 * 1024 * 1024) }]);
+        expect(bytes.length).toBeGreaterThan(5 * 1024 * 1024);
+        const response = await post(owner, bytes);
+        expect(response.status).toBe(201);
+        expect(response.headers.get("cache-control")).toContain("no-store");
+        const artifact = artifactSchema.parse(await response.json());
+        expect(artifact).toMatchObject({ reused: false, sizeBytes: bytes.length });
+        const stored = await testDb.db
+            .selectFrom("artifact")
+            .select("storage_key")
+            .where("id", "=", artifact.id)
+            .executeTakeFirstOrThrow();
+        expect((await fs.readFile(path.join(dataDir, stored.storage_key))).equals(bytes)).toBe(
+            true,
+        );
+        expect(await tmpFiles()).toEqual([]);
+
+        const again = artifactSchema.parse(await (await post(owner, bytes)).json());
+        expect(again).toMatchObject({ id: artifact.id, reused: true });
+    });
+
+    it("refuses wrong content types, hostile archives and unauthorized callers", async () => {
+        const before = (await rows()).length;
+        const json = await post(owner, "{}", { "content-type": "application/json" });
+        expect(json.status).toBe(422);
+        const hostile = await post(
+            owner,
+            tarGz([...SITE, { name: "../escape.txt", content: "x" }]),
+        );
+        expect(hostile.status).toBe(422);
+        const problem = errorSchema.parse(await hostile.json());
+        expect(problem.code).toBe("invalid");
+        expect(problem.title).not.toContain(dataDir);
+        expect((await post(owner, tarGz([{ name: "other.html", content: "x" }]))).status).toBe(422);
+        expect((await post(viewer, archive())).status).toBe(403);
+        expect(
+            (
+                await fetch(`${proxied.base}/api/v1/organizations/${orgId}/artifacts`, {
+                    method: "POST",
+                    headers: { origin: proxied.base, "content-type": "application/gzip" },
+                    body: archive(),
+                })
+            ).status,
+        ).toBe(401);
+        const foreign = await post(owner, archive(), { origin: "https://evil.example.com" });
+        expect(foreign.status).toBe(403);
+        expect(errorSchema.parse(await foreign.json()).code).toBe("forbidden-origin");
+        expect((await rows()).length).toBe(before);
+        expect(await tmpFiles()).toEqual([]);
+    });
+
+    it("rejects an oversized or unframed upload before reading its body", async () => {
+        const tooBig = await rawUpload(
+            proxied,
+            cookieHeaders({ "Content-Length": String(UPLOAD_LIMIT + 1) }),
+            () => {},
+        );
+        expect(tooBig.status).toBe(413);
+        const chunked = await rawUpload(
+            proxied,
+            cookieHeaders({ "Transfer-Encoding": "chunked" }),
+            (socket) => socket.write("5\r\nhello\r\n0\r\n\r\n"),
+        );
+        expect(chunked.status).toBe(411);
+        // Not signed in: refused without waiting for the (never sent) rest of the body.
+        const anonymous = await rawUpload(
+            proxied,
+            {
+                Origin: proxied.base,
+                "Content-Type": "application/gzip",
+                "Content-Length": "4000000",
+                Connection: "close",
+            },
+            (socket) => socket.write(randomBytes(1000)),
+        );
+        expect(anonymous.status).toBe(401);
+        expect(anonymous.elapsedMs).toBeLessThan(3000);
+        expect(await tmpFiles()).toEqual([]);
+    });
+
+    it("cleans up an upload whose connection drops, and keeps serving", async () => {
+        const before = (await rows()).length;
+        let staged = 0;
+        await rawUpload(proxied, cookieHeaders({ "Content-Length": "3000000" }), (socket) => {
+            socket.write(randomBytes(500_000));
+            // Drop only once the server really has a staged file, so cleanup is exercised.
+            void expect
+                .poll(async () => (staged = (await tmpFiles()).length), { timeout: 8000 })
+                .toBe(1)
+                .finally(() => socket.destroy());
+        });
+        await expect.poll(async () => (await tmpFiles()).length, { timeout: 10_000 }).toBe(0);
+        expect(staged).toBe(1);
+        expect((await rows()).length).toBe(before);
+        expect((await fetch(`${proxied.base}/api/health`)).ok).toBe(true);
+    });
+
+    it("times out a stalled upload with 408 and cleans up", async () => {
+        const stalled = await rawUpload(
+            proxied,
+            cookieHeaders({ "Content-Length": "3000000" }),
+            (socket) => socket.write(randomBytes(200_000)),
+        );
+        expect(stalled.status).toBe(408);
+        expect(stalled.elapsedMs).toBeLessThan(12_000);
+        await expect.poll(async () => (await tmpFiles()).length, { timeout: 10_000 }).toBe(0);
+    });
+});
+
+describe("server function bodies", () => {
+    const fn = (headers: Record<string, string>, body?: string) =>
+        fetch(`${proxied.base}/_serverFn/does-not-exist`, {
+            method: "POST",
+            headers: { origin: proxied.base, "content-type": "application/json", ...headers },
+            body,
+        });
+
+    it("bounds a server function request body, as the API does", async () => {
+        const big = await fn({}, JSON.stringify({ pad: "x".repeat(70 * 1024) }));
+        expect(big.status).toBe(413);
+        expect(errorSchema.parse(await big.json()).status).toBe(413);
+        // Small bodies still reach TanStack (which rejects an unknown function itself).
+        const small = await fn({}, JSON.stringify({ ok: true }));
+        expect(small.status).not.toBe(413);
+        expect(small.status).not.toBe(411);
+        // A declared length that was never delivered is refused without waiting.
+        const unframed = await rawUploadTo("/_serverFn/x", {
+            "Transfer-Encoding": "chunked",
+            Connection: "close",
+        });
+        expect(unframed.status).toBe(411);
+    });
+});
+
 describe("OpenAPI reference", () => {
     const operations = [
         "get /api/v1/me",
@@ -887,6 +1128,7 @@ describe("OpenAPI reference", () => {
         "get /api/v1/organizations/{orgId}/projects",
         "post /api/v1/organizations/{orgId}/projects",
         "get /api/v1/key",
+        "post /api/v1/organizations/{orgId}/artifacts",
         "get /api/v1/organizations/{orgId}/api-keys",
         "post /api/v1/organizations/{orgId}/api-keys",
         "delete /api/v1/organizations/{orgId}/api-keys/{keyId}",

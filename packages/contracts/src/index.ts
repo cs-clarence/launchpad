@@ -66,6 +66,8 @@ export const errorSchema = z.strictObject({
         "conflict",
         "invalid",
         "delivery-failed",
+        "too-large",
+        "timeout",
         "internal",
     ]),
     status: z.number().int(),
@@ -124,6 +126,18 @@ export const previewSchema = z.strictObject({
     state: previewStateSchema,
     activeDeploymentId: z.uuid().nullable(),
     createdAt: timestamp,
+});
+
+export const artifactSchema = z.strictObject({
+    id: z.uuid(),
+    digest: z.string().regex(/^[0-9a-f]{64}$/),
+    sizeBytes: z.number().int().nonnegative(),
+    expandedBytes: z.number().int().nonnegative(),
+    entryCount: z.number().int().positive(),
+    createdAt: timestamp,
+    reused: z
+        .boolean()
+        .meta({ description: "True when this organization already had the same archive." }),
 });
 
 export const invitationSchema = z.strictObject({

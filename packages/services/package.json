@@ -15,6 +15,17 @@
                 "development": "./src/index.ts",
                 "default": "./src/index.ts"
             }
+        },
+        "./testing": {
+            "types": "./src/testing/tar-fixtures.ts",
+            "import": {
+                "development": "./src/testing/tar-fixtures.ts",
+                "default": "./src/testing/tar-fixtures.ts"
+            },
+            "require": {
+                "development": "./src/testing/tar-fixtures.ts",
+                "default": "./src/testing/tar-fixtures.ts"
+            }
         }
     },
     "scripts": {
@@ -27,6 +38,7 @@
         "@launchpad/contracts": "workspace:^",
         "@launchpad/database": "workspace:^",
         "kysely": "catalog:",
+        "tar": "catalog:",
         "zod": "catalog:"
     },
     "devDependencies": {

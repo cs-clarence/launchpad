@@ -18,7 +18,13 @@ const invitations = {
     publicSignup: false,
     hashPassword: async (password: string) => password,
 };
-const api = createApi({ auth, db, origin: config.origin, invitations });
+const api = createApi({
+    auth,
+    db,
+    origin: config.origin,
+    invitations,
+    artifacts: { dataDir: "/nonexistent-launchpad-test" },
+});
 
 describe("controller HTTP adapter", () => {
     it("delegates the scaffold health response to the service", async () => {

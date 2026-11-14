@@ -63,6 +63,7 @@
         "nodemailer": "10.5.0",
         "@elysia/openapi": "2.0.0-rc.1",
         "@scalar/api-reference": "1.78.1",
-        "@types/nodemailer": "8.0.2"
+        "@types/nodemailer": "8.0.2",
+        "tar": "7.5.23"
     }
 }

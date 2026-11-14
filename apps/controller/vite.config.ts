@@ -55,6 +55,14 @@ export default defineConfig({
             // through the Referer header. The dashboard may not be framed
             // (clickjacking) or content-sniffed. No script-restricting CSP yet: the
             // API reference needs inline scripts.
+            // Server functions take small JSON bodies; bound them like the API does.
+            handlers: [
+                {
+                    route: "/_serverFn/**",
+                    handler: "./src/server/limit-server-fn.ts",
+                    middleware: true,
+                },
+            ],
             routeRules: {
                 // Responses carry identity and organization data; a shared cache must never
                 // serve one account's response to another.
