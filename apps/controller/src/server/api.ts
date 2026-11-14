@@ -5,6 +5,9 @@ import {
     acceptInvitation,
     addMember,
     type ApiKeyPrincipal,
+    type ArtifactDeps,
+    resolveLimits,
+    uploadArtifact,
     type ApiKeyScope,
     authenticateApiKey,
     createApiKey,
@@ -28,11 +31,17 @@ import {
     ServiceError,
 } from "@launchpad/services";
 import { Elysia } from "elysia";
+import { framingProblem, framingResponse, SAFE_METHODS } from "./body-framing";
+import { MAX_BODY_BYTES } from "./limits";
 import { docs, openApiPlugin } from "./openapi";
 
-const SAFE_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
-// Every request body is small JSON; anything larger is refused before it is read.
-export const MAX_BODY_BYTES = 64 * 1024;
+// Anything larger than the limit is refused before it is read.
+export { MAX_BODY_BYTES } from "./limits";
+
+const ARTIFACT_UPLOAD = /^\/api\/v1\/organizations\/[^/]+\/artifacts\/?$/i;
+function isArtifactUpload(method: string, path: string) {
+    return method === "POST" && ARTIFACT_UPLOAD.test(path);
+}
 
 // A fetch handler only: the parent TanStack Start server owns the listener.
 // The path from the same `request.url` string Elysia routes on, so the guard and
@@ -43,6 +52,21 @@ function rawPath(request: Request): string {
 
 // Normalizes encoding, repeated slashes and case before matching, so no spelling
 // of the path reaches Better Auth's organization routes.
+// The auth namespace path after decoding, collapsing repeated slashes and lowering
+// the case, or null when it is not under /api/auth. Throttles that read a request
+// body match here, never by searching the whole path: a substring search would also
+// match an unrelated route whose name contains it, such as an upload.
+function authPath(path: string): string | null {
+    let decoded = path;
+    try {
+        decoded = decodeURIComponent(path);
+    } catch {
+        return path.toLowerCase().startsWith("/api/auth/") ? path.toLowerCase() : null;
+    }
+    const normalized = decoded.replace(/\/{2,}/g, "/").toLowerCase();
+    return normalized.startsWith("/api/auth/") ? normalized : null;
+}
+
 function isOrganizationPath(path: string): boolean {
     let decoded = path;
     try {
@@ -62,8 +86,11 @@ export function createApi(deps: {
     db: Kysely<Database>;
     origin: string;
     invitations: InvitationDeps;
+    artifacts: ArtifactDeps;
 }) {
-    const { auth, db, origin, invitations } = deps;
+    const { auth, db, origin, invitations, artifacts } = deps;
+    // Resolved once, so a bad limit fails at startup, not on the first upload.
+    const uploadLimit = resolveLimits(artifacts.limits).maxUploadBytes;
     const withDocs = deps.docs ?? false;
     const emailOf = (request: Request) =>
         request
@@ -143,6 +170,8 @@ export function createApi(deps: {
         conflict: 409,
         invalid: 422,
         "delivery-failed": 502,
+        "too-large": 413,
+        timeout: 408,
     } as const;
 
     async function execute(
@@ -244,30 +273,17 @@ export function createApi(deps: {
             // origin. Sibling preview hosts share a site, so SameSite is not enough.
             .onRequest(async ({ request }) => {
                 const path = rawPath(request);
-                if (!SAFE_METHODS.has(request.method)) {
-                    const declared = request.headers.get("content-length");
-                    // Any transfer coding means an undeclared length; the limit cannot be
-                    // enforced before reading, and legitimate clients send a length.
-                    const encoded = request.headers.has("transfer-encoding");
-                    // A body with no declared length (neither header) would reach the JSON
-                    // readers unbounded, so a body must always arrive with a length.
-                    const unframed = request.body !== null && declared === null;
-                    if (encoded || unframed || (declared !== null && !/^\d+$/.test(declared))) {
-                        return Response.json(
-                            { code: "invalid", status: 411, title: "Length Required" },
-                            { status: 411 },
-                        );
-                    }
-                    if (declared !== null && Number(declared) > MAX_BODY_BYTES) {
-                        return Response.json(
-                            { code: "invalid", status: 413, title: "Payload Too Large" },
-                            { status: 413 },
-                        );
-                    }
-                }
+                // Only the archive upload may be large; every other body is small JSON.
+                const problem = framingProblem(
+                    request,
+                    isArtifactUpload(request.method, path) ? uploadLimit : MAX_BODY_BYTES,
+                );
+                if (problem) return framingResponse(problem);
+                const auth = authPath(path);
                 if (
                     request.method === "POST" &&
-                    path.toLowerCase().includes("request-password-reset")
+                    auth !== null &&
+                    auth.includes("request-password-reset")
                 ) {
                     const email = await emailOf(request);
                     if (!(await allowResetRequest(db, email))) {
@@ -277,7 +293,7 @@ export function createApi(deps: {
                         );
                     }
                 }
-                if (request.method === "POST" && path.toLowerCase().includes("sign-in/email")) {
+                if (request.method === "POST" && auth !== null && auth.includes("sign-in/email")) {
                     const throttled = await throttleSignIn(request);
                     if (throttled) {
                         return throttled;
@@ -523,6 +539,47 @@ export function createApi(deps: {
                 ({ request, set, params }) =>
                     respond(request, set, null, (p) =>
                         revokeApiKey(db, p, params.orgId, params.keyId),
+                    ),
+            )
+            // The archive is the request body itself (not multipart), so it streams: the
+            // caller is authorized first and nothing is buffered here.
+            .post(
+                "/v1/organizations/:orgId/artifacts",
+                { detail: docs.uploadArtifact },
+                ({ request, set, params }) =>
+                    respond(
+                        request,
+                        set,
+                        null,
+                        async (p) => {
+                            const type = (request.headers.get("content-type") ?? "")
+                                .split(";")[0]!
+                                .trim()
+                                .toLowerCase();
+                            if (
+                                ![
+                                    "application/gzip",
+                                    "application/x-gzip",
+                                    "application/octet-stream",
+                                ].includes(type)
+                            ) {
+                                throw new ServiceError(
+                                    "invalid",
+                                    "Send the archive as application/gzip.",
+                                );
+                            }
+                            const length = request.headers.get("content-length");
+                            return uploadArtifact(
+                                db,
+                                p,
+                                params.orgId,
+                                request.body,
+                                { contentLength: length === null ? null : Number(length) },
+                                artifacts,
+                                request.signal,
+                            );
+                        },
+                        201,
                     ),
             )
             // Last: the plugin's types would otherwise hide the handler context above.

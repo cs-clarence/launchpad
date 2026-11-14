@@ -14,17 +14,19 @@ Keep this page current when the entry points or runtime change.
 
 ## Configuration
 
-| Variable                  | Meaning                                                                                                                                                                                                |
-| ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `DATABASE_URL`            | PostgreSQL connection string (required)                                                                                                                                                                |
-| `LAUNCHPAD_AUTH_SECRET`   | Random secret, at least 32 characters (required)                                                                                                                                                       |
-| `LAUNCHPAD_BASE_URL`      | Public controller URL; its origin is the only trusted origin (required)                                                                                                                                |
-| `LAUNCHPAD_ENROLLMENT`    | `operator` (default) or `invitation` (requires SMTP)                                                                                                                                                   |
-| `LAUNCHPAD_PUBLIC_SIGNUP` | `false` by default; sign-up is a separate policy from SMTP                                                                                                                                             |
-| `LAUNCHPAD_SMTP_URL`      | Optional; set with `LAUNCHPAD_EMAIL_FROM` to enable email recovery and invitations. `smtps://` or `smtp://` (STARTTLS required unless loopback); no query options                                      |
-| `HOST` / `PORT`           | Listen address and port of the built server (default `127.0.0.1`-style host, port `3000`)                                                                                                              |
-| `LAUNCHPAD_API_DOCS`      | `true` (default) serves the OpenAPI document and Scalar reference; `false` removes them                                                                                                                |
-| `LAUNCHPAD_TRUSTED_PROXY` | `false` (default): the TCP peer address is the client address. `true`: exactly one trusted proxy that appends to `X-Forwarded-For`; its rightmost entry is used. Never set `true` without such a proxy |
+| Variable                          | Meaning                                                                                                                                                                                                |
+| --------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `DATABASE_URL`                    | PostgreSQL connection string (required)                                                                                                                                                                |
+| `LAUNCHPAD_AUTH_SECRET`           | Random secret, at least 32 characters (required)                                                                                                                                                       |
+| `LAUNCHPAD_BASE_URL`              | Public controller URL; its origin is the only trusted origin (required)                                                                                                                                |
+| `LAUNCHPAD_ENROLLMENT`            | `operator` (default) or `invitation` (requires SMTP)                                                                                                                                                   |
+| `LAUNCHPAD_PUBLIC_SIGNUP`         | `false` by default; sign-up is a separate policy from SMTP                                                                                                                                             |
+| `LAUNCHPAD_SMTP_URL`              | Optional; set with `LAUNCHPAD_EMAIL_FROM` to enable email recovery and invitations. `smtps://` or `smtp://` (STARTTLS required unless loopback); no query options                                      |
+| `HOST` / `PORT`                   | Listen address and port of the built server (default `127.0.0.1`-style host, port `3000`)                                                                                                              |
+| `LAUNCHPAD_DATA_DIR`              | Directory only the controller can write; uploaded archives are staged in `tmp/` and kept under `artifacts/` (default `.data/controller`). Mount durable storage here in production                     |
+| `LAUNCHPAD_MAX_UPLOAD_BYTES` etc. | Optional upload limits, all positive integers; a set but invalid value stops startup. See [Artifact uploads](#artifact-uploads)                                                                        |
+| `LAUNCHPAD_API_DOCS`              | `true` (default) serves the OpenAPI document and Scalar reference; `false` removes them                                                                                                                |
+| `LAUNCHPAD_TRUSTED_PROXY`         | `false` (default): the TCP peer address is the client address. `true`: exactly one trusted proxy that appends to `X-Forwarded-For`; its rightmost entry is used. Never set `true` without such a proxy |
 
 ## API reference
 
@@ -147,3 +149,36 @@ The emailed-reset callback runs after Better Auth commits its password change.
 If the callback fails, the response reports failure but the password/token change
 may already have committed. Key revocation precedes its audit insert, so audit
 failure does not restore keys. Use operator recovery if necessary.
+
+## Artifact uploads
+
+`POST /api/v1/organizations/{orgId}/artifacts` (signed in; deployers and above; API
+keys are not accepted yet) stores a static site. The body is the archive itself, a
+`.tar.gz`, sent with `Content-Type: application/gzip` and a `Content-Length`. It is
+not multipart: the caller is authorized first, then the body streams to a private
+staging file (never buffered in memory), is hashed, validated and finalized.
+
+Accepted: regular files and directories, with `index.html` at the root. Refused
+with 422: links of any kind, devices, absolute or `..` paths, backslashes and control
+characters, duplicates (including names that differ only by case), a file used as a
+directory, more than the allowed entries or nesting, secrets (`.env*`, `.git`,
+`.ssh`, `.aws`, `.npmrc`, `.htpasswd`, `id_rsa`-style keys, `*.pem`, `*.key`,
+`*.p12`), a nested compressed layer, and an archive that expands beyond the limit
+(counted while decompressing, so a bomb is stopped early). The CLI should leave
+secrets out before uploading; the server refuses rather than silently dropping them.
+
+| Variable                           | Default             | Limit                                                          |
+| ---------------------------------- | ------------------- | -------------------------------------------------------------- |
+| `LAUNCHPAD_MAX_UPLOAD_BYTES`       | 52428800 (50 MiB)   | Upload size; a larger declared length is a 413 before any read |
+| `LAUNCHPAD_MAX_EXPANDED_BYTES`     | 209715200 (200 MiB) | Decompressed size                                              |
+| `LAUNCHPAD_MAX_ARCHIVE_ENTRIES`    | 5000                | Files and directories                                          |
+| `LAUNCHPAD_MAX_ARCHIVE_DEPTH`      | 16                  | Path depth                                                     |
+| `LAUNCHPAD_UPLOAD_TIMEOUT_SECONDS` | 300                 | Total upload time; 408                                         |
+| `LAUNCHPAD_MAX_ARTIFACTS`          | 20                  | Stored artifacts per organization                              |
+
+A length-less (chunked) upload is a 411. An identical archive already stored for the
+organization is reused (`reused: true`); archives are deduplicated within an
+organization only. Artifacts are not deleted until the cleanup milestone, so an
+organization at its ceiling is refused even for an identical archive (redeploy an
+existing artifact by id instead). A stale staging file from a crash is swept at the
+next start. `/_serverFn/**` request bodies are bounded to 64 KiB like the rest of the API.

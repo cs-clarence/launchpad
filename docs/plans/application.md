@@ -350,9 +350,9 @@ Milestone 1 is complete except these known, accepted items:
 - No interactive browser check of the UI (no desktop browser was available); the
   UI is covered by server-rendered tests and types only. Run a click-through and a
   Lighthouse accessibility audit when a browser is available.
-- Multipart bodies and streamed responses through the Start hop (milestone 3).
-- Request-size limits for TanStack server functions (`/_serverFn`); add one in
-  Nitro or the proxy before milestone 3 uploads.
+- ~~Multipart bodies and streamed responses through the Start hop~~ and
+  ~~request-size limits for `/_serverFn`~~: closed in milestone 3 slice 2 (a streamed
+  raw-body upload through the built server, and a Nitro middleware).
 - The controller image is not built or run with the current controller, and the
   admin commands and migration files are not packaged (milestone 6).
 - Error responses 411, 413 and 429 are not listed per operation in the OpenAPI

@@ -10,3 +10,4 @@ export * from "./invitations";
 export * from "./contracts";
 export * from "./api-keys";
 export * from "./previews";
+export * from "./artifacts";

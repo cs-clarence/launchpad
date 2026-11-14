@@ -6,6 +6,7 @@ import {
     addedMemberSchema,
     addMemberSchema,
     apiKeySummarySchema,
+    artifactSchema,
     createApiKeySchema,
     createdApiKeySchema,
     keyInfoSchema,
@@ -40,7 +41,9 @@ const ERRORS = {
     401: "Not signed in.",
     403: "The caller's role or origin does not allow this.",
     404: "The resource does not exist, or the caller is not a member of its organization.",
+    408: "The upload did not finish in time.",
     409: "The change conflicts with existing data.",
+    413: "The upload is larger than the allowed size.",
     422: "The request body is invalid.",
 } as const;
 
@@ -53,6 +56,7 @@ interface Operation {
     keyOnly?: boolean;
     path?: string[];
     body?: z.ZodType;
+    rawBody?: { contentType: string; description: string };
     ok: { status?: number; description: string; schema?: z.ZodType };
     errors?: (keyof typeof ERRORS | 502)[];
 }
@@ -83,6 +87,19 @@ export function operation(op: Operation): DocumentDecoration {
             required: true,
             schema: { type: "string" },
         })),
+        ...(op.rawBody
+            ? {
+                  requestBody: {
+                      required: true,
+                      description: op.rawBody.description,
+                      content: {
+                          [op.rawBody.contentType]: {
+                              schema: { type: "string", format: "binary" },
+                          },
+                      },
+                  },
+              }
+            : {}),
         ...(op.body ? { requestBody: { required: true, content: content(op.body, "input") } } : {}),
         responses: responses as DocumentDecoration["responses"],
         security: op.public
@@ -128,6 +145,7 @@ export function openApiPlugin(enabled: boolean) {
                 { name: "Session", description: "The signed-in user." },
                 { name: "Organizations", description: "Organizations and membership." },
                 { name: "Projects", description: "Organization-owned projects." },
+                { name: "Artifacts", description: "Uploaded static-site archives." },
                 { name: "API keys", description: "Organization-owned automation keys." },
                 {
                     name: "Invitations",
@@ -234,6 +252,16 @@ export const docs = {
         body: createProjectSchema,
         ok: { status: 201, description: "Created.", schema: createdProjectSchema },
         errors: [401, 403, 404, 409, 422],
+    }),
+    uploadArtifact: operation({
+        tags: ["Artifacts"],
+        summary: "Upload a static-site archive",
+        description:
+            "Deployers and above, signed in (not an API key yet). The body is the archive itself: `.tar.gz` of regular files and directories with `index.html` at its root, sent with a `Content-Length` and `Content-Type: application/gzip`. It is validated while streaming; links, devices, absolute or `..` paths, secrets (`.env*`, `.git`, private keys), duplicates and oversized archives are refused. An identical archive already stored for the organization is reused (`reused: true`).",
+        path: ["orgId"],
+        rawBody: { contentType: "application/gzip", description: "A gzip-compressed tar archive." },
+        ok: { status: 201, description: "Stored (or reused).", schema: artifactSchema },
+        errors: [401, 403, 404, 408, 409, 413, 422],
     }),
     keyInfo: operation({
         keyOnly: true,

@@ -25,4 +25,5 @@ export {
     createPreviewSchema,
     previewSchema,
     previewStateSchema,
+    artifactSchema,
 } from "@launchpad/contracts";

@@ -144,4 +144,15 @@ TTL, expiry, deletion and cleanup (milestone 5), packaging and publishing
       `createPreview`/`listPreviews`/`getPreview` with idempotency and a per-org
       cap (default 10, configurable). No HTTP, Dokku or upload yet; new API-key
       scopes arrive with slice 6.
-- [ ] Slices 2–6.
+- [x] Slice 2: artifact upload and validation. `POST …/artifacts` takes the
+      `.tar.gz` as the request body (not multipart), authorizes before reading,
+      streams to a private staging file under byte and time limits, validates every
+      entry while streaming (types, names, secrets, duplicates, depth, entries,
+      decompressed size, nested compression, `index.html`), and finalizes
+      atomically under a per-organization lock into a content-addressed path.
+      Deduplicates within an organization; hard ceiling of 20 artifacts until the
+      cleanup milestone (an identical re-upload is refused when full; redeploy by id,
+      or announce a digest to skip the upload, is a slice 6 candidate). Session only;
+      API-key access with `preview:deploy` arrives in slice 6. Also closes the
+      milestone 1 gaps for streamed bodies and `/_serverFn` size limits.
+- [ ] Slices 3–6.
