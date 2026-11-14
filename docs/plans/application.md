@@ -334,8 +334,10 @@ Milestone 2 slices (one PR each):
       redirects, tolerant of added fields, no key in errors) and `packages/client-core`
       (profiles, mode-600 credential file under a lock, env credentials for CI, key
       verified at login, redaction).
-- [ ] M2-4: CLI (`login --key`, `whoami`, org selection, `projects list`, `--json`)
-      and the dashboard page to create and revoke keys.
+- [x] M2-4a: CLI (`login` from file/stdin/prompt, `whoami`, profiles, org selection,
+      `projects list`, `--json`, stable exit codes, redacted output).
+- [ ] M2-4b: the dashboard page to issue (one-time reveal) and revoke keys; then the
+      independent review of milestone 2.
 
 Milestone 1 is complete except these known, accepted items:
 
