@@ -1,5 +1,6 @@
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
+import { apiKeySummarySchema } from "@launchpad/contracts";
 
 // Server functions read through the same authorized services as the HTTP API.
 // Imports are dynamic so server-only code stays out of the client bundle.
@@ -14,6 +15,7 @@ async function principal() {
     const role = (session.user as { role?: string }).role;
     return {
         runtime,
+        sessionCreatedAt: session.session.createdAt,
         who: {
             userId: session.user.id,
             instanceRole: role === "operator" ? ("operator" as const) : ("user" as const),
@@ -31,11 +33,29 @@ export const getOrganizationViewFn = createServerFn({ method: "GET" })
     .validator((input: unknown) => z.object({ orgId: z.string().min(1).max(64) }).parse(input))
     .handler(async ({ data }) => {
         const services = await import("@launchpad/services");
-        const { runtime, who } = await principal();
+        const { runtime, who, sessionCreatedAt } = await principal();
         const organization = await services.getOrganization(runtime.db, who, data.orgId);
         const projects = await services.listProjects(runtime.db, who, data.orgId);
         const members = await services.listMembers(runtime.db, who, data.orgId);
         const canManage = services.can(organization.role, "member:manage");
+        const apiKeys = services.can(organization.role, "apikey:manage")
+            ? (await services.listApiKeys(runtime.db, who, data.orgId)).map((key) =>
+                  apiKeySummarySchema.parse({
+                      id: key.id,
+                      name: key.name,
+                      prefix: key.prefix,
+                      scopes: key.scopes,
+                      projectIds: key.projectIds,
+                      createdBy: key.createdBy,
+                      createdAt: key.createdAt.toISOString(),
+                      expiresAt: key.expiresAt.toISOString(),
+                      revokedAt: key.revokedAt?.toISOString() ?? null,
+                      lastUsedAt: key.lastUsedAt?.toISOString() ?? null,
+                      status: key.status,
+                  }),
+              )
+            : null;
+        const keySessionFreshUntil = new Date(sessionCreatedAt).getTime() + 15 * 60 * 1000;
         const invitations =
             canManage && runtime.features.invitations
                 ? (await services.listInvitations(runtime.db, who, data.orgId)).map((i) => ({
@@ -46,6 +66,9 @@ export const getOrganizationViewFn = createServerFn({ method: "GET" })
                   }))
                 : null;
         return {
+            apiKeys,
+            keySessionFreshUntil,
+            keySessionFresh: Date.now() < keySessionFreshUntil,
             invitations,
             organization,
             projects: projects.map((p) => ({ ...p, createdAt: p.createdAt.toISOString() })),

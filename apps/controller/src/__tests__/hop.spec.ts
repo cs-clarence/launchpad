@@ -604,6 +604,45 @@ describe("API keys over HTTP", () => {
         expect(z.array(apiKeySummarySchema).parse(JSON.parse(listed))).toHaveLength(3);
     });
 
+    it("renders safe key metadata only to administrators, never the one-time values", async () => {
+        const page = (cookie: string, path = `/orgs/${orgId}`) =>
+            fetch(`${proxied.base}${path}`, { headers: { cookie }, redirect: "manual" });
+        const metadata = z
+            .array(apiKeySummarySchema)
+            .parse(await (await api(owner, `/organizations/${orgId}/api-keys`)).json());
+        const admin = await page(owner);
+        expect(admin.headers.get("cache-control")).toContain("no-store");
+        const html = await admin.text();
+        expect(html).toContain('id="api-keys-heading"');
+        expect(html).toContain("Issue an API key");
+        for (const key of metadata) expect(html).toContain(key.prefix);
+        for (const value of [readKey, readKey2, writeKey, "secret_hash", '"secret":']) {
+            expect(html).not.toContain(value);
+        }
+        expect(html).not.toMatch(/lp_[A-Za-z0-9_-]{20,}/);
+
+        expect(
+            (
+                await api(owner, `/organizations/${orgId}/members`, {
+                    method: "POST",
+                    body: { email: "other@example.com", role: "viewer" },
+                })
+            ).status,
+        ).toBe(201);
+        const viewer = await login("other@example.com", USER_PASSWORD, "198.51.100.22");
+        const operator = await login("op@example.com", PASSWORD, "198.51.100.23");
+        for (const cookie of [viewer, operator]) {
+            const response = await page(cookie);
+            expect(response.headers.get("cache-control")).toContain("no-store");
+            const body = await response.text();
+            expect(body).not.toContain('id="api-keys-heading"');
+            for (const key of metadata) expect(body).not.toContain(key.prefix);
+        }
+        for (const path of ["/", "/_serverFn/missing-fixture-function"]) {
+            expect((await page(owner, path)).headers.get("cache-control")).toContain("no-store");
+        }
+    });
+
     it("authenticates as a key, limited to its organization and scopes", async () => {
         const info = keyInfoSchema.parse(await (await bearer(readKey, "/key")).json());
         expect(info).toMatchObject({ organizationId: orgId, name: "reader" });
@@ -745,6 +784,10 @@ describe("API keys over HTTP", () => {
             body: { name: "late", scopes: ["project:read"], expiresInDays: 1 },
         });
         expect(stale.status).toBe(403);
+        const stalePage = await fetch(`${proxied.base}/orgs/${orgId}`, {
+            headers: { cookie: owner },
+        });
+        expect(await stalePage.text()).toContain("Sign out and sign in again");
         await testDb.db
             .updateTable("session")
             .set({ createdAt: new Date() })

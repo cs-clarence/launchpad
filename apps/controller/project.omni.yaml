@@ -12,6 +12,7 @@ dependencies:
     - "@launchpad/services"
     - "@launchpad/auth"
     - "@launchpad/database"
+    - "@launchpad/contracts"
 
 tasks:
   test:unit:

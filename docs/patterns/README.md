@@ -23,6 +23,11 @@ its example paths current whenever a boundary or pattern changes.
 | Testing             | Unit tests need no infrastructure and call `api.fetch(Request)`. Integration tests (`*.spec.ts` in `__tests__`) use a disposable PostgreSQL via `@launchpad/database/testing`; `apps/controller/src/__tests__/hop.spec.ts` drives the built server over HTTP.                                                                                                                                   |
 
 The health endpoint reports static metadata, not PostgreSQL/Dokku readiness.
+Key administration is a dedicated organization-page component in
+`apps/controller/src/components/api-keys.tsx`. It imports only browser-safe
+contracts, issues through the cookie-authenticated HTTP API, and keeps reveals
+out of loader data. `src/lib/api-keys.ts` distinguishes issued/rejected/uncertain
+outcomes; never use the generic loader-invalidating mutation path for a reveal.
 Operator login, organizations, members and projects exist, but there are no
 deployments yet: do not publicly expose the controller as a management system.
 

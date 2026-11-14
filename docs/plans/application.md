@@ -336,8 +336,12 @@ Milestone 2 slices (one PR each):
       verified at login, redaction).
 - [x] M2-4a: CLI (`login` from file/stdin/prompt, `whoami`, profiles, org selection,
       `projects list`, `--json`, stable exit codes, redacted output).
-- [ ] M2-4b: the dashboard page to issue (one-time reveal) and revoke keys; then the
-      independent review of milestone 2.
+- [x] M2-4b implementation: organization-page key administration, safe metadata
+      loader, one-time reveal, explicit revoke confirmation, recent-session
+      guidance and uncertain-issuance recovery without automatic retries.
+- [ ] Final independent Opus review of milestone 2 and dashboard PR/CI/merge.
+      No interactive browser click-through has been run; helper/unit and
+      built-server integration tests cover logic, SSR visibility and cache headers.
 
 Milestone 1 is complete except these known, accepted items:
 

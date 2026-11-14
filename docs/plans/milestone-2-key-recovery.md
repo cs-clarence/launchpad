@@ -45,6 +45,6 @@ performed is intentionally irreversible: issue replacement keys after recovery.
 ## Progress
 
 - PR #8 merged as `19b420c`; clean main before this work.
-- Implemented. Full Omni check/test/build/compose and PostgreSQL integration
+- Merged in PR #9 as `3ce3de3`. Full Omni check/test/build/compose and PostgreSQL integration
   passed, including forced email-audit failure and legacy restricted-key cases.
-  Awaiting PR review/CI.
+  PR CI and CodeRabbit passed before merge.
