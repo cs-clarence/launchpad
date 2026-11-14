@@ -1,6 +1,8 @@
+import { execFile } from "node:child_process";
 import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { promisify } from "node:util";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
     ClientCoreError,
@@ -219,21 +221,31 @@ describe("hardening", () => {
     it("rejects a stale organization choice when the profile was replaced meanwhile", async () => {
         await login(ctx(), { controller: CONTROLLER, apiKey: KEY });
         let release!: () => void;
+        let started!: () => void;
         const gate = new Promise<void>((resolveGate) => (release = resolveGate));
+        const requestStarted = new Promise<void>((resolveStart) => (started = resolveStart));
         const slow = createContext(
             { LAUNCHPAD_CONFIG_DIR: dir },
             {
                 fetch: (async (url: string, init: RequestInit) => {
+                    started();
                     await gate;
                     return controller(url, init);
                 }) as unknown as typeof fetch,
             },
         );
         const choice = useOrganization(slow, "acme");
+        // The old credentials have been read and their request is in flight.
+        await requestStarted;
         await login(ctx(), { controller: CONTROLLER, apiKey: KEY2 }); // replaces the profile
         release();
         await expect(choice).rejects.toMatchObject({ code: "bad-input" });
         expect((await listProfiles(ctx())).profiles[0]).toMatchObject({ organizationId: ORG });
+    });
+
+    it.skipIf(process.platform === "win32")("refuses a FIFO instead of waiting on it", async () => {
+        await promisify(execFile)("mkfifo", [path.join(dir, "credentials.json")]);
+        await expect(whoami(ctx())).rejects.toMatchObject({ code: "insecure-store" });
     });
 
     it("refuses a credential directory that is a link or open to others, and does not use it", async () => {

@@ -89,7 +89,14 @@ export class CredentialStore {
         // nothing can be swapped in between the check and the read.
         let handle;
         try {
-            handle = await fs.open(this.file, fsConstants.O_RDONLY | (fsConstants.O_NOFOLLOW ?? 0));
+            // O_NONBLOCK: opening a FIFO with no writer would otherwise hang until the
+            // regular-file check below can refuse it.
+            handle = await fs.open(
+                this.file,
+                fsConstants.O_RDONLY |
+                    (fsConstants.O_NOFOLLOW ?? 0) |
+                    (fsConstants.O_NONBLOCK ?? 0),
+            );
         } catch (error) {
             const code = (error as NodeJS.ErrnoException).code;
             if (code === "ENOENT") return emptyConfig();
