@@ -24,6 +24,7 @@
         "test:integration": "bun --bun vitest run --config vitest.config.integration.ts"
     },
     "dependencies": {
+        "@launchpad/contracts": "workspace:^",
         "@launchpad/database": "workspace:^",
         "kysely": "catalog:",
         "zod": "catalog:"

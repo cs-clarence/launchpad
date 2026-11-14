@@ -91,6 +91,39 @@
         "vitest": "catalog:",
       },
     },
+    "packages/client-core": {
+      "name": "@launchpad/client-core",
+      "version": "0.0.0",
+      "dependencies": {
+        "@launchpad/sdk": "workspace:^",
+        "zod": "catalog:",
+      },
+      "devDependencies": {
+        "@launchpad/tsconfig": "workspace:^",
+        "@launchpad/vite-config": "workspace:^",
+        "@launchpad/vitest-config": "workspace:^",
+        "@types/bun": "catalog:",
+        "typescript": "catalog:",
+        "vite": "catalog:",
+        "vitest": "catalog:",
+      },
+    },
+    "packages/contracts": {
+      "name": "@launchpad/contracts",
+      "version": "0.0.0",
+      "dependencies": {
+        "zod": "catalog:",
+      },
+      "devDependencies": {
+        "@launchpad/tsconfig": "workspace:^",
+        "@launchpad/vite-config": "workspace:^",
+        "@launchpad/vitest-config": "workspace:^",
+        "@types/bun": "catalog:",
+        "typescript": "catalog:",
+        "vite": "catalog:",
+        "vitest": "catalog:",
+      },
+    },
     "packages/database": {
       "name": "@launchpad/database",
       "version": "0.0.0",
@@ -119,10 +152,28 @@
         "vitest": "catalog:",
       },
     },
+    "packages/sdk": {
+      "name": "@launchpad/sdk",
+      "version": "0.0.0",
+      "dependencies": {
+        "@launchpad/contracts": "workspace:^",
+        "zod": "catalog:",
+      },
+      "devDependencies": {
+        "@launchpad/tsconfig": "workspace:^",
+        "@launchpad/vite-config": "workspace:^",
+        "@launchpad/vitest-config": "workspace:^",
+        "@types/bun": "catalog:",
+        "typescript": "catalog:",
+        "vite": "catalog:",
+        "vitest": "catalog:",
+      },
+    },
     "packages/services": {
       "name": "@launchpad/services",
       "version": "0.0.0",
       "dependencies": {
+        "@launchpad/contracts": "workspace:^",
         "@launchpad/database": "workspace:^",
         "kysely": "catalog:",
         "zod": "catalog:",
@@ -317,11 +368,17 @@
 
     "@launchpad/cli": ["@launchpad/cli@workspace:apps/cli"],
 
+    "@launchpad/client-core": ["@launchpad/client-core@workspace:packages/client-core"],
+
+    "@launchpad/contracts": ["@launchpad/contracts@workspace:packages/contracts"],
+
     "@launchpad/controller": ["@launchpad/controller@workspace:apps/controller"],
 
     "@launchpad/database": ["@launchpad/database@workspace:packages/database"],
 
     "@launchpad/dokku": ["@launchpad/dokku@workspace:packages/dokku"],
+
+    "@launchpad/sdk": ["@launchpad/sdk@workspace:packages/sdk"],
 
     "@launchpad/services": ["@launchpad/services@workspace:packages/services"],
 

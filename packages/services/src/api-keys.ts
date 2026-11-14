@@ -1,24 +1,17 @@
 import { createHash, randomBytes } from "node:crypto";
+import { createApiKeySchema } from "@launchpad/contracts";
 import type { Database } from "@launchpad/database";
 import { sql, type Kysely } from "kysely";
 import { z } from "zod";
 import { API_KEY_SCOPES, can, type ApiKeyScope, type Principal } from "./authorization";
 import { ServiceError } from "./errors";
-import { nameSchema, parseInput, recordAudit, requireMembership } from "./organizations";
+import { parseInput, recordAudit, requireMembership } from "./organizations";
 
 type Db = Kysely<Database>;
 
 export const MAX_ACTIVE_KEYS_PER_ORGANIZATION = 100;
-export const MAX_KEY_LIFETIME_DAYS = 365;
 const KEY_PREFIX = "lp_";
 const LAST_USED_GRANULARITY_MS = 5 * 60 * 1000;
-
-export const createApiKeySchema = z.object({
-    name: nameSchema,
-    scopes: z.array(z.enum(API_KEY_SCOPES)).min(1).max(API_KEY_SCOPES.length),
-    projectIds: z.array(z.uuid()).min(1).max(50).optional(),
-    expiresInDays: z.number().int().min(1).max(MAX_KEY_LIFETIME_DAYS),
-});
 
 const hashSecret = (secret: string) => createHash("sha256").update(secret).digest("hex");
 

@@ -1,10 +1,11 @@
 import { createHash, randomBytes, randomUUID } from "node:crypto";
+import { nameSchema } from "@launchpad/contracts";
 import type { Database } from "@launchpad/database";
 import { type Kysely, sql } from "kysely";
 import { z } from "zod";
 import { can, canAssignRole, ORGANIZATION_ROLES, type Principal } from "./authorization";
 import { isUniqueViolation, ServiceError } from "./errors";
-import { nameSchema, parseInput, recordAudit, requireMembership } from "./organizations";
+import { parseInput, recordAudit, requireMembership } from "./organizations";
 
 type Db = Kysely<Database>;
 

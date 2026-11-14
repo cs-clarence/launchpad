@@ -1,0 +1,38 @@
+{
+    "name": "@launchpad/sdk",
+    "version": "0.0.0",
+    "private": true,
+    "description": "Browser-safe HTTP SDK for the Launchpad controller API",
+    "type": "module",
+    "exports": {
+        ".": {
+            "types": "./src/index.ts",
+            "import": {
+                "development": "./src/index.ts",
+                "default": "./src/index.ts"
+            },
+            "require": {
+                "development": "./src/index.ts",
+                "default": "./src/index.ts"
+            }
+        }
+    },
+    "scripts": {
+        "build": "vite build",
+        "check:types": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.node.json",
+        "test:unit": "vitest run --config vitest.config.unit.ts"
+    },
+    "dependencies": {
+        "@launchpad/contracts": "workspace:^",
+        "zod": "catalog:"
+    },
+    "devDependencies": {
+        "@launchpad/tsconfig": "workspace:^",
+        "@launchpad/vite-config": "workspace:^",
+        "@launchpad/vitest-config": "workspace:^",
+        "@types/bun": "catalog:",
+        "typescript": "catalog:",
+        "vite": "catalog:",
+        "vitest": "catalog:"
+    }
+}

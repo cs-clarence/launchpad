@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { nameSchema, slugSchema } from "@launchpad/contracts";
 import type { Database, OrganizationRole } from "@launchpad/database";
 import type { Kysely } from "kysely";
 import { z } from "zod";
@@ -13,16 +14,6 @@ import { isUniqueViolation, ServiceError } from "./errors";
 
 type Db = Kysely<Database>;
 
-export const slugSchema = z
-    .string()
-    .regex(/^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$/, "use lowercase letters, digits and hyphens");
-// No control or formatting characters (including bidi overrides) in display names.
-export const nameSchema = z
-    .string()
-    .trim()
-    .min(1)
-    .max(80)
-    .refine((value) => !/[\p{Cc}\p{Cf}]/u.test(value), "contains control characters");
 const roleSchema = z.enum(ORGANIZATION_ROLES);
 
 export function parseInput<T>(schema: z.ZodType<T>, input: unknown): T {
