@@ -114,6 +114,23 @@ describe("specifier parsing", () => {
         expect([...found].toSorted()).toEqual(["real", "zod"]);
     });
 
+    it("scans template interpolations as code and template text as text", () => {
+        const found = importedPackages(
+            [
+                'const a = `result: ${ /* import("unused-package") */ 1 }`;',
+                'const b = `text // import("in-template-text") stays text`;',
+                'const c = `nested ${ `inner ${ 2 /* import("nested-unused") */ }` } done`;',
+                'const d = `${ await import("used-in-interpolation") }`;',
+                'import real from "real";',
+            ].join("\n"),
+        );
+        expect([...found].toSorted()).toEqual([
+            "in-template-text",
+            "real",
+            "used-in-interpolation",
+        ]);
+    });
+
     it("reads Omni dependency lists in both forms", () => {
         expect(omniDependencyNames(["a", "b"])).toEqual(["a", "b"]);
         expect(omniDependencyNames({ append: ["b"], prepend: ["a"] })).toEqual(["a", "b"]);
