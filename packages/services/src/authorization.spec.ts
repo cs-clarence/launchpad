@@ -4,23 +4,39 @@ import { getControllerInfo } from "./index";
 
 describe("organization authorization matrix", () => {
     const table: Record<string, OrganizationAction[]> = {
-        viewer: ["organization:read", "member:read", "project:read"],
-        deployer: ["organization:read", "member:read", "project:read", "project:create"],
+        viewer: ["organization:read", "member:read", "project:read", "preview:read"],
+        deployer: [
+            "organization:read",
+            "member:read",
+            "project:read",
+            "preview:read",
+            "project:create",
+            "preview:create",
+            "preview:deploy",
+        ],
         admin: [
             "organization:read",
             "member:read",
             "project:read",
+            "preview:read",
             "project:create",
+            "preview:create",
+            "preview:deploy",
             "member:manage",
             "project:delete",
+            "apikey:manage",
         ],
         owner: [
             "organization:read",
             "member:read",
             "project:read",
+            "preview:read",
             "project:create",
+            "preview:create",
+            "preview:deploy",
             "member:manage",
             "project:delete",
+            "apikey:manage",
             "organization:delete",
         ],
     };

@@ -27,3 +27,14 @@ to the creator's current role on every use. The additive `status` field is requi
 by the workspace's response contract; strict consumers must update with the
 controller. These packages are not published yet. No secret, secret hash or
 internal membership identifier is returned in a key summary.
+
+## Previews (milestone 3, slice 1)
+
+`previews.ts` creates and reads preview records only: nothing is deployed and Dokku
+is not contacted. Names that reach Dokku (`app_name`, `lp-` plus ten random
+characters) are generated, never derived from user input; the hostname is
+`<slug>-<six random characters>.<preview domain>`. Creation is serialized per
+organization, enforces the live-preview cap (default 10) and supports an
+idempotency key bound to organization, principal and endpoint. The database
+refuses cross-organization references and more than one unfinished deployment
+per preview. Viewers read previews; deployers and above create and deploy.

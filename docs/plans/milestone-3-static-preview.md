@@ -1,6 +1,6 @@
 # Milestone 3: one static artifact reaches a working preview
 
-Status: **proposed, awaiting approval** (High risk; do not build before approval).
+Status: **approved by the user (2026-11-15)**; built slice by slice. High risk.
 Extends `docs/plans/application.md` milestone 3 and `docs/design/application.md`
 ("Static deployment path", "Jobs, concurrency and reconciliation").
 
@@ -135,4 +135,13 @@ TTL, expiry, deletion and cleanup (milestone 5), packaging and publishing
 ## Progress
 
 - Milestone 2 complete (PR #10 merged as `c935aea`).
-- This plan written; awaiting your approval of the decisions above.
+- Plan approved as written (all six decisions) and merged in PR #11.
+- [x] Slice 1: data model and services. Migration `…_010_previews` (artifact,
+      preview, deployment, deployment_event, idempotency_key), composite
+      organization references, generated `app_name`/hostname, one unfinished
+      deployment per preview enforced by a partial unique index, `preview:*`
+      actions (viewer reads; deployer creates and deploys), preview contracts and
+      `createPreview`/`listPreviews`/`getPreview` with idempotency and a per-org
+      cap (default 10, configurable). No HTTP, Dokku or upload yet; new API-key
+      scopes arrive with slice 6.
+- [ ] Slices 2–6.
