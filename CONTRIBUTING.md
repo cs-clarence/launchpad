@@ -41,9 +41,13 @@ git-ignored. Integration tests need a disposable PostgreSQL and are never part o
 
 ```sh
 omni -i run test:db:up            # disposable postgres:17-alpine on 127.0.0.1:55432 (Docker)
-omni -i run test:integration      # auth, services and controller, against that database
+omni -i run test:integration      # auth/services/controller on PostgreSQL; SDK loopback fixtures
 omni -i run test:db:down
 ```
+
+The SDK's transport suite uses ephemeral loopback HTTP fixtures instead of the
+database: `omni -i run test:integration -p @launchpad/sdk` runs it alone. Fixtures
+close after each test; default `test` remains unit-only and opens no listeners.
 
 `test:integration` defaults `TEST_DATABASE_URL` to that container; export it to point
 elsewhere. The controller's integration test also needs the built server, which Omni

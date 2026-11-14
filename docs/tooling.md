@@ -46,8 +46,10 @@ Rules that keep the graph correct:
   build first and their outputs change dependents' keys. A project that needs generated
   files (the controller's route tree) lists its `build` as a dependency and its
   generated files as build outputs.
-- **`test` is unit tests only.** `test:integration` is explicit and needs a disposable
-  PostgreSQL (`omni -i run test:db:up`).
+- **`test` is unit tests only.** `test:integration` is explicit. Auth, services and
+  controller integration need disposable PostgreSQL (`omni -i run test:db:up`).
+  The SDK's integration suite only uses ephemeral loopback HTTP fixtures; run it
+  alone with `omni -i run test:integration -p @launchpad/sdk`. No database is needed.
 - **Omni loads `.env.local`** from the repository root and the project into task
   environments without expanding variables, and task `env.vars` override the shell. For
   a default that the shell may override, apply it in the command

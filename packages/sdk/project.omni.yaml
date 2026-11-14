@@ -16,7 +16,7 @@ tasks:
     enabled: true
 
   test:integration:
-    enabled: false
+    enabled: true
 
   test:
     enabled: true

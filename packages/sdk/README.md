@@ -18,3 +18,17 @@ const projects = await client.projects.list(key.organizationId);
 - Covers what a key may do: key info, own organization, members (read), projects (list, create). Key, member and invitation management are session-only in the API and are not in the SDK.
 
 Depends on `zod` and `@launchpad/contracts` only; no filesystem or credential storage (see `@launchpad/client-core`).
+
+## Transport verification
+
+`omni -i run test:integration -p @launchpad/sdk` exercises real fetch with temporary
+HTTP fixtures on `127.0.0.1` and OS-assigned ports. It verifies that 302/307/308
+redirects are rejected without reaching another origin or forwarding its bearer
+key, and that a body stalled after response headers is aborted by the SDK timeout.
+Every fixture is closed after its test, including failure paths. This suite needs
+no controller, database or external service.
+
+Run it under Node as well as Bun when changing transport behavior; fetch error
+messages differ between runtimes, so redirect rejection may surface as either a
+redirect or an unreachable-controller transport error. Unit tests remain separate
+and do not open listeners.
