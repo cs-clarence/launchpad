@@ -109,7 +109,9 @@ Keep client hardening separate from the lifecycle/dashboard change:
 - [x] Resolve stale-lock ownership races and clean up failed temporary writes. Prefer
       safe failure over breaking a lock whose ownership cannot be proven. Use a typed
       busy-store error rather than claiming contention is file corruption.
-- [ ] Add real loopback SDK redirect/stream-timeout tests, not just mocked fetch.
+- [x] Add real loopback SDK redirect/stream-timeout tests, not just mocked fetch.
+      Four integration cases passed under real Bun and Node fetch; the default unit
+      task stays listener-free. Awaiting PR CI/review.
 - [ ] Reject project-limited `project:create` at issuance rather than issuing a key
       whose create scope can never be used.
 - [ ] Fix stale role, `/me` and Better Auth key-plugin descriptions in the design,

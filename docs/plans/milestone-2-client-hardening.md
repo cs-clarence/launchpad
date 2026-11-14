@@ -44,6 +44,6 @@ implementation remain separate follow-ups in the dashboard plan.
 ## Progress
 
 - PR #6 merged as `9b579e3`; started from clean main.
-- Implemented; focused unit/type checks and the full Omni
+- Merged in PR #7 as `51563b3`; focused unit/type checks and the full Omni
   check/test/build/compose gate passed. An uncached Node-container
-  check/test/build run also passed. Awaiting PR CI/review.
+  check/test/build run also passed. CI and CodeRabbit review passed before merge.
