@@ -374,13 +374,22 @@ describe("limits and failures leave nothing behind", () => {
     });
 
     it("holds an organization to two uploads at once, and frees the slots afterwards", async () => {
-        const stalled = () =>
-            new ReadableStream<Uint8Array>({
+        // `pull` runs only once an upload has its slot and starts reading, so each signal
+        // says that slot is held; no timing guess.
+        const stalled = () => {
+            let reading!: () => void;
+            const started = new Promise<void>((resolve) => (reading = resolve));
+            const body = new ReadableStream<Uint8Array>({
                 start(controller) {
                     controller.enqueue(Buffer.from("partial"));
                 },
-                pull: () => new Promise(() => {}),
+                pull: () => {
+                    reading();
+                    return new Promise(() => {});
+                },
             });
+            return { body, started };
+        };
         const run = (body: ReadableStream<Uint8Array>) =>
             code(
                 uploadArtifact(
@@ -392,8 +401,10 @@ describe("limits and failures leave nothing behind", () => {
                     deps({ uploadTimeoutMs: 800, maxConcurrentUploads: 2 }),
                 ),
             );
-        const held = [run(stalled()), run(stalled())];
-        await new Promise((resolve) => setTimeout(resolve, 150));
+        const first = stalled();
+        const second = stalled();
+        const held = [run(first.body), run(second.body)];
+        await Promise.all([first.started, second.started]);
         const refused = spy(site());
         expect(await run(refused.body)).toBe("conflict");
         expect(refused.state.pulled).toBe(0);
