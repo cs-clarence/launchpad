@@ -70,6 +70,12 @@ redaction, idempotency and exit-free structured results.
    upload. No tool reads file contents back; no shell tool. This policy controls what
    is published, not OS-level filesystem access: the process runs with its user's
    permissions.
+   **Accepted trust trade-off:** the client chooses `working_dir`. With broad patterns,
+   matching private files in any readable directory can be published; neither the
+   source-within-directory check nor the destination project allow-list prevents this.
+   The user explicitly chose this policy over mandatory startup-authorized roots.
+   Startup help and the MCP README must warn about that authority and recommend narrow
+   patterns plus an OS sandbox/restricted account if directory isolation is needed.
 6. **Mutation authorization:** `--allow-deploy` is the explicit policy. A deploy call also
    needs `confirm: true` and, to bound blast radius, only names matching the CLI's slug
    rule; `--allow-project <id|slug>` (repeatable, optional) limits which projects may be
