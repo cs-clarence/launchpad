@@ -111,6 +111,16 @@ describe("the vocabulary", () => {
         expect(calls.every((c) => c.maxOutputBytes === 64 * 1024)).toBe(true);
     });
 
+    it("sends nothing when it is already cancelled, and says it did not start", async () => {
+        const { client, calls } = await setup();
+        const controller = new AbortController();
+        controller.abort();
+        const error = await caught(client.apps.create(APP, controller.signal));
+        expect(error).toMatchObject({ kind: "not-started", mutating: true });
+        expect(needsReconciliation(error)).toBe(false);
+        expect(calls).toHaveLength(0);
+    });
+
     it("passes cancellation through", async () => {
         const { client, calls } = await setup();
         const controller = new AbortController();

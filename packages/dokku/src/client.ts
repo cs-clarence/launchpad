@@ -122,6 +122,15 @@ export function createDokkuClient(connection: DokkuConnection, options: DokkuCli
         extra: { stdin?: AsyncIterable<Uint8Array>; signal?: AbortSignal } = {},
     ): Promise<TransportResult> {
         assertSafeArguments(operation, args);
+        // Already told to stop: nothing is sent, so the command certainly did not run.
+        if (extra.signal?.aborted) {
+            throw new DokkuError({
+                kind: "not-started",
+                operation,
+                mutating,
+                message: `Dokku ${operation} was cancelled before it started.`,
+            });
+        }
         await trusted();
         const result = await transport.run({
             args,

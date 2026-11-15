@@ -38,8 +38,9 @@ export async function up(db: Kysely<any>): Promise<void> {
             references project (organization_id, id) on delete restrict
     )`.execute(db);
 
-    // attempt is the fencing token: every state write and Dokku call carries the
-    // attempt it was started with and is refused when it is no longer current.
+    // attempt is the fencing token: every state write carries the attempt it was started
+    // with and is refused when it is no longer current. Dokku itself does not know the
+    // attempt; calls are bounded by a lease-derived deadline instead.
     await sql`create table deployment (
         id uuid primary key default gen_random_uuid(),
         organization_id text not null references "organization" ("id") on delete restrict,

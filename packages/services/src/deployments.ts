@@ -13,8 +13,11 @@ type Trx = Transaction<Database>;
 
 export const DEFAULT_LEASE_MS = 15 * 60 * 1000;
 export const MAX_ATTEMPTS = 5;
-// A call is aborted at this fraction of the lease, so a worker that has lost its
-// lease has already been told to stop before a successor can start.
+// A worker starts no Dokku call after this fraction of the lease has passed on its own
+// monotonic clock, and aborts calls under way at that point. This bounds, but cannot
+// remove, the overlap with a successor: a process frozen between its check and the
+// call is not covered, and killing the local ssh does not stop a command already
+// running on the Dokku host. Dokku itself does not know the attempt.
 const SIGNAL_FRACTION = 0.8;
 
 export const STEPS: readonly DeploymentStep[] = ["app", "build", "configure", "load", "verify"];
@@ -25,6 +28,7 @@ const STEP_STATUS: Record<DeploymentStep, DeploymentStatus> = {
     load: "deploying",
     verify: "verifying",
 };
+const KNOWN_KINDS = ["invalid-argument", "trust", "not-started", "failed", "uncertain"];
 const RUNNING: DeploymentStatus[] = ["preparing", "building", "deploying", "verifying"];
 
 export function deploymentsEnabled(value: string | undefined): boolean {
@@ -161,8 +165,11 @@ export interface Claim {
 export async function claimNext(
     db: Db,
     owner: string,
+    deps: DeploymentDeps,
     leaseMs = DEFAULT_LEASE_MS,
 ): Promise<Claim | null> {
+    // Turning the feature off stops work that is already queued, not only new requests.
+    if (!deps.enabled) return null;
     return db.transaction().execute(async (trx) => {
         const next = await trx
             .selectFrom("deployment")
@@ -186,14 +193,17 @@ export async function claimNext(
         if (attempt > MAX_ATTEMPTS) {
             // A load that was in flight may have changed what is running: that is
             // held for a person, never turned into a plain failure.
-            const unknownLoad = next.step_pending === "load";
+            const unknownLoad =
+                next.step_pending === "load" ||
+                next.step_done === "load" ||
+                next.step_done === "verify";
             await trx
                 .updateTable("deployment")
                 .set({
                     status: unknownLoad ? "reconciliation-needed" : "failed",
                     failure_code: unknownLoad ? "load-uncertain" : "too-many-attempts",
                     failure_message: unknownLoad
-                        ? "A previous attempt stopped while loading the image."
+                        ? "Abandoned too many times during or after the image load."
                         : "The deployment was abandoned too many times.",
                     ...(unknownLoad ? {} : { finished_at: sql<Date>`now()` }),
                     updated_at: sql<Date>`now()`,
@@ -203,7 +213,16 @@ export async function claimNext(
                 })
                 .where("id", "=", next.id)
                 .execute();
-            await event(trx, next.organization_id, next.id, "claim", "error", "Too many attempts.");
+            await event(
+                trx,
+                next.organization_id,
+                next.id,
+                "claim",
+                "error",
+                unknownLoad
+                    ? "Abandoned around the load; needs reconciliation."
+                    : "Too many attempts.",
+            );
             return null;
         }
         await trx
@@ -321,7 +340,13 @@ export interface RunOptions {
     signal?: AbortSignal;
 }
 
-export type RunOutcome = "succeeded" | "failed" | "reconciliation-needed" | "stale";
+export type RunOutcome =
+    | "succeeded"
+    | "failed"
+    | "reconciliation-needed"
+    | "stale"
+    // Asked to shut down: the lease was released and a successor continues.
+    | "stopped";
 
 // Runs one claimed deployment to a terminal state. A stale attempt stops quietly with
 // "stale"; a database failure propagates (the lease then runs out and a successor
@@ -394,6 +419,9 @@ async function execute(
         storageKey: row.storage_key,
     };
     let imageTag = row.image_tag;
+    // Once an image load has begun, Dokku may be serving what this deployment built:
+    // any failure from then on is held for a person, never a plain failure.
+    let loadBegun = claim.stepDone === "load" || claim.stepDone === "verify";
 
     const done = claim.stepPending
         ? STEPS.indexOf(claim.stepPending) - 1
@@ -401,6 +429,9 @@ async function execute(
           ? STEPS.indexOf(claim.stepDone)
           : -1;
     for (const step of STEPS.slice(done + 1)) {
+        // The deadline is taken on this machine's monotonic clock before the lease is
+        // written, so it can only be earlier than the lease the database grants.
+        const deadline = performance.now() + Math.floor(claim.leaseMs * SIGNAL_FRACTION);
         // Intent is recorded, fenced, before anything is changed: if this worker
         // stops after the change, the successor sees which step was in flight.
         await fenced(
@@ -409,45 +440,78 @@ async function execute(
             { status: STEP_STATUS[step], step_pending: step },
             { phase: step, message: `Starting ${step}.` },
         );
+        if (step === "load") loadBegun = true;
+        // Checked immediately before every call: a worker that was paused past its
+        // deadline (a frozen process, a stalled commit) starts nothing more.
+        const guard = () => {
+            if (performance.now() >= deadline) throw new StaleAttemptError();
+        };
+        // A shutdown request does not interrupt a load that is already under way.
         const signal = AbortSignal.any([
-            ...(options.signal ? [options.signal] : []),
-            AbortSignal.timeout(Math.floor(claim.leaseMs * SIGNAL_FRACTION)),
+            ...(options.signal && step !== "load" ? [options.signal] : []),
+            AbortSignal.timeout(Math.max(1, Math.floor(deadline - performance.now()))),
         ]);
         try {
             if (step === "app") {
+                guard();
                 if (!(await ports.dokku.apps.exists(context.appName, signal))) {
+                    guard();
                     await ports.dokku.apps.create(context.appName, signal);
                 }
             } else if (step === "build") {
-                imageTag = (await ports.build(context, signal)).imageTag;
+                guard();
+                const built = await ports.build(context, signal);
+                if (!built.imageTag) throw new Error("The build produced no image tag.");
+                imageTag = built.imageTag;
             } else if (step === "configure") {
+                guard();
                 await ports.dokku.domains.set(context.appName, context.hostname, signal);
+                guard();
                 await ports.dokku.ports.set(context.appName, "http:80:80", signal);
             } else if (step === "load") {
+                guard();
                 await ports.loadImage(context, imageTag as string, signal);
             } else {
+                guard();
                 await ports.verify(context, signal);
             }
         } catch (error) {
+            if (error instanceof StaleAttemptError) throw error;
+            // Asked to stop: hand the deployment on, with its intent still recorded.
+            if (options.signal?.aborted && step !== "load" && !loadBegun) {
+                await fenced(
+                    db,
+                    claim,
+                    { release: true },
+                    {
+                        phase: step,
+                        level: "warn",
+                        message: "The worker stopped; another will continue.",
+                    },
+                );
+                return "stopped";
+            }
             const { kind } = kindOf(error);
-            // An image load that did not clearly fail cannot be undone or checked: stop, and hold the
-            // preview until a person has looked. Any other step is idempotent, so its
-            // failure, even an uncertain one, only fails this deployment.
-            const known = ["invalid-argument", "trust", "not-started", "failed"];
-            if (step === "load" && !(kind && known.includes(kind))) {
+            // Only a load that certainly never ran leaves the running image as it was.
+            const untouched = ["invalid-argument", "trust", "not-started"];
+            if (loadBegun && !(step === "load" && kind && untouched.includes(kind))) {
+                // From the load on, what Dokku is serving may be this deployment's image.
                 await fenced(
                     db,
                     claim,
                     {
                         status: "reconciliation-needed",
-                        failure_code: "load-uncertain",
-                        failure_message: "The image load ended with an unknown outcome.",
+                        failure_code: step === "load" ? "load-uncertain" : `${step}-after-load`,
+                        failure_message:
+                            step === "load"
+                                ? "The image load ended without a clear result."
+                                : `The ${step} step failed after the image was loaded.`,
                         release: true,
                     },
                     {
                         phase: step,
                         level: "error",
-                        message: "Outcome unknown; needs reconciliation.",
+                        message: "The running image may differ from the active deployment.",
                     },
                 );
                 return "reconciliation-needed";
@@ -457,7 +521,8 @@ async function execute(
                 claim,
                 {
                     status: "failed",
-                    failure_code: kind ? `dokku-${kind}` : `${step}-failed`,
+                    failure_code:
+                        kind && KNOWN_KINDS.includes(kind) ? `dokku-${kind}` : `${step}-failed`,
                     failure_message: `The ${step} step failed.`,
                     finished: true,
                     release: true,
@@ -473,23 +538,28 @@ async function execute(
             {
                 step_done: step,
                 step_pending: null,
-                ...(step === "build" && imageTag ? { image_tag: imageTag } : {}),
+                ...(step === "build" ? { image_tag: imageTag as string } : {}),
             },
             { phase: step, message: `Finished ${step}.` },
         );
     }
 
     // Activation and success are one transaction, fenced: the preview points at this
-    // deployment only if this attempt still owns it.
+    // deployment only if this attempt still owns it. The preview is locked first, the
+    // order enqueueing and resolving use, so none of them can wait on another.
     await db.transaction().execute(async (trx) => {
+        await trx
+            .selectFrom("preview")
+            .select("id")
+            .where("id", "=", row.preview_id)
+            .where("organization_id", "=", claim.organizationId)
+            .forUpdate()
+            .execute();
         await fencedIn(
             trx,
             claim,
             { status: "succeeded", finished: true, release: true },
-            {
-                phase: "activate",
-                message: "Deployment succeeded.",
-            },
+            { phase: "activate", message: "Deployment succeeded." },
         );
         await trx
             .updateTable("preview")
@@ -511,6 +581,11 @@ export async function resolveReconciliation(
     outcome: "failed" | "succeeded",
 ) {
     await requireMembership(db, principal, organizationId, "preview:resolve");
+    // Checked at run time: a value from outside the type system must not leave a
+    // deployment resumable.
+    if (outcome !== "failed" && outcome !== "succeeded") {
+        throw new ServiceError("invalid", "The outcome must be failed or succeeded.");
+    }
     if (!z.uuid().safeParse(deploymentId).success) {
         throw new ServiceError("not-found", "Deployment not found.");
     }

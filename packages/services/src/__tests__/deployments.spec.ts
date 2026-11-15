@@ -182,7 +182,7 @@ const expire = (id: string) =>
     );
 
 async function claimed(owner = "w1", leaseMs = 60_000): Promise<Claim> {
-    const claim = await claimNext(testDb.db, owner, leaseMs);
+    const claim = await claimNext(testDb.db, owner, on, leaseMs);
     if (!claim) throw new Error("nothing to claim");
     return claim;
 }
@@ -341,8 +341,19 @@ describe("running a deployment", () => {
         const second = await queue(preview);
         const g = fake();
         g.failAt = { call: "load", error: new FakeDokkuError("failed") };
-        expect(await runDeployment(testDb.db, await claimed(), g.ports)).toBe("failed");
-        expect((await state(second.id)).failure_code).toBe("dokku-failed");
+        // Even a reported failure of the load is held: it can come after the swap.
+        expect(await runDeployment(testDb.db, await claimed(), g.ports)).toBe(
+            "reconciliation-needed",
+        );
+        expect((await state(second.id)).failure_code).toBe("load-uncertain");
+        await sql`update deployment set status = 'failed', finished_at = now() where id = ${second.id}`.execute(
+            testDb.db,
+        );
+        const clean = await queue(preview);
+        const k = fake();
+        k.failAt = { call: "load", error: new FakeDokkuError("not-started") };
+        expect(await runDeployment(testDb.db, await claimed(), k.ports)).toBe("failed");
+        expect((await state(clean.id)).failure_code).toBe("dokku-not-started");
 
         const third = await queue(preview);
         const h = fake();
@@ -372,6 +383,155 @@ describe("running a deployment", () => {
     });
 });
 
+describe("failures after the image was loaded", () => {
+    it("hold the preview instead of failing the deployment", async () => {
+        for (const error of [
+            new Error("probe failed"),
+            new FakeDokkuError("uncertain"),
+            new FakeDokkuError("not-started"),
+        ]) {
+            const preview = await freshPreview();
+            const first = await queue(preview);
+            await runDeployment(testDb.db, await claimed(), fake().ports);
+            const d = await queue(preview);
+            const f = fake();
+            f.failAt = { call: "verify", error };
+            expect(await runDeployment(testDb.db, await claimed(), f.ports)).toBe(
+                "reconciliation-needed",
+            );
+            expect(await state(d.id)).toMatchObject({
+                status: "reconciliation-needed",
+                failure_code: "verify-after-load",
+            });
+            expect(await active(preview)).toBe(first.id);
+            expect(await code(queue(preview))).toBe("conflict");
+            await resolveReconciliation(testDb.db, people.ben!, org, d.id, "failed");
+        }
+    });
+
+    it("hold a deployment abandoned after the load on its last attempt", async () => {
+        const preview = await freshPreview();
+        const d = await queue(preview);
+        for (let i = 0; i < MAX_ATTEMPTS; i++) {
+            await claimed(`w${i}`);
+            await expire(d.id);
+        }
+        await sql`update deployment set status = 'verifying', step_done = 'load', step_pending = 'verify' where id = ${d.id}`.execute(
+            testDb.db,
+        );
+        expect(await claimNext(testDb.db, "last", on)).toBeNull();
+        expect(await state(d.id)).toMatchObject({ status: "reconciliation-needed" });
+        await resolveReconciliation(testDb.db, people.ben!, org, d.id, "failed");
+    });
+
+    it("hold a resumed deployment whose verify then fails", async () => {
+        const preview = await freshPreview();
+        const d = await queue(preview);
+        await claimed("dead");
+        await sql`update deployment set status = 'verifying', step_done = 'load', step_pending = 'verify', image_tag = 'lp/site:x' where id = ${d.id}`.execute(
+            testDb.db,
+        );
+        await expire(d.id);
+        const f = fake();
+        f.failAt = { call: "verify", error: new Error("down") };
+        expect(await runDeployment(testDb.db, await claimed("w2"), f.ports)).toBe(
+            "reconciliation-needed",
+        );
+        await resolveReconciliation(testDb.db, people.ben!, org, d.id, "failed");
+    });
+});
+
+describe("the deadline and the shutdown request", () => {
+    it("starts no further call once its deadline has passed", async () => {
+        const preview = await freshPreview();
+        const d = await queue(preview);
+        const f = fake();
+        // 80% of a 400 ms lease is 320 ms; the first call of `configure` takes longer.
+        f.after = { domain: () => new Promise((resolve) => setTimeout(resolve, 380)) };
+        const claim = await claimed("slow", 400);
+        expect(await runDeployment(testDb.db, claim, f.ports)).toBe("stale");
+        expect(f.calls).not.toContain("ports");
+        expect(f.calls).not.toContain("load");
+        expect((await state(d.id)).step_pending).toBe("configure");
+        await sql`update deployment set status = 'cancelled', finished_at = now(), lease_owner = null where id = ${d.id}`.execute(
+            testDb.db,
+        );
+    });
+
+    it("on shutdown releases the lease and leaves the intent for a successor", async () => {
+        const preview = await freshPreview();
+        const d = await queue(preview);
+        const controller = new AbortController();
+        const f = fake();
+        f.ports.build = async () => {
+            controller.abort();
+            throw new Error("interrupted by shutdown");
+        };
+        expect(
+            await runDeployment(testDb.db, await claimed("w1"), f.ports, {
+                signal: controller.signal,
+            }),
+        ).toBe("stopped");
+        expect(await state(d.id)).toMatchObject({
+            status: "building",
+            step_pending: "build",
+            lease_owner: null,
+        });
+        const next = await claimed("w2");
+        expect(next.attempt).toBe(2);
+        expect(await runDeployment(testDb.db, next, fake().ports)).toBe("succeeded");
+    });
+
+    it("does not abort a load that is under way, and stops only claiming", async () => {
+        const preview = await freshPreview();
+        await queue(preview);
+        const controller = new AbortController();
+        const f = fake();
+        let loadSignal: AbortSignal | undefined;
+        f.ports.loadImage = async (_c, _t, signal) => {
+            controller.abort();
+            loadSignal = signal;
+        };
+        expect(
+            await runDeployment(testDb.db, await claimed(), f.ports, { signal: controller.signal }),
+        ).toBe("succeeded");
+        expect(loadSignal?.aborted).toBe(false);
+    });
+});
+
+describe("turning the feature off", () => {
+    it("stops queued work from being claimed", async () => {
+        const preview = await freshPreview();
+        const d = await queue(preview);
+        expect(await claimNext(testDb.db, "w", { enabled: false })).toBeNull();
+        expect((await state(d.id)).status).toBe("queued");
+        expect(await claimNext(testDb.db, "w", on)).not.toBeNull();
+        await drain();
+        await sql`update deployment set status = 'cancelled', finished_at = now(), lease_owner = null where id = ${d.id}`.execute(
+            testDb.db,
+        );
+    });
+
+    it("refuses an outcome that is not failed or succeeded", async () => {
+        const preview = await freshPreview();
+        const d = await queue(preview);
+        const f = fake();
+        f.failAt = { call: "load", error: new FakeDokkuError("uncertain") };
+        await runDeployment(testDb.db, await claimed(), f.ports);
+        for (const bad of ["queued", "building", "reconciliation-needed", ""]) {
+            expect(
+                await code(resolveReconciliation(testDb.db, people.ben!, org, d.id, bad as never)),
+            ).toBe("invalid");
+        }
+        expect((await state(d.id)).status).toBe("reconciliation-needed");
+        // An admin of another organization cannot reach it.
+        expect(
+            await code(resolveReconciliation(testDb.db, people.zoe!, otherOrg, d.id, "failed")),
+        ).toBe("not-found");
+        await resolveReconciliation(testDb.db, people.ben!, org, d.id, "failed");
+    });
+});
+
 describe("reconciliation blocks the preview until a person decides", () => {
     it("refuses new deployments and is never claimed, and resolves only for admins", async () => {
         const preview = await freshPreview();
@@ -381,7 +541,7 @@ describe("reconciliation blocks the preview until a person decides", () => {
         await runDeployment(testDb.db, await claimed(), f.ports);
         expect(await code(queue(preview))).toBe("conflict");
         await expire(d.id);
-        expect(await claimNext(testDb.db, "w2")).toBeNull();
+        expect(await claimNext(testDb.db, "w2", on)).toBeNull();
 
         const resolve = (who: string, outcome: "failed" | "succeeded") =>
             code(resolveReconciliation(testDb.db, people[who]!, org, d.id, outcome));
@@ -451,7 +611,7 @@ describe("a stale worker", () => {
         expect(await runDeployment(testDb.db, claim, f.ports)).toBe("stale");
         expect(f.calls).toEqual([]);
         // A live lease also stops a second claimant.
-        expect(await claimNext(testDb.db, "w3")).toBeNull();
+        expect(await claimNext(testDb.db, "w3", on)).toBeNull();
         await sql`update deployment set status = 'cancelled', finished_at = now() where id = ${d.id}`.execute(
             testDb.db,
         );
@@ -464,7 +624,7 @@ describe("a stale worker", () => {
         const preview = await freshPreview();
         await queue(preview);
         const claims = await Promise.all(
-            Array.from({ length: 6 }, (_, i) => claimNext(testDb.db, `w${i}`)),
+            Array.from({ length: 6 }, (_, i) => claimNext(testDb.db, `w${i}`, on)),
         );
         expect(claims.filter(Boolean)).toHaveLength(1);
         await drain();
@@ -483,7 +643,7 @@ describe("a stale worker", () => {
         await sql`update deployment set status = 'deploying', step_done = 'configure', step_pending = 'load' where id = ${d.id}`.execute(
             testDb.db,
         );
-        expect(await claimNext(testDb.db, "last")).toBeNull();
+        expect(await claimNext(testDb.db, "last", on)).toBeNull();
         expect(await state(d.id)).toMatchObject({
             status: "reconciliation-needed",
             failure_code: "load-uncertain",
@@ -500,7 +660,7 @@ describe("a stale worker", () => {
             expect(c.attempt).toBe(i + 1);
             await expire(d.id);
         }
-        expect(await claimNext(testDb.db, "last")).toBeNull();
+        expect(await claimNext(testDb.db, "last", on)).toBeNull();
         expect(await state(d.id)).toMatchObject({
             status: "failed",
             failure_code: "too-many-attempts",
@@ -548,7 +708,7 @@ describe("recovering from a worker that stopped mid-step", () => {
         const preview = await freshPreview();
         const d = await queue(preview);
         const workerDb = createDatabase(testDb.url, { max: 1 });
-        const claim = await claimNext(workerDb, "doomed", 60_000);
+        const claim = await claimNext(workerDb, "doomed", on, 60_000);
         expect(claim).not.toBeNull();
         const a = fake();
         // The app is created, then this worker's database connection is lost before
