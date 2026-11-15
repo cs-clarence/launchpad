@@ -64,8 +64,10 @@ it fails at once with a message. The settings are listed at the top of
 ## Running it
 
 - A load or rollback in progress is not interrupted by a shutdown (a half-loaded image is
-  worse than a slow stop). Give the process a stop timeout of at least 13 minutes; a
-  SIGKILL mid-load leaves the deployment held for reconciliation.
+  worse than a slow stop). A load can take up to about 11 minutes and a rollback up to
+  1.6 times the lease (24 minutes with the default), so give the process a stop timeout
+  of at least 1.6 times the lease plus a margin (25 minutes by default); a SIGKILL
+  mid-load or mid-rollback leaves the deployment held for reconciliation.
 - Startup removes scratch build directories older than an hour that a killed worker left
   behind. Images are removed after each load; an image built but never loaded (a failure
   before the load) stays in the local engine until removed by hand: there is no global

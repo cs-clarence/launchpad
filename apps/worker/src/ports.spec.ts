@@ -87,10 +87,11 @@ describe("when Dokku refuses before reading the image", () => {
     it("stops docker save at once instead of waiting for its pipe to drain", async () => {
         const tmp = await tempDir();
         try {
-            // Plenty of output, then it just waits: nothing reads it, so it blocks.
+            // Plenty of output and nothing reading it, so it blocks. `exec` makes the process
+            // that holds the pipe the one that receives the stop signal.
             const bin = await fakeDocker(
                 tmp.dir,
-                `case "$1" in save) head -c 20000000 /dev/zero; exec sleep 30;; *) exit 0;; esac`,
+                `case "$1" in save) exec head -c 20000000 /dev/zero;; *) exit 0;; esac`,
             );
             const dokku = {
                 git: {

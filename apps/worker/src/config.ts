@@ -33,6 +33,9 @@ export interface WorkerConfig {
 // (plus the call's own overhead), so a shorter lease would abort every load and end
 // every deployment held for reconciliation.
 export const MIN_LEASE_MS = 14 * 60_000;
+// A rollback may run for 1.6 times the lease; keeping that under the hour after which
+// abandoned scratch directories are swept means a live build is never swept.
+export const MAX_LEASE_MS = 30 * 60_000;
 
 // docker is only handed plain absolute paths.
 const PLAIN_DIR = /^\/[A-Za-z0-9._/@+-]{1,400}$/;
@@ -86,6 +89,7 @@ export function loadConfig(
                 "LAUNCHPAD_WORKER_LEASE_MS",
                 15 * 60_000,
                 MIN_LEASE_MS,
+                MAX_LEASE_MS,
             ),
             archiveLimits: archiveLimits(env),
         },

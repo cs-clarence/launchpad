@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { loadConfig, MIN_LEASE_MS } from "./config";
+import { loadConfig, MAX_LEASE_MS, MIN_LEASE_MS } from "./config";
 
 const full = {
     LAUNCHPAD_DEPLOYMENTS: "on",
@@ -61,6 +61,8 @@ describe("worker configuration", () => {
             { LAUNCHPAD_WORKER_LEASE_MS: "1000" },
             // Shorter than a load can take: every deployment would end held.
             { LAUNCHPAD_WORKER_LEASE_MS: String(MIN_LEASE_MS - 1) },
+            // Longer than the scratch sweep can tolerate for a rollback's build.
+            { LAUNCHPAD_WORKER_LEASE_MS: String(MAX_LEASE_MS + 1) },
             { DOKKU_SSH_PORT: "70000" },
             { LAUNCHPAD_DATA_DIR: "/data/with space" },
             { LAUNCHPAD_DATA_DIR: "/data/$(id)" },
