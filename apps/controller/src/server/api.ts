@@ -4,6 +4,17 @@ import type { Kysely } from "kysely";
 import {
     acceptInvitation,
     addMember,
+    createPreview,
+    deploymentProjectId,
+    enqueueDeployment,
+    getDeployment,
+    getPreview,
+    listDeploymentEvents,
+    listDeployments,
+    listPreviews,
+    previewProjectId,
+    type DeploymentDeps,
+    type PreviewDeps,
     type ApiKeyPrincipal,
     type ArtifactDeps,
     resolveLimits,
@@ -87,8 +98,13 @@ export function createApi(deps: {
     origin: string;
     invitations: InvitationDeps;
     artifacts: ArtifactDeps;
+    // Off unless deployments are enabled; creating previews and deploying need it.
+    previews?: DeploymentDeps & PreviewDeps;
 }) {
     const { auth, db, origin, invitations, artifacts } = deps;
+    const previews = deps.previews ?? { enabled: false, previewDomain: "previews.example.com" };
+    const idempotencyKey = (request: Request) =>
+        request.headers.get("idempotency-key") ?? undefined;
     // Resolved once, so a bad limit fails at startup, not on the first upload.
     const uploadLimit = resolveLimits(artifacts.limits).maxUploadBytes;
     const withDocs = deps.docs ?? false;
@@ -541,6 +557,194 @@ export function createApi(deps: {
                         revokeApiKey(db, p, params.orgId, params.keyId),
                     ),
             )
+            .get(
+                "/v1/organizations/:orgId/previews",
+                { detail: docs.listPreviews },
+                ({ request, set, params, query }) =>
+                    respond(
+                        request,
+                        set,
+                        { organizationId: params.orgId, scope: "preview:read" },
+                        (p, key) => {
+                            const projectId =
+                                typeof query.projectId === "string" ? query.projectId : undefined;
+                            if (key && projectId !== undefined) {
+                                requireKeyAccess(key, params.orgId, "preview:read", projectId);
+                            }
+                            return listPreviews(db, p, params.orgId, {
+                                projectId,
+                                after: typeof query.cursor === "string" ? query.cursor : undefined,
+                                projectIds: key?.projectIds,
+                            });
+                        },
+                    ),
+            )
+            .post(
+                "/v1/organizations/:orgId/projects/:projectId/previews",
+                { detail: docs.createPreview },
+                async ({ request, set, params }) => {
+                    const input = await body(request);
+                    return respond(
+                        request,
+                        set,
+                        { organizationId: params.orgId, scope: "preview:create" },
+                        (p, key) => {
+                            if (key) {
+                                requireKeyAccess(
+                                    key,
+                                    params.orgId,
+                                    "preview:create",
+                                    params.projectId,
+                                );
+                            }
+                            if (!previews.enabled) {
+                                throw new ServiceError("conflict", "Deployments are not enabled.");
+                            }
+                            return createPreview(
+                                db,
+                                p,
+                                params.orgId,
+                                params.projectId,
+                                input,
+                                previews,
+                                idempotencyKey(request),
+                            );
+                        },
+                        201,
+                    );
+                },
+            )
+            .get(
+                "/v1/organizations/:orgId/previews/:previewId",
+                { detail: docs.getPreview },
+                ({ request, set, params }) =>
+                    respond(
+                        request,
+                        set,
+                        { organizationId: params.orgId, scope: "preview:read" },
+                        async (p, key) => {
+                            if (key?.projectIds) {
+                                requireKeyAccess(
+                                    key,
+                                    params.orgId,
+                                    "preview:read",
+                                    await previewProjectId(db, params.orgId, params.previewId),
+                                );
+                            }
+                            return getPreview(db, p, params.orgId, params.previewId);
+                        },
+                    ),
+            )
+            .post(
+                "/v1/organizations/:orgId/previews/:previewId/deployments",
+                { detail: docs.createDeployment },
+                async ({ request, set, params }) => {
+                    const input = await body(request);
+                    return respond(
+                        request,
+                        set,
+                        { organizationId: params.orgId, scope: "preview:deploy" },
+                        async (p, key) => {
+                            if (key?.projectIds) {
+                                requireKeyAccess(
+                                    key,
+                                    params.orgId,
+                                    "preview:deploy",
+                                    await previewProjectId(db, params.orgId, params.previewId),
+                                );
+                            }
+                            return enqueueDeployment(
+                                db,
+                                p,
+                                params.orgId,
+                                params.previewId,
+                                input,
+                                previews,
+                                idempotencyKey(request),
+                            );
+                        },
+                        202,
+                    );
+                },
+            )
+            .get(
+                "/v1/organizations/:orgId/previews/:previewId/deployments",
+                { detail: docs.listDeployments },
+                ({ request, set, params }) =>
+                    respond(
+                        request,
+                        set,
+                        { organizationId: params.orgId, scope: "preview:read" },
+                        async (p, key) => {
+                            if (key?.projectIds) {
+                                requireKeyAccess(
+                                    key,
+                                    params.orgId,
+                                    "preview:read",
+                                    await previewProjectId(db, params.orgId, params.previewId),
+                                );
+                            }
+                            return listDeployments(db, p, params.orgId, params.previewId);
+                        },
+                    ),
+            )
+            .get(
+                "/v1/organizations/:orgId/deployments/:deploymentId",
+                { detail: docs.getDeployment },
+                ({ request, set, params }) =>
+                    respond(
+                        request,
+                        set,
+                        { organizationId: params.orgId, scope: "preview:read" },
+                        async (p, key) => {
+                            if (key?.projectIds) {
+                                requireKeyAccess(
+                                    key,
+                                    params.orgId,
+                                    "preview:read",
+                                    await deploymentProjectId(
+                                        db,
+                                        params.orgId,
+                                        params.deploymentId,
+                                    ),
+                                );
+                            }
+                            return getDeployment(db, p, params.orgId, params.deploymentId);
+                        },
+                    ),
+            )
+            .get(
+                "/v1/organizations/:orgId/deployments/:deploymentId/events",
+                { detail: docs.listDeploymentEvents },
+                ({ request, set, params, query }) =>
+                    respond(
+                        request,
+                        set,
+                        { organizationId: params.orgId, scope: "preview:read" },
+                        async (p, key) => {
+                            if (key?.projectIds) {
+                                requireKeyAccess(
+                                    key,
+                                    params.orgId,
+                                    "preview:read",
+                                    await deploymentProjectId(
+                                        db,
+                                        params.orgId,
+                                        params.deploymentId,
+                                    ),
+                                );
+                            }
+                            const after = typeof query.after === "string" ? Number(query.after) : 0;
+                            return listDeploymentEvents(
+                                db,
+                                p,
+                                params.orgId,
+                                params.deploymentId,
+                                after,
+                            );
+                        },
+                    ),
+            )
             // The archive is the request body itself (not multipart), so it streams: the
             // caller is authorized first and nothing is buffered here.
             .post(
@@ -550,7 +754,7 @@ export function createApi(deps: {
                     respond(
                         request,
                         set,
-                        null,
+                        { organizationId: params.orgId, scope: "preview:deploy" },
                         async (p) => {
                             const type = (request.headers.get("content-type") ?? "")
                                 .split(";")[0]!
