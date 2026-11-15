@@ -40,7 +40,22 @@ steps:
   200 _with this deployment's id_ in `X-Launchpad-Deployment`, so an older container
   still serving does not count.
 
-## Not yet
+## A failed verify
 
-Rolling back to the previous image after a failed verify (the preview is held for an
-administrator instead), and the opt-in live test against a disposable Dokku.
+If the new image loaded but does not become ready, the previous release is restored: it
+is rebuilt from its own stored artifact with the same fixed template, loaded, and probed
+for _its own_ id (`rollback` in `ports.ts`; restoring is the ordinary path, not a second
+way to change what is running). The deployment ends `failed` (`verify-failed-rolled-back`)
+and the previous deployment stays active. With nothing to restore (a first release) it
+ends `failed` (`verify-failed`). If the rollback itself fails, or a worker stops in the
+middle of one, the preview is held for an administrator (`reconciliation-needed`).
+
+## Live tests
+
+`omni -i run test:live -p @launchpad/worker` runs the worker's real steps against a real
+Dokku and Docker: the fixture site, a real 404, SPA deep links, replacing a release and
+rolling back. It is opt-in, never part of `test` or CI, and needs a **disposable** Dokku
+you start yourself. It only creates apps named `lp-test-<6 characters>`, records them,
+and destroys only those at the end; it never touches any other app. Without its settings
+it fails at once with a message. The settings are listed at the top of
+`src/__tests__/live.spec.ts`.

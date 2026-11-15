@@ -70,6 +70,10 @@ export interface DeployPorts {
     loadImage(context: DeployContext, imageTag: string, signal: AbortSignal): Promise<void>;
     // Reads the app through the proxy; throws when it is not serving the new image.
     verify(context: DeployContext, signal: AbortSignal): Promise<void>;
+    // Puts the previously active release back: rebuilds it from its own stored
+    // artifact, loads it, and checks that it is the one serving. `context` is this
+    // deployment (which failed to verify); `previous` is the release to restore.
+    rollback(context: DeployContext, previous: DeployContext, signal: AbortSignal): Promise<void>;
 }
 
 export interface DeploymentDeps {
@@ -156,7 +160,7 @@ export interface Claim {
     owner: string;
     leaseMs: number;
     stepDone: DeploymentStep | null;
-    stepPending: DeploymentStep | null;
+    stepPending: DeploymentStep | "rollback" | null;
 }
 
 // Takes the oldest queued deployment, or one whose worker's lease ran out. Taking it
@@ -195,6 +199,7 @@ export async function claimNext(
             // held for a person, never turned into a plain failure.
             const unknownLoad =
                 next.step_pending === "load" ||
+                next.step_pending === "rollback" ||
                 next.step_done === "load" ||
                 next.step_done === "verify";
             await trx
@@ -277,7 +282,7 @@ async function event(
 type Patch = Partial<{
     status: DeploymentStatus;
     step_done: DeploymentStep | null;
-    step_pending: DeploymentStep | null;
+    step_pending: DeploymentStep | "rollback" | null;
     image_tag: string;
     failure_code: string;
     failure_message: string;
@@ -373,7 +378,7 @@ async function execute(
 ): Promise<RunOutcome> {
     // A `load` that was in flight when its worker stopped may or may not have replaced
     // the running app, and nothing readable tells which image is live. Do not guess.
-    if (claim.stepPending === "load") {
+    if (claim.stepPending === "load" || claim.stepPending === "rollback") {
         await fenced(
             db,
             claim,
@@ -383,7 +388,11 @@ async function execute(
                 failure_message: "A previous attempt stopped while loading the image.",
                 release: true,
             },
-            { phase: "load", level: "error", message: "Outcome unknown; needs reconciliation." },
+            {
+                phase: claim.stepPending,
+                level: "error",
+                message: "Outcome unknown; needs reconciliation.",
+            },
         );
         return "reconciliation-needed";
     }
@@ -422,6 +431,103 @@ async function execute(
     // Once an image load has begun, Dokku may be serving what this deployment built:
     // any failure from then on is held for a person, never a plain failure.
     let loadBegun = claim.stepDone === "load" || claim.stepDone === "verify";
+
+    const failAfterVerify = async (): Promise<RunOutcome> => {
+        const previous = await db
+            .selectFrom("preview as p")
+            .innerJoin("deployment as d", (join) =>
+                join
+                    .onRef("d.id", "=", "p.active_deployment_id")
+                    .onRef("d.organization_id", "=", "p.organization_id"),
+            )
+            .innerJoin("artifact as a", (join) =>
+                join
+                    .onRef("a.id", "=", "d.artifact_id")
+                    .onRef("a.organization_id", "=", "d.organization_id"),
+            )
+            .select(["d.id as id", "d.spa as spa", "a.storage_key as storage_key"])
+            .where("p.id", "=", row.preview_id)
+            .where("p.organization_id", "=", claim.organizationId)
+            .executeTakeFirst();
+        if (!previous) {
+            // Nothing was serving before, so there is nothing to put back; the preview
+            // simply has no active release until the next deployment.
+            await fenced(
+                db,
+                claim,
+                {
+                    status: "failed",
+                    failure_code: "verify-failed",
+                    failure_message: "The new release did not become ready.",
+                    finished: true,
+                    release: true,
+                    step_pending: null,
+                },
+                {
+                    phase: "verify",
+                    level: "error",
+                    message: "The new release did not become ready.",
+                },
+            );
+            return "failed";
+        }
+        const deadline = performance.now() + Math.floor(claim.leaseMs * SIGNAL_FRACTION);
+        await fenced(
+            db,
+            claim,
+            { status: "verifying", step_pending: "rollback" },
+            { phase: "rollback", level: "warn", message: "Restoring the previous release." },
+        );
+        try {
+            if (performance.now() >= deadline) throw new StaleAttemptError();
+            await ports.rollback(
+                context,
+                {
+                    deploymentId: previous.id,
+                    appName: row.app_name,
+                    hostname: row.hostname,
+                    spa: previous.spa,
+                    storageKey: previous.storage_key,
+                },
+                AbortSignal.timeout(Math.max(1, Math.floor(deadline - performance.now()))),
+            );
+        } catch (error) {
+            if (error instanceof StaleAttemptError) throw error;
+            // Whatever is serving now is neither known to be the old release nor the
+            // new one: held for a person.
+            await fenced(
+                db,
+                claim,
+                {
+                    status: "reconciliation-needed",
+                    failure_code: "rollback-failed",
+                    failure_message: "Restoring the previous release failed.",
+                    release: true,
+                },
+                {
+                    phase: "rollback",
+                    level: "error",
+                    message: "The rollback failed; needs reconciliation.",
+                },
+            );
+            return "reconciliation-needed";
+        }
+        await fenced(
+            db,
+            claim,
+            {
+                status: "failed",
+                failure_code: "verify-failed-rolled-back",
+                failure_message:
+                    "The new release did not become ready; the previous one was restored.",
+                finished: true,
+                release: true,
+                step_pending: null,
+            },
+            { phase: "rollback", level: "warn", message: "The previous release was restored." },
+        );
+        return "failed";
+    };
 
     const done = claim.stepPending
         ? STEPS.indexOf(claim.stepPending) - 1
@@ -518,6 +624,23 @@ async function execute(
                 );
                 return "stopped";
             }
+            // A verify is a read: a shutdown just hands it on to be repeated.
+            if (options.signal?.aborted && step === "verify") {
+                await fenced(
+                    db,
+                    claim,
+                    { release: true },
+                    {
+                        phase: step,
+                        level: "warn",
+                        message: "The worker stopped; another will continue.",
+                    },
+                );
+                return "stopped";
+            }
+            // The image loaded cleanly but is not serving: put the previous release
+            // back if there is one, otherwise the deployment simply failed.
+            if (step === "verify") return await failAfterVerify();
             const { kind } = kindOf(error);
             // Only a load that certainly never ran leaves the running image as it was.
             const untouched = ["invalid-argument", "trust", "not-started"];
