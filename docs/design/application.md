@@ -333,7 +333,7 @@ launchpad deploy ./dist --project website --name demo --spa --ttl 24h
 launchpad previews list
 launchpad deployments logs <deployment-id>
 launchpad previews delete <preview-id>
-launchpad mcp --root /absolute/path/to/allowed/projects
+launchpad-mcp --shared --allow-deploy --include 'dist/**' --exclude 'dist/private/**'
 ```
 
 `login` initially accepts a securely entered API key; browser/device login must
@@ -347,8 +347,17 @@ requesting preview deletion. Responses are structured and bounded.
 
 MCP server startup is not permission to deploy arbitrary local files:
 
-- Require explicit allowed filesystem roots; canonicalize paths and reject
-  symlink escapes. Do not expose arbitrary shell execution or unrestricted reads.
+- Deployment requires startup-configured include and exclude glob lists; exclude
+  always wins. Resolve patterns against each call's `working_dir` (or its startup
+  default), canonicalize paths, keep the source within that directory, and reject
+  symlinks. Filesystem roots are not mandatory. This is the user-approved replacement
+  for the original allowed-roots proposal; see the
+  [milestone 4 plan](../plans/milestone-4-local-mcp.md).
+  A client-selected directory plus broad patterns can publish matching private files
+  anywhere the process can read. The operator accepts that authority when enabling
+  deployment; patterns are not a directory authorization boundary. Use narrow
+  patterns and an OS sandbox or a restricted OS account when directory isolation is
+  required. Do not expose arbitrary shell execution or file-content read tools.
 - Use the same packaging/secret exclusions as the CLI, plus server validation.
 - Default MCP keys to read-only; enable deployment/deletion deliberately.
 - Require explicit mutation authorization/confirmation policy; tool annotations
