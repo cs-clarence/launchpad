@@ -6,6 +6,7 @@ import {
     apiKeyStatusSchema,
     apiKeySummarySchema,
     createApiKeySchema,
+    createDeploymentSchema,
     createProjectSchema,
     errorSchema,
     keyInfoSchema,
@@ -20,6 +21,20 @@ describe("contracts", () => {
         expect(API_KEY_SCOPES).not.toContain("member:manage");
         expect(API_KEY_SCOPES).not.toContain("organization:delete");
         expect(ORGANIZATION_ROLES).toEqual(["owner", "admin", "deployer", "viewer"]);
+    });
+
+    it("offers the preview scopes, so a key can deploy without managing anything", () => {
+        expect(API_KEY_SCOPES).toEqual(
+            expect.arrayContaining(["preview:read", "preview:create", "preview:deploy"]),
+        );
+        expect(createDeploymentSchema.safeParse({ artifactId: crypto.randomUUID() }).success).toBe(
+            true,
+        );
+        expect(createDeploymentSchema.safeParse({ artifactId: "x" }).success).toBe(false);
+        expect(
+            createDeploymentSchema.safeParse({ artifactId: crypto.randomUUID(), image: "x" })
+                .success,
+        ).toBe(false);
     });
 
     it("validates the inputs a client builds", () => {

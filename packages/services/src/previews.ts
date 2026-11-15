@@ -22,7 +22,8 @@ export interface PreviewDeps {
     maxPreviews?: number;
 }
 
-const DOMAIN = /^(?=.{1,200}$)([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/;
+export const PREVIEW_DOMAIN_PATTERN =
+    /^(?=.{1,200}$)([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/;
 
 export function opaqueId(length: number): string {
     let id = "";
@@ -39,7 +40,7 @@ export function generatePreviewNames(slug: string, domain: string) {
 const keySchema = z.string().min(1).max(128);
 
 // Stable across key order, so the same payload always hashes the same.
-function hashRequest(payload: Record<string, string>): string {
+export function hashRequest(payload: Record<string, string>): string {
     const canonical = JSON.stringify(
         Object.keys(payload)
             .toSorted()
@@ -84,7 +85,7 @@ export async function listPreviews(
     db: Db,
     principal: Principal,
     organizationId: string,
-    options: { projectId?: string; after?: string } = {},
+    options: { projectId?: string; after?: string; projectIds?: string[] | null } = {},
 ) {
     await requireMembership(db, principal, organizationId, "preview:read");
     let query = db
@@ -96,6 +97,8 @@ export async function listPreviews(
         if (!z.uuid().safeParse(options.projectId).success) return { items: [], nextCursor: null };
         query = query.where("project_id", "=", options.projectId);
     }
+    // A project-limited key sees only previews of its own projects.
+    if (options.projectIds) query = query.where("project_id", "in", options.projectIds);
     if (options.after !== undefined) {
         if (!z.uuid().safeParse(options.after).success) {
             throw new ServiceError("invalid", "The cursor is not valid.");
@@ -152,7 +155,7 @@ export async function createPreview(
     if (!Number.isSafeInteger(maxPreviews) || maxPreviews < 1) {
         throw new Error("maxPreviews must be a positive integer.");
     }
-    if (!DOMAIN.test(deps.previewDomain)) {
+    if (!PREVIEW_DOMAIN_PATTERN.test(deps.previewDomain)) {
         throw new Error("The preview domain is not a valid lowercase domain name.");
     }
     if (!z.uuid().safeParse(projectId).success) {
@@ -283,4 +286,27 @@ export async function createPreview(
         return shape(row);
     });
     return created;
+}
+
+// The project a preview belongs to, for deciding what a project-limited key may reach. A
+// missing or malformed id is the same not-found.
+export async function previewProjectId(
+    db: Db,
+    principal: Principal,
+    organizationId: string,
+    previewId: string,
+) {
+    // A non-member gets not-found, like every other lookup here.
+    await requireMembership(db, principal, organizationId, "preview:read");
+    if (!z.uuid().safeParse(previewId).success) {
+        throw new ServiceError("not-found", "Preview not found.");
+    }
+    const row = await db
+        .selectFrom("preview")
+        .select("project_id")
+        .where("organization_id", "=", organizationId)
+        .where("id", "=", previewId)
+        .executeTakeFirst();
+    if (!row) throw new ServiceError("not-found", "Preview not found.");
+    return row.project_id;
 }

@@ -195,4 +195,14 @@ TTL, expiry, deletion and cleanup (milestone 5), packaging and publishing
       `omni -i run test:live -p @launchpad/worker` runs the real steps against a
       disposable Dokku and Docker you start; **it has not been run yet** (needs your
       Dokku). Everything else is unit- and PostgreSQL-tested with fakes and stand-ins.
-- [ ] Slice 6.
+- [~] Slice 6 (in three PRs). **6a, the API:** previews and deployments under
+  `/api/v1` (list/create/get preview, queue a deployment, list/get a deployment, its
+  ordered events), key scopes `preview:read|create|deploy` with project limits
+  enforced through the preview/deployment's project, `Idempotency-Key` on creating a
+  preview and on deploying (replay returns the first result; a different request with
+  the same key is a conflict), artifact upload open to keys with `preview:deploy`,
+  and `LAUNCHPAD_PREVIEW_DOMAIN` / `LAUNCHPAD_MAX_PREVIEWS` (previews and deploys are
+  refused while `LAUNCHPAD_DEPLOYMENTS` is off, reads are not). Deleting a preview and
+  logs are not part of this milestone. **6b:** SDK, client-core and
+  `launchpad deploy`/`previews`/`deployments`. **6c:** dashboard pages.
+- [ ] Slice 6b–6c.

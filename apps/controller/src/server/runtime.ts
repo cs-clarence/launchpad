@@ -2,7 +2,8 @@ import { createAuth, createMailer, loadAuthConfig } from "@launchpad/auth";
 import { createDatabase } from "@launchpad/database";
 import type { InvitationDeps } from "@launchpad/services";
 import path from "node:path";
-import { sweepStaleUploads } from "@launchpad/services";
+import { deploymentsEnabled, PREVIEW_DOMAIN_PATTERN, sweepStaleUploads } from "@launchpad/services";
+import { getDomain } from "tldts";
 import { createApi } from "./api";
 import { artifactLimitsFromEnv } from "./artifact-config";
 
@@ -12,6 +13,47 @@ function requireEnv(name: string): string {
         throw new Error(`${name} is required`);
     }
     return value;
+}
+
+// Previews are off unless LAUNCHPAD_DEPLOYMENTS=on, and then they need a domain of their
+// own: sibling hosts of the controller share its site, so previews live on a separate
+// registrable domain (see the organization-roles decision). The check here refuses the
+// obvious overlaps; it cannot know the public suffix list.
+export function previewSettings(env: Record<string, string | undefined>, origin: string) {
+    const enabled = deploymentsEnabled(env.LAUNCHPAD_DEPLOYMENTS);
+    const previewDomain = (env.LAUNCHPAD_PREVIEW_DOMAIN ?? "").toLowerCase();
+    if (!enabled) return { enabled, previewDomain: previewDomain || "previews.example.com" };
+    if (!previewDomain) {
+        throw new Error("LAUNCHPAD_PREVIEW_DOMAIN is required when deployments are on.");
+    }
+    if (!PREVIEW_DOMAIN_PATTERN.test(previewDomain)) {
+        throw new Error("LAUNCHPAD_PREVIEW_DOMAIN must be a plain lowercase domain name.");
+    }
+    const host = new URL(origin).hostname.toLowerCase();
+    // Preview pages are deployer-controlled, and hosts of one registrable domain share a
+    // site: cookies and same-site requests cross between them. So the preview domain must
+    // be a different registrable domain from the controller's (by the public suffix list,
+    // so `co.uk`-style suffixes are handled), not merely a different name.
+    const registrable = (name: string) => getDomain(name, { allowPrivateDomains: true });
+    const hostSite = registrable(host);
+    const sameSite = hostSite !== null && hostSite === registrable(previewDomain);
+    // A host with no registrable domain (localhost, an address) falls back to plain overlap.
+    const overlaps =
+        sameSite ||
+        host === previewDomain ||
+        host.endsWith(`.${previewDomain}`) ||
+        previewDomain.endsWith(`.${host}`);
+    if (overlaps) {
+        throw new Error(
+            "LAUNCHPAD_PREVIEW_DOMAIN must be a different registrable domain from the controller's own.",
+        );
+    }
+    const raw = env.LAUNCHPAD_MAX_PREVIEWS;
+    const maxPreviews = raw ? Number(raw) : undefined;
+    if (maxPreviews !== undefined && (!Number.isSafeInteger(maxPreviews) || maxPreviews < 1)) {
+        throw new Error("LAUNCHPAD_MAX_PREVIEWS must be a positive integer.");
+    }
+    return { enabled, previewDomain, maxPreviews };
 }
 
 // Composed on first use so importing the module (build, tests, route
@@ -39,6 +81,7 @@ function compose() {
     void sweepStaleUploads(artifacts.dataDir).catch((error) =>
         console.error("Could not sweep stale uploads", error),
     );
+    const previews = previewSettings(process.env, config.origin);
     const features = { emailRecovery: mailer !== null, invitations: invitations.enabled };
     const api = createApi({
         auth,
@@ -46,6 +89,7 @@ function compose() {
         origin: config.origin,
         invitations,
         artifacts,
+        previews,
         // Serves the OpenAPI document and Scalar reference; set to "false" to remove them.
         docs: process.env.LAUNCHPAD_API_DOCS !== "false",
     });

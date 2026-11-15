@@ -4,6 +4,7 @@ import { z } from "zod";
 import type { Principal } from "./authorization";
 import { isUniqueViolation, ServiceError } from "./errors";
 import { recordAudit, requireMembership } from "./organizations";
+import { hashRequest, IDEMPOTENCY_TTL_MS } from "./previews";
 
 type Db = Kysely<Database>;
 type Trx = Transaction<Database>;
@@ -80,7 +81,8 @@ export interface DeploymentDeps {
     enabled: boolean;
 }
 
-const enqueueSchema = z.object({ artifactId: z.uuid(), spa: z.boolean().default(false) });
+const idempotencyKeySchema = z.string().min(1).max(128);
+const enqueueSchema = z.strictObject({ artifactId: z.uuid(), spa: z.boolean().default(false) });
 
 // Records the deployment in the caller's transaction: either it exists and will be
 // picked up, or it does not exist. A preview has at most one unfinished deployment
@@ -93,6 +95,7 @@ export async function enqueueDeployment(
     previewId: string,
     input: unknown,
     deps: DeploymentDeps,
+    idempotencyKey?: string,
 ) {
     await requireMembership(db, principal, organizationId, "preview:deploy");
     if (!deps.enabled) throw new ServiceError("conflict", "Deployments are not enabled.");
@@ -101,6 +104,16 @@ export async function enqueueDeployment(
     }
     const parsed = enqueueSchema.safeParse(input);
     if (!parsed.success) throw new ServiceError("invalid", "The deployment request is invalid.");
+    const key =
+        idempotencyKey === undefined ? undefined : idempotencyKeySchema.safeParse(idempotencyKey);
+    if (key && !key.success) throw new ServiceError("invalid", "The idempotency key is invalid.");
+    const requestHash = hashRequest({
+        previewId,
+        artifactId: parsed.data.artifactId,
+        spa: String(parsed.data.spa),
+    });
+    const endpoint = "deployment.create";
+    const bound = principal.credentialId ?? principal.userId;
     try {
         return await db.transaction().execute(async (trx) => {
             await requireMembership(trx, principal, organizationId, "preview:deploy");
@@ -114,6 +127,48 @@ export async function enqueueDeployment(
             if (!preview) throw new ServiceError("not-found", "Preview not found.");
             if (preview.desired_state !== "active") {
                 throw new ServiceError("conflict", "That preview is being deleted.");
+            }
+            if (key?.success) {
+                // One request at a time per complete scoped key, even across previews
+                // (which lock different rows): otherwise two could both find the key
+                // absent and the second insert would overwrite the first binding.
+                await sql`select pg_advisory_xact_lock(hashtextextended(${`idempotency:${organizationId}:${bound}:${endpoint}:${key.data}`}, 0))`.execute(
+                    trx,
+                );
+                await trx
+                    .deleteFrom("idempotency_key")
+                    .where("expires_at", "<=", sql<Date>`now()`)
+                    .execute();
+                const seen = await trx
+                    .selectFrom("idempotency_key")
+                    .select(["request_hash", "resource_id"])
+                    .where("organization_id", "=", organizationId)
+                    .where("principal", "=", bound)
+                    .where("endpoint", "=", endpoint)
+                    .where("key", "=", key.data)
+                    .executeTakeFirst();
+                if (seen) {
+                    if (seen.request_hash !== requestHash || !seen.resource_id) {
+                        throw new ServiceError(
+                            "conflict",
+                            "That idempotency key was used with a different request.",
+                        );
+                    }
+                    // The same request again: the first deployment, whatever it has become.
+                    const first = await trx
+                        .selectFrom("deployment")
+                        .select(["id", "status", "created_at"])
+                        .where("organization_id", "=", organizationId)
+                        .where("id", "=", seen.resource_id)
+                        .executeTakeFirst();
+                    if (first) {
+                        return {
+                            id: first.id,
+                            status: first.status,
+                            createdAt: first.created_at.toISOString(),
+                        };
+                    }
+                }
             }
             const artifact = await trx
                 .selectFrom("artifact")
@@ -133,6 +188,25 @@ export async function enqueueDeployment(
                 })
                 .returning(["id", "status", "created_at"])
                 .executeTakeFirstOrThrow();
+            if (key?.success) {
+                await trx
+                    .insertInto("idempotency_key")
+                    .values({
+                        organization_id: organizationId,
+                        principal: bound,
+                        endpoint,
+                        key: key.data,
+                        request_hash: requestHash,
+                        resource_id: row.id,
+                        expires_at: new Date(Date.now() + IDEMPOTENCY_TTL_MS),
+                    })
+                    .onConflict((oc) =>
+                        oc
+                            .columns(["organization_id", "principal", "endpoint", "key"])
+                            .doUpdateSet({ request_hash: requestHash, resource_id: row.id }),
+                    )
+                    .execute();
+            }
             await recordAudit(trx, {
                 actor: principal,
                 action: "deployment.queued",
@@ -832,4 +906,158 @@ export async function resolveReconciliation(
             detail: outcome,
         });
     });
+}
+
+// ---- reading deployments
+
+const DEPLOYMENT_COLUMNS = [
+    "id",
+    "preview_id",
+    "artifact_id",
+    "spa",
+    "status",
+    "failure_code",
+    "failure_message",
+    "created_at",
+    "updated_at",
+    "finished_at",
+] as const;
+
+function shapeDeployment(row: {
+    id: string;
+    preview_id: string;
+    artifact_id: string;
+    spa: boolean;
+    status: DeploymentStatus;
+    failure_code: string | null;
+    failure_message: string | null;
+    created_at: Date;
+    updated_at: Date;
+    finished_at: Date | null;
+}) {
+    return {
+        id: row.id,
+        previewId: row.preview_id,
+        artifactId: row.artifact_id,
+        spa: row.spa,
+        status: row.status,
+        // Fixed texts written by the state machine; never remote output.
+        failure: row.failure_code
+            ? { code: row.failure_code, message: row.failure_message ?? "" }
+            : null,
+        createdAt: row.created_at.toISOString(),
+        updatedAt: row.updated_at.toISOString(),
+        finishedAt: row.finished_at ? row.finished_at.toISOString() : null,
+    };
+}
+
+const EVENT_PAGE = 200;
+const RECENT_DEPLOYMENTS = 20;
+
+export async function getDeployment(
+    db: Db,
+    principal: Principal,
+    organizationId: string,
+    deploymentId: string,
+) {
+    await requireMembership(db, principal, organizationId, "preview:read");
+    if (!z.uuid().safeParse(deploymentId).success) {
+        throw new ServiceError("not-found", "Deployment not found.");
+    }
+    const row = await db
+        .selectFrom("deployment")
+        .select(DEPLOYMENT_COLUMNS)
+        .where("organization_id", "=", organizationId)
+        .where("id", "=", deploymentId)
+        .executeTakeFirst();
+    if (!row) throw new ServiceError("not-found", "Deployment not found.");
+    return shapeDeployment(row);
+}
+
+// The latest deployments of one preview, newest first.
+export async function listDeployments(
+    db: Db,
+    principal: Principal,
+    organizationId: string,
+    previewId: string,
+) {
+    await requireMembership(db, principal, organizationId, "preview:read");
+    if (!z.uuid().safeParse(previewId).success) {
+        throw new ServiceError("not-found", "Preview not found.");
+    }
+    const rows = await db
+        .selectFrom("deployment")
+        .select(DEPLOYMENT_COLUMNS)
+        .where("organization_id", "=", organizationId)
+        .where("preview_id", "=", previewId)
+        .orderBy("created_at", "desc")
+        .orderBy("id", "desc")
+        .limit(RECENT_DEPLOYMENTS)
+        .execute();
+    return { items: rows.map(shapeDeployment) };
+}
+
+// Progress events in order, `after` being the last sequence number already seen, so a
+// poller picks up exactly where it stopped.
+export async function listDeploymentEvents(
+    db: Db,
+    principal: Principal,
+    organizationId: string,
+    deploymentId: string,
+    after = 0,
+) {
+    await requireMembership(db, principal, organizationId, "preview:read");
+    if (!z.uuid().safeParse(deploymentId).success || !Number.isSafeInteger(after) || after < 0) {
+        throw new ServiceError("not-found", "Deployment not found.");
+    }
+    const owned = await db
+        .selectFrom("deployment")
+        .select("id")
+        .where("organization_id", "=", organizationId)
+        .where("id", "=", deploymentId)
+        .executeTakeFirst();
+    if (!owned) throw new ServiceError("not-found", "Deployment not found.");
+    const rows = await db
+        .selectFrom("deployment_event")
+        .select(["seq", "phase", "level", "message", "created_at"])
+        .where("organization_id", "=", organizationId)
+        .where("deployment_id", "=", deploymentId)
+        .where("seq", ">", after)
+        .orderBy("seq")
+        .limit(EVENT_PAGE + 1)
+        .execute();
+    const items = rows.slice(0, EVENT_PAGE).map((row) => ({
+        seq: row.seq,
+        phase: row.phase,
+        level: row.level,
+        message: row.message,
+        createdAt: row.created_at.toISOString(),
+    }));
+    return { items, nextAfter: rows.length > EVENT_PAGE ? items[items.length - 1]!.seq : null };
+}
+
+// The project a deployment belongs to, for deciding what a project-limited key may reach.
+export async function deploymentProjectId(
+    db: Db,
+    principal: Principal,
+    organizationId: string,
+    deploymentId: string,
+) {
+    await requireMembership(db, principal, organizationId, "preview:read");
+    if (!z.uuid().safeParse(deploymentId).success) {
+        throw new ServiceError("not-found", "Deployment not found.");
+    }
+    const row = await db
+        .selectFrom("deployment")
+        .innerJoin("preview", (join) =>
+            join
+                .onRef("preview.id", "=", "deployment.preview_id")
+                .onRef("preview.organization_id", "=", "deployment.organization_id"),
+        )
+        .select("preview.project_id")
+        .where("deployment.organization_id", "=", organizationId)
+        .where("deployment.id", "=", deploymentId)
+        .executeTakeFirst();
+    if (!row) throw new ServiceError("not-found", "Deployment not found.");
+    return row.project_id;
 }

@@ -11,6 +11,11 @@ import {
     addedMemberSchema,
     artifactSchema,
     createdApiKeySchema,
+    createdDeploymentSchema,
+    deploymentEventsSchema,
+    deploymentSchema,
+    previewListSchema,
+    previewSchema,
     createdInvitationSchema,
     keyInfoSchema,
     apiKeySummarySchema,
@@ -179,7 +184,11 @@ beforeAll(async () => {
             .execute();
     }
     direct = await start(false, { LAUNCHPAD_API_DOCS: "false" });
-    proxied = await start(true);
+    // Deployments are on here (no worker runs in these tests); `direct` leaves them off.
+    proxied = await start(true, {
+        LAUNCHPAD_DEPLOYMENTS: "on",
+        LAUNCHPAD_PREVIEW_DOMAIN: "previews.example.com",
+    });
     smtp = startFakeSmtp();
     mailed = await start(true, {
         LAUNCHPAD_SMTP_URL: smtp.url,
@@ -1124,6 +1133,360 @@ describe("artifact upload over HTTP", () => {
     });
 });
 
+describe("previews and deployments over HTTP", () => {
+    let owner = "";
+    let viewer = "";
+    let orgId = "";
+    let otherOrgId = "";
+    let p1 = "";
+    let p2 = "";
+    let deployKey = "";
+    let limitedKey = "";
+    let readKey = "";
+    let artifactId = "";
+    let previewId = "";
+    let otherPreviewId = "";
+    let deploymentId = "";
+
+    const call = (
+        key: string,
+        path: string,
+        init: { method?: string; body?: unknown; headers?: Record<string, string> } = {},
+    ) =>
+        fetch(`${proxied.base}/api/v1${path}`, {
+            method: init.method ?? "GET",
+            headers: {
+                authorization: `Bearer ${key}`,
+                ...(init.body === undefined ? {} : { "content-type": "application/json" }),
+                ...init.headers,
+            },
+            body: init.body === undefined ? undefined : JSON.stringify(init.body),
+        });
+    const status = async (promise: Promise<Response>) => (await promise).status;
+    const mintKey = async (name: string, scopes: string[], projectIds?: string[]) =>
+        createdApiKeySchema.parse(
+            await (
+                await api(owner, `/organizations/${orgId}/api-keys`, {
+                    method: "POST",
+                    body: { name, scopes, expiresInDays: 7, ...(projectIds ? { projectIds } : {}) },
+                })
+            ).json(),
+        ).secret;
+
+    it("is set up: two projects, keys of different reach, a viewer", async () => {
+        const operator = await login("op@example.com", PASSWORD, "198.51.100.60");
+        owner = await login("user@example.com", USER_PASSWORD, "198.51.100.61");
+        viewer = await login("other@example.com", USER_PASSWORD, "198.51.100.62");
+        const makeOrg = async (name: string, slug: string, email: string) =>
+            createdOrganizationSchema.parse(
+                await (
+                    await api(operator, "/organizations", {
+                        method: "POST",
+                        body: { name, slug, ownerEmail: email },
+                    })
+                ).json(),
+            ).id;
+        orgId = await makeOrg("Previews", "previews-org", "user@example.com");
+        otherOrgId = await makeOrg("Previews Two", "previews-two", "other@example.com");
+        await api(owner, `/organizations/${orgId}/members`, {
+            method: "POST",
+            body: { email: "other@example.com", role: "viewer" },
+        });
+        const project = async (slug: string) =>
+            createdProjectSchema.parse(
+                await (
+                    await api(owner, `/organizations/${orgId}/projects`, {
+                        method: "POST",
+                        body: { name: slug, slug },
+                    })
+                ).json(),
+            ).id;
+        p1 = await project("site");
+        p2 = await project("docs");
+        const all = ["preview:read", "preview:create", "preview:deploy", "project:read"];
+        deployKey = await mintKey("deployer", all);
+        limitedKey = await mintKey("limited", all, [p1]);
+        readKey = await mintKey("reader", ["preview:read"]);
+    });
+
+    it("creates a preview with a generated hostname, and repeats safely with an idempotency key", async () => {
+        const path = `/organizations/${orgId}/projects/${p1}/previews`;
+        const first = await call(deployKey, path, {
+            method: "POST",
+            body: { slug: "review" },
+            headers: { "idempotency-key": "create-1" },
+        });
+        expect(first.status).toBe(201);
+        const preview = previewSchema.parse(await first.json());
+        previewId = preview.id;
+        expect(preview.hostname).toMatch(/^review-[a-z0-9]{6}\.previews\.example\.com$/);
+        expect(preview).toMatchObject({ state: "active", activeDeploymentId: null });
+
+        const replay = await call(deployKey, path, {
+            method: "POST",
+            body: { slug: "review" },
+            headers: { "idempotency-key": "create-1" },
+        });
+        expect(previewSchema.parse(await replay.json()).id).toBe(previewId);
+        const clash = await call(deployKey, path, {
+            method: "POST",
+            body: { slug: "other-name" },
+            headers: { "idempotency-key": "create-1" },
+        });
+        expect(clash.status).toBe(409);
+
+        otherPreviewId = previewSchema.parse(
+            await (
+                await call(deployKey, `/organizations/${orgId}/projects/${p2}/previews`, {
+                    method: "POST",
+                    body: { slug: "docs-review" },
+                })
+            ).json(),
+        ).id;
+    });
+
+    it("keeps keys to their scopes, projects and organization", async () => {
+        const p1Path = `/organizations/${orgId}/projects/${p1}/previews`;
+        const p2Path = `/organizations/${orgId}/projects/${p2}/previews`;
+        // No scope: forbidden. A limited key reaches its own project only.
+        expect(
+            await status(call(readKey, p1Path, { method: "POST", body: { slug: "nope" } })),
+        ).toBe(403);
+        expect(
+            await status(call(limitedKey, p2Path, { method: "POST", body: { slug: "nope" } })),
+        ).toBe(404);
+        expect(
+            await status(call(limitedKey, p1Path, { method: "POST", body: { slug: "mine" } })),
+        ).toBe(201);
+        // Its reads are limited the same way, however the preview is named.
+        expect(
+            await status(call(limitedKey, `/organizations/${orgId}/previews/${previewId}`)),
+        ).toBe(200);
+        expect(
+            await status(call(limitedKey, `/organizations/${orgId}/previews/${otherPreviewId}`)),
+        ).toBe(404);
+        const listed = previewListSchema.parse(
+            await (await call(limitedKey, `/organizations/${orgId}/previews`)).json(),
+        );
+        expect(listed.items.map((p) => p.projectId)).toEqual([p1, p1]);
+        const unlimited = previewListSchema.parse(
+            await (await call(readKey, `/organizations/${orgId}/previews`)).json(),
+        );
+        expect(unlimited.items).toHaveLength(3);
+        expect(
+            previewListSchema.parse(
+                await (
+                    await call(readKey, `/organizations/${orgId}/previews?projectId=${p2}`)
+                ).json(),
+            ).items,
+        ).toHaveLength(1);
+        expect(
+            await status(call(limitedKey, `/organizations/${orgId}/previews?projectId=${p2}`)),
+        ).toBe(404);
+        expect(await status(call(readKey, `/organizations/${orgId}/previews?cursor=nope`))).toBe(
+            422,
+        );
+        // Another organization is indistinguishable from one that does not exist.
+        expect(await status(call(deployKey, `/organizations/${otherOrgId}/previews`))).toBe(404);
+        // A viewer reads but cannot create.
+        expect((await api(viewer, `/organizations/${orgId}/previews`)).status).toBe(200);
+        expect(
+            (await api(viewer, p1Path, { method: "POST", body: { slug: "viewer" } })).status,
+        ).toBe(403);
+    });
+
+    it("accepts an upload from a key with the deploy scope, and from nobody else", async () => {
+        const upload = (key: string) =>
+            fetch(`${proxied.base}/api/v1/organizations/${orgId}/artifacts`, {
+                method: "POST",
+                headers: { authorization: `Bearer ${key}`, "content-type": "application/gzip" },
+                body: tarGz(SITE) as BodyInit,
+            });
+        expect(await status(upload(readKey))).toBe(403);
+        const ok = await upload(deployKey);
+        expect(ok.status).toBe(201);
+        artifactId = artifactSchema.parse(await ok.json()).id;
+    });
+
+    it("queues a deployment once, repeats safely, and refuses a second while one is unfinished", async () => {
+        const path = `/organizations/${orgId}/previews/${previewId}/deployments`;
+        const deploy = (key: string, body: unknown, idem?: string) =>
+            call(key, path, {
+                method: "POST",
+                body,
+                headers: idem ? { "idempotency-key": idem } : {},
+            });
+        const first = await deploy(deployKey, { artifactId, spa: true }, "deploy-1");
+        expect(first.status).toBe(202);
+        const queued = createdDeploymentSchema.parse(await first.json());
+        deploymentId = queued.id;
+        expect(queued.status).toBe("queued");
+
+        const replay = await deploy(deployKey, { artifactId, spa: true }, "deploy-1");
+        expect(createdDeploymentSchema.parse(await replay.json()).id).toBe(deploymentId);
+        expect(await status(deploy(deployKey, { artifactId, spa: false }, "deploy-1"))).toBe(409);
+        // A different request while this one is unfinished.
+        expect(await status(deploy(deployKey, { artifactId }, "deploy-2"))).toBe(409);
+        expect(await status(deploy(deployKey, { artifactId }))).toBe(409);
+
+        expect(await status(deploy(readKey, { artifactId }))).toBe(403);
+        expect(
+            await status(
+                call(limitedKey, `/organizations/${orgId}/previews/${otherPreviewId}/deployments`, {
+                    method: "POST",
+                    body: { artifactId },
+                }),
+            ),
+        ).toBe(404);
+        expect(await status(deploy(deployKey, { artifactId: "not-a-uuid" }))).toBe(422);
+        expect(await status(deploy(deployKey, { artifactId, extra: 1 }))).toBe(422);
+        const viewerAttempt = await fetch(`${proxied.base}/api/v1${path}`, {
+            method: "POST",
+            headers: { cookie: viewer, origin: proxied.base, "content-type": "application/json" },
+            body: JSON.stringify({ artifactId }),
+        });
+        expect(viewerAttempt.status).toBe(403);
+    });
+
+    it("reports status, a safe failure and ordered events, and hides them from other reach", async () => {
+        const base = `/organizations/${orgId}/deployments/${deploymentId}`;
+        const got = deploymentSchema.parse(await (await call(readKey, base)).json());
+        expect(got).toMatchObject({
+            id: deploymentId,
+            previewId,
+            artifactId,
+            spa: true,
+            status: "queued",
+            failure: null,
+        });
+        expect(JSON.stringify(got)).not.toMatch(/image|attempt|lease|app_name|lp-/);
+
+        await testDb.db
+            .insertInto("deployment_event")
+            .values(
+                [1, 2, 3].map((seq) => ({
+                    organization_id: orgId,
+                    deployment_id: deploymentId,
+                    seq,
+                    phase: "build",
+                    message: `step ${seq}`,
+                })),
+            )
+            .execute();
+        const events = deploymentEventsSchema.parse(
+            await (await call(readKey, `${base}/events?after=1`)).json(),
+        );
+        expect(events.items.map((e) => e.seq)).toEqual([2, 3]);
+        expect(events.nextAfter).toBeNull();
+        expect(await status(call(readKey, `${base}/events?after=-1`))).toBe(404);
+
+        await testDb.db
+            .updateTable("deployment")
+            .set({
+                status: "failed",
+                failure_code: "build-failed",
+                failure_message: "The build step failed.",
+                finished_at: new Date(),
+            })
+            .where("id", "=", deploymentId)
+            .execute();
+        const failed = deploymentSchema.parse(await (await call(readKey, base)).json());
+        expect(failed.failure).toEqual({ code: "build-failed", message: "The build step failed." });
+        expect(failed.finishedAt).not.toBeNull();
+
+        const history = await call(
+            readKey,
+            `/organizations/${orgId}/previews/${previewId}/deployments`,
+        );
+        expect((await history.json()).items[0].id).toBe(deploymentId);
+
+        // The same ids through a key limited to the other project, or another organization.
+        const other = await testDb.db
+            .insertInto("deployment")
+            .values({
+                organization_id: orgId,
+                preview_id: otherPreviewId,
+                artifact_id: artifactId,
+                requested_by: (
+                    await testDb.db
+                        .selectFrom("user")
+                        .select("id")
+                        .where("email", "=", "user@example.com")
+                        .executeTakeFirstOrThrow()
+                ).id,
+            })
+            .returning("id")
+            .executeTakeFirstOrThrow();
+        expect(
+            await status(call(limitedKey, `/organizations/${orgId}/deployments/${other.id}`)),
+        ).toBe(404);
+        expect(
+            await status(
+                call(limitedKey, `/organizations/${orgId}/deployments/${other.id}/events`),
+            ),
+        ).toBe(404);
+        expect(
+            await status(
+                call(deployKey, `/organizations/${otherOrgId}/deployments/${deploymentId}`),
+            ),
+        ).toBe(404);
+        expect(
+            await status(
+                call(
+                    readKey,
+                    `/organizations/${orgId}/deployments/${"0".repeat(8)}-0000-4000-8000-000000000000`,
+                ),
+            ),
+        ).toBe(404);
+        // A failed deployment frees the preview for the next one.
+        await testDb.db.deleteFrom("deployment").where("id", "=", other.id).execute();
+        expect(
+            await status(
+                call(deployKey, `/organizations/${orgId}/previews/${previewId}/deployments`, {
+                    method: "POST",
+                    body: { artifactId },
+                }),
+            ),
+        ).toBe(202);
+    });
+
+    it("is off unless deployments are on: reads work, creating and deploying are refused", async () => {
+        const cookieOwner = await (async () => {
+            const response = await signIn(direct, "user@example.com", USER_PASSWORD);
+            expect(response.status).toBe(200);
+            return response.headers
+                .getSetCookie()
+                .map((c) => c.split(";")[0])
+                .join("; ");
+        })();
+        const request = (path: string, method = "GET", body?: unknown) =>
+            fetch(`${direct.base}/api/v1${path}`, {
+                method,
+                headers: {
+                    cookie: cookieOwner,
+                    origin: direct.base,
+                    "content-type": "application/json",
+                },
+                body: body === undefined ? undefined : JSON.stringify(body),
+            });
+        expect((await request(`/organizations/${orgId}/previews`)).status).toBe(200);
+        expect(
+            (
+                await request(`/organizations/${orgId}/projects/${p1}/previews`, "POST", {
+                    slug: "off",
+                })
+            ).status,
+        ).toBe(409);
+        expect(
+            (
+                await request(`/organizations/${orgId}/previews/${previewId}/deployments`, "POST", {
+                    artifactId,
+                })
+            ).status,
+        ).toBe(409);
+    });
+});
+
 describe("server function bodies", () => {
     const fn = (headers: Record<string, string>, body?: string) =>
         fetch(`${proxied.base}/_serverFn/does-not-exist`, {
@@ -1167,6 +1530,13 @@ describe("OpenAPI reference", () => {
         "post /api/v1/organizations/{orgId}/projects",
         "get /api/v1/key",
         "post /api/v1/organizations/{orgId}/artifacts",
+        "get /api/v1/organizations/{orgId}/previews",
+        "post /api/v1/organizations/{orgId}/projects/{projectId}/previews",
+        "get /api/v1/organizations/{orgId}/previews/{previewId}",
+        "post /api/v1/organizations/{orgId}/previews/{previewId}/deployments",
+        "get /api/v1/organizations/{orgId}/previews/{previewId}/deployments",
+        "get /api/v1/organizations/{orgId}/deployments/{deploymentId}",
+        "get /api/v1/organizations/{orgId}/deployments/{deploymentId}/events",
         "get /api/v1/organizations/{orgId}/api-keys",
         "post /api/v1/organizations/{orgId}/api-keys",
         "delete /api/v1/organizations/{orgId}/api-keys/{keyId}",

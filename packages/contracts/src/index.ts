@@ -16,6 +16,9 @@ export const API_KEY_SCOPES = [
     "project:read",
     "project:create",
     "project:delete",
+    "preview:read",
+    "preview:create",
+    "preview:deploy",
 ] as const;
 export type ApiKeyScopeName = (typeof API_KEY_SCOPES)[number];
 
@@ -126,6 +129,71 @@ export const previewSchema = z.strictObject({
     state: previewStateSchema,
     activeDeploymentId: z.uuid().nullable(),
     createdAt: timestamp,
+});
+
+export const previewListSchema = z.strictObject({
+    items: z.array(previewSchema),
+    nextCursor: z.uuid().nullable().meta({ description: "Pass as `cursor` for the next page." }),
+});
+
+export const deploymentStatusSchema = z.enum([
+    "queued",
+    "preparing",
+    "building",
+    "deploying",
+    "verifying",
+    "succeeded",
+    "failed",
+    "cancelled",
+    "reconciliation-needed",
+]);
+export type DeploymentStatusName = z.infer<typeof deploymentStatusSchema>;
+
+export const createDeploymentSchema = z.strictObject({
+    artifactId: z.uuid(),
+    spa: z.boolean().optional().meta({
+        description: "Serve index.html (200) for unknown paths, for single-page apps.",
+    }),
+});
+
+export const createdDeploymentSchema = z.strictObject({
+    id: z.uuid(),
+    status: deploymentStatusSchema,
+    createdAt: timestamp,
+});
+
+export const deploymentSchema = z.strictObject({
+    id: z.uuid(),
+    previewId: z.uuid(),
+    artifactId: z.uuid(),
+    spa: z.boolean(),
+    status: deploymentStatusSchema,
+    failure: z
+        .strictObject({ code: z.string(), message: z.string() })
+        .nullable()
+        .meta({ description: "Fixed, safe text; remote output is never included." }),
+    createdAt: timestamp,
+    updatedAt: timestamp,
+    finishedAt: timestamp.nullable(),
+});
+
+export const deploymentListSchema = z.strictObject({ items: z.array(deploymentSchema) });
+
+export const deploymentEventSchema = z.strictObject({
+    seq: z.number().int().positive(),
+    phase: z.string(),
+    level: z.enum(["info", "warn", "error"]),
+    message: z.string(),
+    createdAt: timestamp,
+});
+
+export const deploymentEventsSchema = z.strictObject({
+    items: z.array(deploymentEventSchema),
+    nextAfter: z
+        .number()
+        .int()
+        .nullable()
+        .meta({ description: "Pass as `after` to continue; null when caught up." }),
 });
 
 export const artifactSchema = z.strictObject({

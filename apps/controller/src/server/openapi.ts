@@ -15,6 +15,7 @@ import {
     createdProjectSchema,
     createInvitationSchema,
     createOrganizationSchema,
+    createPreviewSchema,
     createProjectSchema,
     errorSchema,
     invitationPreviewSchema,
@@ -25,6 +26,13 @@ import {
     okSchema,
     organizationSummarySchema,
     projectSchema,
+    previewSchema,
+    previewListSchema,
+    createDeploymentSchema,
+    createdDeploymentSchema,
+    deploymentSchema,
+    deploymentListSchema,
+    deploymentEventsSchema,
 } from "@launchpad/services";
 import { z } from "zod";
 
@@ -55,6 +63,8 @@ interface Operation {
     keys?: boolean;
     keyOnly?: boolean;
     path?: string[];
+    query?: { name: string; description: string }[];
+    idempotent?: boolean;
     body?: z.ZodType;
     rawBody?: { contentType: string; description: string };
     ok: { status?: number; description: string; schema?: z.ZodType };
@@ -81,12 +91,33 @@ export function operation(op: Operation): DocumentDecoration {
         tags: op.tags,
         summary: op.summary,
         ...(op.description ? { description: op.description } : {}),
-        parameters: (op.path ?? []).map((name) => ({
-            name,
-            in: "path",
-            required: true,
-            schema: { type: "string" },
-        })),
+        parameters: [
+            ...(op.path ?? []).map((name) => ({
+                name,
+                in: "path" as const,
+                required: true,
+                schema: { type: "string" },
+            })),
+            ...(op.query ?? []).map((q) => ({
+                name: q.name,
+                in: "query" as const,
+                required: false,
+                description: q.description,
+                schema: { type: "string" },
+            })),
+            ...(op.idempotent
+                ? [
+                      {
+                          name: "Idempotency-Key",
+                          in: "header" as const,
+                          required: false,
+                          description:
+                              "Up to 128 characters. A repeated request with the same key returns the first result; the same key with a different request is a conflict. Kept for 24 hours.",
+                          schema: { type: "string" },
+                      },
+                  ]
+                : []),
+        ] as DocumentDecoration["parameters"],
         ...(op.rawBody
             ? {
                   requestBody: {
@@ -146,6 +177,7 @@ export function openApiPlugin(enabled: boolean) {
                 { name: "Organizations", description: "Organizations and membership." },
                 { name: "Projects", description: "Organization-owned projects." },
                 { name: "Artifacts", description: "Uploaded static-site archives." },
+                { name: "Previews", description: "Previews and their deployments." },
                 { name: "API keys", description: "Organization-owned automation keys." },
                 {
                     name: "Invitations",
@@ -254,14 +286,90 @@ export const docs = {
         errors: [401, 403, 404, 409, 422],
     }),
     uploadArtifact: operation({
+        keys: true,
         tags: ["Artifacts"],
         summary: "Upload a static-site archive",
         description:
-            "Deployers and above, signed in (not an API key yet). The body is the archive itself: `.tar.gz` of regular files and directories with `index.html` at its root, sent with a `Content-Length` and `Content-Type: application/gzip`. It is validated while streaming; links, devices, absolute or `..` paths, secrets (`.env*`, `.git`, private keys), duplicates and oversized archives are refused. An identical archive already stored for the organization is reused (`reused: true`).",
+            "Deployers and above; a key needs `preview:deploy` (a project-limited key may upload, since an archive belongs to no project until it is deployed). The body is the archive itself: `.tar.gz` of regular files and directories with `index.html` at its root, sent with a `Content-Length` and `Content-Type: application/gzip`. It is validated while streaming; links, devices, absolute or `..` paths, secrets (`.env*`, `.git`, private keys), duplicates and oversized archives are refused. An identical archive already stored for the organization is reused (`reused: true`).",
         path: ["orgId"],
         rawBody: { contentType: "application/gzip", description: "A gzip-compressed tar archive." },
         ok: { status: 201, description: "Stored (or reused).", schema: artifactSchema },
         errors: [401, 403, 404, 408, 409, 413, 422],
+    }),
+    listPreviews: operation({
+        keys: true,
+        tags: ["Previews"],
+        summary: "List previews",
+        description:
+            "Newest last, in pages. A project-limited key sees only its own projects' previews.",
+        path: ["orgId"],
+        query: [
+            { name: "projectId", description: "Only this project's previews." },
+            { name: "cursor", description: "The `nextCursor` of the previous page." },
+        ],
+        ok: { description: "A page of previews.", schema: previewListSchema },
+        errors: [401, 403, 404, 422],
+    }),
+    createPreview: operation({
+        keys: true,
+        tags: ["Previews"],
+        summary: "Create a preview",
+        description:
+            "Needs deployer or higher. Creates the record and its generated hostname only; nothing is deployed. Needs deployments to be enabled.",
+        path: ["orgId", "projectId"],
+        idempotent: true,
+        body: createPreviewSchema,
+        ok: { status: 201, description: "Created.", schema: previewSchema },
+        errors: [401, 403, 404, 409, 422],
+    }),
+    getPreview: operation({
+        keys: true,
+        tags: ["Previews"],
+        summary: "Get a preview",
+        path: ["orgId", "previewId"],
+        ok: { description: "The preview and its active deployment.", schema: previewSchema },
+        errors: [401, 403, 404],
+    }),
+    createDeployment: operation({
+        keys: true,
+        tags: ["Previews"],
+        summary: "Deploy an uploaded archive to a preview",
+        description:
+            "Needs deployer or higher and deployments to be enabled. Queues the deployment and returns at once; poll the deployment for progress. A preview takes one deployment at a time: a second while one is unfinished (or awaiting an administrator's reconciliation) is a conflict.",
+        path: ["orgId", "previewId"],
+        idempotent: true,
+        body: createDeploymentSchema,
+        ok: { status: 202, description: "Queued.", schema: createdDeploymentSchema },
+        errors: [401, 403, 404, 409, 422],
+    }),
+    listDeployments: operation({
+        keys: true,
+        tags: ["Previews"],
+        summary: "List a preview's recent deployments",
+        description: "The latest 20, newest first.",
+        path: ["orgId", "previewId"],
+        ok: { description: "Deployments.", schema: deploymentListSchema },
+        errors: [401, 403, 404],
+    }),
+    getDeployment: operation({
+        keys: true,
+        tags: ["Previews"],
+        summary: "Get a deployment",
+        description:
+            "Failure text is fixed and safe to show; remote output is never included. `reconciliation-needed` means an administrator must check the host before the preview can be deployed again.",
+        path: ["orgId", "deploymentId"],
+        ok: { description: "The deployment's status.", schema: deploymentSchema },
+        errors: [401, 403, 404],
+    }),
+    listDeploymentEvents: operation({
+        keys: true,
+        tags: ["Previews"],
+        summary: "A deployment's progress events",
+        description: "In order; pass the last `seq` seen as `after` to continue.",
+        path: ["orgId", "deploymentId"],
+        query: [{ name: "after", description: "Only events after this sequence number." }],
+        ok: { description: "Events.", schema: deploymentEventsSchema },
+        errors: [401, 403, 404],
     }),
     keyInfo: operation({
         keyOnly: true,
