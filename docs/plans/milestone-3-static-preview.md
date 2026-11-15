@@ -213,4 +213,9 @@ TTL, expiry, deletion and cleanup (milestone 5), packaging and publishing
       own preflight (a mirror of the server's rules, which stay authoritative), retries only
       requests that got no answer and only with the same idempotency key, and polls events
       and status. An end-to-end test drives the real built controller through the client library.
-- [ ] Slice 6c.
+- [x] Slice 6c: dashboard. The key form offers `preview:read|create|deploy`; the organization
+      page links to a previews list (status of each latest deployment) and a preview page
+      that polls progress every 2 s while a deployment is moving (events resumed by
+      sequence number, stops on a terminal status or after 5 failed polls). Read-only:
+      deploying stays in the CLI, and resolving `reconciliation-needed` is not exposed
+      over HTTP, so the page only says it needs an administrator.
