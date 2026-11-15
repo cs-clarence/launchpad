@@ -58,6 +58,9 @@ interface Script {
     failure?: unknown;
     createDeployment?: () => Response;
     uploadReused?: boolean;
+    createPreview?: () => Response;
+    hangEvents?: boolean;
+    pagedEvents?: boolean;
 }
 
 function controller(script: Script) {
@@ -105,6 +108,7 @@ function controller(script: Script) {
             return json({ items: script.previews, nextCursor: null });
         }
         if (p === `/organizations/${ORG}/projects/${PROJECT}/previews`) {
+            if (script.createPreview) return script.createPreview();
             script.previews.push(previewBody());
             return json(previewBody(), 201);
         }
@@ -115,6 +119,29 @@ function controller(script: Script) {
         }
         if (p === `/organizations/${ORG}/deployments/${DEPLOYMENT}/events`) {
             const after = Number(u.searchParams.get("after") ?? 0);
+            if (script.hangEvents) {
+                return new Promise<Response>((_resolve, reject) =>
+                    init.signal?.addEventListener("abort", () =>
+                        reject(Object.assign(new Error("aborted"), { name: "AbortError" })),
+                    ),
+                );
+            }
+            if (script.pagedEvents) {
+                const page = (seqs: number[], nextAfter: number | null) =>
+                    json({
+                        items: seqs.map((seq) => ({
+                            seq,
+                            phase: "build",
+                            level: "info",
+                            message: `step ${seq}`,
+                            createdAt: NOW,
+                        })),
+                        nextAfter,
+                    });
+                if (after === 0) return page([1, 2], 2);
+                if (after === 2) return page([3], null);
+                return page([], null);
+            }
             const all = [1, 2, 3].map((seq) => ({
                 seq,
                 phase: "build",
@@ -285,6 +312,110 @@ describe("deploying a directory", () => {
     });
 });
 
+describe("cancellation, the deadline and the last events", () => {
+    it("does no further work once cancelled, and never queues the deployment", async () => {
+        const { ctx, calls } = controller({ previews: [], statuses: ["succeeded"] });
+        const abort = new AbortController();
+        await expect(
+            deploy(
+                ctx,
+                args(await site(), {
+                    signal: abort.signal,
+                    onProgress: (p: Progress) => {
+                        if (p.kind === "step" && p.message.startsWith("Deploying to"))
+                            abort.abort();
+                    },
+                }),
+            ),
+        ).rejects.toBeDefined();
+        expect(calls.some((c) => c.path.endsWith("/deployments") && c.method === "POST")).toBe(
+            false,
+        );
+        // Cancelled before the preview is created, too.
+        const early = controller({ previews: [], statuses: ["succeeded"] });
+        const first = new AbortController();
+        await expect(
+            deploy(
+                early.ctx,
+                args(await site(), {
+                    signal: first.signal,
+                    onProgress: (p: Progress) => {
+                        if (p.kind === "step" && p.message === "Archive stored") first.abort();
+                    },
+                }),
+            ),
+        ).rejects.toBeDefined();
+        expect(early.calls.some((c) => c.path.includes("/projects/") && c.method === "POST")).toBe(
+            false,
+        );
+    });
+
+    it("holds every poll to the wait deadline, however long the controller takes", async () => {
+        const { ctx } = controller({
+            previews: [previewBody()],
+            statuses: ["building"],
+            hangEvents: true,
+        });
+        const started = Date.now();
+        const result = await deploy(ctx, args(await site(), { waitTimeoutMs: 300 }));
+        expect(result.outcome).toBe("timeout");
+        expect(Date.now() - started).toBeLessThan(5000);
+        // A caller's cancellation is still theirs, not a timeout.
+        const cancelled = controller({
+            previews: [previewBody()],
+            statuses: ["building"],
+            hangEvents: true,
+        });
+        const abort = new AbortController();
+        setTimeout(() => abort.abort(), 100);
+        await expect(
+            deploy(
+                cancelled.ctx,
+                args(await site(), { signal: abort.signal, waitTimeoutMs: 10_000 }),
+            ),
+        ).rejects.toBeDefined();
+    });
+
+    it("delivers every event, across pages, before it reports the end", async () => {
+        const { ctx } = controller({
+            previews: [previewBody()],
+            statuses: ["succeeded"],
+            pagedEvents: true,
+        });
+        const seen: number[] = [];
+        const result = await deploy(
+            ctx,
+            args(await site(), {
+                onProgress: (p: Progress) => {
+                    if (p.kind === "event") seen.push(p.seq);
+                },
+            }),
+        );
+        expect(result.outcome).toBe("succeeded");
+        expect(seen).toEqual([1, 2, 3]);
+    });
+
+    it("repeats a lost preview creation with the one key", async () => {
+        let attempts = 0;
+        const { ctx, calls } = controller({
+            previews: [],
+            statuses: ["succeeded"],
+            createPreview: () => {
+                attempts++;
+                if (attempts < 3) throw new TypeError("fetch failed");
+                return json(previewBody(), 201);
+            },
+        });
+        await deploy(ctx, args(await site()));
+        const keys = calls
+            .filter((c) => c.path.includes("/projects/") && c.method === "POST")
+            .map((c) => c.headers["idempotency-key"]);
+        expect(keys).toHaveLength(3);
+        expect(new Set(keys).size).toBe(1);
+        expect(keys[0]).toMatch(/^preview-/);
+    });
+});
+
 describe("naming the project", () => {
     it("uses an id as it is, so a key without project:read can deploy and list by id", async () => {
         const byId = controller({ previews: [previewBody()], statuses: ["succeeded"] });
@@ -353,6 +484,19 @@ describe("what is refused before anything is sent", () => {
         await expect(packDirectory(path.join(root, "index.html"))).rejects.toThrow(
             /not a directory/,
         );
+    });
+
+    it("reads an archive within the limit it was given, and reports the bytes actually read", async () => {
+        const file = path.join(dir, "grow.tar.gz");
+        await fs.writeFile(file, Buffer.alloc(1000, 1));
+        const { readArchive } = await import("./index");
+        expect(
+            (await readArchive(file, { maxArchiveBytes: 5000, maxEntries: 1, maxDepth: 1 })).bytes,
+        ).toBe(1000);
+        await expect(
+            readArchive(file, { maxArchiveBytes: 999, maxEntries: 1, maxDepth: 1 }),
+        ).rejects.toThrow(/larger than/);
+        await expect(readArchive(dir)).rejects.toThrow(/not a file/);
     });
 
     it("sends an existing archive as it is, after a size check", async () => {

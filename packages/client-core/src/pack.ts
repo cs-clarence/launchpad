@@ -86,13 +86,21 @@ export async function packDirectory(
             const segments = rel.split("/");
             checkName(rel, segments, limits);
             if (entry.isDirectory()) {
+                // Looked at again without following links: the listing may be stale, and a
+                // directory swapped for a link since must not be descended into.
+                const now = await fs.lstat(path.join(root, rel));
+                if (!now.isDirectory()) {
+                    refuse(`${show(rel)} changed while it was being read.`);
+                }
                 await walk(rel);
             } else if (entry.isFile()) {
                 files.push(rel);
                 if (files.length > limits.maxEntries) {
                     refuse(`The directory has more than ${limits.maxEntries} files.`);
                 }
-                bytes += (await fs.lstat(path.join(root, rel))).size;
+                const now = await fs.lstat(path.join(root, rel));
+                if (!now.isFile()) refuse(`${show(rel)} changed while it was being read.`);
+                bytes += now.size;
             } else {
                 // Links, sockets, devices: nothing but plain files is deployed.
                 refuse(`${show(rel)} is not a regular file (links and special files are refused).`);
@@ -127,10 +135,27 @@ export async function readArchive(
 ): Promise<Packed> {
     const stat = await fs.lstat(file).catch(() => undefined);
     if (!stat?.isFile()) refuse(`${show(file)} is not a file.`);
-    if (stat.size > limits.maxArchiveBytes) {
+    const tooLarge = () =>
         refuse(
             `${show(file)} is larger than ${Math.floor(limits.maxArchiveBytes / (1024 * 1024))} MiB.`,
         );
+    if (stat.size > limits.maxArchiveBytes) tooLarge();
+    // Read with the limit enforced as the bytes arrive: a file that grows after the check
+    // above cannot make this allocate more than the limit allows.
+    const handle = await fs.open(file, "r");
+    try {
+        const chunks: Buffer[] = [];
+        let total = 0;
+        for (;;) {
+            const chunk = Buffer.allocUnsafe(64 * 1024);
+            const { bytesRead } = await handle.read(chunk, 0, chunk.length, null);
+            if (bytesRead === 0) break;
+            total += bytesRead;
+            if (total > limits.maxArchiveBytes) tooLarge();
+            chunks.push(chunk.subarray(0, bytesRead));
+        }
+        return { archive: Buffer.concat(chunks), files: 0, bytes: total };
+    } finally {
+        await handle.close();
     }
-    return { archive: await fs.readFile(file), files: 0, bytes: stat.size };
 }

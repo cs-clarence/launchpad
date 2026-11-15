@@ -59,8 +59,11 @@ const defaultSleep = (ms: number) => new Promise<void>((resolve) => setTimeout(r
 async function retrying<T>(
     run: () => Promise<T>,
     sleep: (ms: number) => Promise<void>,
+    signal?: AbortSignal,
 ): Promise<T> {
     for (let attempt = 1; ; attempt++) {
+        // A cancelled deployment does no further work, not even another attempt.
+        signal?.throwIfAborted();
         try {
             return await run();
         } catch (error) {
@@ -106,7 +109,15 @@ export async function deploy(ctx: Context, input: DeployInput): Promise<DeployRe
         message: artifact.reused ? "Archive already stored" : "Archive stored",
     });
 
-    const preview = await findOrCreatePreview(client, organizationId, projectId, input.name, sleep);
+    input.signal?.throwIfAborted();
+    const preview = await findOrCreatePreview(
+        client,
+        organizationId,
+        projectId,
+        input.name,
+        sleep,
+        input.signal,
+    );
     progress({ kind: "step", message: `Deploying to ${preview.hostname}` });
 
     const idempotencyKey = `deploy-${randomUUID()}`;
@@ -116,9 +127,10 @@ export async function deploy(ctx: Context, input: DeployInput): Promise<DeployRe
                 organizationId,
                 preview.id,
                 { artifactId: artifact.id, spa: input.spa ?? false },
-                { idempotencyKey },
+                { idempotencyKey, signal: input.signal },
             ),
         sleep,
+        input.signal,
     );
     const base = {
         preview: { id: preview.id, slug: preview.slug, hostname: preview.hostname },
@@ -133,17 +145,38 @@ export async function deploy(ctx: Context, input: DeployInput): Promise<DeployRe
     let after = 0;
     let lastStatus = "";
     let misses = 0;
-    for (;;) {
-        try {
+    const timedOut = (): DeployResult => ({
+        ...base,
+        outcome: "timeout",
+        deployment: { id: queued.id, status: lastStatus || queued.status },
+    });
+    // Every request is held to what is left of the wait, so a one-second wait cannot
+    // take half a minute; the caller's own cancellation is kept apart from the deadline.
+    const budget = () =>
+        AbortSignal.any([
+            ...(input.signal ? [input.signal] : []),
+            AbortSignal.timeout(Math.max(1, deadline - Date.now())),
+        ]);
+    // Pages through every event after the last one delivered, so nothing is lost to a
+    // page boundary or to events that arrive between this and the status request.
+    const drainEvents = async () => {
+        for (let page = 0; page < 50; page++) {
             const events = await client.deployments.events(organizationId, queued.id, after, {
-                signal: input.signal,
+                signal: budget(),
             });
             for (const event of events.items) {
                 progress({ kind: "event", ...event });
                 after = event.seq;
             }
+            if (events.nextAfter === null || events.items.length === 0) return;
+        }
+    };
+    for (;;) {
+        input.signal?.throwIfAborted();
+        try {
+            await drainEvents();
             const current = await client.deployments.get(organizationId, queued.id, {
-                signal: input.signal,
+                signal: budget(),
             });
             misses = 0;
             if (current.status !== lastStatus) {
@@ -151,22 +184,20 @@ export async function deploy(ctx: Context, input: DeployInput): Promise<DeployRe
                 progress({ kind: "status", status: current.status });
             }
             if (TERMINAL.has(current.status)) {
+                // Whatever was written between the events request and the status.
+                await drainEvents().catch(() => {});
                 return { ...base, outcome: current.status as DeployOutcome, deployment: current };
             }
         } catch (error) {
+            if (input.signal?.aborted) throw error;
+            if (Date.now() >= deadline) return timedOut();
             // A dropped poll is not a failed deployment; give up only when it persists.
             const transient =
                 error instanceof LaunchpadTransportError &&
                 (error.reason === "unreachable" || error.reason === "timeout");
             if (!transient || ++misses >= 5) throw error;
         }
-        if (Date.now() + pollMs > deadline) {
-            return {
-                ...base,
-                outcome: "timeout",
-                deployment: { id: queued.id, status: lastStatus || queued.status },
-            };
-        }
+        if (Date.now() + pollMs > deadline) return timedOut();
         await sleep(pollMs);
     }
 }
@@ -177,6 +208,7 @@ async function findOrCreatePreview(
     projectId: string,
     slug: string,
     sleep: (ms: number) => Promise<void>,
+    signal?: AbortSignal,
 ): Promise<Preview> {
     const find = async (): Promise<Preview | undefined> => {
         let cursor: string | undefined;
@@ -192,6 +224,10 @@ async function findOrCreatePreview(
     };
     const existing = await find();
     if (existing) return existing;
+    signal?.throwIfAborted();
+    // One key for every attempt: if a create committed but its answer was lost, the
+    // retry gets that same preview back instead of a conflict.
+    const idempotencyKey = `preview-${randomUUID()}`;
     try {
         return await retrying(
             () =>
@@ -199,9 +235,10 @@ async function findOrCreatePreview(
                     organizationId,
                     projectId,
                     { slug },
-                    { idempotencyKey: `preview-${randomUUID()}` },
+                    { idempotencyKey, signal },
                 ),
             sleep,
+            signal,
         );
     } catch (error) {
         // Created by someone else between the list and the create: use theirs.
