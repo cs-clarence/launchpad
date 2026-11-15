@@ -52,7 +52,8 @@ returns once it is queued). Progress goes to stderr; stdout is the result, a sin
   projects), plus `project:read` only to name a project by slug (a project id needs no lookup). Previews and deployments are available only when
   the controller has deployments turned on.
 - **Failures** carry fixed, safe text (for example, the new release did not become ready and the previous one
-  was restored). `reconciliation-needed` means an administrator must check the host first.
+  was restored). `reconciliation-needed` means an administrator must check the host, then record the outcome in the dashboard (the preview page) or with `POST …/deployments/{id}/resolution`; until then the preview takes no new deployment.
+- **Stored archives** are not deleted yet and each organization may hold `LAUNCHPAD_MAX_ARTIFACTS` (20 by default); `deploy` settles the preview before it uploads so a deploy that cannot start does not spend one. Uploads are refused while deployments are off, and at most 2 per organization run at once.
 - Output and errors hide anything shaped like a key and strip terminal escape
   sequences/control bytes. Serialized JSON stays valid.
 - If the credential store reports `store-busy` (exit 6), wait for other commands

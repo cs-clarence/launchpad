@@ -30,6 +30,7 @@ import {
     previewListSchema,
     createDeploymentSchema,
     createdDeploymentSchema,
+    resolveDeploymentSchema,
     deploymentSchema,
     deploymentListSchema,
     deploymentEventsSchema,
@@ -360,6 +361,16 @@ export const docs = {
         path: ["orgId", "deploymentId"],
         ok: { description: "The deployment's status.", schema: deploymentSchema },
         errors: [401, 403, 404],
+    }),
+    resolveDeployment: operation({
+        tags: ["Previews"],
+        summary: "Resolve a deployment that needs an administrator",
+        description:
+            "Needs admin or owner and a session (an API key cannot do this). Only for a deployment in `reconciliation-needed`: record whether the host was found serving the new release (`succeeded`) or the previous one (`failed`), after checking the host. This frees the preview for new deployments.",
+        path: ["orgId", "deploymentId"],
+        body: resolveDeploymentSchema,
+        ok: { description: "Resolved.", schema: okSchema },
+        errors: [401, 403, 404, 409, 422],
     }),
     listDeploymentEvents: operation({
         keys: true,

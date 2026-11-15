@@ -19,6 +19,8 @@ export interface ArtifactLimits {
     // Artifacts kept per organization. They are not deleted until the cleanup
     // milestone, so this is a hard ceiling for now.
     maxArtifacts: number;
+    // Uploads one organization may have in flight; each stages up to a full archive.
+    maxConcurrentUploads: number;
 }
 
 export const DEFAULT_ARTIFACT_LIMITS: ArtifactLimits = {
@@ -28,6 +30,7 @@ export const DEFAULT_ARTIFACT_LIMITS: ArtifactLimits = {
     maxDepth: 16,
     uploadTimeoutMs: 5 * 60 * 1000,
     maxArtifacts: 20,
+    maxConcurrentUploads: 2,
 };
 
 export interface ArtifactDeps {
@@ -117,6 +120,27 @@ export interface UploadedArtifact {
     reused: boolean;
 }
 
+// Uploads in flight stage up to a full archive each on the controller's disk, so a
+// caller cannot hold more than a few open: per organization (a limit) and in total.
+export const MAX_UPLOADS_TOTAL = 8;
+const activeUploads = new Map<string, number>();
+let activeTotal = 0;
+
+function takeUploadSlot(organizationId: string, perOrganization: number): boolean {
+    const mine = activeUploads.get(organizationId) ?? 0;
+    if (mine >= perOrganization || activeTotal >= MAX_UPLOADS_TOTAL) return false;
+    activeUploads.set(organizationId, mine + 1);
+    activeTotal++;
+    return true;
+}
+
+function releaseUploadSlot(organizationId: string): void {
+    const mine = (activeUploads.get(organizationId) ?? 1) - 1;
+    if (mine <= 0) activeUploads.delete(organizationId);
+    else activeUploads.set(organizationId, mine);
+    activeTotal = Math.max(0, activeTotal - 1);
+}
+
 async function countArtifacts(db: Db, organizationId: string): Promise<number> {
     const row = await db
         .selectFrom("artifact")
@@ -152,9 +176,14 @@ export async function uploadArtifact(
         throw new ServiceError("conflict", "This organization has too many stored artifacts.");
     }
 
-    await fs.mkdir(tmpDir(deps.dataDir), { recursive: true, mode: 0o700 });
-    const temp = path.join(tmpDir(deps.dataDir), `upload-${randomBytes(12).toString("hex")}.part`);
+    if (!takeUploadSlot(organizationId, limits.maxConcurrentUploads)) {
+        await body.cancel().catch(() => {});
+        throw new ServiceError("conflict", "Too many uploads are in progress. Try again shortly.");
+    }
+    let temp = "";
     try {
+        await fs.mkdir(tmpDir(deps.dataDir), { recursive: true, mode: 0o700 });
+        temp = path.join(tmpDir(deps.dataDir), `upload-${randomBytes(12).toString("hex")}.part`);
         const { digest, bytes } = await receive(body, temp, limits, meta.contentLength, signal);
         let summary;
         try {
@@ -175,7 +204,8 @@ export async function uploadArtifact(
             limits,
         );
     } finally {
-        await fs.rm(temp, { force: true });
+        releaseUploadSlot(organizationId);
+        if (temp) await fs.rm(temp, { force: true });
     }
 }
 

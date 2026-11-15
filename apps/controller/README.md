@@ -175,6 +175,7 @@ secrets out before uploading; the server refuses rather than silently dropping t
 | `LAUNCHPAD_MAX_ARCHIVE_DEPTH`      | 16                  | Path depth                                                     |
 | `LAUNCHPAD_UPLOAD_TIMEOUT_SECONDS` | 300                 | Total upload time; 408                                         |
 | `LAUNCHPAD_MAX_ARTIFACTS`          | 20                  | Stored artifacts per organization                              |
+| `LAUNCHPAD_MAX_CONCURRENT_UPLOADS` | 2                   | Uploads in flight per organization (8 in total)                |
 
 A length-less (chunked) upload is a 411. An identical archive already stored for the
 organization is reused (`reused: true`); archives are deduplicated within an

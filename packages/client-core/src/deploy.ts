@@ -100,6 +100,17 @@ export async function deploy(ctx: Context, input: DeployInput): Promise<DeployRe
         ? await packDirectory(input.source)
         : await readArchive(input.source);
 
+    // The preview is settled before the upload: a stored archive is kept for good, so
+    // one is not spent on a deploy that cannot start.
+    input.signal?.throwIfAborted();
+    const preview = await findOrCreatePreview(
+        client,
+        organizationId,
+        projectId,
+        input.name,
+        sleep,
+        input.signal,
+    );
     progress({ kind: "step", message: `Uploading ${packed.archive.length} bytes` });
     const artifact = await client.artifacts.upload(organizationId, packed.archive, {
         signal: input.signal,
@@ -110,14 +121,6 @@ export async function deploy(ctx: Context, input: DeployInput): Promise<DeployRe
     });
 
     input.signal?.throwIfAborted();
-    const preview = await findOrCreatePreview(
-        client,
-        organizationId,
-        projectId,
-        input.name,
-        sleep,
-        input.signal,
-    );
     progress({ kind: "step", message: `Deploying to ${preview.hostname}` });
 
     const idempotencyKey = `deploy-${randomUUID()}`;
