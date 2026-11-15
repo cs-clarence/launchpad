@@ -109,11 +109,13 @@ export async function workspaceContext(
     input: { workingDir: string; profile?: string; organization?: string; project?: string },
 ) {
     const workspace = await readWorkspace(input.workingDir);
-    const profile = input.profile ?? workspace.config?.profile;
+    let profile = input.profile ?? workspace.config?.profile;
     const organization = input.organization ?? workspace.config?.organization;
     let scoped = ctx;
     if (organization) {
         const resolved = await resolve(ctx, profile);
+        // Do not select currentProfile again after checking this identity's organization.
+        profile ??= resolved.profile ?? undefined;
         const organizations = await clientFor(ctx, resolved).organizations.list();
         const match = organizations.find((o) => o.id === organization || o.slug === organization);
         if (!match) {

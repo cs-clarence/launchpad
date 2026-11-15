@@ -81,8 +81,8 @@ credentials; review its profile and organization choices before using it.
 An organization supplied by config or argument is validated using the selected
 key's visible organizations (requires `organization:read`).
 
-The CLI's `deploy` uses this same context from its launch directory. `--project`
-and `--name` override the corresponding file defaults.
+The CLI's deploy, preview and deployment reads use this same context from their
+launch directory. `--project` and `--name` override the corresponding file defaults.
 
 ## Results and limits
 

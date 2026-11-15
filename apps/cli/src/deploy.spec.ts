@@ -118,7 +118,7 @@ function controller(options: { statuses: string[]; failure?: unknown; denyUpload
     }) as unknown as typeof fetch;
 }
 
-async function cli(args: string[], fetchImpl: typeof fetch) {
+async function cli(args: string[], fetchImpl: typeof fetch, organization?: string) {
     const out: string[] = [];
     const err: string[] = [];
     const io: Io = {
@@ -128,6 +128,7 @@ async function cli(args: string[], fetchImpl: typeof fetch) {
                 LAUNCHPAD_CONFIG_DIR: dir,
                 LAUNCHPAD_CONTROLLER: "https://control.example.com",
                 LAUNCHPAD_API_KEY: KEY,
+                LAUNCHPAD_ORG: organization,
             },
             { fetch: fetchImpl },
         ),
@@ -166,6 +167,43 @@ const deployArgs = (...extra: string[]) => [
 ];
 
 describe("launchpad deploy", () => {
+    it("reads status in the workspace organization, and makes follow-up commands explicit", async () => {
+        await fs.writeFile(
+            path.join(dir, "launchpad.json"),
+            JSON.stringify({
+                organization: "one",
+                project: PROJECT,
+                name: "review",
+            }),
+        );
+        const result = await cli(
+            ["deployments", "status", DEPLOYMENT],
+            controller({ statuses: ["succeeded"] }),
+            "stale-org",
+        );
+        expect(result).toMatchObject({ code: EXIT.ok, err: "" });
+        expect(result.out).toContain("succeeded");
+        for (const args of [
+            ["previews", "list"],
+            ["previews", "get", PREVIEW],
+            ["deployments", "events", DEPLOYMENT],
+        ]) {
+            const read = await cli(args, controller({ statuses: ["succeeded"] }), "stale-org");
+            expect(read, args.join(" ")).toMatchObject({ code: EXIT.ok, err: "" });
+        }
+        const queued = await cli(
+            ["deploy", site, "--no-wait"],
+            controller({ statuses: ["queued"] }),
+        );
+        expect(queued.out).toContain(`--organization '${ORG}'`);
+        await fs.unlink(path.join(dir, "launchpad.json"));
+        const explicit = await cli(
+            ["deployments", "status", DEPLOYMENT, "--organization", ORG],
+            controller({ statuses: ["succeeded"] }),
+            "stale-org",
+        );
+        expect(explicit).toMatchObject({ code: EXIT.ok, err: "" });
+    });
     it("uses launchpad.json defaults, with explicit flags taking precedence", async () => {
         await fs.writeFile(
             path.join(dir, "launchpad.json"),

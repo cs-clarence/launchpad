@@ -7,6 +7,7 @@ import {
     MAX_WORKSPACE_CONFIG_BYTES,
     readWorkspace,
     workspaceContext,
+    resolve,
 } from "./index";
 
 let dir = "";
@@ -21,6 +22,36 @@ const save = (where: string, value: unknown) =>
     fs.writeFile(path.join(where, "launchpad.json"), JSON.stringify(value));
 
 describe("workspace context", () => {
+    it("pins the profile selected during organization validation if the current selection changes", async () => {
+        await save(dir, config);
+        const ctx = createContext(
+            { LAUNCHPAD_CONFIG_DIR: path.join(dir, "credentials") },
+            {
+                fetch: (async (_url: string, _init: RequestInit) => {
+                    await ctx.store.update((saved) => {
+                        saved.currentProfile = "second";
+                    });
+                    return Response.json([
+                        { id: "org-one", slug: "one", name: "One", role: "owner" },
+                    ]);
+                }) as typeof fetch,
+            },
+        );
+        await ctx.store.update((saved) => {
+            saved.currentProfile = "first";
+            for (const name of ["first", "second"]) {
+                saved.profiles[name] = {
+                    controller: "https://control.example.com",
+                    apiKey: `lp_${name.repeat(10)}`,
+                    organizationId: null,
+                    savedAt: "2026-11-16T00:00:00.000Z",
+                };
+            }
+        });
+        const workspace = await workspaceContext(ctx, { workingDir: dir });
+        expect((await ctx.store.load()).currentProfile).toBe("second");
+        expect((await resolve(workspace.context, workspace.profile)).profile).toBe("first");
+    });
     it("finds the nearest config, without changing cwd or requiring one", async () => {
         const cwd = process.cwd();
         const child = path.join(dir, "child");

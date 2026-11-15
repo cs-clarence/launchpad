@@ -12,7 +12,8 @@ launchpad org list | use <slug-or-id>
 launchpad projects list
 launchpad deploy <directory|archive.tar.gz> [--project <slug|id>] [--name <name>] [--spa] [--no-wait] [--timeout <seconds>]
 launchpad previews list [--project <slug|id>] | get <previewId>
-launchpad deployments status <deploymentId> | events <deploymentId> [--after <seq>]
+launchpad deployments status <deploymentId> [--organization <slug|id>]
+launchpad deployments events <deploymentId> [--after <seq>] [--organization <slug|id>]
 ```
 
 Global options: `--json` (machine-readable output; errors become `{"error":{"code","message"}}` on stderr)
@@ -37,7 +38,8 @@ and `--profile <name>`.
 
 ## Deploying
 
-`deploy` reads the nearest `launchpad.json` from its working directory upward.
+`deploy`, `previews` and `deployments` read the nearest `launchpad.json` from their
+working directory upward.
 The file requires `organization` (id or slug) and `project` (id or slug), with
 optional `profile` and preview `name`. `--profile`, `--project` and `--name` override
 file values; without file defaults, project and name must be supplied as flags.
@@ -46,6 +48,9 @@ Organization selection from the file requires `organization:read`; it is checked
 against the key's organizations and never saved. With no file, existing
 profile/environment behavior is unchanged. This resolver is shared with the
 [separate MCP app](../mcp/README.md).
+Deployment status/events accept `--organization` to override the file selection.
+Queued/timeout follow-up commands include the workspace organization and selected
+profile when present, so they do not depend on the original working directory.
 
 `launchpad deploy ./dist --project site --name review` packs the directory, uploads it, finds or creates the
 preview named `review` in that project, queues a deployment and follows it until it is live (`--no-wait`

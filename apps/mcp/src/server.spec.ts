@@ -259,6 +259,74 @@ describe("read-only MCP protocol", () => {
             expect(JSON.parse(content.text)).toEqual(result.structuredContent);
     });
 
+    it("bounds the complete result even when JSON text is escaped a second time", () => {
+        for (const char of ['"', "\\"]) {
+            const result = toolResult({ text: char.repeat(14_000) });
+            expect(Buffer.byteLength(JSON.stringify(result))).toBeLessThanOrEqual(64 * 1024);
+            expect(result.structuredContent).toMatchObject({ truncated: true });
+        }
+    });
+
+    it("keeps actual process stdout pure during a successful stdio session", async () => {
+        const result = await new Promise<{ stdout: string; stderr: string; code: number | null }>(
+            (resolve, reject) => {
+                const child = spawn("bun", ["src/index.ts", "--shared"], {
+                    cwd: path.resolve(import.meta.dirname, ".."),
+                    env: { ...process.env, NO_COLOR: "1" },
+                    stdio: ["pipe", "pipe", "pipe"],
+                });
+                let stdout = "",
+                    stderr = "";
+                const timer = setTimeout(() => {
+                    child.kill();
+                    reject(new Error("MCP subprocess did not close after EOF"));
+                }, 3000);
+                child.stdout.on("data", (b) => {
+                    stdout += b;
+                });
+                child.stderr.on("data", (b) => {
+                    stderr += b;
+                });
+                child.on("error", (error) => {
+                    clearTimeout(timer);
+                    reject(error);
+                });
+                child.on("close", (code) => {
+                    clearTimeout(timer);
+                    resolve({ stdout, stderr, code });
+                });
+                child.stdin.end(
+                    [
+                        {
+                            jsonrpc: "2.0",
+                            id: 1,
+                            method: "initialize",
+                            params: {
+                                protocolVersion: LATEST_PROTOCOL_VERSION,
+                                capabilities: {},
+                                clientInfo: { name: "test", version: "1" },
+                            },
+                        },
+                        { jsonrpc: "2.0", method: "notifications/initialized" },
+                        { jsonrpc: "2.0", id: 2, method: "tools/list", params: {} },
+                    ]
+                        .map((message) => JSON.stringify(message) + "\n")
+                        .join(""),
+                );
+            },
+        );
+        expect(result.code, result.stderr).toBe(0);
+        const messages = result.stdout
+            .trim()
+            .split("\n")
+            .map((line) => JSON.parse(line));
+        expect(messages).toHaveLength(2);
+        expect(messages.map((m) => m.id).sort()).toEqual([1, 2]);
+        for (const message of messages) {
+            expect(message).toMatchObject({ jsonrpc: "2.0", result: expect.any(Object) });
+        }
+    });
+
     it("writes only JSON-RPC lines to the real stdio transport", async () => {
         const { server } = fixture({ shared: true });
         const input = new PassThrough();

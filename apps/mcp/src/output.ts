@@ -2,8 +2,7 @@ import { ClientCoreError, safeOutput } from "@launchpad/client-core";
 import { LaunchpadApiError, LaunchpadConfigError, LaunchpadTransportError } from "@launchpad/sdk";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 
-// Both representations (text and structuredContent) fit inside a 64 KiB result.
-const MAX_PAYLOAD_BYTES = 30 * 1024;
+const MAX_RESULT_BYTES = 64 * 1024;
 
 function clean(value: unknown): unknown {
     if (typeof value === "string") return safeOutput(value);
@@ -20,20 +19,29 @@ function clean(value: unknown): unknown {
  * controls; refuse oversized results rather than emit invalid or partial objects.
  */
 export function toolResult(data: unknown, isError = false): CallToolResult {
-    let result = { data: clean(data), truncated: false };
-    let text = JSON.stringify(result);
-    if (Buffer.byteLength(text) > MAX_PAYLOAD_BYTES) {
-        result = {
-            data: {
-                code: "output-too-large",
-                message: "Narrow the query or request a smaller page.",
+    const encode = (
+        result: { data: unknown; truncated: boolean },
+        failed: boolean,
+    ): CallToolResult => ({
+        content: [{ type: "text", text: JSON.stringify(result) }],
+        structuredContent: result,
+        isError: failed,
+    });
+    const result = encode({ data: clean(data), truncated: false }, isError);
+    // content.text is serialized again on the wire: quotes and backslashes expand.
+    if (Buffer.byteLength(JSON.stringify(result)) > MAX_RESULT_BYTES) {
+        return encode(
+            {
+                data: {
+                    code: "output-too-large",
+                    message: "Narrow the query or request a smaller page.",
+                },
+                truncated: true,
             },
-            truncated: true,
-        };
-        text = JSON.stringify(result);
-        isError = true;
+            true,
+        );
     }
-    return { content: [{ type: "text", text }], structuredContent: result, isError };
+    return result;
 }
 
 export function toolError(error: unknown): CallToolResult {
