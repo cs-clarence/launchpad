@@ -11,5 +11,6 @@ export * from "./contracts";
 export * from "./api-keys";
 export * from "./previews";
 export * from "./archive";
+export * from "./artifact-config";
 export * from "./artifacts";
 export * from "./deployments";

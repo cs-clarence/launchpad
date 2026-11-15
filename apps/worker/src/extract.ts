@@ -12,14 +12,17 @@ export async function extractSite(
     limits: ArchiveLimits,
 ): Promise<{ fileCount: number }> {
     await validateArchive(archivePath, limits);
-    await fs.mkdir(destination, { recursive: true, mode: 0o700 });
+    // Readable by the web server's user inside the image: the build context is the only
+    // place its permissions come from, and they come from here, not from the archive.
+    await fs.mkdir(destination, { recursive: true, mode: 0o755 });
     await extract({
         file: archivePath,
         cwd: destination,
         strict: true,
         preservePaths: false,
         noChmod: true,
-        // Ownership and modes come from this process, never from the archive.
+        // Ownership comes from this process; modes are set by the filter and then
+        // normalized below, so nothing but plain read permissions survives.
         uid: process.getuid?.(),
         gid: process.getgid?.(),
         filter: (_path, entry) => {
@@ -27,19 +30,26 @@ export async function extractSite(
             return type === "File" || type === "OldFile" || type === "Directory";
         },
     });
+    await fs.chmod(destination, 0o755);
     return { fileCount: await checkTree(destination) };
 }
 
 // Everything under `root` must be a regular file or directory that really lives inside
-// it, and the site must have an index.
+// it (their modes are normalized as they are visited), and the site must have an index.
 async function checkTree(root: string): Promise<number> {
     let files = 0;
     const walk = async (dir: string): Promise<void> => {
         for (const entry of await fs.readdir(dir, { withFileTypes: true })) {
             const full = path.join(dir, entry.name);
-            if (entry.isDirectory()) await walk(full);
-            else if (entry.isFile()) files++;
-            else throw new Error("The extracted site contains something other than files.");
+            if (entry.isDirectory()) {
+                await fs.chmod(full, 0o755);
+                await walk(full);
+            } else if (entry.isFile()) {
+                // Whatever the archive said (unreadable, setuid, setgid, executable): a
+                // static file is world-readable and nothing else.
+                await fs.chmod(full, 0o644);
+                files++;
+            } else throw new Error("The extracted site contains something other than files.");
         }
     };
     await walk(root);

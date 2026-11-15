@@ -1,6 +1,6 @@
 import { createDatabase } from "@launchpad/database";
 import { createDokkuClient } from "@launchpad/dokku";
-import { DEFAULT_ARTIFACT_LIMITS } from "@launchpad/services";
+import { sweepScratch } from "./build";
 import { loadConfig } from "./config";
 import { createDocker } from "./docker";
 import { createDeployPorts } from "./ports";
@@ -23,16 +23,14 @@ async function main() {
         return;
     }
     const { config } = loaded;
+    // A worker killed mid-build leaves its scratch directory behind.
+    await sweepScratch(config.dataDir);
     const db = createDatabase(config.databaseUrl, { max: 4 });
     const ports = createDeployPorts({
         dokku: createDokkuClient({ ...config.dokku }),
         docker: createDocker({ binary: config.dockerBinary }),
         dataDir: config.dataDir,
-        limits: {
-            maxExpandedBytes: DEFAULT_ARTIFACT_LIMITS.maxExpandedBytes,
-            maxEntries: DEFAULT_ARTIFACT_LIMITS.maxEntries,
-            maxDepth: DEFAULT_ARTIFACT_LIMITS.maxDepth,
-        },
+        limits: config.archiveLimits,
         baseImage: config.baseImage,
         probe: { proxyUrl: config.proxyUrl, timeoutMs: 90_000, intervalMs: 1500 },
     });

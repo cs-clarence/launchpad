@@ -3,7 +3,7 @@ import path from "node:path";
 import { artifactStorageKey, type DeployContext } from "@launchpad/services";
 import { SITE, tarGz, type FixtureEntry } from "@launchpad/services/testing";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { buildImage } from "./build";
+import { buildImage, sweepScratch } from "./build";
 import { createDocker } from "./docker";
 import { dockerfile, imageTagFor, nginxConf } from "./template";
 import { fakeDocker, LIMITS, tempDir } from "./testing";
@@ -88,5 +88,23 @@ describe("building the image", () => {
         await expect(
             buildImage({ ...context, storageKey: "../../etc/passwd" }, deps, signal()),
         ).rejects.toThrow(/storage key/);
+    });
+});
+
+describe("sweeping abandoned build directories", () => {
+    it("removes only old b-* directories, and nothing else", async () => {
+        const root = path.join(tmp.dir, "build");
+        await fs.mkdir(root, { recursive: true });
+        const old = path.join(root, "b-abc123");
+        const young = path.join(root, "b-xyz789");
+        const other = path.join(root, "keep-me");
+        for (const dir of [old, young, other])
+            await fs.mkdir(path.join(dir, "site"), { recursive: true });
+        const past = new Date(Date.now() - 2 * 60 * 60 * 1000);
+        await fs.utimes(old, past, past);
+        await fs.utimes(other, past, past);
+        expect(await sweepScratch(tmp.dir)).toBe(1);
+        expect((await fs.readdir(root)).toSorted()).toEqual(["b-xyz789", "keep-me"]);
+        expect(await sweepScratch(path.join(tmp.dir, "missing"))).toBe(0);
     });
 });

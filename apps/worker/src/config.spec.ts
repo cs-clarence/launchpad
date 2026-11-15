@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { loadConfig } from "./config";
+import { loadConfig, MAX_LEASE_MS, MIN_LEASE_MS } from "./config";
 
 const full = {
     LAUNCHPAD_DEPLOYMENTS: "on",
@@ -28,6 +28,24 @@ describe("worker configuration", () => {
         }
     });
 
+    it("reads the same archive limits as the controller, and resolves the data directory", () => {
+        const loaded = loadConfig({
+            ...full,
+            LAUNCHPAD_DATA_DIR: "./data/../data2",
+            LAUNCHPAD_MAX_ARCHIVE_ENTRIES: "7",
+            LAUNCHPAD_MAX_EXPANDED_BYTES: "1234",
+            LAUNCHPAD_MAX_ARCHIVE_DEPTH: "3",
+        });
+        if (!loaded.enabled) throw new Error("expected enabled");
+        expect(loaded.config.archiveLimits).toEqual({
+            maxEntries: 7,
+            maxExpandedBytes: 1234,
+            maxDepth: 3,
+        });
+        expect(loaded.config.dataDir.startsWith("/")).toBe(true);
+        expect(loaded.config.dataDir.endsWith("/data2")).toBe(true);
+    });
+
     it("applies defaults and checks numbers and references", () => {
         const loaded = loadConfig(full);
         if (!loaded.enabled) throw new Error("expected enabled");
@@ -41,6 +59,14 @@ describe("worker configuration", () => {
             { DOKKU_SSH_PORT: "0" },
             { LAUNCHPAD_WORKER_POLL_MS: "5" },
             { LAUNCHPAD_WORKER_LEASE_MS: "1000" },
+            // Shorter than a load can take: every deployment would end held.
+            { LAUNCHPAD_WORKER_LEASE_MS: String(MIN_LEASE_MS - 1) },
+            // Longer than the scratch sweep can tolerate for a rollback's build.
+            { LAUNCHPAD_WORKER_LEASE_MS: String(MAX_LEASE_MS + 1) },
+            { DOKKU_SSH_PORT: "70000" },
+            { LAUNCHPAD_DATA_DIR: "/data/with space" },
+            { LAUNCHPAD_DATA_DIR: "/data/$(id)" },
+            { LAUNCHPAD_MAX_ARCHIVE_ENTRIES: "0" },
             { LAUNCHPAD_BASE_IMAGE: "nginx:latest; rm -rf /" },
             { LAUNCHPAD_PREVIEW_PROXY_URL: "ftp://x" },
         ]) {

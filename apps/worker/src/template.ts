@@ -6,12 +6,16 @@
 export const TEMPLATE_VERSION = "1";
 export const DEFAULT_BASE_IMAGE = "nginx:1.27-alpine";
 
+// [registry[:port]/]path[:tag][@sha256:digest]; a tag or a digest is required, so a base
+// image is never "whatever latest is". A digest pin is what makes a build repeatable.
 const BASE_IMAGE =
-    /^[a-z0-9][a-z0-9._-]{0,60}(\/[a-z0-9][a-z0-9._-]{0,60}){0,3}:[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}(@sha256:[0-9a-f]{64})?$/;
+    /^(?:[a-z0-9][a-z0-9.-]{0,60}(?::[0-9]{1,5})?\/)?[a-z0-9][a-z0-9._-]{0,60}(?:\/[a-z0-9][a-z0-9._-]{0,60}){0,3}(?::[A-Za-z0-9_][A-Za-z0-9_.-]{0,127})?(?:@sha256:[0-9a-f]{64})?$/;
+const HAS_REFERENCE = /(?::[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}|@sha256:[0-9a-f]{64})$/;
 const DEPLOYMENT_ID = /^[0-9a-f]{32}$/;
 
 export function checkBaseImage(value: string): string {
-    if (!BASE_IMAGE.test(value)) throw new Error("The base image reference is not valid.");
+    if (!BASE_IMAGE.test(value) || !HAS_REFERENCE.test(value))
+        throw new Error("The base image reference is not valid.");
     return value;
 }
 

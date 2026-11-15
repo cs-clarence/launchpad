@@ -10,6 +10,8 @@ export interface FixtureEntry {
     type?: "file" | "dir" | "symlink" | "hardlink" | "char" | "block" | "fifo" | "sparse";
     content?: Buffer | string;
     link?: string;
+    // Permission bits stored in the header (default 0644 for files, 0755 for directories).
+    mode?: number;
     // Carry the name in a pax extended header, so it can exceed the ustar limit.
     pax?: boolean;
 }
@@ -48,7 +50,7 @@ function header(entry: FixtureEntry, size: number): Buffer {
         }
     }
     base.copy(block, 0);
-    block.write(octal(entry.type === "dir" ? 0o755 : 0o644, 8), 100);
+    block.write(octal(entry.mode ?? (entry.type === "dir" ? 0o755 : 0o644), 8), 100);
     block.write(octal(0, 8), 108);
     block.write(octal(0, 8), 116);
     block.write(octal(size, 12), 124);

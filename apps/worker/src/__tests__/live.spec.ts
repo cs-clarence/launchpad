@@ -83,9 +83,15 @@ async function newRelease(spa: boolean, app: string): Promise<DeployContext> {
 async function deploy(context: DeployContext) {
     if (!context.appName.startsWith(PREFIX)) throw new Error("Refusing a non-test app.");
     const signal = new AbortController().signal;
-    if (!(await dokku.apps.exists(context.appName, signal))) {
-        await dokku.apps.create(context.appName, signal);
+    if (!created.has(context.appName)) {
+        // A name that already exists was not made by this run: never adopt, change or
+        // destroy it. It is recorded before the create, so even a create that ends
+        // uncertain (but did happen) is cleaned up.
+        if (await dokku.apps.exists(context.appName, signal)) {
+            throw new Error(`${context.appName} already exists; refusing to use it.`);
+        }
         created.add(context.appName);
+        await dokku.apps.create(context.appName, signal);
     }
     const { imageTag } = await ports.build(context, signal);
     await dokku.domains.set(context.appName, context.hostname, signal);

@@ -52,7 +52,17 @@ describe("the fixed template", () => {
             expect(() => dockerfile(bad)).toThrow();
             expect(() => checkBaseImage(bad)).toThrow();
         }
-        expect(checkBaseImage("registry.example.com/library/nginx:1.27-alpine")).toBeTruthy();
+        // A tag or a digest is required, so a base image is never "whatever is latest".
+        for (const bad of ["reg.example.com:5000/nginx", "nginx", "a/b/c/d/e/f:1"]) {
+            expect(() => checkBaseImage(bad), bad).toThrow();
+        }
+        for (const good of [
+            "reg.example.com:5000/library/nginx:1.27",
+            `nginx@sha256:${"b".repeat(64)}`,
+            "registry.example.com/library/nginx:1.27-alpine",
+        ]) {
+            expect(checkBaseImage(good)).toBe(good);
+        }
         expect(checkBaseImage(`nginx:1.27@sha256:${"a".repeat(64)}`)).toBeTruthy();
     });
 
