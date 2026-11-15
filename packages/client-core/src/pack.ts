@@ -1,4 +1,4 @@
-import { promises as fs } from "node:fs";
+import { constants as fsConstants, promises as fs } from "node:fs";
 import path from "node:path";
 import { create } from "tar";
 import { ClientCoreError } from "./errors";
@@ -142,8 +142,15 @@ export async function readArchive(
     if (stat.size > limits.maxArchiveBytes) tooLarge();
     // Read with the limit enforced as the bytes arrive: a file that grows after the check
     // above cannot make this allocate more than the limit allows.
-    const handle = await fs.open(file, "r");
+    // Opened without following a link that replaced the file since the check above, and
+    // the opened file itself is checked: what is read is what was validated.
+    const handle = await fs
+        .open(file, fsConstants.O_RDONLY | (fsConstants.O_NOFOLLOW ?? 0))
+        .catch(() => refuse(`${show(file)} cannot be read as a plain file.`));
     try {
+        const opened = await handle.stat();
+        if (!opened.isFile()) refuse(`${show(file)} is not a file.`);
+        if (opened.size > limits.maxArchiveBytes) tooLarge();
         const chunks: Buffer[] = [];
         let total = 0;
         for (;;) {

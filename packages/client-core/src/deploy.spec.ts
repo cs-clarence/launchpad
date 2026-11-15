@@ -350,6 +350,26 @@ describe("cancellation, the deadline and the last events", () => {
         );
     });
 
+    it("rejects when cancelled while the final events are delivered, instead of reporting success", async () => {
+        const { ctx } = controller({
+            previews: [previewBody()],
+            statuses: ["succeeded"],
+            pagedEvents: true,
+        });
+        const abort = new AbortController();
+        await expect(
+            deploy(
+                ctx,
+                args(await site(), {
+                    signal: abort.signal,
+                    onProgress: (p: Progress) => {
+                        if (p.kind === "status" && p.status === "succeeded") abort.abort();
+                    },
+                }),
+            ),
+        ).rejects.toBeDefined();
+    });
+
     it("holds every poll to the wait deadline, however long the controller takes", async () => {
         const { ctx } = controller({
             previews: [previewBody()],

@@ -186,6 +186,8 @@ export async function deploy(ctx: Context, input: DeployInput): Promise<DeployRe
             if (TERMINAL.has(current.status)) {
                 // Whatever was written between the events request and the status.
                 await drainEvents().catch(() => {});
+                // Cancelled while the last events were delivered: that is the caller's call.
+                input.signal?.throwIfAborted();
                 return { ...base, outcome: current.status as DeployOutcome, deployment: current };
             }
         } catch (error) {
