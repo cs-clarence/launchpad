@@ -29,9 +29,9 @@ steps:
 
 - **build** (`build.ts`, `extract.ts`, `template.ts`): the stored archive is validated
   again, extracted with a filter that admits only files and directories, and built
-  with Launchpad's fixed, versioned template. There is no user Dockerfile and no
+  with Launchpad's fixed, versioned template (a rollback is rebuilt with the template of the worker that runs it, which may be newer than the one that built the original). There is no user Dockerfile and no
   build command: the only inputs are the deployment id, the SPA switch and a validated
-  base image reference. Docker runs without a shell, with `--network none`, and only
+  base image reference. Docker runs without a shell, with `--network none` (which only affects `RUN` steps; this template has none, and the base image is fetched by the engine itself), and only
   with tags and directories this worker makes. The scratch directory is always
   removed.
 - **load** (`ports.ts`): `docker save` is streamed to Dokku's `git:load-image`; a failure
@@ -48,7 +48,8 @@ for _its own_ id (`rollback` in `ports.ts`; restoring is the ordinary path, not 
 way to change what is running). The deployment ends `failed` (`verify-failed-rolled-back`)
 and the previous deployment stays active. With nothing to restore (a first release) it
 ends `failed` (`verify-failed`). If the rollback itself fails, or a worker stops in the
-middle of one, the preview is held for an administrator (`reconciliation-needed`).
+middle of one, the preview is held for an administrator (`reconciliation-needed`). A rollback
+is given twice the usual lease, since it builds, loads and probes in one go.
 
 ## Live tests
 
@@ -59,3 +60,15 @@ you start yourself. It only creates apps named `lp-test-<6 characters>`, records
 and destroys only those at the end; it never touches any other app. Without its settings
 it fails at once with a message. The settings are listed at the top of
 `src/__tests__/live.spec.ts`.
+
+## Running it
+
+- A load or rollback in progress is not interrupted by a shutdown (a half-loaded image is
+  worse than a slow stop). Give the process a stop timeout of at least 13 minutes; a
+  SIGKILL mid-load leaves the deployment held for reconciliation.
+- Startup removes scratch build directories older than an hour that a killed worker left
+  behind. Images are removed after each load; an image built but never loaded (a failure
+  before the load) stays in the local engine until removed by hand: there is no global
+  prune, on purpose.
+- Failure details (a failed build's output, say) are kept on the error for operators but
+  are not logged yet; the log lines carry only outcomes.

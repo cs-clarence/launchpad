@@ -43,6 +43,23 @@ describe("extracting a site", () => {
         }
     });
 
+    it("takes permissions from this process, never from the archive", async () => {
+        const { file, out } = await archive([
+            { name: "index.html", content: "<p>x</p>", mode: 0o000 },
+            { name: "dir/", type: "dir", mode: 0o700 },
+            { name: "dir/setuid.js", content: "x", mode: 0o6755 },
+            { name: "dir/open.js", content: "x", mode: 0o777 },
+            { name: "exec.sh", content: "x", mode: 0o700 },
+        ]);
+        await extractSite(file, out, LIMITS);
+        const modeOf = async (rel: string) => (await fs.stat(path.join(out, rel))).mode & 0o7777;
+        expect(await modeOf(".")).toBe(0o755);
+        expect(await modeOf("dir")).toBe(0o755);
+        for (const rel of ["index.html", "dir/setuid.js", "dir/open.js", "exec.sh"]) {
+            expect(await modeOf(rel), rel).toBe(0o644);
+        }
+    });
+
     it("applies the size limits it is given", async () => {
         const { file, out } = await archive(SITE);
         await expect(extractSite(file, out, { ...LIMITS, maxEntries: 1 })).rejects.toThrow(

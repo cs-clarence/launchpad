@@ -77,5 +77,33 @@ describe("the readiness probe", () => {
         expect(parseProxyUrl("http://dokku:80").hostname).toBe("dokku");
         expect(() => parseProxyUrl("ftp://x")).toThrow();
         expect(() => parseProxyUrl("nope")).toThrow();
+        // Only scheme, host and port are used, so anything else is an error, not ignored.
+        for (const bad of [
+            "http://user:pw@dokku",
+            "http://dokku/path",
+            "http://dokku/?x=1",
+            "http://dokku/#f",
+        ]) {
+            expect(() => parseProxyUrl(bad), bad).toThrow(/scheme, host/);
+        }
+    });
+
+    it("reaches an IPv6 proxy through its bracketed URL", async (context) => {
+        const v6 = http.createServer((_req, res) => stamped(res));
+        const listening = await new Promise<boolean>((resolve) => {
+            v6.once("error", () => resolve(false));
+            v6.listen(0, "::1", () => resolve(true));
+        });
+        if (!listening) return context.skip();
+        try {
+            const port = (v6.address() as AddressInfo).port;
+            await probe(
+                target,
+                { ...config(), proxyUrl: new URL(`http://[::1]:${port}`) },
+                new AbortController().signal,
+            );
+        } finally {
+            await new Promise<void>((resolve) => v6.close(() => resolve()));
+        }
     });
 });

@@ -288,6 +288,8 @@ type Patch = Partial<{
     failure_message: string;
     finished: boolean;
     release: boolean;
+    // A longer lease for a step known to take longer than the usual one.
+    leaseMs: number;
 }>;
 
 // Every state write goes through here: it applies only while this attempt still holds
@@ -300,7 +302,7 @@ async function fenced(db: Db, claim: Claim, patch: Patch, log?: Log) {
 
 async function fencedIn(trx: Trx, claim: Claim, patch: Patch, log?: Log) {
     {
-        const { finished, release, ...columns } = patch;
+        const { finished, release, leaseMs, ...columns } = patch;
         const updated = await trx
             .updateTable("deployment")
             .set({
@@ -310,7 +312,7 @@ async function fencedIn(trx: Trx, claim: Claim, patch: Patch, log?: Log) {
                 ...(release
                     ? { lease_owner: null, lease_expires_at: null }
                     : {
-                          lease_expires_at: sql<Date>`clock_timestamp() + ${claim.leaseMs} * interval '1 millisecond'`,
+                          lease_expires_at: sql<Date>`clock_timestamp() + ${leaseMs ?? claim.leaseMs} * interval '1 millisecond'`,
                       }),
             })
             .where("id", "=", claim.deploymentId)
@@ -433,22 +435,41 @@ async function execute(
     let loadBegun = claim.stepDone === "load" || claim.stepDone === "verify";
 
     const failAfterVerify = async (): Promise<RunOutcome> => {
-        const previous = await db
-            .selectFrom("preview as p")
-            .innerJoin("deployment as d", (join) =>
-                join
-                    .onRef("d.id", "=", "p.active_deployment_id")
-                    .onRef("d.organization_id", "=", "p.organization_id"),
-            )
-            .innerJoin("artifact as a", (join) =>
-                join
-                    .onRef("a.id", "=", "d.artifact_id")
-                    .onRef("a.organization_id", "=", "d.organization_id"),
-            )
-            .select(["d.id as id", "d.spa as spa", "a.storage_key as storage_key"])
-            .where("p.id", "=", row.preview_id)
-            .where("p.organization_id", "=", claim.organizationId)
+        const active = await db
+            .selectFrom("preview")
+            .select("active_deployment_id")
+            .where("id", "=", row.preview_id)
+            .where("organization_id", "=", claim.organizationId)
             .executeTakeFirst();
+        const previous = active?.active_deployment_id
+            ? await db
+                  .selectFrom("deployment as d")
+                  .innerJoin("artifact as a", (join) =>
+                      join
+                          .onRef("a.id", "=", "d.artifact_id")
+                          .onRef("a.organization_id", "=", "d.organization_id"),
+                  )
+                  .select(["d.id as id", "d.spa as spa", "a.storage_key as storage_key"])
+                  .where("d.id", "=", active.active_deployment_id)
+                  .where("d.organization_id", "=", claim.organizationId)
+                  .executeTakeFirst()
+            : undefined;
+        if (active?.active_deployment_id && !previous) {
+            // There is a release that should be restored but it cannot be found: do not
+            // call that "nothing to restore" while a broken image is serving.
+            await fenced(
+                db,
+                claim,
+                {
+                    status: "reconciliation-needed",
+                    failure_code: "rollback-unavailable",
+                    failure_message: "The previous release cannot be restored.",
+                    release: true,
+                },
+                { phase: "rollback", level: "error", message: "The previous release is missing." },
+            );
+            return "reconciliation-needed";
+        }
         if (!previous) {
             // Nothing was serving before, so there is nothing to put back; the preview
             // simply has no active release until the next deployment.
@@ -471,11 +492,14 @@ async function execute(
             );
             return "failed";
         }
-        const deadline = performance.now() + Math.floor(claim.leaseMs * SIGNAL_FRACTION);
+        // A rollback rebuilds, loads and probes in one go, which takes longer than any
+        // single step, so it is given twice the usual lease and deadline.
+        const rollbackLeaseMs = claim.leaseMs * 2;
+        const deadline = performance.now() + Math.floor(rollbackLeaseMs * SIGNAL_FRACTION);
         await fenced(
             db,
             claim,
-            { status: "verifying", step_pending: "rollback" },
+            { status: "verifying", step_pending: "rollback", leaseMs: rollbackLeaseMs },
             { phase: "rollback", level: "warn", message: "Restoring the previous release." },
         );
         try {

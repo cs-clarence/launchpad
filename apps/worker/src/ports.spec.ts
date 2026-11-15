@@ -1,9 +1,9 @@
 import { DokkuError, type DokkuClient } from "@launchpad/dokku";
 import type { DeployContext } from "@launchpad/services";
 import { describe, expect, it } from "vitest";
-import { DockerError, type Docker } from "./docker";
+import { createDocker, DockerError, type Docker } from "./docker";
 import { createDeployPorts } from "./ports";
-import { LIMITS } from "./testing";
+import { fakeDocker, LIMITS, tempDir } from "./testing";
 
 const context: DeployContext = {
     deploymentId: "0f8fad5b-d9cb-469f-a165-70867728950e",
@@ -80,5 +80,44 @@ describe("loading the image", () => {
         await expect(
             ports.loadImage(context, TAG, new AbortController().signal),
         ).rejects.toBeInstanceOf(DockerError);
+    });
+});
+
+describe("when Dokku refuses before reading the image", () => {
+    it("stops docker save at once instead of waiting for its pipe to drain", async () => {
+        const tmp = await tempDir();
+        try {
+            // Plenty of output, then it just waits: nothing reads it, so it blocks.
+            const bin = await fakeDocker(
+                tmp.dir,
+                `case "$1" in save) head -c 20000000 /dev/zero; exec sleep 30;; *) exit 0;; esac`,
+            );
+            const dokku = {
+                git: {
+                    loadImage: async () => {
+                        throw new DokkuError({
+                            kind: "trust",
+                            operation: "connect",
+                            message: "no",
+                        });
+                    },
+                },
+            } as unknown as DokkuClient;
+            const ports = createDeployPorts({
+                dokku,
+                docker: createDocker({ binary: bin }),
+                dataDir: tmp.dir,
+                limits: LIMITS,
+                baseImage: "nginx:1.27-alpine",
+                probe: { proxyUrl: new URL("http://127.0.0.1:1"), timeoutMs: 100, intervalMs: 20 },
+            });
+            const started = Date.now();
+            await expect(
+                ports.loadImage(context, TAG, new AbortController().signal),
+            ).rejects.toBeInstanceOf(DokkuError);
+            expect(Date.now() - started).toBeLessThan(8000);
+        } finally {
+            await tmp.cleanup();
+        }
     });
 });

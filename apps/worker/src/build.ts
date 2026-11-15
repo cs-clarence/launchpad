@@ -38,3 +38,21 @@ export async function buildImage(
         await fs.rm(scratch, { recursive: true, force: true });
     }
 }
+
+// Removes build directories left behind by a worker that was killed mid-build. Only
+// directories this module names (`b-*`) and old enough that no live build can own
+// them: workers may share a data directory.
+export async function sweepScratch(dataDir: string, maxAgeMs = 60 * 60 * 1000): Promise<number> {
+    const root = path.join(path.resolve(dataDir), "build");
+    const names = await fs.readdir(root).catch(() => [] as string[]);
+    let removed = 0;
+    for (const name of names) {
+        if (!/^b-[A-Za-z0-9]{6}$/.test(name)) continue;
+        const full = path.join(root, name);
+        const stat = await fs.lstat(full).catch(() => undefined);
+        if (!stat?.isDirectory() || Date.now() - stat.mtimeMs < maxAgeMs) continue;
+        await fs.rm(full, { recursive: true, force: true });
+        removed++;
+    }
+    return removed;
+}

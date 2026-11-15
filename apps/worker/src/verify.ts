@@ -15,6 +15,10 @@ export function parseProxyUrl(value: string): URL {
     if (url.protocol !== "http:" && url.protocol !== "https:") {
         throw new Error("The preview proxy URL must be http or https.");
     }
+    // Only scheme, host and port are used; anything else would be silently ignored.
+    if (url.username || url.password || url.search || url.hash || url.pathname !== "/") {
+        throw new Error("The preview proxy URL must be only a scheme, host and optional port.");
+    }
     return url;
 }
 
@@ -28,7 +32,8 @@ function once(
         const client = config.proxyUrl.protocol === "https:" ? https : http;
         const request = client.request(
             {
-                hostname: config.proxyUrl.hostname,
+                // An IPv6 literal is bracketed in a URL and bare in a connection.
+                hostname: config.proxyUrl.hostname.replace(/^\[|\]$/g, ""),
                 port: config.proxyUrl.port || undefined,
                 path: "/",
                 method: "GET",

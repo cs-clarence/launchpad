@@ -416,6 +416,32 @@ describe("failures after the image was loaded", () => {
         }
     });
 
+    it("give a rollback a longer lease than a single step, so it can finish", async () => {
+        const preview = await freshPreview();
+        await queue(preview);
+        await runDeployment(testDb.db, await claimed(), fake().ports);
+        const d = await queue(preview);
+        const f = fake();
+        f.failAt = { call: "verify", error: new Error("probe failed") };
+        let remainingMs = 0;
+        f.ports.rollback = async () => {
+            const row = await testDb.db
+                .selectFrom("deployment")
+                .select(
+                    sql<number>`extract(epoch from (lease_expires_at - clock_timestamp())) * 1000`.as(
+                        "ms",
+                    ),
+                )
+                .where("id", "=", d.id)
+                .executeTakeFirstOrThrow();
+            remainingMs = Number(row.ms);
+        };
+        expect(await runDeployment(testDb.db, await claimed("w", 60_000), f.ports)).toBe("failed");
+        // More than the ordinary 60 s lease: it was extended to about two minutes.
+        expect(remainingMs).toBeGreaterThan(90_000);
+        await drain();
+    });
+
     it("simply fail a first release that does not verify, with nothing to restore", async () => {
         const preview = await freshPreview();
         const d = await queue(preview);
