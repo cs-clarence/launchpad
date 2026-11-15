@@ -1037,7 +1037,13 @@ export async function listDeploymentEvents(
 }
 
 // The project a deployment belongs to, for deciding what a project-limited key may reach.
-export async function deploymentProjectId(db: Db, organizationId: string, deploymentId: string) {
+export async function deploymentProjectId(
+    db: Db,
+    principal: Principal,
+    organizationId: string,
+    deploymentId: string,
+) {
+    await requireMembership(db, principal, organizationId, "preview:read");
     if (!z.uuid().safeParse(deploymentId).success) {
         throw new ServiceError("not-found", "Deployment not found.");
     }

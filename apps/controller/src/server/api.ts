@@ -628,7 +628,7 @@ export function createApi(deps: {
                                     key,
                                     params.orgId,
                                     "preview:read",
-                                    await previewProjectId(db, params.orgId, params.previewId),
+                                    await previewProjectId(db, p, params.orgId, params.previewId),
                                 );
                             }
                             return getPreview(db, p, params.orgId, params.previewId);
@@ -650,7 +650,7 @@ export function createApi(deps: {
                                     key,
                                     params.orgId,
                                     "preview:deploy",
-                                    await previewProjectId(db, params.orgId, params.previewId),
+                                    await previewProjectId(db, p, params.orgId, params.previewId),
                                 );
                             }
                             return enqueueDeployment(
@@ -681,7 +681,7 @@ export function createApi(deps: {
                                     key,
                                     params.orgId,
                                     "preview:read",
-                                    await previewProjectId(db, params.orgId, params.previewId),
+                                    await previewProjectId(db, p, params.orgId, params.previewId),
                                 );
                             }
                             return listDeployments(db, p, params.orgId, params.previewId);
@@ -704,6 +704,7 @@ export function createApi(deps: {
                                     "preview:read",
                                     await deploymentProjectId(
                                         db,
+                                        p,
                                         params.orgId,
                                         params.deploymentId,
                                     ),
@@ -729,6 +730,7 @@ export function createApi(deps: {
                                     "preview:read",
                                     await deploymentProjectId(
                                         db,
+                                        p,
                                         params.orgId,
                                         params.deploymentId,
                                     ),

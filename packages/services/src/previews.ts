@@ -290,7 +290,14 @@ export async function createPreview(
 
 // The project a preview belongs to, for deciding what a project-limited key may reach. A
 // missing or malformed id is the same not-found.
-export async function previewProjectId(db: Db, organizationId: string, previewId: string) {
+export async function previewProjectId(
+    db: Db,
+    principal: Principal,
+    organizationId: string,
+    previewId: string,
+) {
+    // A non-member gets not-found, like every other lookup here.
+    await requireMembership(db, principal, organizationId, "preview:read");
     if (!z.uuid().safeParse(previewId).success) {
         throw new ServiceError("not-found", "Preview not found.");
     }

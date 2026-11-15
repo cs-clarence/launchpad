@@ -9,9 +9,11 @@ import {
     createOrganization,
     createPreview,
     createProject,
+    deploymentProjectId,
     deploymentsEnabled,
     enqueueDeployment,
     MAX_ATTEMPTS,
+    previewProjectId,
     resolveReconciliation,
     runDeployment,
     ServiceError,
@@ -273,6 +275,23 @@ describe("queueing a deployment", () => {
             .where("id", "=", preview)
             .execute();
         expect(await code(queue(preview))).toBe("conflict");
+    });
+});
+
+describe("the project lookups for limited keys", () => {
+    it("answer members, and give a non-member not-found", async () => {
+        const preview = await freshPreview();
+        const d = await queue(preview);
+        const projectOfPreview = await previewProjectId(testDb.db, people.vic!, org, preview);
+        expect(projectOfPreview).toBe(project);
+        expect(await deploymentProjectId(testDb.db, people.vic!, org, d.id)).toBe(project);
+        for (const lookup of [
+            () => previewProjectId(testDb.db, people.zoe!, org, preview),
+            () => deploymentProjectId(testDb.db, people.zoe!, org, d.id),
+        ]) {
+            expect(await code(lookup())).toBe("not-found");
+        }
+        await drain();
     });
 });
 
