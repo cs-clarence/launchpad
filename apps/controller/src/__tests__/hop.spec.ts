@@ -55,7 +55,25 @@ const UPLOAD_LIMIT = 8 * 1024 * 1024;
 // A random base so concurrent test runs on one machine rarely overlap.
 let nextPort = 43100 + Math.floor(Math.random() * 600) * 3;
 
+// A port picked here can be taken by another process before the server binds it (a
+// shared CI runner has other services). That is the only startup failure worth
+// retrying, and only with a different port.
 async function start(
+    trustedProxy: boolean,
+    extraEnv: Record<string, string> = {},
+): Promise<Instance> {
+    for (let attempt = 1; ; attempt++) {
+        try {
+            return await startOnce(trustedProxy, extraEnv);
+        } catch (error) {
+            const inUse = error instanceof Error && error.message.includes("EADDRINUSE");
+            if (!inUse || attempt >= 5) throw error;
+            nextPort += 1 + Math.floor(Math.random() * 50);
+        }
+    }
+}
+
+async function startOnce(
     trustedProxy: boolean,
     extraEnv: Record<string, string> = {},
 ): Promise<Instance> {
@@ -86,6 +104,8 @@ async function start(
     proc.stdout?.on("data", (d) => (instance.logs += d));
     proc.stderr?.on("data", (d) => (instance.logs += d));
     for (let i = 0; i < 100; i++) {
+        // A child that has already exited will never answer: fail now, with its output.
+        if (proc.exitCode !== null) break;
         try {
             if ((await fetch(`${base}/api/health`)).ok) return instance;
         } catch {}
