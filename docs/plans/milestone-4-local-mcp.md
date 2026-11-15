@@ -49,7 +49,8 @@ redaction, idempotency and exit-free structured results.
    message. The CLI reads the same file (`launchpad deploy` without `--project`), so both
    clients agree; its schema is validated strictly and has a size limit. No secret is ever a
    tool argument or output.
-4. **Read-only by default.** Read tools: `whoami`, `list_projects`, `list_previews`,
+4. **Read-only by default.** Read tools: `whoami`, `list_organizations` (backed by
+   client-core's `listOrganizations`), `list_projects`, `list_previews`,
    `get_preview`, `list_deployments` (via preview), `get_deployment`,
    `deployment_events`. Mutating tools (`deploy`) exist only with `--allow-deploy`.
    Tool annotations are hints only; enforcement is the startup flag plus the key's scopes
