@@ -288,7 +288,7 @@ export function buildProgram(rawIo: Io) {
                                     : `  [${p.phase}] ${p.message}`,
                           ),
             });
-            const organization = workspace.context.env.LAUNCHPAD_ORG;
+            const organization = workspace.organization;
             const follow = (id: string) =>
                 [
                     "launchpad",

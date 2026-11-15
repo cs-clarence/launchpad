@@ -132,5 +132,7 @@ export async function workspaceContext(
         project: input.project ?? workspace.config?.project,
         name: workspace.config?.name,
         directory: workspace.directory,
+        // Only what an argument or launchpad.json selected, not the inherited environment.
+        organization,
     };
 }

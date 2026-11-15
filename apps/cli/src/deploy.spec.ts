@@ -197,6 +197,14 @@ describe("launchpad deploy", () => {
         );
         expect(queued.out).toContain(`--organization '${ORG}'`);
         await fs.unlink(path.join(dir, "launchpad.json"));
+        // An organization only inherited from the environment is not repeated: the hint
+        // would then need a permission the plain command does not.
+        const inherited = await cli(
+            deployArgs("--no-wait"),
+            controller({ statuses: ["queued"] }),
+            ORG,
+        );
+        expect(inherited.out).not.toContain("--organization");
         const explicit = await cli(
             ["deployments", "status", DEPLOYMENT, "--organization", ORG],
             controller({ statuses: ["succeeded"] }),
