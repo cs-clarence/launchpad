@@ -163,4 +163,18 @@ TTL, expiry, deletion and cleanup (milestone 5), packaging and publishing
       bounded output, and a typed error taxonomy where `uncertain` (timeout,
       cancellation, dropped connection) must be reconciled. Unit-tested with fake
       transports and stand-in `ssh` executables; no live engine yet.
-- [ ] Slices 4–6.
+- [x] Slice 4: deployment state machine (`packages/services/src/deployments.ts`,
+      migration `…_011_deployment_leases`). **Decision: no pg-boss for now.** The
+      deployment row is the queue and the lease: enqueueing is the insert (same
+      transaction by construction), `claimNext` uses `FOR UPDATE SKIP LOCKED`, and the
+      per-preview unique index already serializes work. The spike's revisit clause
+      applies: this fences stale attempts with one mechanism instead of two, at the
+      cost of polling (`claimNext`) rather than push. Steps `app, build, configure,
+      load, verify`, intent recorded (fenced) before each; a stale attempt is refused
+      on its next write and Dokku calls are aborted at 80% of the lease. Only an image
+      load with an unknown outcome parks the preview (`reconciliation-needed`,
+      resolved by an admin via `resolveReconciliation`); the other steps are
+      idempotent and simply re-run. Off by default (`deploymentsEnabled`). The
+      `apps/worker` process that polls `claimNext` and supplies real `DeployPorts`
+      arrives with slice 5, when there is something real to run.
+- [ ] Slices 5–6.
