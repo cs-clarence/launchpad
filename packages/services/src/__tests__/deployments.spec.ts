@@ -473,6 +473,25 @@ describe("a stale worker", () => {
         );
     });
 
+    it("holds, rather than fails, a deployment abandoned during a load on its last attempt", async () => {
+        const preview = await freshPreview();
+        const d = await queue(preview);
+        for (let i = 0; i < MAX_ATTEMPTS; i++) {
+            await claimed(`w${i}`);
+            await expire(d.id);
+        }
+        await sql`update deployment set status = 'deploying', step_done = 'configure', step_pending = 'load' where id = ${d.id}`.execute(
+            testDb.db,
+        );
+        expect(await claimNext(testDb.db, "last")).toBeNull();
+        expect(await state(d.id)).toMatchObject({
+            status: "reconciliation-needed",
+            failure_code: "load-uncertain",
+        });
+        expect(await code(queue(preview))).toBe("conflict");
+        await resolveReconciliation(testDb.db, people.ben!, org, d.id, "failed");
+    });
+
     it("gives up on a deployment abandoned too many times", async () => {
         const preview = await freshPreview();
         const d = await queue(preview);

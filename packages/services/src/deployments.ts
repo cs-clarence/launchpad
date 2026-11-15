@@ -184,13 +184,18 @@ export async function claimNext(
         if (!next) return null;
         const attempt = next.attempt + 1;
         if (attempt > MAX_ATTEMPTS) {
+            // A load that was in flight may have changed what is running: that is
+            // held for a person, never turned into a plain failure.
+            const unknownLoad = next.step_pending === "load";
             await trx
                 .updateTable("deployment")
                 .set({
-                    status: "failed",
-                    failure_code: "too-many-attempts",
-                    failure_message: "The deployment was abandoned too many times.",
-                    finished_at: sql<Date>`now()`,
+                    status: unknownLoad ? "reconciliation-needed" : "failed",
+                    failure_code: unknownLoad ? "load-uncertain" : "too-many-attempts",
+                    failure_message: unknownLoad
+                        ? "A previous attempt stopped while loading the image."
+                        : "The deployment was abandoned too many times.",
+                    ...(unknownLoad ? {} : { finished_at: sql<Date>`now()` }),
                     updated_at: sql<Date>`now()`,
                     lease_owner: null,
                     lease_expires_at: null,
@@ -281,13 +286,15 @@ async function fencedIn(trx: Trx, claim: Claim, patch: Patch, log?: Log) {
                 ...(release
                     ? { lease_owner: null, lease_expires_at: null }
                     : {
-                          lease_expires_at: sql<Date>`now() + ${claim.leaseMs} * interval '1 millisecond'`,
+                          lease_expires_at: sql<Date>`clock_timestamp() + ${claim.leaseMs} * interval '1 millisecond'`,
                       }),
             })
             .where("id", "=", claim.deploymentId)
             .where("attempt", "=", claim.attempt)
             .where("lease_owner", "=", claim.owner)
-            .where("lease_expires_at", ">", sql<Date>`now()`)
+            // The statement-time clock, not the transaction start: a write that waited past the
+            // lease must not commit under it.
+            .where("lease_expires_at", ">", sql<Date>`clock_timestamp()`)
             .where("status", "in", ["queued", ...RUNNING])
             .returning("id")
             .executeTakeFirst();
@@ -509,6 +516,21 @@ export async function resolveReconciliation(
     }
     await db.transaction().execute(async (trx) => {
         await requireMembership(trx, principal, organizationId, "preview:resolve");
+        // Preview before deployment, as enqueueing and activation do.
+        const owner = await trx
+            .selectFrom("deployment")
+            .select("preview_id")
+            .where("organization_id", "=", organizationId)
+            .where("id", "=", deploymentId)
+            .executeTakeFirst();
+        if (!owner) throw new ServiceError("not-found", "Deployment not found.");
+        await trx
+            .selectFrom("preview")
+            .select("id")
+            .where("id", "=", owner.preview_id)
+            .where("organization_id", "=", organizationId)
+            .forUpdate()
+            .execute();
         const row = await trx
             .selectFrom("deployment")
             .select(["preview_id", "status"])
