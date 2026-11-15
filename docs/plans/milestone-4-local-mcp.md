@@ -1,13 +1,13 @@
 # Milestone 4: local MCP provides the same safe deployment workflow
 
-Status: **proposed, awaiting the user's approval**. Extends `docs/plans/application.md`
+Status: **approved by the user with the directory and deployment-policy revisions below**. Extends `docs/plans/application.md`
 milestone 4 and `docs/design/application.md` ("CLI and local MCP share a client core").
 
 ## Assessment
 
 - **Kind:** medium (one new app, no new server behavior, no schema change).
 - **Risk:** High, because an LLM-driven client can read local files and cause
-  deployments: the filesystem boundary (roots, symlinks), mutation authorization,
+  deployments: archive selection (include/exclude patterns, symlinks), mutation authorization,
   prompt injection through logs/deployed content, and protocol correctness (stdout is
   the protocol).
 - **Undo:** revoke the key or disable mutating tools (they are off by default). The
@@ -19,24 +19,30 @@ milestone 4 and `docs/design/application.md` ("CLI and local MCP share a client 
 
 `launchpad-mcp` (stdio) lets an MCP client list organizations, projects, previews,
 deployments and progress, and, only when started with deployment enabled, deploy a
-directory under an allowed root and follow it to completion. It calls the same
+directory using an explicitly configured include/exclude policy and follow it to completion. It calls the same
 client-core operations as the CLI, with the same profiles, credentials, safe errors,
 redaction, idempotency and exit-free structured results.
 
-## Decisions to approve
+## Decisions
 
 1. **Package:** `apps/mcp` (`@launchpad/mcp`, binary `launchpad-mcp`), generated with
    the Omni generator, built on the official `@modelcontextprotocol/sdk` (pinned in
-   the catalog) with zod schemas. The CLI also gains `launchpad mcp` only if you want
-   it; the design shows it, the milestone says "executable". Proposal: separate
-   executable only, no CLI subcommand, so the CLI has no MCP dependency.
-2. **Two modes, one stdio server.** *Single* (default): the context is the directory the
-   server was started in. *Shared* (`--shared`): launched once, no organization, project
-   or directory is fixed at startup; **every tool takes a required `current_dir`** and
-   works in the context of that directory, so one server can serve any project (several
-   clients or several projects of one client). Nothing is remembered between calls.
-3. **Context from a directory.** The context of `current_dir` is found by walking up from
-   it (never above a `--root`) to the first `launchpad.json`: `{ "profile"?, "organization",
+   the catalog) with zod schemas. Separate executable only, no CLI subcommand:
+   the CLI has no MCP dependency.
+2. **Two modes, one stdio server.** _Single_ (default): the context is the directory the
+   server was started in unless configured otherwise. _Shared_ (`--shared`): launched
+   once for calls concerning any project. Every tool accepts optional `working_dir`;
+   when supplied it must be an absolute existing directory and takes precedence over
+   the startup default (`--working-dir`). Shared mode has no implicit default: a call
+   without either returns a validation error. Relative paths and deployment patterns
+   resolve against that call's effective directory. No process-wide `chdir` or mutable
+   current-project state: concurrent calls cannot change one another's context.
+   Stdio is one client connection; shared mode means multiple project contexts on
+   that connection, not a multi-client daemon.
+   Do not depend on MCP roots (deprecated in protocol revision `2026-07-28`):
+   there is no automatic client-directory fallback.
+3. **Context from a directory.** The context of `working_dir` is found by walking up from
+   it to the first `launchpad.json`: `{ "profile"?, "organization",
    "project", "name"? }`. It holds no secrets; credentials stay in the shared credential
    store, selected by `profile` (default: the current profile). Explicit tool arguments
    (`organization`, `project`) override the file, and a call with neither fails with a clear
@@ -48,13 +54,21 @@ redaction, idempotency and exit-free structured results.
    `deployment_events`. Mutating tools (`deploy`) exist only with `--allow-deploy`.
    Tool annotations are hints only; enforcement is the startup flag plus the key's scopes
    plus the controller.
-5. **Filesystem:** `current_dir` and `deploy`'s `path` (relative to `current_dir`); it must resolve (realpath) inside one of the
-   `--root` directories given at startup (at least one required for deploy; none means
-   no deploy tool; in shared mode `--root` is the ceiling for every `current_dir`, and
-   `current_dir` outside it is refused for every tool, reads included). Roots are
-   canonicalized at startup; each path is canonicalized per call; symlink escape, `..`, and non-directories are refused. No tool reads file
-   contents back; no shell tool. Same client-side preflight (secret/dotfile exclusion)
-   as the CLI, server remains authoritative.
+5. **Deployment file policy:** `--allow-deploy` requires explicitly supplied, nonempty
+   `--include` and `--exclude` lists (repeatable flags); missing either is a startup
+   error, in either mode. Patterns are relative to each call's effective `working_dir`,
+   not the server's launch directory or the deployment source. Only included files
+   that match no exclusion may enter the archive: **exclude always takes precedence**.
+   The policy is fixed at startup and cannot be broadened through tool arguments or
+   `launchpad.json`. No mandatory `--root` flag or MCP-roots lookup.
+   Patterns use normalized, directory-relative paths; reject absolute patterns and
+   parent traversal. The deploy source must be a directory within `working_dir`;
+   reject symlinks rather than following them around the selection policy. Preserve
+   existing secret/dotfile exclusions as additional mandatory exclusions, plus archive
+   limits and the required `index.html`. Empty or invalid selected sites fail before
+   upload. No tool reads file contents back; no shell tool. This policy controls what
+   is published, not OS-level filesystem access: the process runs with its user's
+   permissions.
 6. **Mutation authorization:** `--allow-deploy` is the explicit policy. A deploy call also
    needs `confirm: true` and, to bound blast radius, only names matching the CLI's slug
    rule; `--allow-project <id|slug>` (repeatable, optional) limits which projects may be
@@ -70,13 +84,16 @@ redaction, idempotency and exit-free structured results.
 
 ## Slices (one PR each)
 
-1. **Package and read-only server:** generator scaffold, startup (mode, roots), `launchpad.json`
+1. **Package and read-only server:** generator scaffold, startup (mode, default working
+   directory), per-call `working_dir` resolution, `launchpad.json`
    context resolution (shared with the CLI via client-core),
    stdio transport, read tools, bounded/redacted output, unit tests with an in-memory
    MCP client transport, stdout-purity test.
-2. **Deploy tool:** root/symlink enforcement, `--allow-deploy`, `confirm`, project
-   allow-list, progress, tests for escape attempts (symlink, `..`, outside root, file
-   not directory, root itself a symlink), missing/insufficient scopes, malicious
+2. **Deploy tool:** include/exclude filtering in the shared client-core packer
+   (existing CLI defaults unchanged), `--allow-deploy`, `confirm`, project
+   allow-list, progress, tests for escape attempts (symlink, `..`, source outside
+   `working_dir`, file not directory), include/exclude overlap (exclude wins),
+   mandatory startup lists, excluded `index.html`, missing/insufficient scopes, malicious
    event text, oversized output.
 3. **End to end and docs:** a real MCP client (the SDK's client over stdio against the
    built binary and the real built controller) lists, deploys the fixture (deployments
@@ -89,8 +106,11 @@ redaction, idempotency and exit-free structured results.
 ## Verify
 
 Shared mode: two project directories served by one process without leaking context
-between calls; a `current_dir` outside the roots, a missing one, and a `launchpad.json` outside
-the ceiling are refused. A real MCP client lists, deploys the fixture and tracks completion; escape and
+between calls; explicit directory overrides the startup default; missing both in shared
+mode is refused; relative paths and patterns use the effective `working_dir`.
+An excluded file never enters an archive even if included, and a tool call cannot
+broaden the startup policy. No MCP-roots capability is required.
+A real MCP client lists, deploys the fixture and tracks completion; escape and
 read-boundary tests; scope tests (a read key cannot deploy, a deploy tool with a
 read-only key returns a safe error); protocol correctness; output bounds.
 
