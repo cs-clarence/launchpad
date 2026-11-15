@@ -26,6 +26,13 @@ its example paths current whenever a boundary or pattern changes.
 | CLI                 | `apps/cli/src/program.ts`: login, whoami, profile, org and projects commands over `@launchpad/client-core`, behind an `Io` interface so tests need no terminal or network; entry in `src/index.ts`. The key is never an argument. It consumes the controller, never Dokku.                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
 | Testing             | Unit tests need no infrastructure and call `api.fetch(Request)`. Integration tests (`*.spec.ts` in `__tests__`) use a disposable PostgreSQL via `@launchpad/database/testing`; `apps/controller/src/__tests__/hop.spec.ts` drives the built server over HTTP.                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
 
+The local stdio MCP adapter lives in `apps/mcp/src/server.ts`. It uses only
+client-core and the SDK, never controller services or the CLI executable. Per-call
+`working_dir` and `launchpad.json` context resolution lives in
+`packages/client-core/src/workspace.ts`; it never changes cwd or saved selections.
+The CLI's deploy command uses the same resolver. MCP output is bounded and uses
+the same `safeOutput` redaction/control stripping as the CLI (client-core).
+
 The health endpoint reports static metadata, not PostgreSQL/Dokku readiness.
 Key administration is a dedicated organization-page component in
 `apps/controller/src/components/api-keys.tsx`. It imports only browser-safe

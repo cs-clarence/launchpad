@@ -10,7 +10,7 @@ launchpad whoami
 launchpad profile list | use <name>
 launchpad org list | use <slug-or-id>
 launchpad projects list
-launchpad deploy <directory|archive.tar.gz> --project <slug|id> --name <name> [--spa] [--no-wait] [--timeout <seconds>]
+launchpad deploy <directory|archive.tar.gz> [--project <slug|id>] [--name <name>] [--spa] [--no-wait] [--timeout <seconds>]
 launchpad previews list [--project <slug|id>] | get <previewId>
 launchpad deployments status <deploymentId> | events <deploymentId> [--after <seq>]
 ```
@@ -36,6 +36,16 @@ and `--profile <name>`.
   ran out (it is not cancelled).
 
 ## Deploying
+
+`deploy` reads the nearest `launchpad.json` from its working directory upward.
+The file requires `organization` (id or slug) and `project` (id or slug), with
+optional `profile` and preview `name`. `--profile`, `--project` and `--name` override
+file values; without file defaults, project and name must be supplied as flags.
+Files are strictly validated, bounded to 16 KiB and must not be symlinks.
+Organization selection from the file requires `organization:read`; it is checked
+against the key's organizations and never saved. With no file, existing
+profile/environment behavior is unchanged. This resolver is shared with the
+[separate MCP app](../mcp/README.md).
 
 `launchpad deploy ./dist --project site --name review` packs the directory, uploads it, finds or creates the
 preview named `review` in that project, queues a deployment and follows it until it is live (`--no-wait`

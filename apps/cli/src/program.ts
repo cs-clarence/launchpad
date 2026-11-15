@@ -14,6 +14,8 @@ import {
     useOrganization,
     useProfile,
     whoami,
+    workspaceContext,
+    ClientCoreError,
 } from "@launchpad/client-core";
 import { describe, EXIT, ExitWith } from "./errors";
 import type { Io } from "./io";
@@ -75,6 +77,9 @@ export function buildProgram(rawIo: Io) {
     // come from the server and may contain key-shaped text. Redacting inside a JSON
     // document keeps it valid JSON.
     const io: Io = {
+        get workingDir() {
+            return rawIo.workingDir;
+        },
         get context() {
             return rawIo.context;
         },
@@ -233,8 +238,8 @@ export function buildProgram(rawIo: Io) {
         .description(
             "Deploy a built static site to a preview. The directory is packed here (links, secrets and version-control data are refused), uploaded, and followed until it is live.",
         )
-        .requiredOption("--project <project>", "the project's slug or id")
-        .requiredOption("--name <name>", "the preview's name (created if it does not exist)")
+        .option("--project <project>", "the project's slug or id (or launchpad.json)")
+        .option("--name <name>", "the preview's name (or launchpad.json)")
         .option("--spa", "serve index.html for unknown paths, for single-page apps")
         .option("--no-wait", "return as soon as the deployment is queued")
         .option("--timeout <seconds>", "stop waiting after this long (default 900)", "900")
@@ -248,14 +253,27 @@ export function buildProgram(rawIo: Io) {
                     "error: --timeout is a whole number of seconds, from 1 to 86400",
                 );
             }
-            const result = await deploy(io.context, {
-                source,
+            const workspace = await workspaceContext(io.context, {
+                workingDir: io.workingDir ?? process.cwd(),
+                profile,
                 project: options.project,
-                name: options.name,
+            });
+            const project = workspace.project;
+            const name = options.name ?? workspace.name;
+            if (!project || !name) {
+                throw new ClientCoreError(
+                    "bad-input",
+                    "Set --project and --name, or configure them in launchpad.json.",
+                );
+            }
+            const result = await deploy(workspace.context, {
+                source,
+                project,
+                name,
                 spa: options.spa,
                 wait: options.wait,
                 waitTimeoutMs: seconds * 1000,
-                profile,
+                profile: workspace.profile,
                 // Progress goes to stderr so stdout stays the result; none with --json.
                 onProgress: json
                     ? undefined

@@ -57,6 +57,9 @@ function controller(options: { statuses: string[]; failure?: unknown; denyUpload
                 expiresAt: NOW,
             });
         }
+        if (p === "/organizations") {
+            return json([{ id: ORG, slug: "one", name: "One", role: "deployer" }]);
+        }
         if (p === `/organizations/${ORG}/projects`) {
             return json([{ id: PROJECT, slug: "site", name: "Site", createdAt: NOW }]);
         }
@@ -119,6 +122,7 @@ async function cli(args: string[], fetchImpl: typeof fetch) {
     const out: string[] = [];
     const err: string[] = [];
     const io: Io = {
+        workingDir: dir,
         context: createContext(
             {
                 LAUNCHPAD_CONFIG_DIR: dir,
@@ -162,6 +166,36 @@ const deployArgs = (...extra: string[]) => [
 ];
 
 describe("launchpad deploy", () => {
+    it("uses launchpad.json defaults, with explicit flags taking precedence", async () => {
+        await fs.writeFile(
+            path.join(dir, "launchpad.json"),
+            JSON.stringify({
+                organization: "one",
+                project: PROJECT,
+                name: "review",
+            }),
+        );
+        const result = await cli(
+            ["deploy", site, "--no-wait"],
+            controller({ statuses: ["succeeded"] }),
+        );
+        expect(result).toMatchObject({ code: EXIT.ok, err: expect.not.stringContaining("error") });
+        // An unknown project default is overridden by the explicit project flag.
+        await fs.writeFile(
+            path.join(dir, "launchpad.json"),
+            JSON.stringify({
+                organization: "one",
+                project: "unknown",
+                name: "review",
+            }),
+        );
+        const explicit = await cli(
+            deployArgs("--no-wait"),
+            controller({ statuses: ["succeeded"] }),
+        );
+        expect(explicit.code).toBe(EXIT.ok);
+    });
+
     it("deploys, shows progress on stderr and the result on stdout, and exits 0", async () => {
         const result = await cli(deployArgs("--spa"), controller({ statuses: ["succeeded"] }));
         expect(result.code).toBe(EXIT.ok);
