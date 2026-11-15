@@ -1,6 +1,7 @@
 import { randomBytes, randomUUID } from "node:crypto";
 import { promises as fs } from "node:fs";
 import http from "node:http";
+import https from "node:https";
 import os from "node:os";
 import path from "node:path";
 import { createDokkuClient, type DokkuClient } from "@launchpad/dokku";
@@ -98,13 +99,18 @@ function get(
     urlPath: string,
 ): Promise<{ status: number; body: string; id?: string }> {
     return new Promise((resolve, reject) => {
-        const request = http.request(
+        const secure = proxy.protocol === "https:";
+        // The same transport the worker's readiness probe uses, so an HTTPS-only proxy
+        // is exercised the same way: its protocol, its default port, and the preview's
+        // name as both Host and TLS server name.
+        const request = (secure ? https : http).request(
             {
                 hostname: proxy.hostname,
-                port: proxy.port || 80,
+                port: proxy.port || (secure ? 443 : 80),
                 path: urlPath,
                 headers: { Host: host },
                 timeout: 10_000,
+                ...(secure ? { servername: host } : {}),
             },
             (response) => {
                 let body = "";
