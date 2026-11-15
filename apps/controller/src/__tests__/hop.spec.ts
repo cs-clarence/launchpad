@@ -7,6 +7,13 @@ import path from "node:path";
 import { randomBytes } from "node:crypto";
 import { createAuth, loadAuthConfig, setupFirstOperator } from "@launchpad/auth";
 import {
+    createContext,
+    deploy as deployWithClient,
+    deploymentEvents,
+    getDeployment,
+    listPreviews,
+} from "@launchpad/client-core";
+import {
     acceptedInvitationSchema,
     addedMemberSchema,
     artifactSchema,
@@ -1448,6 +1455,51 @@ describe("previews and deployments over HTTP", () => {
                 }),
             ),
         ).toBe(202);
+    });
+
+    it("is driven end to end by the client library: its parsers accept the real controller", async () => {
+        const root = await fs.mkdtemp(path.join(os.tmpdir(), "launchpad-e2e-site-"));
+        const config = await fs.mkdtemp(path.join(os.tmpdir(), "launchpad-e2e-config-"));
+        try {
+            await fs.writeFile(path.join(root, "index.html"), "<p>hello</p>");
+            await fs.mkdir(path.join(root, "assets"));
+            await fs.writeFile(path.join(root, "assets", "app.js"), "console.log(1)");
+            const ctx = createContext({
+                LAUNCHPAD_CONFIG_DIR: config,
+                LAUNCHPAD_CONTROLLER: proxied.base,
+                LAUNCHPAD_API_KEY: deployKey,
+            });
+            // No worker runs here, so the deployment stays queued: --no-wait.
+            const result = await deployWithClient(ctx, {
+                source: root,
+                project: "site",
+                name: "from-the-cli",
+                spa: true,
+                wait: false,
+            });
+            expect(result.outcome).toBe("queued");
+            expect(result.preview.hostname).toMatch(
+                /^from-the-cli-[a-z0-9]{6}\.previews\.example\.com$/,
+            );
+            // Deploying the same site again finds the same preview (and conflicts while
+            // the first deployment is unfinished).
+            await expect(
+                deployWithClient(ctx, {
+                    source: root,
+                    project: "site",
+                    name: "from-the-cli",
+                    wait: false,
+                }),
+            ).rejects.toMatchObject({ status: 409 });
+            const deployment = await getDeployment(ctx, result.deployment.id);
+            expect(deployment).toMatchObject({ status: "queued", spa: true, failure: null });
+            expect((await deploymentEvents(ctx, deployment.id, { after: 0 })).items).toEqual([]);
+            const previews = await listPreviews(ctx, { project: "site" });
+            expect(previews.items.map((p) => p.slug)).toContain("from-the-cli");
+        } finally {
+            await fs.rm(root, { recursive: true, force: true });
+            await fs.rm(config, { recursive: true, force: true });
+        }
     });
 
     it("is off unless deployments are on: reads work, creating and deploying are refused", async () => {

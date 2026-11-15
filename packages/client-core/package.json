@@ -24,6 +24,7 @@
     },
     "dependencies": {
         "@launchpad/sdk": "workspace:^",
+        "tar": "catalog:",
         "zod": "catalog:"
     },
     "devDependencies": {

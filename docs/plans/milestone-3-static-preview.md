@@ -205,4 +205,12 @@ TTL, expiry, deletion and cleanup (milestone 5), packaging and publishing
   refused while `LAUNCHPAD_DEPLOYMENTS` is off, reads are not). Deleting a preview and
   logs are not part of this milestone. **6b:** SDK, client-core and
   `launchpad deploy`/`previews`/`deployments`. **6c:** dashboard pages.
-- [ ] Slice 6b–6c.
+- [x] Slice 6b: SDK (`artifacts.upload`, `previews`, `deployments`; tolerant of fields
+      a newer controller adds; idempotency keys validated before any request),
+      client-core (`deploy`, `packDirectory`, `listPreviews`, `getDeployment`,
+      `deploymentEvents`) and the CLI (`deploy`, `previews list|get`,
+      `deployments status|events`, exit codes 7 and 8). The client packs a directory with its
+      own preflight (a mirror of the server's rules, which stay authoritative), retries only
+      requests that got no answer and only with the same idempotency key, and polls events
+      and status. An end-to-end test drives the real built controller through the client library.
+- [ ] Slice 6c.

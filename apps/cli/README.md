@@ -10,6 +10,9 @@ launchpad whoami
 launchpad profile list | use <name>
 launchpad org list | use <slug-or-id>
 launchpad projects list
+launchpad deploy <directory|archive.tar.gz> --project <slug|id> --name <name> [--spa] [--no-wait] [--timeout <seconds>]
+launchpad previews list [--project <slug|id>] | get <previewId>
+launchpad deployments status <deploymentId> | events <deploymentId> [--after <seq>]
 ```
 
 Global options: `--json` (machine-readable output; errors become `{"error":{"code","message"}}` on stderr)
@@ -28,7 +31,28 @@ and `--profile <name>`.
   is an organization **ID**, not a slug. Without it, project listing discovers
   the key's organization.
 - **Exit codes:** 0 success, 1 other failure, 2 usage, 3 not logged in or the key is rejected (401/403),
-  4 not found, 5 controller unreachable, timed out or unexpected answer, 6 credential file or profile unusable.
+  4 not found, 5 controller unreachable, timed out or unexpected answer, 6 credential file or profile unusable,
+  7 the deployment failed, was cancelled or needs an administrator, 8 `deploy` was still running when `--timeout`
+  ran out (it is not cancelled).
+
+## Deploying
+
+`launchpad deploy ./dist --project site --name review` packs the directory, uploads it, finds or creates the
+preview named `review` in that project, queues a deployment and follows it until it is live (`--no-wait`
+returns once it is queued). Progress goes to stderr; stdout is the result, a single JSON document with `--json`.
+
+- **The directory is checked before anything is sent:** it must have an `index.html` at its top level, and
+  links, special files, `.env*`, `.git`, private keys and similar are refused (remove them; nothing is skipped
+  silently). The controller validates the archive again and is the authority. An existing `.tar.gz` is sent as
+  it is. The limits (50 MiB, 5000 files, 16 levels) match the controller's defaults.
+- **Safe to repeat:** a request that got no answer is retried (up to three times) with the same idempotency key,
+  so the controller returns the first result instead of deploying twice. A preview takes one deployment at a
+  time: deploying while one is unfinished is a conflict (exit 1, code `conflict`).
+- **The key needs** `preview:read`, `preview:create` and `preview:deploy` (a project-limited key reaches only its
+  projects), plus `project:read` only to name a project by slug (a project id needs no lookup). Previews and deployments are available only when
+  the controller has deployments turned on.
+- **Failures** carry fixed, safe text (for example, the new release did not become ready and the previous one
+  was restored). `reconciliation-needed` means an administrator must check the host first.
 - Output and errors hide anything shaped like a key and strip terminal escape
   sequences/control bytes. Serialized JSON stays valid.
 - If the credential store reports `store-busy` (exit 6), wait for other commands

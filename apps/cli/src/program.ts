@@ -1,5 +1,11 @@
 import { Command, CommanderError } from "@commander-js/extra-typings";
 import {
+    deploy,
+    deploymentEvents,
+    getDeployment,
+    getPreview,
+    listDeployments,
+    listPreviews,
     listOrganizations,
     listProfiles,
     listProjects,
@@ -9,7 +15,7 @@ import {
     useProfile,
     whoami,
 } from "@launchpad/client-core";
-import { describe, EXIT } from "./errors";
+import { describe, EXIT, ExitWith } from "./errors";
 import type { Io } from "./io";
 import { safeOutput } from "./output";
 
@@ -221,6 +227,169 @@ export function buildProgram(rawIo: Io) {
             );
         });
 
+    program
+        .command("deploy")
+        .argument("<source>", "a built directory, or a .tar.gz of one")
+        .description(
+            "Deploy a built static site to a preview. The directory is packed here (links, secrets and version-control data are refused), uploaded, and followed until it is live.",
+        )
+        .requiredOption("--project <project>", "the project's slug or id")
+        .requiredOption("--name <name>", "the preview's name (created if it does not exist)")
+        .option("--spa", "serve index.html for unknown paths, for single-page apps")
+        .option("--no-wait", "return as soon as the deployment is queued")
+        .option("--timeout <seconds>", "stop waiting after this long (default 900)", "900")
+        .action(async (source, options, command) => {
+            const { json, profile } = wants(command);
+            const seconds = Number(options.timeout);
+            if (!Number.isInteger(seconds) || seconds < 1 || seconds > 86_400) {
+                throw new CommanderError(
+                    EXIT.usage,
+                    "commander.invalidArgument",
+                    "error: --timeout is a whole number of seconds, from 1 to 86400",
+                );
+            }
+            const result = await deploy(io.context, {
+                source,
+                project: options.project,
+                name: options.name,
+                spa: options.spa,
+                wait: options.wait,
+                waitTimeoutMs: seconds * 1000,
+                profile,
+                // Progress goes to stderr so stdout stays the result; none with --json.
+                onProgress: json
+                    ? undefined
+                    : (p) =>
+                          io.err(
+                              p.kind === "step"
+                                  ? p.message
+                                  : p.kind === "status"
+                                    ? `Status: ${p.status}`
+                                    : `  [${p.phase}] ${p.message}`,
+                          ),
+            });
+            print(command, result, () => {
+                const id = result.deployment.id;
+                switch (result.outcome) {
+                    case "succeeded":
+                        return `Deployed ${result.preview.hostname} (deployment ${id}).`;
+                    case "queued":
+                        return `Queued deployment ${id} for ${result.preview.hostname}. Check it with: launchpad deployments status ${id}`;
+                    case "timeout":
+                        return `Still ${result.deployment.status} after ${seconds}s; it was not cancelled. Check it with: launchpad deployments status ${id}`;
+                    case "reconciliation-needed":
+                        return `Deployment ${id} needs an administrator: the host must be checked before ${result.preview.hostname} can be deployed again.`;
+                    default: {
+                        const failure = (
+                            result.deployment as { failure?: { message: string } | null }
+                        ).failure;
+                        return `Deployment ${id} ${result.outcome}${failure ? `: ${failure.message}` : "."}`;
+                    }
+                }
+            });
+            if (result.outcome === "timeout") throw new ExitWith(EXIT.waiting);
+            if (!["succeeded", "queued"].includes(result.outcome)) {
+                throw new ExitWith(EXIT.deployment);
+            }
+        });
+
+    const previews = program
+        .command("previews")
+        .description("Previews of the selected organization.");
+    previews
+        .command("list")
+        .description("List previews.")
+        .option("--project <project>", "only this project's previews (slug or id)")
+        .action(async (options, command) => {
+            const result = await listPreviews(io.context, {
+                project: options.project,
+                profile: wants(command).profile,
+            });
+            print(command, result, () =>
+                result.items.length === 0
+                    ? "No previews."
+                    : text([
+                          ["ID", "NAME", "HOSTNAME", "ACTIVE"],
+                          ...result.items.map((p) => [
+                              p.id,
+                              p.slug,
+                              p.hostname,
+                              p.activeDeploymentId ?? "-",
+                          ]),
+                      ]) +
+                      (result.truncated ? "\n(more previews exist; narrow with --project)" : ""),
+            );
+        });
+    previews
+        .command("get")
+        .argument("<previewId>", "the preview's id")
+        .description("Show a preview and its recent deployments.")
+        .action(async (previewId, _options, command) => {
+            const profile = wants(command).profile;
+            const [preview, recent] = await Promise.all([
+                getPreview(io.context, previewId, profile),
+                listDeployments(io.context, previewId, profile),
+            ]);
+            print(command, { preview, deployments: recent.items }, () =>
+                [
+                    `Preview:  ${preview.slug} (${preview.id})`,
+                    `Hostname: ${preview.hostname}`,
+                    `Active:   ${preview.activeDeploymentId ?? "none"}`,
+                    "",
+                    recent.items.length === 0
+                        ? "No deployments."
+                        : text([
+                              ["DEPLOYMENT", "STATUS", "CREATED"],
+                              ...recent.items.map((d) => [d.id, d.status, d.createdAt]),
+                          ]),
+                ].join("\n"),
+            );
+        });
+
+    const deployments = program.command("deployments").description("Deployments of a preview.");
+    deployments
+        .command("status")
+        .argument("<deploymentId>", "the deployment's id")
+        .description("Show a deployment's status and failure.")
+        .action(async (deploymentId, _options, command) => {
+            const result = await getDeployment(io.context, deploymentId, wants(command).profile);
+            print(command, result, () =>
+                [
+                    `Deployment: ${result.id}`,
+                    `Status:     ${result.status}`,
+                    ...(result.failure
+                        ? [`Failure:    ${result.failure.code}: ${result.failure.message}`]
+                        : []),
+                    `Created:    ${result.createdAt}`,
+                    `Finished:   ${result.finishedAt ?? "-"}`,
+                ].join("\n"),
+            );
+        });
+    deployments
+        .command("events")
+        .argument("<deploymentId>", "the deployment's id")
+        .option("--after <seq>", "only events after this sequence number", "0")
+        .description("Show a deployment's progress events.")
+        .action(async (deploymentId, options, command) => {
+            const after = Number(options.after);
+            if (!Number.isInteger(after) || after < 0) {
+                throw new CommanderError(
+                    EXIT.usage,
+                    "commander.invalidArgument",
+                    "error: --after is a sequence number (0 or more)",
+                );
+            }
+            const result = await deploymentEvents(io.context, deploymentId, {
+                after,
+                profile: wants(command).profile,
+            });
+            print(command, result, () =>
+                result.items.length === 0
+                    ? "No events."
+                    : result.items.map((e) => `${e.seq}  [${e.phase}] ${e.message}`).join("\n"),
+            );
+        });
+
     return program;
 }
 
@@ -232,6 +401,8 @@ export async function run(argv: string[], io: Io): Promise<number> {
         return EXIT.ok;
     } catch (error) {
         if (error instanceof CommanderError && error.exitCode === 0) return EXIT.ok; // --help, --version
+        // The command already printed its result and asked for this exit code.
+        if (error instanceof ExitWith) return error.exitCode;
         const failure = describe(error);
         const json = argv.includes("--json");
         io.err(

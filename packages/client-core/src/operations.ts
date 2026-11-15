@@ -63,7 +63,7 @@ export async function resolve(ctx: Context, profileName?: string): Promise<Resol
     };
 }
 
-function clientFor(ctx: Context, resolved: Resolved): LaunchpadClient {
+export function clientFor(ctx: Context, resolved: Resolved): LaunchpadClient {
     return createClient({
         baseUrl: resolved.controller,
         apiKey: resolved.apiKey,
