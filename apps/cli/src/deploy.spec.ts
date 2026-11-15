@@ -195,7 +195,7 @@ describe("launchpad deploy", () => {
             ["deploy", site, "--no-wait"],
             controller({ statuses: ["queued"] }),
         );
-        expect(queued.out).toContain(`--organization '${ORG}'`);
+        expect(queued.out).toContain("--organization 'one'");
         await fs.unlink(path.join(dir, "launchpad.json"));
         // An organization only inherited from the environment is not repeated: the hint
         // would then need a permission the plain command does not.
