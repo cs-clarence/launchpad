@@ -100,7 +100,7 @@ preview serving.
    credentials and output limits. No live engine yet.
 4. **Worker and deployment state machine** (`apps/worker`, feature off). pg-boss
    enqueue in the same transaction as the deployment; an attempt/fencing token
-   checked on every state write and Dokku call; per-preview serialization;
+   checked on every state write (Dokku is bounded by a lease-derived deadline, not fenced); per-preview serialization;
    lease ownership; reconciliation of recorded app/image state before any retry;
    `reconciliation-needed` blocks further mutation of that preview. _Verify:_
    deterministic tests of every row in "complexities" above against the fake
@@ -171,10 +171,15 @@ TTL, expiry, deletion and cleanup (milestone 5), packaging and publishing
       applies: this fences stale attempts with one mechanism instead of two, at the
       cost of polling (`claimNext`) rather than push. Steps `app, build, configure,
       load, verify`, intent recorded (fenced) before each; a stale attempt is refused
-      on its next write and Dokku calls are aborted at 80% of the lease. Only an image
-      load with an unknown outcome parks the preview (`reconciliation-needed`,
+      on its next write; no Dokku call starts after 80% of the lease has passed on the
+      worker's monotonic clock (a frozen process or a command already running on the
+      Dokku host is not covered). Once an image load has begun, any failure
+      (including a failed verify) parks the preview (`reconciliation-needed`,
       resolved by an admin via `resolveReconciliation`); the other steps are
-      idempotent and simply re-run. Off by default (`deploymentsEnabled`). The
+      idempotent and simply re-run. Off by default (`deploymentsEnabled`; `claimNext`
+      also refuses work while it is off). Carried to later slices: roll back to the
+      previous image instead of parking after a failed verify (5), API-key project
+      restrictions on enqueue (6), a worker shutdown signal wired in (5). The
       `apps/worker` process that polls `claimNext` and supplies real `DeployPorts`
       arrives with slice 5, when there is something real to run.
 - [ ] Slices 5–6.
