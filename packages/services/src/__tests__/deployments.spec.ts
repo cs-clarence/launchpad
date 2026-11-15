@@ -482,6 +482,35 @@ describe("the deadline and the shutdown request", () => {
         expect(await runDeployment(testDb.db, next, fake().ports)).toBe("succeeded");
     });
 
+    it("does not even record a load intent once shutdown was requested", async () => {
+        const preview = await freshPreview();
+        const d = await queue(preview);
+        const controller = new AbortController();
+        const f = fake();
+        f.after = { ports: () => controller.abort() };
+        const original = f.ports.dokku.ports.set;
+        f.ports.dokku.ports.set = async (...args) => {
+            await original(...args);
+            controller.abort();
+        };
+        expect(
+            await runDeployment(testDb.db, await claimed("w1"), f.ports, {
+                signal: controller.signal,
+            }),
+        ).toBe("stopped");
+        expect(f.calls).not.toContain("load");
+        expect(await state(d.id)).toMatchObject({
+            step_done: "configure",
+            step_pending: null,
+            lease_owner: null,
+        });
+        const next = await claimed("w2");
+        const g = fake();
+        g.existing = f.existing;
+        expect(await runDeployment(testDb.db, next, g.ports)).toBe("succeeded");
+        expect(g.calls).toEqual(["load", "verify"]);
+    });
+
     it("does not abort a load that is under way, and stops only claiming", async () => {
         const preview = await freshPreview();
         await queue(preview);

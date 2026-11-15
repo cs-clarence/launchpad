@@ -432,6 +432,21 @@ async function execute(
         // The deadline is taken on this machine's monotonic clock before the lease is
         // written, so it can only be earlier than the lease the database grants.
         const deadline = performance.now() + Math.floor(claim.leaseMs * SIGNAL_FRACTION);
+        // Asked to stop before this step (and so before any load) begins: hand the
+        // deployment on without recording an intent that would later look like a load.
+        if (options.signal?.aborted && !loadBegun) {
+            await fenced(
+                db,
+                claim,
+                { release: true },
+                {
+                    phase: step,
+                    level: "warn",
+                    message: "The worker stopped; another will continue.",
+                },
+            );
+            return "stopped";
+        }
         // Intent is recorded, fenced, before anything is changed: if this worker
         // stops after the change, the successor sees which step was in flight.
         await fenced(
@@ -440,6 +455,7 @@ async function execute(
             { status: STEP_STATUS[step], step_pending: step },
             { phase: step, message: `Starting ${step}.` },
         );
+        let loadInvoked = false;
         if (step === "load") loadBegun = true;
         // Checked immediately before every call: a worker that was paused past its
         // deadline (a frozen process, a stalled commit) starts nothing more.
@@ -470,13 +486,24 @@ async function execute(
                 await ports.dokku.ports.set(context.appName, "http:80:80", signal);
             } else if (step === "load") {
                 guard();
+                loadInvoked = true;
                 await ports.loadImage(context, imageTag as string, signal);
             } else {
                 guard();
                 await ports.verify(context, signal);
             }
         } catch (error) {
-            if (error instanceof StaleAttemptError) throw error;
+            if (error instanceof StaleAttemptError) {
+                // The deadline passed before the load was started: nothing was sent, so
+                // the intent is withdrawn (best effort; a lost lease means a successor
+                // owns the row) and the next attempt runs the load as a plain step.
+                if (step === "load" && !loadInvoked) {
+                    await fenced(db, claim, { step_pending: null, release: true }).catch(
+                        () => undefined,
+                    );
+                }
+                throw error;
+            }
             // Asked to stop: hand the deployment on, with its intent still recorded.
             if (options.signal?.aborted && step !== "load" && !loadBegun) {
                 await fenced(
