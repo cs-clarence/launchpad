@@ -2,7 +2,8 @@ import { createAuth, createMailer, loadAuthConfig } from "@launchpad/auth";
 import { createDatabase } from "@launchpad/database";
 import type { InvitationDeps } from "@launchpad/services";
 import path from "node:path";
-import { deploymentsEnabled, sweepStaleUploads } from "@launchpad/services";
+import { deploymentsEnabled, PREVIEW_DOMAIN_PATTERN, sweepStaleUploads } from "@launchpad/services";
+import { getDomain } from "tldts";
 import { createApi } from "./api";
 import { artifactLimitsFromEnv } from "./artifact-config";
 
@@ -25,14 +26,26 @@ export function previewSettings(env: Record<string, string | undefined>, origin:
     if (!previewDomain) {
         throw new Error("LAUNCHPAD_PREVIEW_DOMAIN is required when deployments are on.");
     }
+    if (!PREVIEW_DOMAIN_PATTERN.test(previewDomain)) {
+        throw new Error("LAUNCHPAD_PREVIEW_DOMAIN must be a plain lowercase domain name.");
+    }
     const host = new URL(origin).hostname.toLowerCase();
+    // Preview pages are deployer-controlled, and hosts of one registrable domain share a
+    // site: cookies and same-site requests cross between them. So the preview domain must
+    // be a different registrable domain from the controller's (by the public suffix list,
+    // so `co.uk`-style suffixes are handled), not merely a different name.
+    const registrable = (name: string) => getDomain(name, { allowPrivateDomains: true });
+    const hostSite = registrable(host);
+    const sameSite = hostSite !== null && hostSite === registrable(previewDomain);
+    // A host with no registrable domain (localhost, an address) falls back to plain overlap.
     const overlaps =
+        sameSite ||
         host === previewDomain ||
         host.endsWith(`.${previewDomain}`) ||
         previewDomain.endsWith(`.${host}`);
     if (overlaps) {
         throw new Error(
-            "LAUNCHPAD_PREVIEW_DOMAIN must be a different domain from the controller's own.",
+            "LAUNCHPAD_PREVIEW_DOMAIN must be a different registrable domain from the controller's own.",
         );
     }
     const raw = env.LAUNCHPAD_MAX_PREVIEWS;

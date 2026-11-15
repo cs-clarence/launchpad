@@ -22,8 +22,53 @@ describe("preview settings", () => {
             expect(
                 () => previewSettings({ ...on, LAUNCHPAD_PREVIEW_DOMAIN: bad }, ORIGIN),
                 bad,
-            ).toThrow(/different domain/);
+            ).toThrow(/registrable domain/);
         }
+    });
+
+    it("tells registrable domains apart by the public suffix list", () => {
+        const on = { LAUNCHPAD_DEPLOYMENTS: "on" };
+        // co.uk is a public suffix: these are two different sites.
+        expect(
+            previewSettings(
+                { ...on, LAUNCHPAD_PREVIEW_DOMAIN: "previews.other.co.uk" },
+                "https://launchpad.example.co.uk",
+            ).enabled,
+        ).toBe(true);
+        expect(() =>
+            previewSettings(
+                { ...on, LAUNCHPAD_PREVIEW_DOMAIN: "previews.example.co.uk" },
+                "https://launchpad.example.co.uk",
+            ),
+        ).toThrow(/registrable/);
+        // A controller on an address or localhost has no registrable domain to share.
+        expect(
+            previewSettings(
+                { ...on, LAUNCHPAD_PREVIEW_DOMAIN: "previews.example.net" },
+                "http://127.0.0.1:3000",
+            ).enabled,
+        ).toBe(true);
+    });
+
+    it("refuses a preview domain that is not a plain domain name", () => {
+        const on = { LAUNCHPAD_DEPLOYMENTS: "on" };
+        for (const bad of [
+            "https://previews.example.net",
+            "previews.example.net/path",
+            "previews.example.net:8080",
+            "-bad.example.net",
+            "localhost",
+            "1.2.3.4",
+        ]) {
+            expect(
+                () => previewSettings({ ...on, LAUNCHPAD_PREVIEW_DOMAIN: bad }, ORIGIN),
+                bad,
+            ).toThrow(/plain lowercase domain/);
+        }
+        // Off: nothing is read.
+        expect(previewSettings({ LAUNCHPAD_PREVIEW_DOMAIN: "https://nope" }, ORIGIN).enabled).toBe(
+            false,
+        );
     });
 
     it("checks the preview limit", () => {

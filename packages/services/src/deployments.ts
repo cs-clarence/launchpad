@@ -129,6 +129,12 @@ export async function enqueueDeployment(
                 throw new ServiceError("conflict", "That preview is being deleted.");
             }
             if (key?.success) {
+                // One request at a time per complete scoped key, even across previews
+                // (which lock different rows): otherwise two could both find the key
+                // absent and the second insert would overwrite the first binding.
+                await sql`select pg_advisory_xact_lock(hashtextextended(${`idempotency:${organizationId}:${bound}:${endpoint}:${key.data}`}, 0))`.execute(
+                    trx,
+                );
                 await trx
                     .deleteFrom("idempotency_key")
                     .where("expires_at", "<=", sql<Date>`now()`)

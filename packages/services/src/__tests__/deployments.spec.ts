@@ -276,6 +276,43 @@ describe("queueing a deployment", () => {
     });
 });
 
+describe("idempotency across previews", () => {
+    it("lets only one of concurrent requests with the same key win, and keeps its binding", async () => {
+        const [a, b] = [await freshPreview(), await freshPreview()];
+        const artifact = await artifactIn(org, "dee");
+        const enqueue = (preview: string) =>
+            enqueueDeployment(
+                testDb.db,
+                people.dee!,
+                org,
+                preview,
+                { artifactId: artifact.id },
+                on,
+                "shared-key",
+            );
+        const results = await Promise.allSettled([enqueue(a), enqueue(b)]);
+        const ok = results.filter((r) => r.status === "fulfilled");
+        const refused = results.filter((r) => r.status === "rejected");
+        expect(ok).toHaveLength(1);
+        expect(((refused[0] as PromiseRejectedResult).reason as ServiceError).code).toBe(
+            "conflict",
+        );
+        // The first binding stands: repeating the winner's request returns its deployment.
+        const winner = (ok[0] as PromiseFulfilledResult<{ id: string }>).value.id;
+        const again = await enqueue(
+            (
+                await testDb.db
+                    .selectFrom("deployment")
+                    .select("preview_id")
+                    .where("id", "=", winner)
+                    .executeTakeFirstOrThrow()
+            ).preview_id,
+        );
+        expect(again.id).toBe(winner);
+        await drain();
+    });
+});
+
 describe("running a deployment", () => {
     it("goes through every step in order and activates only at the end", async () => {
         const preview = await freshPreview();

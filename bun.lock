@@ -55,6 +55,7 @@
         "kysely": "catalog:",
         "react": "catalog:",
         "react-dom": "catalog:",
+        "tldts": "catalog:",
         "zod": "catalog:",
       },
       "devDependencies": {
@@ -264,6 +265,7 @@
     "react-dom": "19.3.1",
     "tailwindcss": "4.3.5",
     "tar": "7.5.23",
+    "tldts": "7.5.3",
     "typescript": "7.0.2",
     "unplugin-dts": "1.1.2",
     "vite": "8.3.8",
@@ -1404,6 +1406,10 @@
     "tinyglobby": ["tinyglobby@0.2.17", "", { "dependencies": { "fdir": "^6.5.0", "picomatch": "^4.0.4" } }, "sha512-wXR/dYpcqKmfWpEdZjiKJOwCNFndD0DMnrW/cYjVGttEkBfVgcLFHoNrlj47mjOVic9yyNu65alsgF4NQyTa2g=="],
 
     "tinypool": ["tinypool@2.2.0", "", {}, "sha512-jBrmx4lYmaC9k/mgPbylxs7kBUxHtD8256up+HjLaDFfXScKJQyil+SWXSvhAtT7XHo+yTVlpB81PGmHP8oLSQ=="],
+
+    "tldts": ["tldts@7.5.3", "", { "dependencies": { "tldts-core": "^7.5.3" }, "bin": { "tldts": "bin/cli.js" } }, "sha512-Gt09nFFdNq5+Gm7qubL33O+g1UZ6lAlV3QXUTbXpqYWS+OI58IqzuxUrwk/D6S6jLNvEZrHaBtXIGMh1mW1poA=="],
+
+    "tldts-core": ["tldts-core@7.5.3", "", {}, "sha512-G9K/M0Ah+U22clAb1r0fYNheSysv7Y6OAIundzKcFQx5jBgPId3CnFl44sAGGqJA+lUXMOrREFXHX1lrtEApdA=="],
 
     "trim-lines": ["trim-lines@3.0.1", "", {}, "sha512-kRj8B+YHZCc9kQYdWfJB2/oUl9rA99qbowYYBtr4ui4mZyAQ2JpvVBd/6U2YloATfqBhBTSMhTpgBHtU0Mf3Rg=="],
 

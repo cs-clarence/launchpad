@@ -22,7 +22,8 @@ export interface PreviewDeps {
     maxPreviews?: number;
 }
 
-const DOMAIN = /^(?=.{1,200}$)([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/;
+export const PREVIEW_DOMAIN_PATTERN =
+    /^(?=.{1,200}$)([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/;
 
 export function opaqueId(length: number): string {
     let id = "";
@@ -154,7 +155,7 @@ export async function createPreview(
     if (!Number.isSafeInteger(maxPreviews) || maxPreviews < 1) {
         throw new Error("maxPreviews must be a positive integer.");
     }
-    if (!DOMAIN.test(deps.previewDomain)) {
+    if (!PREVIEW_DOMAIN_PATTERN.test(deps.previewDomain)) {
         throw new Error("The preview domain is not a valid lowercase domain name.");
     }
     if (!z.uuid().safeParse(projectId).success) {
