@@ -333,7 +333,7 @@ launchpad deploy ./dist --project website --name demo --spa --ttl 24h
 launchpad previews list
 launchpad deployments logs <deployment-id>
 launchpad previews delete <preview-id>
-launchpad mcp --root /absolute/path/to/allowed/projects
+launchpad-mcp --shared --allow-deploy --include 'dist/**' --exclude 'dist/private/**'
 ```
 
 `login` initially accepts a securely entered API key; browser/device login must
