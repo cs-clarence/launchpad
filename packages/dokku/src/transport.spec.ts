@@ -268,6 +268,30 @@ describe("running ssh", () => {
         expect(Date.now() - started).toBeLessThan(5000);
     });
 
+    it("does not leave a rejection unhandled when ssh exits while input is backed up", async () => {
+        const unhandled: unknown[] = [];
+        const record = (reason: unknown) => unhandled.push(reason);
+        process.on("unhandledRejection", record);
+        try {
+            let reads = 0;
+            const source = {
+                [Symbol.asyncIterator]: () => ({
+                    next: async () => {
+                        if (++reads > 40) throw new Error("late read failed");
+                        return { done: false as const, value: Buffer.alloc(256 * 1024, 1) };
+                    },
+                    return: async () => ({ done: true as const, value: undefined }),
+                }),
+            };
+            const result = await run("sleep 0.3; exit 4", { stdin: source });
+            expect(result.exitCode).toBe(4);
+            await new Promise((resolve) => setTimeout(resolve, 200));
+            expect(unhandled).toEqual([]);
+        } finally {
+            process.off("unhandledRejection", record);
+        }
+    });
+
     it("survives an input source that fails", async () => {
         async function* broken() {
             yield Buffer.from("partial");

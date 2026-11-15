@@ -206,11 +206,13 @@ async function pump(
         over = true;
         wake?.();
     });
-    const waitable = <T>(inner: Promise<T>): Promise<T | undefined> =>
+    // Starts the wait only while the child is alive, and always handles the inner
+    // promise's outcome so a late rejection cannot go unhandled.
+    const waitable = <T>(start: () => Promise<T>): Promise<T | undefined> =>
         new Promise<T | undefined>((resolve, reject) => {
             if (over) return resolve(undefined);
             wake = () => resolve(undefined);
-            inner.then(resolve, reject);
+            start().then(resolve, reject);
         }).finally(() => {
             wake = undefined;
         });
@@ -218,17 +220,18 @@ async function pump(
     try {
         iterator = source[Symbol.asyncIterator]();
         for (;;) {
-            const next = await waitable(iterator.next());
+            const next = await waitable(() => iterator!.next());
             if (over || !next || next.done || sink.destroyed) break;
             sent.bytes += next.value.byteLength;
             if (!sink.write(next.value)) {
                 let done: (() => void) | undefined;
                 await waitable(
-                    new Promise<void>((resolve) => {
-                        done = () => resolve();
-                        sink.once("drain", done);
-                        sink.once("close", done);
-                    }),
+                    () =>
+                        new Promise<void>((resolve) => {
+                            done = () => resolve();
+                            sink.once("drain", done);
+                            sink.once("close", done);
+                        }),
                 );
                 if (done) {
                     sink.off("drain", done);
