@@ -27,10 +27,17 @@ export const Route = createFileRoute("/orgs_/$orgId/previews/$previewId")({
 
 type Deployment = z.infer<typeof deploymentSchema>;
 
-function Progress(props: { orgId: string; deployment: Deployment }) {
+function Progress(props: {
+    orgId: string;
+    deployment: Deployment;
+    latest?: boolean;
+    canResolve?: boolean;
+}) {
     const [deployment, setDeployment] = useState(props.deployment);
     const [events, setEvents] = useState<ProgressEvent[]>([]);
     const [lost, setLost] = useState(false);
+    const [stopped, setStopped] = useState(false);
+    const [attempt, setAttempt] = useState(0);
 
     useEffect(() => {
         let stopped = false;
@@ -58,16 +65,17 @@ function Progress(props: { orgId: string; deployment: Deployment }) {
                 if (stopped) return;
                 misses++;
                 setLost(true);
-                if (misses >= 5) return;
+                if (misses >= 5) return void setStopped(true);
             }
             timer = setTimeout(poll, 2000);
         };
+        setStopped(false);
         void poll();
         return () => {
             stopped = true;
             clearTimeout(timer);
         };
-    }, [props.orgId, props.deployment.id]);
+    }, [props.orgId, props.deployment.id, attempt]);
 
     return (
         <article className="space-y-2">
@@ -80,7 +88,28 @@ function Progress(props: { orgId: string; deployment: Deployment }) {
                     {deployment.failure.message} <code>{deployment.failure.code}</code>
                 </p>
             ) : null}
-            {lost ? <p role="status">Progress could not be refreshed; retrying.</p> : null}
+            {stopped ? (
+                <p role="status">
+                    Progress stopped updating.{" "}
+                    <button
+                        type="button"
+                        className="anchor"
+                        onClick={() => setAttempt((n) => n + 1)}
+                    >
+                        Retry
+                    </button>
+                </p>
+            ) : lost ? (
+                <p role="status">Progress could not be refreshed; retrying.</p>
+            ) : null}
+            {props.latest && deployment.status === "reconciliation-needed" ? (
+                <p role="alert">
+                    This deployment needs an administrator to confirm what the preview is serving.
+                    {props.canResolve
+                        ? " Resolve it with the administrator tools; it is not offered here."
+                        : " Ask an organization administrator."}
+                </p>
+            ) : null}
             {events.length > 0 ? (
                 <ol className="space-y-1 text-sm">
                     {events.map((event) => (
@@ -109,18 +138,16 @@ function PreviewDetail() {
                 Previews
             </Link>
             <h1 className="h2">{view.preview.hostname}</h1>
-            {latest?.status === "reconciliation-needed" ? (
-                <p role="alert">
-                    This deployment needs an administrator to confirm what the preview is serving.
-                    {view.canResolve
-                        ? " Resolve it with the administrator tools; it is not offered here."
-                        : " Ask an organization administrator."}
-                </p>
-            ) : null}
             {latest ? (
                 <section className="space-y-3">
                     <h2 className="h4">Latest deployment</h2>
-                    <Progress key={latest.id} orgId={view.organization.id} deployment={latest} />
+                    <Progress
+                        key={latest.id}
+                        orgId={view.organization.id}
+                        deployment={latest}
+                        latest
+                        canResolve={view.canResolve}
+                    />
                 </section>
             ) : (
                 <p>This preview has not been deployed yet.</p>
