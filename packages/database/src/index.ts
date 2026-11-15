@@ -142,6 +142,8 @@ export type DeploymentStatus =
     | "cancelled"
     | "reconciliation-needed";
 
+export type DeploymentStep = "app" | "build" | "configure" | "load" | "verify";
+
 export interface DeploymentTable {
     id: Generated<string>;
     organization_id: string;
@@ -157,6 +159,10 @@ export interface DeploymentTable {
     created_at: Generated<Date>;
     updated_at: Generated<Date>;
     finished_at: Date | null;
+    lease_owner: string | null;
+    lease_expires_at: Date | null;
+    step_done: DeploymentStep | null;
+    step_pending: DeploymentStep | null;
 }
 
 export interface DeploymentEventTable {
