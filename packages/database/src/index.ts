@@ -162,7 +162,8 @@ export interface DeploymentTable {
     lease_owner: string | null;
     lease_expires_at: Date | null;
     step_done: DeploymentStep | null;
-    step_pending: DeploymentStep | null;
+    // A rollback is only ever an intent, never a completed step.
+    step_pending: DeploymentStep | "rollback" | null;
 }
 
 export interface DeploymentEventTable {

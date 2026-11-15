@@ -102,6 +102,7 @@ interface Fake {
     calls: string[];
     ports: DeployPorts;
     existing: Set<string>;
+    rolledBackTo?: string;
     failAt?: { call: string; error: Error };
     after?: Record<string, () => Promise<void> | void>;
 }
@@ -148,6 +149,10 @@ function fake(db = testDb.db): Fake {
         },
         verify: async () => {
             await step("verify");
+        },
+        rollback: async (_c, previous) => {
+            await step("rollback");
+            f.rolledBackTo = previous.deploymentId;
         },
     };
     void db;
@@ -384,7 +389,7 @@ describe("running a deployment", () => {
 });
 
 describe("failures after the image was loaded", () => {
-    it("hold the preview instead of failing the deployment", async () => {
+    it("put the previous release back when the new one does not verify", async () => {
         for (const error of [
             new Error("probe failed"),
             new FakeDokkuError("uncertain"),
@@ -396,17 +401,113 @@ describe("failures after the image was loaded", () => {
             const d = await queue(preview);
             const f = fake();
             f.failAt = { call: "verify", error };
-            expect(await runDeployment(testDb.db, await claimed(), f.ports)).toBe(
-                "reconciliation-needed",
-            );
+            expect(await runDeployment(testDb.db, await claimed(), f.ports)).toBe("failed");
+            expect(f.calls.at(-1)).toBe("rollback");
+            expect(f.rolledBackTo).toBe(first.id);
             expect(await state(d.id)).toMatchObject({
-                status: "reconciliation-needed",
-                failure_code: "verify-after-load",
+                status: "failed",
+                failure_code: "verify-failed-rolled-back",
+                step_pending: null,
             });
+            // The previous release is still the active one, and the preview is free.
             expect(await active(preview)).toBe(first.id);
-            expect(await code(queue(preview))).toBe("conflict");
-            await resolveReconciliation(testDb.db, people.ben!, org, d.id, "failed");
+            expect(await code(queue(preview))).toBe("ok");
+            await drain();
         }
+    });
+
+    it("simply fail a first release that does not verify, with nothing to restore", async () => {
+        const preview = await freshPreview();
+        const d = await queue(preview);
+        const f = fake();
+        f.failAt = { call: "verify", error: new Error("probe failed") };
+        expect(await runDeployment(testDb.db, await claimed(), f.ports)).toBe("failed");
+        expect(f.calls).not.toContain("rollback");
+        expect(await state(d.id)).toMatchObject({
+            status: "failed",
+            failure_code: "verify-failed",
+        });
+        expect(await active(preview)).toBeNull();
+    });
+
+    it("hold the preview when the rollback itself fails", async () => {
+        const preview = await freshPreview();
+        const first = await queue(preview);
+        await runDeployment(testDb.db, await claimed(), fake().ports);
+        const d = await queue(preview);
+        const f = fake();
+        f.failAt = { call: "verify", error: new Error("probe failed") };
+        const original = f.ports.rollback;
+        f.ports.rollback = async (...args) => {
+            await original(...args);
+            throw new Error("rollback load broke");
+        };
+        expect(await runDeployment(testDb.db, await claimed(), f.ports)).toBe(
+            "reconciliation-needed",
+        );
+        expect(await state(d.id)).toMatchObject({
+            status: "reconciliation-needed",
+            failure_code: "rollback-failed",
+        });
+        expect(await active(preview)).toBe(first.id);
+        expect(await code(queue(preview))).toBe("conflict");
+        await resolveReconciliation(testDb.db, people.ben!, org, d.id, "failed");
+    });
+
+    it("hold a deployment whose worker stopped in the middle of a rollback", async () => {
+        const preview = await freshPreview();
+        const d = await queue(preview);
+        await claimed("dead");
+        await sql`update deployment set status = 'verifying', step_done = 'load', step_pending = 'rollback' where id = ${d.id}`.execute(
+            testDb.db,
+        );
+        await expire(d.id);
+        const f = fake();
+        expect(await runDeployment(testDb.db, await claimed("w2"), f.ports)).toBe(
+            "reconciliation-needed",
+        );
+        expect(f.calls).toEqual([]);
+        await resolveReconciliation(testDb.db, people.ben!, org, d.id, "failed");
+    });
+
+    it("hold a rollback abandoned on its last attempt", async () => {
+        const preview = await freshPreview();
+        const d = await queue(preview);
+        for (let i = 0; i < MAX_ATTEMPTS; i++) {
+            await claimed(`w${i}`);
+            await expire(d.id);
+        }
+        await sql`update deployment set status = 'verifying', step_done = 'load', step_pending = 'rollback' where id = ${d.id}`.execute(
+            testDb.db,
+        );
+        expect(await claimNext(testDb.db, "last", on)).toBeNull();
+        expect((await state(d.id)).status).toBe("reconciliation-needed");
+        await resolveReconciliation(testDb.db, people.ben!, org, d.id, "failed");
+    });
+
+    it("stop and hand on a verify that a shutdown interrupted, without a rollback", async () => {
+        const preview = await freshPreview();
+        const d = await queue(preview);
+        const controller = new AbortController();
+        const f = fake();
+        const original = f.ports.verify;
+        f.ports.verify = async (...args) => {
+            controller.abort();
+            await original(...args);
+            throw new Error("interrupted");
+        };
+        expect(
+            await runDeployment(testDb.db, await claimed("w1"), f.ports, {
+                signal: controller.signal,
+            }),
+        ).toBe("stopped");
+        expect(f.calls).not.toContain("rollback");
+        expect(await state(d.id)).toMatchObject({ step_pending: "verify", lease_owner: null });
+        const next = await claimed("w2");
+        const g = fake();
+        g.existing = f.existing;
+        expect(await runDeployment(testDb.db, next, g.ports)).toBe("succeeded");
+        expect(g.calls).toEqual(["verify"]);
     });
 
     it("hold a deployment abandoned after the load on its last attempt", async () => {
@@ -424,7 +525,7 @@ describe("failures after the image was loaded", () => {
         await resolveReconciliation(testDb.db, people.ben!, org, d.id, "failed");
     });
 
-    it("hold a resumed deployment whose verify then fails", async () => {
+    it("roll back a resumed deployment whose verify then fails", async () => {
         const preview = await freshPreview();
         const d = await queue(preview);
         await claimed("dead");
@@ -434,10 +535,10 @@ describe("failures after the image was loaded", () => {
         await expire(d.id);
         const f = fake();
         f.failAt = { call: "verify", error: new Error("down") };
-        expect(await runDeployment(testDb.db, await claimed("w2"), f.ports)).toBe(
-            "reconciliation-needed",
-        );
-        await resolveReconciliation(testDb.db, people.ben!, org, d.id, "failed");
+        // A first release: nothing to restore, so it fails; the point is that a resumed
+        // verify takes the same path as a fresh one.
+        expect(await runDeployment(testDb.db, await claimed("w2"), f.ports)).toBe("failed");
+        expect(await state(d.id)).toMatchObject({ failure_code: "verify-failed" });
     });
 });
 

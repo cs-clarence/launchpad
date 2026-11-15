@@ -55,6 +55,12 @@ builds first and starts on a local port. Tests run under Bun (`bun --bun vitest`
 because the database layer uses Bun SQL, and each test file creates and drops its own
 database. Integration results are never cached.
 
+The worker also has an opt-in **live** suite, `omni -i run test:live -p @launchpad/worker`,
+that builds and deploys a fixture site on a real Dokku and Docker. It is not part of
+`test`, `test:integration` or CI, and needs a disposable Dokku you started yourself; it
+creates and removes only `lp-test-` apps. Its settings are in the header of
+`apps/worker/src/__tests__/live.spec.ts`.
+
 Operator and development tasks live in the controller project:
 
 ```sh

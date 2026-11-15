@@ -20,6 +20,16 @@ tasks:
   test:integration:
     enabled: false
 
+  # Opt-in, against a disposable Dokku and Docker you started; never part of `test`
+  # or CI, and never cached. See src/__tests__/live.spec.ts for what it touches.
+  test:live:
+    description: Live tests against a disposable Dokku and Docker (opt-in)
+    exec: bun run test:live
+    dependencies:
+      - ^build
+    cache:
+      enabled: false
+
   test:
     enabled: true
 
