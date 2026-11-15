@@ -287,6 +287,8 @@ describe("running ssh", () => {
             expect(result.exitCode).toBe(4);
             await new Promise((resolve) => setTimeout(resolve, 200));
             expect(unhandled).toEqual([]);
+            // Backed up behind the first chunk: no read may start after ssh ends.
+            expect(reads).toBe(1);
         } finally {
             process.off("unhandledRejection", record);
         }

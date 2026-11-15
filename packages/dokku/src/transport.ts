@@ -220,6 +220,8 @@ async function pump(
     try {
         iterator = source[Symbol.asyncIterator]();
         for (;;) {
+            // The input can close a moment before the child's own exit is reported.
+            if (over || sink.destroyed) break;
             const next = await waitable(() => iterator!.next());
             if (over || !next || next.done || sink.destroyed) break;
             sent.bytes += next.value.byteLength;
