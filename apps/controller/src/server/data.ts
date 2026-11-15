@@ -112,3 +112,91 @@ export const getInvitationPreviewFn = createServerFn({ method: "POST" })
             signedInAsInvitee: session?.user.email.toLowerCase() === preview.email,
         };
     });
+
+const orgInput = (input: unknown) => z.object({ orgId: z.string().min(1).max(64) }).parse(input);
+
+export const getPreviewsViewFn = createServerFn({ method: "GET" })
+    .validator(orgInput)
+    .handler(async ({ data }) => {
+        const services = await import("@launchpad/services");
+        const { runtime, who } = await principal();
+        const organization = await services.getOrganization(runtime.db, who, data.orgId);
+        const projects = await services.listProjects(runtime.db, who, data.orgId);
+        const previews = await services.listPreviews(runtime.db, who, data.orgId);
+        const items = await Promise.all(
+            previews.items.map(async (preview) => {
+                const { items: deployments } = await services.listDeployments(
+                    runtime.db,
+                    who,
+                    data.orgId,
+                    preview.id,
+                );
+                const latest = deployments[0];
+                return {
+                    ...preview,
+                    projectName: projects.find((p) => p.id === preview.projectId)?.name ?? null,
+                    latest: latest
+                        ? { id: latest.id, status: latest.status, updatedAt: latest.updatedAt }
+                        : null,
+                };
+            }),
+        );
+        return {
+            organization: { id: organization.id, name: organization.name },
+            previews: items,
+            more: previews.nextCursor !== null,
+        };
+    });
+
+export const getPreviewDetailFn = createServerFn({ method: "GET" })
+    .validator((input: unknown) =>
+        z.object({ orgId: z.string().min(1).max(64), previewId: z.string().max(64) }).parse(input),
+    )
+    .handler(async ({ data }) => {
+        const services = await import("@launchpad/services");
+        const { runtime, who } = await principal();
+        const organization = await services.getOrganization(runtime.db, who, data.orgId);
+        const preview = await services.getPreview(runtime.db, who, data.orgId, data.previewId);
+        const deployments = await services.listDeployments(
+            runtime.db,
+            who,
+            data.orgId,
+            data.previewId,
+        );
+        return {
+            organization: { id: organization.id, name: organization.name },
+            preview,
+            deployments: deployments.items,
+            canResolve: services.can(organization.role, "preview:resolve"),
+        };
+    });
+
+// What a progress poll needs: the status and every event after the last one seen.
+export const getDeploymentProgressFn = createServerFn({ method: "GET" })
+    .validator((input: unknown) =>
+        z
+            .object({
+                orgId: z.string().min(1).max(64),
+                deploymentId: z.string().max(64),
+                after: z.number().int().min(0).max(1_000_000_000),
+            })
+            .parse(input),
+    )
+    .handler(async ({ data }) => {
+        const services = await import("@launchpad/services");
+        const { runtime, who } = await principal();
+        const deployment = await services.getDeployment(
+            runtime.db,
+            who,
+            data.orgId,
+            data.deploymentId,
+        );
+        const events = await services.listDeploymentEvents(
+            runtime.db,
+            who,
+            data.orgId,
+            data.deploymentId,
+            data.after,
+        );
+        return { deployment, events };
+    });
