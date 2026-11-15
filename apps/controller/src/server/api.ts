@@ -10,6 +10,7 @@ import {
     getDeployment,
     getPreview,
     listDeploymentEvents,
+    resolveReconciliation,
     listDeployments,
     listPreviews,
     previewProjectId,
@@ -750,6 +751,30 @@ export function createApi(deps: {
             // The archive is the request body itself (not multipart), so it streams: the
             // caller is authorized first and nothing is buffered here.
             .post(
+                "/v1/organizations/:orgId/deployments/:deploymentId/resolution",
+                { detail: docs.resolveDeployment },
+                async ({ request, set, params }) => {
+                    const input = (await body(request)) as { outcome?: unknown } | undefined;
+                    return respond(
+                        request,
+                        set,
+                        null,
+                        async (p) => {
+                            await resolveReconciliation(
+                                db,
+                                p,
+                                params.orgId,
+                                params.deploymentId,
+                                input?.outcome as "failed" | "succeeded",
+                            );
+                            return { ok: true };
+                        },
+                        200,
+                        { fresh: true },
+                    );
+                },
+            )
+            .post(
                 "/v1/organizations/:orgId/artifacts",
                 { detail: docs.uploadArtifact },
                 ({ request, set, params }) =>
@@ -773,6 +798,11 @@ export function createApi(deps: {
                                     "invalid",
                                     "Send the archive as application/gzip.",
                                 );
+                            }
+                            // Stored archives are never deleted yet: none are taken while
+                            // deployments are off.
+                            if (!previews.enabled) {
+                                throw new ServiceError("conflict", "Deployments are not enabled.");
                             }
                             const length = request.headers.get("content-length");
                             return uploadArtifact(

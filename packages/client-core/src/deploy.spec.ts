@@ -331,7 +331,7 @@ describe("cancellation, the deadline and the last events", () => {
         expect(calls.some((c) => c.path.endsWith("/deployments") && c.method === "POST")).toBe(
             false,
         );
-        // Cancelled before the preview is created, too.
+        // Cancelled before the preview is created, too, so nothing is uploaded either.
         const early = controller({ previews: [], statuses: ["succeeded"] });
         const first = new AbortController();
         await expect(
@@ -340,7 +340,7 @@ describe("cancellation, the deadline and the last events", () => {
                 args(await site(), {
                     signal: first.signal,
                     onProgress: (p: Progress) => {
-                        if (p.kind === "step" && p.message === "Archive stored") first.abort();
+                        if (p.kind === "step" && p.message === "Packing the site") first.abort();
                     },
                 }),
             ),

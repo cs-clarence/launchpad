@@ -1502,6 +1502,47 @@ describe("previews and deployments over HTTP", () => {
         }
     });
 
+    it("lets an administrator resolve a deployment that needs one, and nobody else", async () => {
+        // One unfinished deployment per preview: leave only this one.
+        await testDb.db
+            .deleteFrom("deployment")
+            .where("preview_id", "=", previewId)
+            .where("id", "!=", deploymentId)
+            .execute();
+        await testDb.db
+            .updateTable("deployment")
+            .set({ status: "reconciliation-needed" })
+            .where("id", "=", deploymentId)
+            .execute();
+        const path = `/organizations/${orgId}/deployments/${deploymentId}/resolution`;
+        // An API key cannot do this, whatever its scopes.
+        expect(
+            await status(call(deployKey, path, { method: "POST", body: { outcome: "failed" } })),
+        ).toBe(403);
+        const viewerAttempt = await fetch(`${proxied.base}/api/v1${path}`, {
+            method: "POST",
+            headers: { cookie: viewer, origin: proxied.base, "content-type": "application/json" },
+            body: JSON.stringify({ outcome: "failed" }),
+        });
+        expect(viewerAttempt.status).toBe(403);
+        expect(
+            (await api(owner, path, { method: "POST", body: { outcome: "maybe" } })).status,
+        ).toBe(422);
+        expect(
+            (await api(owner, path, { method: "POST", body: { outcome: "failed" } })).status,
+        ).toBe(200);
+        const after = deploymentSchema.parse(
+            await (
+                await call(readKey, `/organizations/${orgId}/deployments/${deploymentId}`)
+            ).json(),
+        );
+        expect(after.status).toBe("failed");
+        // Already resolved.
+        expect(
+            (await api(owner, path, { method: "POST", body: { outcome: "failed" } })).status,
+        ).toBe(409);
+    });
+
     it("is off unless deployments are on: reads work, creating and deploying are refused", async () => {
         const cookieOwner = await (async () => {
             const response = await signIn(direct, "user@example.com", USER_PASSWORD);
@@ -1533,6 +1574,20 @@ describe("previews and deployments over HTTP", () => {
             (
                 await request(`/organizations/${orgId}/previews/${previewId}/deployments`, "POST", {
                     artifactId,
+                })
+            ).status,
+        ).toBe(409);
+        // Stored archives are never deleted yet, so none are taken while it is off.
+        expect(
+            (
+                await fetch(`${direct.base}/api/v1/organizations/${orgId}/artifacts`, {
+                    method: "POST",
+                    headers: {
+                        cookie: cookieOwner,
+                        origin: direct.base,
+                        "content-type": "application/gzip",
+                    },
+                    body: tarGz(SITE) as BodyInit,
                 })
             ).status,
         ).toBe(409);
@@ -1589,6 +1644,7 @@ describe("OpenAPI reference", () => {
         "get /api/v1/organizations/{orgId}/previews/{previewId}/deployments",
         "get /api/v1/organizations/{orgId}/deployments/{deploymentId}",
         "get /api/v1/organizations/{orgId}/deployments/{deploymentId}/events",
+        "post /api/v1/organizations/{orgId}/deployments/{deploymentId}/resolution",
         "get /api/v1/organizations/{orgId}/api-keys",
         "post /api/v1/organizations/{orgId}/api-keys",
         "delete /api/v1/organizations/{orgId}/api-keys/{keyId}",

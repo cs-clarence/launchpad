@@ -1,7 +1,8 @@
-import { createFileRoute, Link, redirect } from "@tanstack/react-router";
+import { createFileRoute, Link, redirect, useRouter } from "@tanstack/react-router";
 import type { z } from "zod";
 import type { deploymentSchema } from "@launchpad/contracts";
 import { useEffect, useState } from "react";
+import { apiRequest } from "../lib/api";
 import { isInProgress, mergeEvents, statusLabel, type ProgressEvent } from "../lib/previews";
 import { getDeploymentProgressFn, getPreviewDetailFn } from "../server/data";
 import { getCurrentUser } from "../server/session";
@@ -26,6 +27,55 @@ export const Route = createFileRoute("/orgs_/$orgId/previews/$previewId")({
 });
 
 type Deployment = z.infer<typeof deploymentSchema>;
+
+function Resolve(props: { orgId: string; deploymentId: string; onResolved(): void }) {
+    const router = useRouter();
+    const [busy, setBusy] = useState(false);
+    const [error, setError] = useState<string | null>(null);
+    async function resolve(outcome: "succeeded" | "failed") {
+        const sure = window.confirm(
+            outcome === "succeeded"
+                ? "Record that the host is serving the NEW release? Check the host first."
+                : "Record that the host is serving the PREVIOUS release? Check the host first.",
+        );
+        if (!sure) return;
+        setBusy(true);
+        setError(null);
+        const result = await apiRequest(
+            "POST",
+            `/organizations/${props.orgId}/deployments/${props.deploymentId}/resolution`,
+            { outcome },
+        );
+        if (!result.ok) setError(result.message);
+        else {
+            props.onResolved();
+            await router.invalidate({ sync: true });
+        }
+        setBusy(false);
+    }
+    return (
+        <div className="space-y-2">
+            <p>After checking the host, record what it is serving:</p>
+            <button
+                type="button"
+                className="btn preset-tonal"
+                disabled={busy}
+                onClick={() => resolve("succeeded")}
+            >
+                It is serving the new release
+            </button>{" "}
+            <button
+                type="button"
+                className="btn preset-tonal"
+                disabled={busy}
+                onClick={() => resolve("failed")}
+            >
+                It is serving the previous release
+            </button>
+            {error ? <p role="alert">{error}</p> : null}
+        </div>
+    );
+}
 
 function Progress(props: {
     orgId: string;
@@ -105,10 +155,15 @@ function Progress(props: {
             {props.latest && deployment.status === "reconciliation-needed" ? (
                 <p role="alert">
                     This deployment needs an administrator to confirm what the preview is serving.
-                    {props.canResolve
-                        ? " Resolve it with the administrator tools; it is not offered here."
-                        : " Ask an organization administrator."}
+                    {props.canResolve ? "" : " Ask an organization administrator."}
                 </p>
+            ) : null}
+            {props.latest && props.canResolve && deployment.status === "reconciliation-needed" ? (
+                <Resolve
+                    orgId={props.orgId}
+                    deploymentId={deployment.id}
+                    onResolved={() => setAttempt((n) => n + 1)}
+                />
             ) : null}
             {events.length > 0 ? (
                 <ol className="space-y-1 text-sm">

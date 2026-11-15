@@ -10,6 +10,7 @@ const schema = z.object({
     LAUNCHPAD_MAX_ARCHIVE_DEPTH: positiveInt,
     LAUNCHPAD_UPLOAD_TIMEOUT_SECONDS: positiveInt,
     LAUNCHPAD_MAX_ARTIFACTS: positiveInt,
+    LAUNCHPAD_MAX_CONCURRENT_UPLOADS: positiveInt,
 });
 
 // Upload limits from the environment. Unset means the documented default; a set but
@@ -35,5 +36,8 @@ export function artifactLimitsFromEnv(
         limits.uploadTimeoutMs = v.LAUNCHPAD_UPLOAD_TIMEOUT_SECONDS * 1000;
     }
     if (v.LAUNCHPAD_MAX_ARTIFACTS) limits.maxArtifacts = v.LAUNCHPAD_MAX_ARTIFACTS;
+    if (v.LAUNCHPAD_MAX_CONCURRENT_UPLOADS) {
+        limits.maxConcurrentUploads = v.LAUNCHPAD_MAX_CONCURRENT_UPLOADS;
+    }
     return limits;
 }

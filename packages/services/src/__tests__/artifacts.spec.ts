@@ -83,7 +83,12 @@ function spy(bytes: Buffer) {
     return { body, state };
 }
 
-const deps = (limits: ArtifactDeps["limits"] = {}): ArtifactDeps => ({ dataDir, limits });
+// Tests that start many uploads at once raise the per-organization cap, which is on its
+// own in the test of the cap itself.
+const deps = (limits: ArtifactDeps["limits"] = {}): ArtifactDeps => ({
+    dataDir,
+    limits: { maxConcurrentUploads: 50, ...limits },
+});
 const upload = (
     who: string,
     bytes: Buffer,
@@ -365,6 +370,59 @@ describe("limits and failures leave nothing behind", () => {
         );
         expect(result).toBe("timeout");
         expect(Date.now() - started).toBeLessThan(3000);
+        expect(await leftovers()).toEqual([]);
+    });
+
+    it("holds an organization to two uploads at once, and frees the slots afterwards", async () => {
+        // `pull` runs only once an upload has its slot and starts reading, so each signal
+        // says that slot is held; no timing guess.
+        const stalled = () => {
+            let reading!: () => void;
+            const started = new Promise<void>((resolve) => (reading = resolve));
+            const body = new ReadableStream<Uint8Array>({
+                start(controller) {
+                    controller.enqueue(Buffer.from("partial"));
+                },
+                pull: () => {
+                    reading();
+                    return new Promise(() => {});
+                },
+            });
+            return { body, started };
+        };
+        const run = (body: ReadableStream<Uint8Array>) =>
+            code(
+                uploadArtifact(
+                    testDb.db,
+                    people.dee!,
+                    org,
+                    body,
+                    { contentLength: null },
+                    deps({ uploadTimeoutMs: 800, maxConcurrentUploads: 2 }),
+                ),
+            );
+        const first = stalled();
+        const second = stalled();
+        const held = [run(first.body), run(second.body)];
+        await Promise.all([first.started, second.started]);
+        const refused = spy(site());
+        expect(await run(refused.body)).toBe("conflict");
+        expect(refused.state.pulled).toBe(0);
+        // Another organization is not held back by this one.
+        expect(
+            await code(
+                uploadArtifact(
+                    testDb.db,
+                    people.zoe!,
+                    otherOrg,
+                    stream(site()),
+                    { contentLength: null },
+                    deps(),
+                ),
+            ),
+        ).toBe("ok");
+        expect(await Promise.all(held)).toEqual(["timeout", "timeout"]);
+        expect(await run(stream(site([{ name: "again.txt", content: "x" }])))).toBe("ok");
         expect(await leftovers()).toEqual([]);
     });
 

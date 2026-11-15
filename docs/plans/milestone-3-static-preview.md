@@ -219,3 +219,17 @@ TTL, expiry, deletion and cleanup (milestone 5), packaging and publishing
       sequence number, stops on a terminal status or after 5 failed polls). Read-only:
       deploying stays in the CLI, and resolving `reconciliation-needed` is not exposed
       over HTTP, so the page only says it needs an administrator.
+
+## Milestone review (Opus 5.5)
+
+No security or tenant-isolation findings. Fixed: an administrator can now resolve a
+`reconciliation-needed` deployment (`POST …/deployments/{id}/resolution`, session only,
+fresh sign-in, admin/owner; a button on the preview page); uploads are refused while
+deployments are off and capped at `LAUNCHPAD_MAX_CONCURRENT_UPLOADS` (2) per organization
+and 8 in total; `deploy` settles the preview before uploading. Still open: the live
+Dokku run (needs a disposable Dokku); the plan's outcome and decision 1 say the dashboard
+accepts an upload, but the dashboard is read-only and logs were not built, so the user must
+approve that narrowing or ask for it; artifacts are never deleted (milestone 5); and the
+low findings (404 wording across projects, a key revoked mid-upload, an unknown preview's
+deployment list returning an empty list, the list showing "Failed" after a rolled-back
+deploy, per-preview queries on the list page, the global idempotency-row sweep).

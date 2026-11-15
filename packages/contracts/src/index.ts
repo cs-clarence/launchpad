@@ -177,6 +177,13 @@ export const deploymentSchema = z.strictObject({
     finishedAt: timestamp.nullable(),
 });
 
+export const resolveDeploymentSchema = z.strictObject({
+    outcome: z.enum(["failed", "succeeded"]).meta({
+        description:
+            "What the host was found to be serving: `succeeded` if the new release is live, `failed` if the previous one still is.",
+    }),
+});
+
 export const deploymentListSchema = z.strictObject({ items: z.array(deploymentSchema) });
 
 export const deploymentEventSchema = z.strictObject({

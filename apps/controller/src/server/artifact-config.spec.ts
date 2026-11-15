@@ -16,6 +16,7 @@ describe("upload configuration", () => {
                 LAUNCHPAD_MAX_ARCHIVE_DEPTH: "4",
                 LAUNCHPAD_UPLOAD_TIMEOUT_SECONDS: "9",
                 LAUNCHPAD_MAX_ARTIFACTS: "5",
+                LAUNCHPAD_MAX_CONCURRENT_UPLOADS: "3",
             }),
         ).toEqual({
             maxUploadBytes: 1000,
@@ -24,6 +25,7 @@ describe("upload configuration", () => {
             maxDepth: 4,
             uploadTimeoutMs: 9000,
             maxArtifacts: 5,
+            maxConcurrentUploads: 3,
         });
     });
 
