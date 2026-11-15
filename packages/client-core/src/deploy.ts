@@ -9,6 +9,7 @@ import {
 import { ClientCoreError } from "./errors";
 import { clientFor, type Context, resolve } from "./operations";
 import { packDirectory, readArchive } from "./pack";
+import { resolveProjectId } from "./project";
 
 const TERMINAL = new Set(["succeeded", "failed", "cancelled", "reconciliation-needed"]);
 const SLUG = /^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$/;
@@ -87,11 +88,7 @@ export async function deploy(ctx: Context, input: DeployInput): Promise<DeployRe
     const client = clientFor(ctx, resolved);
     const organizationId = resolved.organizationId ?? (await client.key.get()).organizationId;
 
-    const projects = await client.projects.list(organizationId);
-    const project = projects.find((p) => p.id === input.project || p.slug === input.project);
-    if (!project) {
-        throw new ClientCoreError("bad-input", `This key cannot see a project "${input.project}".`);
-    }
+    const projectId = await resolveProjectId(client, organizationId, input.project);
 
     const stat = await fs.lstat(input.source).catch(() => undefined);
     if (!stat) throw new ClientCoreError("bad-input", "The source does not exist.");
@@ -109,13 +106,7 @@ export async function deploy(ctx: Context, input: DeployInput): Promise<DeployRe
         message: artifact.reused ? "Archive already stored" : "Archive stored",
     });
 
-    const preview = await findOrCreatePreview(
-        client,
-        organizationId,
-        project.id,
-        input.name,
-        sleep,
-    );
+    const preview = await findOrCreatePreview(client, organizationId, projectId, input.name, sleep);
     progress({ kind: "step", message: `Deploying to ${preview.hostname}` });
 
     const idempotencyKey = `deploy-${randomUUID()}`;

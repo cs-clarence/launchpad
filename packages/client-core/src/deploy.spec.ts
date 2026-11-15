@@ -2,7 +2,14 @@ import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { ClientCoreError, createContext, deploy, type Progress, packDirectory } from "./index";
+import {
+    ClientCoreError,
+    createContext,
+    deploy,
+    listPreviews,
+    type Progress,
+    packDirectory,
+} from "./index";
 
 const KEY = "lp_" + "a".repeat(43);
 const ORG = "org-one";
@@ -275,6 +282,24 @@ describe("deploying a directory", () => {
         expect(
             calls.filter((c) => c.path.endsWith("/deployments") && c.method === "POST"),
         ).toHaveLength(1);
+    });
+});
+
+describe("naming the project", () => {
+    it("uses an id as it is, so a key without project:read can deploy and list by id", async () => {
+        const byId = controller({ previews: [previewBody()], statuses: ["succeeded"] });
+        await deploy(byId.ctx, args(await site(), { project: PROJECT }));
+        expect(byId.calls.some((c) => c.path.endsWith("/projects"))).toBe(false);
+        await listPreviews(byId.ctx, { project: PROJECT });
+        expect(byId.calls.some((c) => c.path.endsWith("/projects"))).toBe(false);
+        expect(byId.calls.some((c) => c.path.includes(`projectId=${PROJECT}`))).toBe(true);
+
+        const bySlug = controller({ previews: [previewBody()], statuses: ["succeeded"] });
+        await deploy(bySlug.ctx, args(await site(), { project: "site" }));
+        expect(bySlug.calls.some((c) => c.path.endsWith("/projects"))).toBe(true);
+        await expect(listPreviews(bySlug.ctx, { project: "nope" })).rejects.toThrow(
+            /cannot see a project/,
+        );
     });
 });
 

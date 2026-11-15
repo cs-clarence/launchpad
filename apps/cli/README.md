@@ -49,7 +49,7 @@ returns once it is queued). Progress goes to stderr; stdout is the result, a sin
   so the controller returns the first result instead of deploying twice. A preview takes one deployment at a
   time: deploying while one is unfinished is a conflict (exit 1, code `conflict`).
 - **The key needs** `preview:read`, `preview:create` and `preview:deploy` (a project-limited key reaches only its
-  projects), plus `project:read` to name a project by slug. Previews and deployments are available only when
+  projects), plus `project:read` only to name a project by slug (a project id needs no lookup). Previews and deployments are available only when
   the controller has deployments turned on.
 - **Failures** carry fixed, safe text (for example, the new release did not become ready and the previous one
   was restored). `reconciliation-needed` means an administrator must check the host first.

@@ -1,5 +1,5 @@
-import { ClientCoreError } from "./errors";
 import { clientFor, type Context, resolve } from "./operations";
+import { resolveProjectId } from "./project";
 
 async function scoped(ctx: Context, profile?: string) {
     const resolved = await resolve(ctx, profile);
@@ -15,17 +15,8 @@ export async function listPreviews(
 ) {
     const { client, organizationId } = await scoped(ctx, options.profile);
     let projectId: string | undefined;
-    if (options.project) {
-        const projects = await client.projects.list(organizationId);
-        const match = projects.find((p) => p.id === options.project || p.slug === options.project);
-        if (!match) {
-            throw new ClientCoreError(
-                "bad-input",
-                `This key cannot see a project "${options.project}".`,
-            );
-        }
-        projectId = match.id;
-    }
+    if (options.project)
+        projectId = await resolveProjectId(client, organizationId, options.project);
     const items = [];
     let cursor: string | undefined;
     // Bounded: a very large organization is paged through, not pulled whole.
