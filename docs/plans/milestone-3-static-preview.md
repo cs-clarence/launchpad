@@ -155,4 +155,12 @@ TTL, expiry, deletion and cleanup (milestone 5), packaging and publishing
       or announce a digest to skip the upload, is a slice 6 candidate). Session only;
       API-key access with `preview:deploy` arrives in slice 6. Also closes the
       milestone 1 gaps for streamed bodies and `/_serverFn` size limits.
-- [ ] Slices 3–6.
+- [x] Slice 3: Dokku SSH adapter (`packages/dokku`). Fixed vocabulary (apps
+      create/exists/destroy, domains:set, ports:set, git:load-image, ps:report), strict
+      validation of generated names, pinned known_hosts and a private-key permission
+      check re-verified on every call, a fail-closed ssh command line (`--` before the
+      destination, `-F /dev/null`, minimal environment), timeouts, cancellation,
+      bounded output, and a typed error taxonomy where `uncertain` (timeout,
+      cancellation, dropped connection) must be reconciled. Unit-tested with fake
+      transports and stand-in `ssh` executables; no live engine yet.
+- [ ] Slices 4–6.
