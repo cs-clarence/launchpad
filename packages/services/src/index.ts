@@ -10,5 +10,6 @@ export * from "./invitations";
 export * from "./contracts";
 export * from "./api-keys";
 export * from "./previews";
+export * from "./archive";
 export * from "./artifacts";
 export * from "./deployments";
