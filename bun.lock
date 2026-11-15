@@ -75,6 +75,26 @@
         "vitest": "catalog:",
       },
     },
+    "apps/worker": {
+      "name": "@launchpad/worker",
+      "version": "0.0.0",
+      "dependencies": {
+        "@launchpad/database": "workspace:^",
+        "@launchpad/dokku": "workspace:^",
+        "@launchpad/services": "workspace:^",
+        "kysely": "catalog:",
+        "tar": "catalog:",
+      },
+      "devDependencies": {
+        "@launchpad/tsconfig": "workspace:^",
+        "@launchpad/vite-config": "workspace:^",
+        "@launchpad/vitest-config": "workspace:^",
+        "@types/bun": "catalog:",
+        "typescript": "catalog:",
+        "vite": "catalog:",
+        "vitest": "catalog:",
+      },
+    },
     "packages/auth": {
       "name": "@launchpad/auth",
       "version": "0.0.0",
@@ -396,6 +416,8 @@
     "@launchpad/vite-config": ["@launchpad/vite-config@workspace:packages/vite-config"],
 
     "@launchpad/vitest-config": ["@launchpad/vitest-config@workspace:packages/vitest-config"],
+
+    "@launchpad/worker": ["@launchpad/worker@workspace:apps/worker"],
 
     "@lezer/common": ["@lezer/common@1.5.5", "", {}, "sha512-Pw7PVCndruF1pb3ebCxpSVpkMHSDjwRCLcTRw+RizUKco5QbWylwq2g4lnG/RYN7yTTQDXE9F77MwtkAyphrjg=="],
 

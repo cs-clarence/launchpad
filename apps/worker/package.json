@@ -1,0 +1,28 @@
+{
+    "name": "@launchpad/worker",
+    "version": "0.0.0",
+    "private": true,
+    "description": "The privileged deployment worker: builds images and talks to Dokku",
+    "type": "module",
+    "scripts": {
+        "build": "bun build src/index.ts --target=bun --outdir=dist",
+        "check:types": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.node.json",
+        "test:unit": "bun --bun vitest run --config vitest.config.unit.ts"
+    },
+    "dependencies": {
+        "@launchpad/database": "workspace:^",
+        "@launchpad/dokku": "workspace:^",
+        "@launchpad/services": "workspace:^",
+        "kysely": "catalog:",
+        "tar": "catalog:"
+    },
+    "devDependencies": {
+        "@launchpad/tsconfig": "workspace:^",
+        "@launchpad/vite-config": "workspace:^",
+        "@launchpad/vitest-config": "workspace:^",
+        "@types/bun": "catalog:",
+        "typescript": "catalog:",
+        "vite": "catalog:",
+        "vitest": "catalog:"
+    }
+}

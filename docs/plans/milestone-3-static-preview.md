@@ -182,4 +182,14 @@ TTL, expiry, deletion and cleanup (milestone 5), packaging and publishing
       restrictions on enqueue (6), a worker shutdown signal wired in (5). The
       `apps/worker` process that polls `claimNext` and supplies real `DeployPorts`
       arrives with slice 5, when there is something real to run.
-- [ ] Slices 5–6.
+- [~] Slice 5 (in two PRs). **5a: the worker** (`apps/worker`): fixed versioned Nginx
+  template with an SPA switch, extraction that validates the archive again,
+  `docker build --network none` and `docker save` through a fixed vocabulary, the
+  load streamed to Dokku, a proxy readiness probe that requires this deployment's
+  id in `X-Launchpad-Deployment`, the polling loop, and configuration that reads
+  nothing while the flag is off. Unit-tested with stand-in `docker` executables, a
+  local HTTP server and fakes; no Docker, Dokku or database is needed. **5b:** the
+  opt-in live task (`omni -i run test:live -p @launchpad/worker`) against a
+  disposable Dokku you start, and rollback to the previous image after a failed
+  verify.
+- [ ] Slice 6.

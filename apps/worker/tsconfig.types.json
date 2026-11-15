@@ -1,0 +1,4 @@
+{
+    "extends": ["@launchpad/tsconfig/types.json", "./tsconfig.project.json"],
+    "compilerOptions": {}
+}
