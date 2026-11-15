@@ -83,6 +83,25 @@ describe("the docker vocabulary", () => {
         await expect(partial.done).rejects.toBeInstanceOf(DockerError);
     });
 
+    it("keeps a bounded, whole-character diagnostic however the output is chunked", async () => {
+        // 5000 two-byte characters on stderr: the limit is 4000 bytes, not characters.
+        const { docker } = await recording(
+            `i=0; while [ $i -lt 5000 ]; do printf '\\303\\251' >&2; i=$((i+1)); done; exit 1`,
+        );
+        const error = (await docker.build("/tmp/d", TAG).catch((e: unknown) => e)) as DockerError;
+        expect(Buffer.byteLength(error.detail)).toBeLessThanOrEqual(4000);
+        expect(error.detail).not.toContain("\uFFFD");
+        expect(error.detail.length).toBeGreaterThan(1000);
+    });
+
+    it("bounds image removal with its own deadline", async () => {
+        const bin = await fakeDocker(tmp.dir, "exec sleep 30");
+        const docker = createDocker({ binary: bin, removeTimeoutMs: 300 });
+        const started = Date.now();
+        await docker.remove(TAG);
+        expect(Date.now() - started).toBeLessThan(5000);
+    });
+
     it("removes exactly one image, forced, and ignores a failure", async () => {
         const { docker, argv } = await recording("exit 1");
         await expect(docker.remove(TAG)).resolves.toBeUndefined();

@@ -2,7 +2,8 @@ import type { Database } from "@launchpad/database";
 import type { DeployPorts } from "@launchpad/services";
 import type { Kysely } from "kysely";
 import { describe, expect, it } from "vitest";
-import { runOnce, runWorker } from "./worker";
+import { getEventListeners } from "node:events";
+import { runOnce, runWorker, sleep } from "./worker";
 
 const ports = {} as DeployPorts;
 // A database that must never be touched, or one that always fails.
@@ -48,6 +49,18 @@ describe("the worker loop", () => {
         await done;
         expect(lines).toEqual([{ event: "worker-error" }]);
         expect(JSON.stringify(lines)).not.toContain("hunter2");
+    });
+
+    it("does not wait out the poll interval when stopped before it starts, or leak listeners", async () => {
+        const aborted = new AbortController();
+        aborted.abort();
+        const started = Date.now();
+        await sleep(60_000, aborted.signal);
+        expect(Date.now() - started).toBeLessThan(1000);
+
+        const live = new AbortController();
+        for (let i = 0; i < 20; i++) await sleep(1, live.signal);
+        expect(getEventListeners(live.signal, "abort")).toHaveLength(0);
     });
 
     it("stops promptly when idle", async () => {

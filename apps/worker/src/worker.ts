@@ -30,17 +30,17 @@ export async function runOnce(
     return outcome;
 }
 
-const sleep = (ms: number, signal: AbortSignal) =>
+export const sleep = (ms: number, signal: AbortSignal) =>
     new Promise<void>((resolve) => {
-        const timer = setTimeout(resolve, ms);
-        signal.addEventListener(
-            "abort",
-            () => {
-                clearTimeout(timer);
-                resolve();
-            },
-            { once: true },
-        );
+        // An abort that already happened will not fire again.
+        if (signal.aborted) return resolve();
+        const done = () => {
+            clearTimeout(timer);
+            signal.removeEventListener("abort", done);
+            resolve();
+        };
+        const timer = setTimeout(done, ms);
+        signal.addEventListener("abort", done, { once: true });
     });
 
 // Polls until asked to stop. An error from one round (a database outage, say) is

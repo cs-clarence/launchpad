@@ -21,15 +21,20 @@ function minimalEnv(): Record<string, string> {
     return env;
 }
 
+// Keeps at most `limit` bytes and decodes once at the end, so a multibyte character is
+// never counted in the wrong unit or decoded from a half-chunk.
 function bounded(limit: number) {
-    let text = "";
+    const chunks: Buffer[] = [];
+    let bytes = 0;
     return {
         add(chunk: Buffer) {
-            if (text.length < limit)
-                text += chunk.subarray(0, limit - text.length).toString("utf8");
+            if (bytes >= limit) return;
+            const part = chunk.subarray(0, limit - bytes);
+            chunks.push(part);
+            bytes += part.length;
         },
         get text() {
-            return text;
+            return Buffer.concat(chunks).toString("utf8");
         },
     };
 }
@@ -44,8 +49,9 @@ export class DockerError extends Error {
     }
 }
 
-export function createDocker(options: { binary?: string } = {}) {
+export function createDocker(options: { binary?: string; removeTimeoutMs?: number } = {}) {
     const binary = options.binary ?? "docker";
+    const removeTimeoutMs = options.removeTimeoutMs ?? 20_000;
 
     function start(args: string[], signal: AbortSignal | undefined) {
         const child = spawn(binary, args, {
@@ -114,7 +120,9 @@ export function createDocker(options: { binary?: string } = {}) {
         // Best effort: removes exactly this image, never a prune.
         async remove(tag: string): Promise<void> {
             if (!TAG.test(tag)) return;
-            const { exited } = start(["rmi", "--force", tag], undefined);
+            // Its own deadline, independent of any deployment's signal: cleanup must stay
+            // bounded even when that signal is already aborted (a shutdown).
+            const { exited } = start(["rmi", "--force", tag], AbortSignal.timeout(removeTimeoutMs));
             await exited;
         },
     };
