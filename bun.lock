@@ -59,6 +59,7 @@
         "zod": "catalog:",
       },
       "devDependencies": {
+        "@launchpad/client-core": "workspace:^",
         "@launchpad/tsconfig": "workspace:^",
         "@launchpad/vite-config": "workspace:^",
         "@launchpad/vitest-config": "workspace:^",
@@ -121,6 +122,7 @@
       "version": "0.0.0",
       "dependencies": {
         "@launchpad/sdk": "workspace:^",
+        "tar": "catalog:",
         "zod": "catalog:",
       },
       "devDependencies": {

@@ -1,7 +1,17 @@
 import {
+    artifactSchema,
+    createdDeploymentSchema,
     type createApiKeySchema,
+    type createDeploymentSchema,
+    type createPreviewSchema,
     type createProjectSchema,
     createdProjectSchema,
+    deploymentEventSchema,
+    deploymentEventsSchema,
+    deploymentListSchema,
+    deploymentSchema,
+    previewListSchema,
+    previewSchema,
     keyInfoSchema,
     memberSchema,
     organizationSummarySchema,
@@ -17,6 +27,19 @@ export type Project = z.infer<typeof projectSchema>;
 export type CreatedProject = z.infer<typeof createdProjectSchema>;
 export type CreateProjectInput = z.input<typeof createProjectSchema>;
 export type CreateApiKeyInput = z.input<typeof createApiKeySchema>;
+export type Preview = z.infer<typeof previewSchema>;
+export type PreviewList = z.infer<typeof previewListSchema>;
+export type CreatePreviewInput = z.input<typeof createPreviewSchema>;
+export type CreateDeploymentInput = z.input<typeof createDeploymentSchema>;
+export type QueuedDeployment = z.infer<typeof createdDeploymentSchema>;
+export type Deployment = z.infer<typeof deploymentSchema>;
+export type DeploymentEvents = z.infer<typeof deploymentEventsSchema>;
+export type Artifact = z.infer<typeof artifactSchema>;
+export interface RequestOptions {
+    // Repeating a request with the same key returns the first result.
+    idempotencyKey?: string;
+    signal?: AbortSignal;
+}
 
 export interface ClientOptions {
     // The controller's origin, e.g. https://control.example.com. Plain http is accepted
@@ -26,6 +49,8 @@ export interface ClientOptions {
     apiKey: string;
     fetch?: typeof fetch;
     timeoutMs?: number;
+    // Uploading an archive takes longer than any other call.
+    uploadTimeoutMs?: number;
 }
 
 const API_KEY_FORMAT = /^lp_[A-Za-z0-9_-]{20,200}$/;
@@ -57,6 +82,21 @@ export function normalizeBaseUrl(input: string): string {
 // Loose: a newer controller may add fields without breaking an older client.
 const loose = <S extends z.ZodObject>(schema: S) =>
     schema.loose() as unknown as z.ZodType<z.infer<S>>;
+
+// Pages whose items are tolerant too, so a newer controller's extra fields on a preview or
+// a deployment do not break an older client.
+const previewPage = z
+    .object({ items: z.array(loose(previewSchema)), nextCursor: z.uuid().nullable() })
+    .loose() as unknown as z.ZodType<PreviewList>;
+const deploymentPage = z
+    .object({ items: z.array(loose(deploymentSchema)) })
+    .loose() as unknown as z.ZodType<z.infer<typeof deploymentListSchema>>;
+const eventPage = z
+    .object({
+        items: z.array(loose(deploymentEventSchema)),
+        nextAfter: z.number().int().nullable(),
+    })
+    .loose() as unknown as z.ZodType<DeploymentEvents>;
 
 // Reads at most MAX_BODY_BYTES, stopping (and cancelling the stream) as soon as the limit
 // is passed, so an oversized or endless answer is never buffered whole.
@@ -98,13 +138,28 @@ export function createClient(options: ClientOptions) {
     }
     const doFetch = options.fetch ?? globalThis.fetch.bind(globalThis);
     const timeoutMs = options.timeoutMs ?? 30_000;
+    const uploadTimeoutMs = options.uploadTimeoutMs ?? 5 * 60_000;
+    const IDEMPOTENCY_KEY = /^[A-Za-z0-9._:-]{1,128}$/;
 
     async function request<T>(
         method: string,
         path: string,
         schema: z.ZodType<T>,
         body?: unknown,
+        extra: {
+            idempotencyKey?: string;
+            signal?: AbortSignal;
+            raw?: { body: Blob | Uint8Array; contentType: string };
+            timeoutMs?: number;
+        } = {},
     ): Promise<T> {
+        if (extra.idempotencyKey !== undefined && !IDEMPOTENCY_KEY.test(extra.idempotencyKey)) {
+            throw new LaunchpadConfigError(
+                "An idempotency key is 1 to 128 letters, digits and . _ : -.",
+            );
+        }
+        const signals = [AbortSignal.timeout(extra.timeoutMs ?? timeoutMs)];
+        if (extra.signal) signals.push(extra.signal);
         let response: Response;
         let text: string;
         try {
@@ -114,19 +169,27 @@ export function createClient(options: ClientOptions) {
                     authorization: `Bearer ${apiKey}`,
                     accept: "application/json",
                     ...(body === undefined ? {} : { "content-type": "application/json" }),
+                    ...(extra.raw ? { "content-type": extra.raw.contentType } : {}),
+                    ...(extra.idempotencyKey ? { "idempotency-key": extra.idempotencyKey } : {}),
                 },
-                body: body === undefined ? undefined : JSON.stringify(body),
+                body: extra.raw
+                    ? (extra.raw.body as BodyInit)
+                    : body === undefined
+                      ? undefined
+                      : JSON.stringify(body),
                 // Never ambient browser credentials, and never forward the key elsewhere.
                 credentials: "omit",
                 redirect: "error",
                 cache: "no-store",
-                signal: AbortSignal.timeout(timeoutMs),
+                signal: AbortSignal.any(signals),
             });
             // The timeout also covers the body: a stalled stream must not hang the caller.
             text = await readBounded(response);
         } catch (error) {
             if (error instanceof LaunchpadTransportError) throw error;
             const name = (error as { name?: string })?.name;
+            // The caller's own cancellation is theirs to see, not a timeout.
+            if (extra.signal?.aborted) throw error;
             if (name === "TimeoutError" || name === "AbortError") {
                 throw new LaunchpadTransportError(
                     "timeout",
@@ -175,6 +238,12 @@ export function createClient(options: ClientOptions) {
     }
 
     const seg = encodeURIComponent;
+    const query = (params: Record<string, string | number | undefined>) => {
+        const entries = Object.entries(params).filter(([, v]) => v !== undefined);
+        return entries.length === 0
+            ? ""
+            : `?${entries.map(([k, v]) => `${seg(k)}=${seg(String(v))}`).join("&")}`;
+    };
     return {
         // What this key is: its organization, scopes, project limits and expiry.
         key: { get: () => request("GET", "/key", loose(keyInfoSchema)) },
@@ -193,6 +262,97 @@ export function createClient(options: ClientOptions) {
                     "GET",
                     `/organizations/${seg(organizationId)}/members`,
                     z.array(loose(memberSchema)),
+                ),
+        },
+        artifacts: {
+            // Uploads a `.tar.gz` of a built static site (index.html at its root). An
+            // identical archive already stored for the organization is reused.
+            upload: (
+                organizationId: string,
+                archive: Blob | Uint8Array,
+                opts: RequestOptions = {},
+            ) =>
+                request(
+                    "POST",
+                    `/organizations/${seg(organizationId)}/artifacts`,
+                    loose(artifactSchema),
+                    undefined,
+                    {
+                        signal: opts.signal,
+                        raw: { body: archive, contentType: "application/gzip" },
+                        timeoutMs: uploadTimeoutMs,
+                    },
+                ),
+        },
+        previews: {
+            list: (organizationId: string, filter: { projectId?: string; cursor?: string } = {}) =>
+                request(
+                    "GET",
+                    `/organizations/${seg(organizationId)}/previews${query(filter)}`,
+                    previewPage,
+                ),
+            get: (organizationId: string, previewId: string) =>
+                request(
+                    "GET",
+                    `/organizations/${seg(organizationId)}/previews/${seg(previewId)}`,
+                    loose(previewSchema),
+                ),
+            create: (
+                organizationId: string,
+                projectId: string,
+                input: CreatePreviewInput,
+                opts: RequestOptions = {},
+            ) =>
+                request(
+                    "POST",
+                    `/organizations/${seg(organizationId)}/projects/${seg(projectId)}/previews`,
+                    loose(previewSchema),
+                    input,
+                    opts,
+                ),
+        },
+        deployments: {
+            // Queues the deployment and returns at once; poll `get` for progress.
+            create: (
+                organizationId: string,
+                previewId: string,
+                input: CreateDeploymentInput,
+                opts: RequestOptions = {},
+            ) =>
+                request(
+                    "POST",
+                    `/organizations/${seg(organizationId)}/previews/${seg(previewId)}/deployments`,
+                    loose(createdDeploymentSchema),
+                    input,
+                    opts,
+                ),
+            list: (organizationId: string, previewId: string) =>
+                request(
+                    "GET",
+                    `/organizations/${seg(organizationId)}/previews/${seg(previewId)}/deployments`,
+                    deploymentPage,
+                ),
+            get: (organizationId: string, deploymentId: string, opts: RequestOptions = {}) =>
+                request(
+                    "GET",
+                    `/organizations/${seg(organizationId)}/deployments/${seg(deploymentId)}`,
+                    loose(deploymentSchema),
+                    undefined,
+                    { signal: opts.signal },
+                ),
+            // Events after the last sequence number already seen.
+            events: (
+                organizationId: string,
+                deploymentId: string,
+                after?: number,
+                opts: RequestOptions = {},
+            ) =>
+                request(
+                    "GET",
+                    `/organizations/${seg(organizationId)}/deployments/${seg(deploymentId)}/events${query({ after })}`,
+                    eventPage,
+                    undefined,
+                    { signal: opts.signal },
                 ),
         },
         projects: {

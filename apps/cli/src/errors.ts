@@ -11,7 +11,17 @@ export const EXIT = {
     notFound: 4,
     transport: 5, // the controller could not be reached, or timed out, or sent something unexpected
     local: 6, // the credential file, or a profile, is unusable
+    deployment: 7, // the deployment failed, was cancelled, or needs an administrator
+    waiting: 8, // still running when --timeout ran out; it was not cancelled
 } as const;
+
+// A command that has already printed its result and only needs a particular exit code.
+export class ExitWith extends Error {
+    constructor(readonly exitCode: number) {
+        super(`exit ${exitCode}`);
+        this.name = "ExitWith";
+    }
+}
 
 export interface Failure {
     exitCode: number;

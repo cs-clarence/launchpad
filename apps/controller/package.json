@@ -32,6 +32,7 @@
         "zod": "catalog:"
     },
     "devDependencies": {
+        "@launchpad/client-core": "workspace:^",
         "@launchpad/tsconfig": "workspace:^",
         "@launchpad/vite-config": "workspace:^",
         "@launchpad/vitest-config": "workspace:^",

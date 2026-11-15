@@ -251,3 +251,161 @@ describe("packaging", () => {
         }
     });
 });
+
+const ID = "0f8fad5b-d9cb-469f-a165-70867728950e";
+const PREVIEW = {
+    id: ID,
+    projectId: ID,
+    slug: "review",
+    hostname: "review-a1b2c3.previews.example.com",
+    state: "active",
+    activeDeploymentId: null,
+    createdAt: "2026-11-15T00:00:00.000Z",
+};
+const DEPLOYMENT = {
+    id: ID,
+    previewId: ID,
+    artifactId: ID,
+    spa: false,
+    status: "queued",
+    failure: null,
+    createdAt: "2026-11-15T00:00:00.000Z",
+    updatedAt: "2026-11-15T00:00:00.000Z",
+    finishedAt: null,
+};
+
+describe("previews and deployments", () => {
+    it("lists previews with a filter and cursor, tolerating fields a newer controller adds", async () => {
+        const { client, calls } = recording(() =>
+            json({ items: [{ ...PREVIEW, newField: 1 }], nextCursor: ID, extra: true }),
+        );
+        const page = await client.previews.list(ORG, { projectId: ID, cursor: ID });
+        expect(page.nextCursor).toBe(ID);
+        expect(page.items[0]!.hostname).toBe(PREVIEW.hostname);
+        expect(calls[0]!.url).toBe(
+            `https://control.example.com/api/v1/organizations/${ORG}/previews?projectId=${ID}&cursor=${ID}`,
+        );
+        expect((calls[0]!.init.headers as Record<string, string>).authorization).toBe(
+            `Bearer ${KEY}`,
+        );
+    });
+
+    it("sends the idempotency key on create and deploy, and refuses a malformed one before any request", async () => {
+        const { client, calls } = recording((url) =>
+            url.endsWith("/previews")
+                ? json(PREVIEW, { status: 201 })
+                : json({ id: ID, status: "queued", createdAt: PREVIEW.createdAt }, { status: 202 }),
+        );
+        await client.previews.create(ORG, ID, { slug: "review" }, { idempotencyKey: "create-1" });
+        await client.deployments.create(
+            ORG,
+            ID,
+            { artifactId: ID, spa: true },
+            { idempotencyKey: "deploy-1" },
+        );
+        const header = (i: number) =>
+            (calls[i]!.init.headers as Record<string, string>)["idempotency-key"];
+        expect([header(0), header(1)]).toEqual(["create-1", "deploy-1"]);
+        expect(JSON.parse(calls[1]!.init.body as string)).toEqual({ artifactId: ID, spa: true });
+        for (const bad of ["", "has space", "x".repeat(129), "line\nbreak"]) {
+            await expect(
+                client.deployments.create(ORG, ID, { artifactId: ID }, { idempotencyKey: bad }),
+            ).rejects.toBeInstanceOf(LaunchpadConfigError);
+        }
+        expect(calls).toHaveLength(2);
+    });
+
+    it("reads a deployment and its events from where the caller stopped", async () => {
+        const { client, calls } = recording((url) =>
+            url.includes("/events")
+                ? json({
+                      items: [
+                          {
+                              seq: 3,
+                              phase: "build",
+                              level: "info",
+                              message: "m",
+                              createdAt: PREVIEW.createdAt,
+                          },
+                      ],
+                      nextAfter: null,
+                  })
+                : json({
+                      ...DEPLOYMENT,
+                      status: "failed",
+                      failure: { code: "build-failed", message: "x" },
+                  }),
+        );
+        const got = await client.deployments.get(ORG, ID);
+        expect(got.failure).toEqual({ code: "build-failed", message: "x" });
+        const events = await client.deployments.events(ORG, ID, 2);
+        expect(events.items[0]!.seq).toBe(3);
+        expect(calls[1]!.url).toMatch(/\/events\?after=2$/);
+        await client.deployments.events(ORG, ID);
+        expect(calls[2]!.url).toMatch(/\/events$/);
+    });
+
+    it("uploads the archive as the raw body with its content type and a longer deadline", async () => {
+        const body = new Uint8Array([0x1f, 0x8b, 1, 2, 3]);
+        const { client, calls } = recording(() =>
+            json(
+                {
+                    id: ID,
+                    digest: "a".repeat(64),
+                    sizeBytes: 5,
+                    expandedBytes: 10,
+                    entryCount: 1,
+                    createdAt: PREVIEW.createdAt,
+                    reused: false,
+                },
+                { status: 201 },
+            ),
+        );
+        const artifact = await client.artifacts.upload(ORG, body);
+        expect(artifact.reused).toBe(false);
+        const init = calls[0]!.init;
+        expect((init.headers as Record<string, string>)["content-type"]).toBe("application/gzip");
+        expect(init.body).toBe(body);
+        expect(init.method).toBe("POST");
+    });
+
+    it("keeps the caller's own cancellation distinct from a timeout, and encodes path segments", async () => {
+        const controller = new AbortController();
+        const { client, calls } = recording(
+            (_url, init) =>
+                new Promise((_resolve, reject) => {
+                    init.signal!.addEventListener("abort", () =>
+                        reject(Object.assign(new Error("aborted"), { name: "AbortError" })),
+                    );
+                    setTimeout(() => controller.abort(), 20);
+                }),
+        );
+        await expect(
+            client.deployments.get(ORG, ID, { signal: controller.signal }),
+        ).rejects.not.toBeInstanceOf(LaunchpadTransportError);
+        const { client: other, calls: otherCalls } = recording(() => json(DEPLOYMENT));
+        await other.deployments.get("org/1", "a b");
+        expect(otherCalls[0]!.url).toContain("/organizations/org%2F1/deployments/a%20b");
+        void calls;
+    });
+
+    it("turns an API error into a typed error and a bad shape into an invalid-response", async () => {
+        const { client } = recording(() =>
+            json(
+                {
+                    code: "conflict",
+                    status: 409,
+                    title: "That preview already has an unfinished deployment.",
+                },
+                { status: 409 },
+            ),
+        );
+        const error = await client.deployments
+            .create(ORG, ID, { artifactId: ID })
+            .catch((e: unknown) => e);
+        expect(error).toBeInstanceOf(LaunchpadApiError);
+        expect((error as LaunchpadApiError).code).toBe("conflict");
+        const { client: odd } = recording(() => json({ items: "nope" }));
+        await expect(odd.previews.list(ORG)).rejects.toMatchObject({ reason: "invalid-response" });
+    });
+});
