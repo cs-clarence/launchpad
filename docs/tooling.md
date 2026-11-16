@@ -21,6 +21,8 @@ when tools, generators, or their commands change.
   MCP uses the official MIT-licensed `@modelcontextprotocol/sdk` (pinned in the
   catalog at 1.32.2) for stdio framing, capability negotiation and tool schemas,
   not a custom protocol implementation. Only stdio modules are imported.
+  The controller's integration tests build the MCP and CLI first and run their built
+  files (also copied alone into an empty directory) over stdio against the built controller.
 - Vitest, Oxfmt, and Oxlint provide tests, formatting, and linting. Commands are
   in [CONTRIBUTING.md](../CONTRIBUTING.md).
 

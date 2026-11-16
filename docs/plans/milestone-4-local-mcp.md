@@ -139,3 +139,11 @@ resources/prompts, browser login.
   path confined to `working_dir`, progress and cancellation), and the selection in the
   shared packer (`picomatch`, pinned in the catalog). Selected secrets and links are still
   refused; unselected files are not judged.
+- Slice 3 implemented: the controller's integration suite (`hop.spec.ts`) drives the built
+  `apps/mcp/dist/index.js` with the SDK's stdio client against the real built controller:
+  read tools, deploy within the include/exclude policy (the stored archive is inspected),
+  following the queued deployment, and a read-only key refused by the controller. A second
+  test copies the built MCP and CLI files alone into an empty directory and runs them.
+  The controller's integration task now builds the MCP and CLI first. No worker runs there, so a stand-in
+  marks the queued deployment succeeded while the tool follows it (the state machine and the
+  worker have their own tests); the live Dokku run remains pending (milestone 3).

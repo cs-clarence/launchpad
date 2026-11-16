@@ -32,10 +32,13 @@
         "zod": "catalog:"
     },
     "devDependencies": {
+        "@launchpad/cli": "workspace:^",
         "@launchpad/client-core": "workspace:^",
+        "@launchpad/mcp": "workspace:^",
         "@launchpad/tsconfig": "workspace:^",
         "@launchpad/vite-config": "workspace:^",
         "@launchpad/vitest-config": "workspace:^",
+        "@modelcontextprotocol/sdk": "catalog:",
         "@scalar/api-reference": "catalog:",
         "@skeletonlabs/skeleton": "catalog:",
         "@skeletonlabs/skeleton-react": "catalog:",
