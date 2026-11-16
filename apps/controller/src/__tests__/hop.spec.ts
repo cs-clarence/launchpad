@@ -41,6 +41,8 @@ import { z } from "zod";
 import { type FakeSmtp, mailText, startFakeSmtp } from "@launchpad/auth/testing";
 import { createTestDatabase } from "@launchpad/database/testing";
 import { SITE, tarGz } from "@launchpad/services/testing";
+import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 // Exercises the real built TanStack Start server (Nitro) -> Elysia -> Better Auth
@@ -1499,6 +1501,169 @@ describe("previews and deployments over HTTP", () => {
         } finally {
             await fs.rm(root, { recursive: true, force: true });
             await fs.rm(config, { recursive: true, force: true });
+        }
+    });
+
+    it("is driven by a real MCP client over stdio: the built binary reads, deploys within its policy, and follows the deployment", async () => {
+        const root = await fs.mkdtemp(path.join(os.tmpdir(), "launchpad-mcp-e2e-"));
+        const config = await fs.mkdtemp(path.join(os.tmpdir(), "launchpad-mcp-e2e-config-"));
+        const binary = path.resolve(import.meta.dirname, "../../../mcp/dist/index.js");
+        const connect = async (key: string, extra: string[]) => {
+            const client = new Client({ name: "e2e", version: "1" });
+            await client.connect(
+                new StdioClientTransport({
+                    command: process.execPath,
+                    args: [binary, "--shared", ...extra],
+                    env: {
+                        PATH: process.env.PATH ?? "",
+                        LAUNCHPAD_CONFIG_DIR: config,
+                        LAUNCHPAD_CONTROLLER: proxied.base,
+                        LAUNCHPAD_API_KEY: key,
+                    },
+                    stderr: "pipe",
+                }),
+            );
+            return client;
+        };
+        const clients: Client[] = [];
+        try {
+            await fs.mkdir(path.join(root, "dist", "private"), { recursive: true });
+            await fs.writeFile(path.join(root, "dist", "index.html"), "<p>hello</p>");
+            await fs.writeFile(path.join(root, "dist", "app.js"), "console.log(1)");
+            await fs.writeFile(path.join(root, "dist", "app.js.map"), "{}");
+            await fs.writeFile(path.join(root, "dist", "private", "notes.txt"), "internal");
+            const policy = [
+                "--allow-deploy",
+                "--include",
+                "dist/**",
+                "--exclude",
+                "**/*.map",
+                "--exclude",
+                "dist/private/**",
+            ];
+
+            const reader = await connect(deployKey, []);
+            clients.push(reader);
+            expect((await reader.listTools()).tools.map((t) => t.name)).not.toContain("deploy");
+            const projects = await reader.callTool({
+                name: "list_projects",
+                arguments: { working_dir: root },
+            });
+            expect(projects.isError).toBe(false);
+            expect(JSON.stringify(projects.structuredContent)).toContain('"slug":"site"');
+
+            const client = await connect(deployKey, policy);
+            clients.push(client);
+            expect((await client.listTools()).tools.map((t) => t.name)).toContain("deploy");
+            const deployed = await client.callTool({
+                name: "deploy",
+                arguments: {
+                    working_dir: root,
+                    path: "dist",
+                    project: "site",
+                    name: "from-mcp",
+                    confirm: true,
+                    wait_seconds: 0,
+                },
+            });
+            expect(deployed.isError, JSON.stringify(deployed)).toBe(false);
+            const data = (
+                deployed.structuredContent as {
+                    data: {
+                        outcome: string;
+                        preview: { id: string; hostname: string };
+                        artifact: { id: string };
+                        deployment: { id: string };
+                    };
+                }
+            ).data;
+            expect(data.outcome).toBe("queued");
+            expect(data.preview.hostname).toMatch(/^from-mcp-[a-z0-9]{6}\.previews\.example\.com$/);
+
+            // The controller stored exactly what the policy allowed.
+            const stored = await testDb.db
+                .selectFrom("artifact")
+                .select("storage_key")
+                .where("id", "=", data.artifact.id)
+                .executeTakeFirstOrThrow();
+            const tar = Bun.gunzipSync(await fs.readFile(path.join(dataDir, stored.storage_key)));
+            const headers = Buffer.from(tar).toString("latin1");
+            expect(headers).toContain("index.html");
+            expect(headers).toContain("app.js");
+            expect(headers).not.toContain("app.js.map");
+            expect(headers).not.toContain("notes.txt");
+
+            const followed = await client.callTool({
+                name: "get_deployment",
+                arguments: { working_dir: root, deployment_id: data.deployment.id },
+            });
+            expect(followed.structuredContent).toMatchObject({
+                data: { id: data.deployment.id, status: "queued", failure: null },
+            });
+            const listed = await client.callTool({
+                name: "list_previews",
+                arguments: { working_dir: root, project: "site" },
+            });
+            expect(JSON.stringify(listed.structuredContent)).toContain("from-mcp");
+
+            // A key without the deploy scope is refused by the controller, not by a hint.
+            const limited = await connect(readKey, policy);
+            clients.push(limited);
+            const refused = await limited.callTool({
+                name: "deploy",
+                arguments: {
+                    working_dir: root,
+                    path: "dist",
+                    project: "site",
+                    name: "from-mcp-two",
+                    confirm: true,
+                    wait_seconds: 0,
+                },
+            });
+            expect(refused.isError).toBe(true);
+            expect(JSON.stringify(refused.structuredContent)).toMatch(/forbidden|permission/);
+        } finally {
+            for (const client of clients) await client.close().catch(() => {});
+            await fs.rm(root, { recursive: true, force: true });
+            await fs.rm(config, { recursive: true, force: true });
+        }
+    });
+
+    it("runs from its built file alone, outside the repository and its node_modules", async () => {
+        const alone = await fs.mkdtemp(path.join(os.tmpdir(), "launchpad-standalone-"));
+        try {
+            for (const app of ["mcp", "cli"]) {
+                const built = path.resolve(import.meta.dirname, `../../../${app}/dist/index.js`);
+                await fs.copyFile(built, path.join(alone, `${app}.js`));
+            }
+            const client = new Client({ name: "standalone", version: "1" });
+            try {
+                await client.connect(
+                    new StdioClientTransport({
+                        command: process.execPath,
+                        args: [path.join(alone, "mcp.js"), "--shared"],
+                        cwd: alone,
+                        env: { PATH: process.env.PATH ?? "", HOME: alone },
+                    }),
+                );
+                expect((await client.listTools()).tools.length).toBeGreaterThan(0);
+            } finally {
+                await client.close().catch(() => {});
+            }
+            const help = await new Promise<{ code: number | null; out: string }>((resolve) => {
+                const child = spawn(process.execPath, [path.join(alone, "cli.js"), "--help"], {
+                    cwd: alone,
+                    env: { PATH: process.env.PATH ?? "", HOME: alone },
+                });
+                let out = "";
+                child.stdout.on("data", (b) => (out += b));
+                child.stderr.on("data", (b) => (out += b));
+                child.on("close", (code) => resolve({ code, out }));
+            });
+            expect(help.code).toBe(0);
+            expect(help.out).toContain("launchpad");
+        } finally {
+            await fs.rm(alone, { recursive: true, force: true });
         }
     });
 

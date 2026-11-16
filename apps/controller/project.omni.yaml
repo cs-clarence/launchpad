@@ -14,6 +14,8 @@ dependencies:
     - "@launchpad/database"
     - "@launchpad/contracts"
     - "@launchpad/client-core"
+    - "@launchpad/cli"
+    - "@launchpad/mcp"
 
 tasks:
   test:unit:
