@@ -59,12 +59,17 @@ export async function runWorker(
     options: WorkerOptions,
 ): Promise<void> {
     const state: LifecycleState = { lastCollect: 0 };
+    let lastLifecycle = 0;
+    // Lifecycle work fills the time between deployments, but a worker that always has a
+    // deployment to run must still expire and delete now and then.
+    const LIFECYCLE_AT_LEAST_EVERY_MS = 30_000;
     while (!options.signal.aborted) {
         try {
             const result = await runOnce(db, ports, options);
-            // Deployments first: lifecycle work only fills the time between them.
             let busy = result !== "idle";
-            if (!busy && options.lifecycle?.config.enabled) {
+            const due = Date.now() - lastLifecycle >= LIFECYCLE_AT_LEAST_EVERY_MS;
+            if ((!busy || due) && options.lifecycle?.config.enabled) {
+                lastLifecycle = Date.now();
                 const round = await runLifecycleOnce(
                     db,
                     options.lifecycle.ports,

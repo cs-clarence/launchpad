@@ -5,6 +5,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
     addMember,
     claimDeletion,
+    claimNext,
     createOrganization,
     createPreview,
     createProject,
@@ -17,9 +18,11 @@ import {
     requestPreviewDeletion,
     resolveDeletion,
     runDeletion,
+    runDeployment,
     ServiceError,
     StaleAttemptError,
     type DeletionClaim,
+    type DeployPorts,
     type DeletionDeps,
     type LifecyclePorts,
     type Principal,
@@ -109,7 +112,7 @@ const make = async () => {
     return { id: preview.id, app: app_name };
 };
 const request = (id: string, who = "dee", organization = org) =>
-    requestPreviewDeletion(testDb.db, people[who]!, organization, id);
+    requestPreviewDeletion(testDb.db, people[who]!, organization, id, { enabled: true });
 const preview = (id: string) =>
     testDb.db.selectFrom("preview").selectAll().where("id", "=", id).executeTakeFirstOrThrow();
 const operation = (id: string) =>
@@ -331,6 +334,61 @@ describe("requesting a deletion", () => {
     });
 });
 
+describe("asking for a deletion while the lifecycle is off", () => {
+    it("is refused, leaving the preview as it was", async () => {
+        const p = await make();
+        expect(
+            await code(
+                requestPreviewDeletion(testDb.db, people.dee!, org, p.id, { enabled: false }),
+            ),
+        ).toBe("conflict");
+        expect((await preview(p.id)).desired_state).toBe("active");
+        const queued = await testDb.db
+            .selectFrom("deletion_operation")
+            .select("id")
+            .where("preview_id", "=", p.id)
+            .execute();
+        expect(queued).toEqual([]);
+        // Authorization still comes first: a stranger learns nothing about the setting.
+        expect(
+            await code(
+                requestPreviewDeletion(testDb.db, people.zoe!, org, p.id, { enabled: false }),
+            ),
+        ).toBe("not-found");
+    });
+});
+
+describe("a name after its preview is gone", () => {
+    it("can be used again once the preview is deleted, but not while it is being deleted", async () => {
+        const p = await make();
+        const slug = (await preview(p.id)).slug;
+        const again = () => createPreview(testDb.db, people.dee!, org, project, { slug }, deps);
+        expect(await code(again())).toBe("conflict");
+        await request(p.id);
+        expect(await code(again())).toBe("conflict");
+        await drain();
+        await testDb.db
+            .updateTable("preview")
+            .set({ desired_state: "deleted", deleted_at: new Date() })
+            .where("id", "=", p.id)
+            .execute();
+        const second = await again();
+        expect(second.id).not.toBe(p.id);
+        expect(second.slug).toBe(slug);
+        // The old row stays, with its own generated names, and two live ones still cannot share.
+        expect(await code(again())).toBe("conflict");
+        const rows = await testDb.db
+            .selectFrom("preview")
+            .select(["id", "app_name", "hostname"])
+            .where("slug", "=", slug)
+            .where("project_id", "=", project)
+            .execute();
+        expect(rows).toHaveLength(2);
+        expect(new Set(rows.map((r) => r.app_name)).size).toBe(2);
+        expect(new Set(rows.map((r) => r.hostname)).size).toBe(2);
+    });
+});
+
 describe("claiming a deletion", () => {
     it("does nothing while the feature is off, and hands one operation to one worker", async () => {
         await drain();
@@ -380,9 +438,17 @@ describe("claiming a deletion", () => {
             .execute();
         await request(p.id);
         expect(await claim()).toBeNull();
+        // Abandoned just now: its image load may still be running on the host, so wait.
         await testDb.db
             .updateTable("deployment")
-            .set({ status: "reconciliation-needed" })
+            .set({ status: "reconciliation-needed", updated_at: new Date() })
+            .where("id", "=", d.id)
+            .execute();
+        expect(await claim()).toBeNull();
+        // Abandoned long ago: the destroy is what puts the host right.
+        await testDb.db
+            .updateTable("deployment")
+            .set({ updated_at: new Date(Date.now() - 2 * 3_600_000) })
             .where("id", "=", d.id)
             .execute();
         expect(await claim()).toMatchObject({ previewId: p.id });
@@ -579,6 +645,104 @@ describe("running a deletion", () => {
         // Nothing runs it again by itself, and the preview is still being deleted.
         expect(await claim("w1")).toBeNull();
         expect((await preview(p.id)).desired_state).toBe("deleting");
+    });
+
+    it("waits out an unreachable host without using up the attempts", async () => {
+        await drain();
+        const p = await make();
+        await request(p.id);
+        let outage = MAX_DELETION_ATTEMPTS * 3;
+        const fake = host([p.app], {
+            exists: () => {
+                if (outage-- > 0) throw dokkuError("not-started");
+                return undefined;
+            },
+        });
+        const outcomes: string[] = [];
+        for (let i = 0; i < MAX_DELETION_ATTEMPTS * 12; i++) {
+            const next = await claim();
+            if (!next) {
+                // Not claimable until the wait has passed: let it.
+                await testDb.db
+                    .updateTable("deletion_operation")
+                    .set({ lease_expires_at: new Date(Date.now() - 1) })
+                    .where("preview_id", "=", p.id)
+                    .execute();
+                continue;
+            }
+            const outcome = await runDeletion(testDb.db, next, fake.ports, on);
+            outcomes.push(outcome);
+            if (outcome !== "retry") break;
+        }
+        expect(outcomes.filter((o) => o === "retry").length).toBe(MAX_DELETION_ATTEMPTS * 3);
+        expect(outcomes.at(-1)).toBe("succeeded");
+        expect((await preview(p.id)).desired_state).toBe("deleted");
+        expect(fake.count.destroy).toBe(1);
+    });
+
+    it("holds a preview that is not being deleted, sending nothing to Dokku", async () => {
+        await drain();
+        const p = await make();
+        await request(p.id);
+        const c = (await claim())!;
+        // Something put it back (or never marked it): the operation has no business running.
+        await testDb.db
+            .updateTable("preview")
+            .set({ desired_state: "active" })
+            .where("id", "=", p.id)
+            .execute();
+        const fake = host([p.app]);
+        expect(await runDeletion(testDb.db, c, fake.ports, on)).toBe("reconciliation-needed");
+        expect(fake.calls).toEqual([]);
+        expect(await operation(p.id)).toMatchObject({ failure_code: "unexpected-state" });
+    });
+
+    it("does not destroy twice when the lease is lost between asking and destroying", async () => {
+        await drain();
+        const p = await make();
+        await request(p.id);
+        let successorRan = false;
+        const fake = host([p.app], {
+            exists: async (_app, n) => {
+                if (n !== 1) return undefined;
+                // Between the answer and the destroy another worker takes over.
+                await testDb.db
+                    .updateTable("deletion_operation")
+                    .set({ lease_expires_at: new Date(Date.now() - 1000) })
+                    .where("preview_id", "=", p.id)
+                    .execute();
+                const successor = (await claim("w2"))!;
+                expect(successor.attempt).toBe(2);
+                successorRan = true;
+                return undefined;
+            },
+        });
+        const first = (await claim("w1"))!;
+        // The first worker goes on to destroy (its own deadline has not passed), then its next
+        // write is refused: it is stale, and the app is gone exactly once.
+        expect(await runDeletion(testDb.db, first, fake.ports, on)).toBe("stale");
+        expect(successorRan).toBe(true);
+        expect(fake.count.destroy).toBe(1);
+        const next = await testDb.db
+            .selectFrom("deletion_operation")
+            .selectAll()
+            .where("preview_id", "=", p.id)
+            .executeTakeFirstOrThrow();
+        // The successor's claim is the live one, and it finishes without a second destroy.
+        const successor: DeletionClaim = {
+            operationId: next.id,
+            organizationId: org,
+            previewId: p.id,
+            attempt: next.attempt,
+            fence: next.fence,
+            owner: "w2",
+            leaseMs: 60_000,
+            stepDone: next.step_done,
+            stepPending: next.step_pending,
+        };
+        expect(await runDeletion(testDb.db, successor, fake.ports, on)).toBe("succeeded");
+        expect(fake.count.destroy).toBe(1);
+        expect((await preview(p.id)).desired_state).toBe("deleted");
     });
 
     it("does not retry a call Dokku refused before it ran", async () => {
@@ -883,6 +1047,65 @@ describe("resolving a deletion held for a person", () => {
         expect(
             await code(resolveDeletion(testDb.db, people.ben!, org, operationId, "deleted")),
         ).toBe("conflict");
+    });
+});
+
+describe("a deployment claimed just before the deletion", () => {
+    it("stops as stale before any Dokku call, because the deletion cancelled it", async () => {
+        await drain();
+        const p = await make();
+        const artifact = await testDb.db
+            .insertInto("artifact")
+            .values({
+                organization_id: org,
+                digest: randomUUID().replaceAll("-", "").padEnd(64, "0"),
+                size_bytes: 1,
+                expanded_bytes: 1,
+                entry_count: 1,
+                storage_key: "x",
+                created_by: people.dee!.userId,
+            })
+            .returning("id")
+            .executeTakeFirstOrThrow();
+        await enqueueDeployment(
+            testDb.db,
+            people.dee!,
+            org,
+            p.id,
+            { artifactId: artifact.id },
+            { enabled: true },
+        );
+        // The worker has claimed it (still `queued`, with a lease) when the deletion arrives.
+        const claimed = (await claimNext(testDb.db, "w1", { enabled: true }))!;
+        expect(claimed).toBeTruthy();
+        await request(p.id);
+        let touched = 0;
+        const dokku = new Proxy(
+            {},
+            {
+                get: () => () => {
+                    touched++;
+                },
+            },
+        );
+        const ports = {
+            dokku,
+            build: async () => {
+                touched++;
+                return { imageTag: "x" };
+            },
+            loadImage: async () => {
+                touched++;
+            },
+            verify: async () => {
+                touched++;
+            },
+            rollback: async () => {
+                touched++;
+            },
+        } as unknown as DeployPorts;
+        expect(await runDeployment(testDb.db, claimed, ports)).toBe("stale");
+        expect(touched).toBe(0);
     });
 });
 

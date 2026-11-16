@@ -9,6 +9,7 @@ export const LIFECYCLE_AUDIT = {
     previewDeleted: "preview.deleted",
     deletionResolved: "preview.deletion-resolved",
     artifactCollected: "artifact.collected",
+    lifecycleEnabled: "lifecycle.enabled",
 } as const;
 
 const DAY = 86_400;
@@ -66,6 +67,11 @@ export function lifecycleConfigFromEnv(env: Record<string, string | undefined>):
             duration("LAUNCHPAD_ARTIFACT_RETENTION", env.LAUNCHPAD_ARTIFACT_RETENTION) ??
             DEFAULT_LIFECYCLE.artifactRetentionSeconds,
     };
+    // A shorter retention leaves no time between an upload and the deployment that uses it,
+    // and none to recover what was just deleted.
+    if (config.artifactRetentionSeconds < 3600) {
+        throw new Error("LAUNCHPAD_ARTIFACT_RETENTION must be at least 1h.");
+    }
     if (config.defaultTtlSeconds > config.maxTtlSeconds) {
         throw new Error("LAUNCHPAD_DEFAULT_TTL must not be longer than LAUNCHPAD_MAX_TTL.");
     }

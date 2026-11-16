@@ -45,6 +45,7 @@ describe("lifecycle configuration", () => {
             ["LAUNCHPAD_MAX_TTL", "-1d"],
             ["LAUNCHPAD_MAX_TTL", "366d"],
             ["LAUNCHPAD_ARTIFACT_RETENTION", "1w"],
+            ["LAUNCHPAD_ARTIFACT_RETENTION", "30m"],
         ] as const) {
             expect(() => lifecycleConfigFromEnv({ [name]: value }), `${name}=${value}`).toThrow(
                 new RegExp(name),
