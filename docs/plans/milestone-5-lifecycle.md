@@ -159,7 +159,7 @@ operator panel.
 ## What deletion keeps
 
 The preview row and its deployments, events and audit records stay (hostnames are not reused:
-`app_name` and `hostname` are unique). The Dokku app and its images are gone; artifacts are
+`app_name` and `hostname` are unique). The Dokku app is gone and its images are removed (if an image cannot be removed the deletion still finishes and records `images-left-behind`, so an operator should not assume none remain); artifacts are
 kept for the retention period and then collected, so within that window a deleted preview's
 content could be re-published by hand from storage, and after it nothing can.
 
@@ -181,3 +181,16 @@ content could be re-published by hand from storage, and after it nothing can.
   against PostgreSQL: expiry vs extension on 24 previews at once (exactly one wins each),
   concurrent sweeps, a long lock wait, an outage worked off in batches. The scheduler loop is
   slice 4; nothing destroys anything yet.
+- Slice 3 (deletion operation, services): `requestPreviewDeletion` (`preview:delete`, membership
+  re-read after the lock, a repeat returns the queued operation), `claimDeletion` (leases, the
+  attempt fence, waits for a running deployment, bounded attempts), `runDeletion` with injected
+  `LifecyclePorts` (write-ahead `destroy` then `images`; asks `apps:exists` before any destroy, so a
+  lost answer after a destroy that worked is recovered without a second one (if the app is still
+  there, destroy is tried again, within the bounded attempts); refused calls and exhausted attempts are
+  held for a person; leftover images never block the deletion), the ownership pattern as an
+  argument (`OWNED_APP_PATTERN`, nothing sent to Dokku for any other name), and
+  `resolveDeletion` (`preview:resolve`: `deleted` or `retry`). Fake-host tests cover every crash
+  and timeout point, a stale worker, a worker past its lease deadline, shutdown, expiry feeding
+  the same path, and deploy vs delete on 20 previews at once; mutation checks confirmed the
+  ownership check, the existence check, the wait for deployments and the fence each fail a test
+  when removed. The real ports and the scheduler loop are slice 4.
