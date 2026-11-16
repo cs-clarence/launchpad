@@ -265,6 +265,11 @@ describe("read-only MCP protocol", () => {
         expect(JSON.stringify(result.structuredContent)).toBe(
             '{"data":{"abcde":"abcde"},"truncated":false}',
         );
+        // Joiners are real text but can hide data: shown as escapes, not deleted.
+        expect(toolResult({ t: "\u{1F469}\u200d\u{1F4BB}" }).structuredContent).toEqual({
+            data: { t: "\u{1F469}\\u200d\u{1F4BB}" },
+            truncated: false,
+        });
     });
 
     it("bounds the complete result even when JSON text is escaped a second time", () => {

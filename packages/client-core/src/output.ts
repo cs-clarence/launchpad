@@ -8,7 +8,15 @@ export function safeOutput(text: string): string {
         stripVTControlCharacters(redact(text))
             // Controls and invisible format characters (bidi overrides, zero-width and tag
             // characters, which can carry hidden text) go; newline and tab stay for layout.
-            .replace(/[\p{Cc}\p{Cf}\u2028\u2029]/gu, (c) => (c === "\n" || c === "\t" ? c : ""))
+            // The two joiners are real text (emoji sequences, Persian spelling) but can also
+            // hide data, so they are shown as visible escapes instead of being deleted.
+            .replace(/[\p{Cc}\p{Cf}\u2028\u2029]/gu, (c) =>
+                c === "\n" || c === "\t"
+                    ? c
+                    : c === "\u200c" || c === "\u200d"
+                      ? `\\u${c.codePointAt(0)!.toString(16)}`
+                      : "",
+            )
             .replace(/(\[redacted\])[A-Za-z0-9_-]+/g, "$1"),
     );
 }

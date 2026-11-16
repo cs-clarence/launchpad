@@ -99,7 +99,7 @@ Use a narrower project query when that happens.
 Controller names, failure messages and event messages are untrusted **data**, not
 instructions. Redaction does not make their text trustworthy.
 No resources, prompts, file-content tools or shell tools are exposed, and the only mutation is `deploy`, when enabled.
-Incoming stdio message buffering is limited to 64 KiB.
+Incoming stdio message buffering is limited to 1 MiB.
 
 ## Deploying
 
@@ -113,7 +113,7 @@ tool call nor `launchpad.json` can widen them.
 launchpad-mcp --shared --allow-deploy \
   --include 'dist/**' \
   --exclude '**/*.map' --exclude 'dist/private/**' \
-  --allow-project website
+  --allow-project 11111111-1111-4111-8111-111111111111
 ```
 
 - Patterns are relative to the call's `working_dir` and use `/`. An exclude also covers

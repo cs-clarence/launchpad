@@ -1,7 +1,7 @@
 import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
     checkLocation,
     ClientCoreError,
@@ -670,7 +670,15 @@ describe("choosing which files are published", () => {
 
     it("does not walk directories nothing can select, and stops when cancelled", async () => {
         const root = await site({ "other/x.txt": "x" });
-        await fs.chmod(path.join(root, "other"), 0o000);
+        const walked: string[] = [];
+        const readdir = fs.readdir.bind(fs);
+        const spy = vi.spyOn(fs, "readdir").mockImplementation(((
+            target: string,
+            ...rest: unknown[]
+        ) => {
+            walked.push(String(target));
+            return (readdir as (...a: unknown[]) => unknown)(target, ...rest);
+        }) as typeof fs.readdir);
         try {
             const packed = await packDirectory(
                 root,
@@ -678,14 +686,15 @@ describe("choosing which files are published", () => {
                 pick(["dist/index.html"], ["nothing"]),
             );
             expect(await names(packed.archive)).toEqual(["index.html"]);
+            expect(walked.some((w) => w.endsWith("other"))).toBe(false);
+            const cancelled = new AbortController();
+            cancelled.abort();
+            await expect(
+                packDirectory(root, undefined, pick(["dist/**"], ["nothing"]), cancelled.signal),
+            ).rejects.toMatchObject({ name: "AbortError" });
         } finally {
-            await fs.chmod(path.join(root, "other"), 0o755);
+            spy.mockRestore();
         }
-        const cancelled = new AbortController();
-        cancelled.abort();
-        await expect(
-            packDirectory(root, undefined, pick(["dist/**"], ["nothing"]), cancelled.signal),
-        ).rejects.toBeDefined();
     });
 
     it("refuses a location inside secret data or this client's own store", () => {

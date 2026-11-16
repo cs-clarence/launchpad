@@ -276,7 +276,9 @@ export function checkLocation(directory: string, protectedDirectories: string[] 
     }
     for (const guarded of protectedDirectories) {
         const relative = path.relative(guarded, directory);
-        if (relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative))) {
+        // A parent is the segment "..", not any name that merely starts with two dots.
+        const outside = relative === ".." || relative.startsWith(`..${path.sep}`);
+        if (!outside && !path.isAbsolute(relative)) {
             refuse("That directory holds this client's credentials and cannot be deployed.");
         }
     }

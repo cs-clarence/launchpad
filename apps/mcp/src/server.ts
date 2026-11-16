@@ -240,7 +240,12 @@ export function createMcpServer(context: Context, options: ServerOptions = {}) {
                         );
                     }
                     const source = await sourceWithin(workspace.directory, input.path);
-                    checkLocation(source.directory, [context.store.directory]);
+                    // The store is compared as a real path, as the source is; a store that does not
+                    // exist holds no credentials, so its plain path is the fallback.
+                    const store = await fs
+                        .realpath(context.store.directory)
+                        .catch(() => context.store.directory);
+                    checkLocation(source.directory, [store]);
                     const progressToken = extra._meta?.progressToken;
                     let steps = 0;
                     const result = await deploy(workspace.context, {

@@ -42,7 +42,11 @@ afterEach(async () => {
 const json = (body: unknown, status = 200) =>
     new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
 
-function controller(final = "succeeded", failure: unknown = null) {
+function controller(
+    final = "succeeded",
+    failure: unknown = null,
+    configDir = path.join(dir, "cfg"),
+) {
     const calls: { method: string; path: string }[] = [];
     const uploads: Buffer[] = [];
     const preview = {
@@ -120,7 +124,7 @@ function controller(final = "succeeded", failure: unknown = null) {
         {
             LAUNCHPAD_CONTROLLER: "https://control.example.com",
             LAUNCHPAD_API_KEY: KEY,
-            LAUNCHPAD_CONFIG_DIR: path.join(dir, "cfg"),
+            LAUNCHPAD_CONFIG_DIR: configDir,
         },
         { fetch: fetchImpl },
     );
@@ -371,6 +375,22 @@ describe("the deploy tool", () => {
             ),
         ).rejects.toBeDefined();
         expect(seen.some((m) => m === `Queued deployment ${DEPLOYMENT}`)).toBe(true);
+    });
+
+    it("compares the credential store as a real path, so a symlinked store path is still protected", async () => {
+        const real = path.join(dir, "real-store");
+        await fs.mkdir(real, { recursive: true });
+        await fs.writeFile(path.join(real, "index.html"), "x");
+        const alias = path.join(dir, "store-alias");
+        await fs.symlink(real, alias);
+        const { client, uploads } = await connect(
+            { workingDir: dir, deploy: { ...POLICY, include: ["**"], exclude: ["nothing"] } },
+            controller("succeeded", null, alias),
+        );
+        const result = await call(client, { path: "real-store" });
+        expect(result.isError).toBe(true);
+        expect(text(result)).toContain("credentials");
+        expect(uploads).toEqual([]);
     });
 
     it("refuses a deploy from inside this client's own credential store or a secret directory", async () => {

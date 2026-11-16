@@ -30,51 +30,37 @@ describe("workspace context rules", () => {
     });
 
     it("orders the profile: the call, then the file, then the startup default; and keeps the file's name to its own project", async () => {
-        const ctx = createContext({
-            LAUNCHPAD_CONTROLLER: "https://control.example.com",
-            LAUNCHPAD_API_KEY: "lp_" + "a".repeat(43),
+        const ctx = createContext(
+            { LAUNCHPAD_CONFIG_DIR: path.join(dir, "credentials") },
+            { fetch: orgsFetch },
+        );
+        await ctx.store.update((saved) => {
+            for (const name of ["from-call", "from-file", "startup"]) {
+                saved.profiles[name] = {
+                    controller: "https://control.example.com",
+                    apiKey: `lp_${name.replace("-", "")}${"a".repeat(30)}`,
+                    organizationId: null,
+                    savedAt: "2026-11-16T00:00:00.000Z",
+                };
+            }
         });
-        await save(dir, { ...config, profile: "from-file" });
-        const options = { workingDir: dir, defaultProfile: "startup" };
-        // No organization lookup is needed to see which profile is chosen: drop it.
-        const noOrg = { ...options, organization: undefined };
+        const at = { workingDir: dir, defaultProfile: "startup" };
         await save(dir, {
             project: "site",
             organization: "one",
             profile: "from-file",
             name: "review",
         });
-        const own = await workspaceContext(createContext({}, { fetch: orgsFetch }), {
-            ...noOrg,
-            profile: "from-call",
-        }).catch((error: unknown) => error);
-        expect(String(own)).toContain("from-call");
-        const file = await workspaceContext(createContext({}, { fetch: orgsFetch }), noOrg).catch(
-            (error: unknown) => error,
+        expect((await workspaceContext(ctx, { ...at, profile: "from-call" })).profile).toBe(
+            "from-call",
         );
-        expect(String(file)).toContain("from-file");
+        expect((await workspaceContext(ctx, at)).profile).toBe("from-file");
         await save(dir, { project: "site", organization: "one", name: "review" });
-        const startup = await workspaceContext(
-            createContext({}, { fetch: orgsFetch }),
-            noOrg,
-        ).catch((error: unknown) => error);
-        expect(String(startup)).toContain("startup");
-        void ctx;
+        expect((await workspaceContext(ctx, at)).profile).toBe("startup");
         // Naming another project drops the file's preview name; the same project keeps it.
-        const env = createContext(
-            {
-                LAUNCHPAD_CONTROLLER: "https://control.example.com",
-                LAUNCHPAD_API_KEY: "lp_" + "a".repeat(43),
-            },
-            { fetch: orgsFetch },
-        );
-        expect((await workspaceContext(env, { workingDir: dir })).name).toBe("review");
-        expect((await workspaceContext(env, { workingDir: dir, project: "site" })).name).toBe(
-            "review",
-        );
-        expect(
-            (await workspaceContext(env, { workingDir: dir, project: "other" })).name,
-        ).toBeUndefined();
+        expect((await workspaceContext(ctx, at)).name).toBe("review");
+        expect((await workspaceContext(ctx, { ...at, project: "site" })).name).toBe("review");
+        expect((await workspaceContext(ctx, { ...at, project: "other" })).name).toBeUndefined();
     });
 });
 
