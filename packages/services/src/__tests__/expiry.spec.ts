@@ -12,6 +12,7 @@ import {
     expirePreviews,
     extendPreview,
     getPreview,
+    removeMember,
     ServiceError,
     type LifecycleConfig,
     type Principal,
@@ -485,6 +486,30 @@ describe("expiry racing an extension", () => {
                     .execute()
             ).length,
         ).toBe(survivors);
+    });
+
+    it("refuses a member removed while the extension waited for the lock", async () => {
+        await newUser("leaver");
+        await addMember(testDb.db, people.ann!, org, {
+            email: "leaver@example.com",
+            role: "deployer",
+        });
+        const p = await make({ ttl: "24h" });
+        const before = ms((await row(p.id)).expires_at);
+        let release!: () => void;
+        const held = new Promise<void>((resolve) => (release = resolve));
+        const holder = testDb.db.transaction().execute(async (trx) => {
+            await sql`select 1 from preview where id = ${p.id} for update`.execute(trx);
+            await held;
+        });
+        await new Promise((r) => setTimeout(r, 200));
+        const waiting = code(extend(p.id, "2d", "leaver"));
+        await new Promise((r) => setTimeout(r, 300));
+        await removeMember(testDb.db, people.ann!, org, people.leaver!.userId);
+        release();
+        await holder;
+        expect(await waiting).toBe("not-found");
+        expect(ms((await row(p.id)).expires_at)).toBe(before);
     });
 
     it("does not let a long wait for the lock leave the extension already past", async () => {

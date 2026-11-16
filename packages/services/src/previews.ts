@@ -382,6 +382,8 @@ export async function extendPreview(
             .where("id", "=", previewId)
             .forUpdate()
             .executeTakeFirst();
+        // Authority is re-read now that the lock is held: it can change while waiting for it.
+        await requireMembership(trx, principal, organizationId, "preview:deploy");
         if (!row) throw new ServiceError("not-found", "Preview not found.");
         if (row.desired_state !== "active") {
             throw new ServiceError("conflict", "That preview is expired or being deleted.");
