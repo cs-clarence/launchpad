@@ -416,6 +416,31 @@ describe("expiring previews", () => {
     });
 });
 
+// Holds the preview's row lock while `during` runs. `during` starts what must wait for the
+// lock, does what the test needs in the meantime, and returns that waiting work as
+// `{ pending }` (wrapped, so it is not awaited early). The lock is always let go of and the
+// holding transaction ended, even if `during` fails; then the waiting work is awaited.
+async function whileLocked<T>(
+    id: string,
+    during: () => Promise<{ pending: Promise<T> }>,
+): Promise<T> {
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => (release = resolve));
+    const holder = testDb.db.transaction().execute(async (trx) => {
+        await sql`select 1 from preview where id = ${id} for update`.execute(trx);
+        await held;
+    });
+    await new Promise((r) => setTimeout(r, 200));
+    let pending: Promise<T> | undefined;
+    try {
+        ({ pending } = await during());
+    } finally {
+        release();
+        await holder;
+    }
+    return pending;
+}
+
 describe("expiry racing an extension", () => {
     it("lets exactly one win, on every preview, never both", async () => {
         const ids: string[] = [];
@@ -496,19 +521,13 @@ describe("expiry racing an extension", () => {
         });
         const p = await make({ ttl: "24h" });
         const before = ms((await row(p.id)).expires_at);
-        let release!: () => void;
-        const held = new Promise<void>((resolve) => (release = resolve));
-        const holder = testDb.db.transaction().execute(async (trx) => {
-            await sql`select 1 from preview where id = ${p.id} for update`.execute(trx);
-            await held;
+        const waiting = await whileLocked(p.id, async () => {
+            const pending = code(extend(p.id, "2d", "leaver"));
+            await new Promise((r) => setTimeout(r, 300));
+            await removeMember(testDb.db, people.ann!, org, people.leaver!.userId);
+            return { pending };
         });
-        await new Promise((r) => setTimeout(r, 200));
-        const waiting = code(extend(p.id, "2d", "leaver"));
-        await new Promise((r) => setTimeout(r, 300));
-        await removeMember(testDb.db, people.ann!, org, people.leaver!.userId);
-        release();
-        await holder;
-        expect(await waiting).toBe("not-found");
+        expect(waiting).toBe("not-found");
         expect(ms((await row(p.id)).expires_at)).toBe(before);
     });
 
@@ -516,18 +535,11 @@ describe("expiry racing an extension", () => {
         const p = await make({ ttl: "24h" });
         // Still in the future when the request starts, already past when the lock is won.
         await setExpiry(p.id, new Date(Date.now() + 1000));
-        let release!: () => void;
-        const held = new Promise<void>((resolve) => (release = resolve));
-        const holder = testDb.db.transaction().execute(async (trx) => {
-            await sql`select 1 from preview where id = ${p.id} for update`.execute(trx);
-            await held;
+        const result = await whileLocked(p.id, async () => {
+            const pending = extend(p.id, "1s");
+            await new Promise((r) => setTimeout(r, 2000));
+            return { pending };
         });
-        await new Promise((r) => setTimeout(r, 200));
-        const waiting = extend(p.id, "1s");
-        await new Promise((r) => setTimeout(r, 2000));
-        release();
-        await holder;
-        const result = await waiting;
         // The clock was read after the lock was won, so the new expiry is in the future.
         expect(ms(result.expiresAt)!).toBeGreaterThan(Date.now());
     });
