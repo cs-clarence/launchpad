@@ -416,24 +416,42 @@ describe("expiring previews", () => {
     });
 });
 
-// Holds the preview's row lock while `during` runs. `during` starts what must wait for the
-// lock, does what the test needs in the meantime, and returns that waiting work as
-// `{ pending }` (wrapped, so it is not awaited early). The lock is always let go of and the
-// holding transaction ended, even if `during` fails; then the waiting work is awaited.
+// Polls (bounded) until some statement in this database is waiting for a lock, so a test
+// knows its request has reached the wait rather than hoping a delay was long enough.
+async function untilBlocked(timeoutMs = 5000) {
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+        const { rows } = await sql<{ n: string }>`select count(*)::text as n from pg_stat_activity
+            where datname = current_database() and wait_event_type = 'Lock'`.execute(testDb.db);
+        if (Number(rows[0]!.n) > 0) return;
+        await new Promise((r) => setTimeout(r, 20));
+    }
+    throw new Error("nothing was waiting for the lock");
+}
+
+// Holds the preview's row lock while `during` runs. The lock is known to be held before
+// `during` starts (the holder says so), and `during` is given `blocked()` to wait until its
+// request is stuck behind it. `during` starts what must wait for the lock and returns that
+// waiting work as `{ pending }` (wrapped, so it is not awaited early). The lock is always
+// let go of and the holding transaction ended, even if `during` fails; then the waiting
+// work is awaited.
 async function whileLocked<T>(
     id: string,
-    during: () => Promise<{ pending: Promise<T> }>,
+    during: (blocked: () => Promise<void>) => Promise<{ pending: Promise<T> }>,
 ): Promise<T> {
     let release!: () => void;
+    let locked!: () => void;
     const held = new Promise<void>((resolve) => (release = resolve));
+    const acquired = new Promise<void>((resolve) => (locked = resolve));
     const holder = testDb.db.transaction().execute(async (trx) => {
         await sql`select 1 from preview where id = ${id} for update`.execute(trx);
+        locked();
         await held;
     });
-    await new Promise((r) => setTimeout(r, 200));
     let pending: Promise<T> | undefined;
     try {
-        ({ pending } = await during());
+        await Promise.race([acquired, holder]);
+        ({ pending } = await during(() => untilBlocked()));
     } finally {
         release();
         await holder;
@@ -521,9 +539,11 @@ describe("expiry racing an extension", () => {
         });
         const p = await make({ ttl: "24h" });
         const before = ms((await row(p.id)).expires_at);
-        const waiting = await whileLocked(p.id, async () => {
+        const waiting = await whileLocked(p.id, async (blocked) => {
             const pending = code(extend(p.id, "2d", "leaver"));
-            await new Promise((r) => setTimeout(r, 300));
+            // Past its first membership check and stuck on the row lock: only now is the
+            // member removed, so only the re-check after the lock can refuse it.
+            await blocked();
             await removeMember(testDb.db, people.ann!, org, people.leaver!.userId);
             return { pending };
         });
@@ -535,9 +555,11 @@ describe("expiry racing an extension", () => {
         const p = await make({ ttl: "24h" });
         // Still in the future when the request starts, already past when the lock is won.
         await setExpiry(p.id, new Date(Date.now() + 1000));
-        const result = await whileLocked(p.id, async () => {
+        const result = await whileLocked(p.id, async (blocked) => {
             const pending = extend(p.id, "1s");
-            await new Promise((r) => setTimeout(r, 2000));
+            await blocked();
+            // Time passes while it waits: the expiry set above is now behind us.
+            await new Promise((r) => setTimeout(r, 1500));
             return { pending };
         });
         // The clock was read after the lock was won, so the new expiry is in the future.
