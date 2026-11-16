@@ -42,12 +42,15 @@ and an operator can see whether the system is healthy and how far behind it is.
    "Never expires" is refused unless an operator sets `LAUNCHPAD_ALLOW_NO_EXPIRY=on`.
    Previews that exist today have no expiry (`null` = never) until extended or given one;
    a later operator command can apply the default to them (not built here).
-2. **Extension.** `POST …/previews/:id/extend {ttl}` sets `expires_at` to
-   `greatest(now, expires_at) + ttl`, capped at `now + max TTL`. Each requested `ttl` must be
-   positive (zero and negative are refused, so an extension can never move expiry to or
-   before now), and at most the maximum. It succeeds only while the
-   preview is `active`; once expiry has claimed it, extension is a conflict (see the race
-   rule below).
+2. **Extension.** `POST …/previews/:id/extend {ttl}` computes, with `clock` sampled **after
+   the preview row lock is acquired** (`clock_timestamp()`, not the transaction's `now()`,
+   so a long lock wait cannot make the result already past):
+   `expires_at = greatest(expires_at, least(greatest(clock, expires_at) + ttl, clock + max TTL))`.
+   An extension therefore never shortens a lifetime: if the cap (for instance a maximum an
+   operator lowered since) would reduce the existing expiry, the existing expiry is kept and
+   the response reports it. Each requested `ttl` must be positive (zero and negative are
+   refused) and at most the maximum. It succeeds only while the preview is `active`; once
+   expiry has claimed it, extension is a conflict (see the race rule below).
 3. **Who may delete.** New permission `preview:delete` for deployer, admin and owner,
    as for deploy; keys may be granted it. Expiry has no actor (recorded as `system`).
 4. **Deletion semantics.** A deletion is an **operation** (a row, like a deployment): the
