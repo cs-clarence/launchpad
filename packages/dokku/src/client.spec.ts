@@ -377,6 +377,18 @@ describe("what a finished command means", () => {
 
 describe("operations that read", () => {
     it("exists is false only when Dokku says the app does not exist", async () => {
+        const current = await setup({ exitCode: 20, stderr: ` !     App ${APP} does not exist` });
+        expect(await current.client.apps.exists(APP)).toBe(false);
+        await current.ws.cleanup();
+        const denied = await setup({ exitCode: 20, stderr: "permission problem" });
+        expect((await caught(denied.client.apps.exists(APP))).kind).toBe("failed");
+        await denied.ws.cleanup();
+        const foreign = await setup({
+            exitCode: 20,
+            stderr: " !     App lp-zzzzzzzzzz does not exist",
+        });
+        expect((await caught(foreign.client.apps.exists(APP))).kind).toBe("failed");
+        await foreign.ws.cleanup();
         const missing = await setup({ exitCode: 1, stderr: ` !     App ${APP} does not exist` });
         expect(await missing.client.apps.exists(APP)).toBe(false);
         await missing.ws.cleanup();
