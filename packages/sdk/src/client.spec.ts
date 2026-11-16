@@ -276,6 +276,72 @@ const DEPLOYMENT = {
 };
 
 describe("previews and deployments", () => {
+    it("extends with an idempotency key and forwards the resulting expiry", async () => {
+        const expiresAt = "2026-11-20T00:00:00.000Z";
+        const { calls, client } = recording(() => json({ ...PREVIEW, expiresAt }));
+        expect(
+            await client.previews.extend(ORG, ID, { ttl: "24h" }, { idempotencyKey: "extend-1" }),
+        ).toMatchObject({ expiresAt });
+        expect(calls[0]!.url).toBe(
+            `https://control.example.com/api/v1/organizations/${ORG}/previews/${ID}/extend`,
+        );
+        expect(calls[0]!.init.method).toBe("POST");
+        expect(JSON.parse(calls[0]!.init.body as string)).toEqual({ ttl: "24h" });
+        expect((calls[0]!.init.headers as Record<string, string>)["idempotency-key"]).toBe(
+            "extend-1",
+        );
+    });
+
+    it("requests deletion without a body and reads its operation", async () => {
+        const { calls, client } = recording((_url, init) =>
+            json(
+                init.method === "DELETE"
+                    ? { operationId: ID, state: "deleting" }
+                    : {
+                          id: ID,
+                          previewId: ID,
+                          status: "queued",
+                          reason: "manual",
+                          failure: null,
+                          createdAt: PREVIEW.createdAt,
+                          finishedAt: null,
+                      },
+            ),
+        );
+        expect(await client.previews.delete("org/1", ID)).toEqual({
+            operationId: ID,
+            state: "deleting",
+        });
+        expect(calls[0]!.url).toBe(
+            `https://control.example.com/api/v1/organizations/org%2F1/previews/${ID}`,
+        );
+        expect(calls[0]!.init.method).toBe("DELETE");
+        expect(calls[0]!.init.body).toBeUndefined();
+        expect(await client.deletions.get("org/1", ID)).toMatchObject({ status: "queued" });
+        expect(calls[1]!.url).toBe(
+            `https://control.example.com/api/v1/organizations/org%2F1/deletions/${ID}`,
+        );
+    });
+    it("rejects unknown deletion statuses and incomplete deletion acknowledgments", async () => {
+        const malformed = recording(() => json({ operationId: ID, state: "active" }));
+        await expect(malformed.client.previews.delete(ORG, ID)).rejects.toMatchObject({
+            reason: "invalid-response",
+        });
+        const unknown = recording(() =>
+            json({
+                id: ID,
+                previewId: ID,
+                status: "mystery",
+                reason: "manual",
+                failure: null,
+                createdAt: PREVIEW.createdAt,
+                finishedAt: null,
+            }),
+        );
+        await expect(unknown.client.deletions.get(ORG, ID)).rejects.toMatchObject({
+            reason: "invalid-response",
+        });
+    });
     it("lists previews with a filter and cursor, tolerating fields a newer controller adds", async () => {
         const { client, calls } = recording(() =>
             json({ items: [{ ...PREVIEW, newField: 1 }], nextCursor: ID, extra: true }),

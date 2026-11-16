@@ -10,6 +10,68 @@ import { recordAudit, requireMembership } from "./organizations";
 type Db = Kysely<Database>;
 type Trx = Transaction<Database>;
 
+// Project limits are enforced by transports, after this organization-scoped lookup.
+export async function deletionProjectId(
+    db: Db,
+    principal: Principal,
+    organizationId: string,
+    operationId: string,
+) {
+    await requireMembership(db, principal, organizationId, "preview:read");
+    if (!z.uuid().safeParse(operationId).success) {
+        throw new ServiceError("not-found", "Deletion not found.");
+    }
+    const row = await db
+        .selectFrom("deletion_operation as op")
+        .innerJoin("preview as p", "p.id", "op.preview_id")
+        .select("p.project_id")
+        .where("op.organization_id", "=", organizationId)
+        .where("p.organization_id", "=", organizationId)
+        .where("op.id", "=", operationId)
+        .executeTakeFirst();
+    if (!row) throw new ServiceError("not-found", "Deletion not found.");
+    return row.project_id;
+}
+
+export async function getDeletion(
+    db: Db,
+    principal: Principal,
+    organizationId: string,
+    operationId: string,
+) {
+    await requireMembership(db, principal, organizationId, "preview:read");
+    if (!z.uuid().safeParse(operationId).success) {
+        throw new ServiceError("not-found", "Deletion not found.");
+    }
+    const row = await db
+        .selectFrom("deletion_operation")
+        .select([
+            "id",
+            "preview_id",
+            "status",
+            "reason",
+            "failure_code",
+            "failure_message",
+            "created_at",
+            "finished_at",
+        ])
+        .where("organization_id", "=", organizationId)
+        .where("id", "=", operationId)
+        .executeTakeFirst();
+    if (!row) throw new ServiceError("not-found", "Deletion not found.");
+    return {
+        id: row.id,
+        previewId: row.preview_id,
+        status: row.status,
+        reason: row.reason,
+        failure: row.failure_code
+            ? { code: row.failure_code, message: row.failure_message ?? "Deletion did not finish." }
+            : null,
+        createdAt: row.created_at.toISOString(),
+        finishedAt: row.finished_at?.toISOString() ?? null,
+    };
+}
+
 // Starts a deletion inside the caller's transaction, which must hold the preview's row
 // lock. Either the preview is `deleting` with its operation queued, or nothing changed:
 // the two are one commit. New deployments are refused from here on (a preview that is not

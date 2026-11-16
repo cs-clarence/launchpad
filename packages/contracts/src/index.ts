@@ -88,6 +88,23 @@ export const extendPreviewSchema = z.strictObject({
 });
 export const previewStateSchema = z.enum(["active", "deleting", "deleted"]);
 
+export const requestedDeletionSchema = z.strictObject({
+    operationId: z.uuid(),
+    state: z.literal("deleting"),
+});
+export const resolveDeletionSchema = z.strictObject({
+    outcome: z.enum(["deleted", "retry"]),
+});
+export const deletionSchema = z.strictObject({
+    id: z.uuid(),
+    previewId: z.uuid(),
+    status: z.enum(["queued", "running", "succeeded", "reconciliation-needed"]),
+    reason: z.enum(["manual", "expired"]),
+    failure: z.strictObject({ code: z.string(), message: z.string() }).nullable(),
+    createdAt: z.string().meta({ format: "date-time" }),
+    finishedAt: z.string().meta({ format: "date-time" }).nullable(),
+});
+
 const role = z.enum(ORGANIZATION_ROLES);
 const timestamp = z.string().meta({ format: "date-time" });
 

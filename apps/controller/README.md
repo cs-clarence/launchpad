@@ -188,6 +188,34 @@ Previews created before lifetimes existed have no expiry until given one. **Noth
 deleted unless the worker runs the lifecycle** (`LAUNCHPAD_LIFECYCLE=on` on the worker,
 default off): then expired previews are deleted, and stored archives are collected after
 `LAUNCHPAD_ARTIFACT_RETENTION` (default `7d`); see `apps/worker/README.md`.
+Retention must be at least `1h`. The first time the worker enables lifecycle for this
+database, already-overdue previews get a one-time 24 h grace.
+
+### Preview lifecycle API
+
+All paths below are under `/api/v1/organizations/:orgId`. Mutations require deployer
+or higher unless noted; API keys also need the named scope and access to the owning
+project. Cookie mutations keep the same-origin requirement.
+
+| Method and path                                                                                       | Result                                                                 | Key scope                                              |
+| ----------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------- | ------------------------------------------------------ |
+| `POST /previews/:previewId/extend` with `{ "ttl": "24h" }`                                            | 200 preview with resulting `expiresAt`                                 | `preview:deploy`                                       |
+| `DELETE /previews/:previewId`                                                                         | 202 `{ operationId, state: "deleting" }`                               | `preview:delete`                                       |
+| `GET /deletions/:operationId`                                                                         | 200 deletion status, reason, fixed failure text, creation/finish times | `preview:read`                                         |
+| `POST /deletions/:operationId/resolution` with `{ "outcome": "retry" }` or `{ "outcome": "deleted" }` | 200 `{ ok: true }`                                                     | Session only: admin/owner, signed in within 15 minutes |
+
+Extension accepts `Idempotency-Key`: repeating it does not extend again; a different
+request with that key is 409. Extension never shortens an expiry and is capped at the
+instance maximum from now. Extending a never-expiring preview with a duration **gives it
+an expiry**. Once deleting, extension is 409.
+
+Deletion cannot be undone. It only queues work; it does not wait for Dokku. Set
+`LAUNCHPAD_LIFECYCLE=on` in both controller and worker (and enable worker deployments);
+the controller refuses deletion with 409 while lifecycle is off. Repeated DELETE
+returns the same operation while deleting, without needing an idempotency key; after
+deletion it is 404. Poll the operation: `queued`, `running`, `succeeded`, or
+`reconciliation-needed`. For reconciliation, check the host first: `retry` queues
+another attempt; `deleted` trusts the administrator and does not remove images.
 
 A length-less (chunked) upload is a 411. An identical archive already stored for the
 organization is reused (`reused: true`); archives are deduplicated within an

@@ -15,9 +15,27 @@ const projects = await client.projects.list(key.organizationId);
 
 - Only `https` (or `http` to loopback) base URLs; the key is sent as a bearer token, never with cookies, and redirects are refused so it cannot be forwarded.
 - Responses are checked against `@launchpad/contracts` but tolerate fields a newer controller adds. Errors are `LaunchpadApiError` (the controller answered with an error status; `code` may be a code this version does not know), `LaunchpadTransportError` (unreachable, timeout, redirect, unexpected answer) or `LaunchpadConfigError`. None contains the key or a response body.
-- Covers what a key may do: key info, own organization, members (read), projects (list, create). Key, member and invitation management are session-only in the API and are not in the SDK.
+- Covers what a key may do: key info, own organization, members (read), projects (list, create), uploads, previews, deployments and deletion status. Key, member and invitation management and reconciliation are session-only in the API and are not in the SDK.
 
 Depends on `zod` and `@launchpad/contracts` only; no filesystem or credential storage (see `@launchpad/client-core`).
+
+## Preview lifecycles
+
+- `client.previews.create(orgId, projectId, { slug, ttl: "24h" })` chooses a lifetime.
+- `client.previews.extend(orgId, previewId, { ttl: "24h" }, { idempotencyKey })` returns
+  the resulting preview without extending again on a retry with that key. Requires
+  `preview:deploy`. Extending a never-expiring preview with a duration gives it an expiry.
+- `client.previews.delete(orgId, previewId)` queues deletion and returns
+  `{ operationId, state: "deleting" }`. Requires `preview:delete` and enabled lifecycle.
+  Repeating while deleting returns the same operation; after deletion it is 404.
+- `client.deletions.get(orgId, operationId)` polls the operation with `preview:read`.
+  `reconciliation-needed` requires an administrator's session; resolution is intentionally
+  not exposed by this bearer-only SDK.
+
+These calls accept `{ signal }` as their final options argument. Project-limited keys
+can reach only previews and deletion operations in their allowed projects. See the
+[controller reference](../../apps/controller/README.md#preview-lifecycle-api) for states,
+errors and what deletion keeps.
 
 ## Transport verification
 

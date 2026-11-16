@@ -5,6 +5,12 @@ import {
     acceptInvitation,
     addMember,
     createPreview,
+    extendPreview,
+    requestPreviewDeletion,
+    getDeletion,
+    deletionProjectId,
+    resolveDeletion,
+    resolveDeletionSchema,
     deploymentProjectId,
     enqueueDeployment,
     getDeployment,
@@ -635,6 +641,117 @@ export function createApi(deps: {
                             return getPreview(db, p, params.orgId, params.previewId);
                         },
                     ),
+            )
+            .post(
+                "/v1/organizations/:orgId/previews/:previewId/extend",
+                { detail: docs.extendPreview },
+                async ({ request, set, params }) => {
+                    const input = await body(request);
+                    return respond(
+                        request,
+                        set,
+                        { organizationId: params.orgId, scope: "preview:deploy" },
+                        async (p, key) => {
+                            if (key?.projectIds) {
+                                requireKeyAccess(
+                                    key,
+                                    params.orgId,
+                                    "preview:deploy",
+                                    await previewProjectId(db, p, params.orgId, params.previewId),
+                                );
+                            }
+                            return extendPreview(
+                                db,
+                                p,
+                                params.orgId,
+                                params.previewId,
+                                input,
+                                previews,
+                                idempotencyKey(request),
+                            );
+                        },
+                    );
+                },
+            )
+            .delete(
+                "/v1/organizations/:orgId/previews/:previewId",
+                { detail: docs.deletePreview },
+                ({ request, set, params }) =>
+                    respond(
+                        request,
+                        set,
+                        { organizationId: params.orgId, scope: "preview:delete" },
+                        async (p, key) => {
+                            if (key?.projectIds) {
+                                requireKeyAccess(
+                                    key,
+                                    params.orgId,
+                                    "preview:delete",
+                                    await previewProjectId(db, p, params.orgId, params.previewId),
+                                );
+                            }
+                            return requestPreviewDeletion(db, p, params.orgId, params.previewId, {
+                                enabled: previews.lifecycle?.enabled ?? false,
+                            });
+                        },
+                        202,
+                    ),
+            )
+            .get(
+                "/v1/organizations/:orgId/deletions/:operationId",
+                { detail: docs.getDeletion },
+                ({ request, set, params }) =>
+                    respond(
+                        request,
+                        set,
+                        { organizationId: params.orgId, scope: "preview:read" },
+                        async (p, key) => {
+                            if (key?.projectIds) {
+                                requireKeyAccess(
+                                    key,
+                                    params.orgId,
+                                    "preview:read",
+                                    await deletionProjectId(
+                                        db,
+                                        p,
+                                        params.orgId,
+                                        params.operationId,
+                                    ),
+                                );
+                            }
+                            return getDeletion(db, p, params.orgId, params.operationId);
+                        },
+                    ),
+            )
+            .post(
+                "/v1/organizations/:orgId/deletions/:operationId/resolution",
+                { detail: docs.resolveDeletion },
+                async ({ request, set, params }) => {
+                    const input = await body(request);
+                    return respond(
+                        request,
+                        set,
+                        null,
+                        async (p) => {
+                            const parsed = resolveDeletionSchema.safeParse(input);
+                            if (!parsed.success)
+                                throw new ServiceError(
+                                    "invalid",
+                                    "The outcome must be deleted or retry.",
+                                );
+                            await resolveDeletion(
+                                db,
+                                p,
+                                params.orgId,
+                                params.operationId,
+                                parsed.data.outcome,
+                            );
+                            return { ok: true };
+                        },
+                        200,
+                        { fresh: true },
+                    );
+                },
             )
             .post(
                 "/v1/organizations/:orgId/previews/:previewId/deployments",

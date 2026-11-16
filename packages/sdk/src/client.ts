@@ -4,6 +4,9 @@ import {
     type createApiKeySchema,
     type createDeploymentSchema,
     type createPreviewSchema,
+    type extendPreviewSchema,
+    requestedDeletionSchema,
+    deletionSchema,
     type createProjectSchema,
     createdProjectSchema,
     deploymentEventSchema,
@@ -30,6 +33,9 @@ export type CreateApiKeyInput = z.input<typeof createApiKeySchema>;
 export type Preview = z.infer<typeof previewSchema>;
 export type PreviewList = z.infer<typeof previewListSchema>;
 export type CreatePreviewInput = z.input<typeof createPreviewSchema>;
+export type ExtendPreviewInput = z.input<typeof extendPreviewSchema>;
+export type RequestedDeletion = z.infer<typeof requestedDeletionSchema>;
+export type Deletion = z.infer<typeof deletionSchema>;
 export type CreateDeploymentInput = z.input<typeof createDeploymentSchema>;
 export type QueuedDeployment = z.infer<typeof createdDeploymentSchema>;
 export type Deployment = z.infer<typeof deploymentSchema>;
@@ -285,6 +291,27 @@ export function createClient(options: ClientOptions) {
                 ),
         },
         previews: {
+            extend: (
+                organizationId: string,
+                previewId: string,
+                input: ExtendPreviewInput,
+                opts: RequestOptions = {},
+            ) =>
+                request(
+                    "POST",
+                    `/organizations/${seg(organizationId)}/previews/${seg(previewId)}/extend`,
+                    loose(previewSchema),
+                    input,
+                    opts,
+                ),
+            delete: (organizationId: string, previewId: string, opts: RequestOptions = {}) =>
+                request(
+                    "DELETE",
+                    `/organizations/${seg(organizationId)}/previews/${seg(previewId)}`,
+                    loose(requestedDeletionSchema),
+                    undefined,
+                    { signal: opts.signal },
+                ),
             list: (organizationId: string, filter: { projectId?: string; cursor?: string } = {}) =>
                 request(
                     "GET",
@@ -309,6 +336,16 @@ export function createClient(options: ClientOptions) {
                     loose(previewSchema),
                     input,
                     opts,
+                ),
+        },
+        deletions: {
+            get: (organizationId: string, operationId: string, opts: RequestOptions = {}) =>
+                request(
+                    "GET",
+                    `/organizations/${seg(organizationId)}/deletions/${seg(operationId)}`,
+                    loose(deletionSchema),
+                    undefined,
+                    { signal: opts.signal },
                 ),
         },
         deployments: {

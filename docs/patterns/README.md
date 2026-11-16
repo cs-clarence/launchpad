@@ -36,6 +36,12 @@ include/exclude globs, exclude wins) lives in `packages/client-core/src/pack.ts`
 the same `safeOutput` redaction/control stripping as the CLI (client-core).
 
 The health endpoint reports static metadata, not PostgreSQL/Dokku readiness.
+Lifecycle requests are now exposed by `src/server/api.ts`: delete and extend enforce key
+scope plus project limits through `previewProjectId`; deletion reads use
+`deletionProjectId`. Resolution is fresh-session-only. The services retain membership
+checks after row locks. `getDeletion` explicitly selects public fields only; never return
+leases, fences or transport output. The SDK exposes deletion/extension and status reads,
+not reconciliation.
 Key administration is a dedicated organization-page component in
 `apps/controller/src/components/api-keys.tsx`. It imports only browser-safe
 contracts, issues through the cookie-authenticated HTTP API, and keeps reveals
