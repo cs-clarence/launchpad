@@ -213,6 +213,10 @@ export async function sweepOrphanArtifactFiles(
         // How long a moved-aside file of a live artifact is left alone before it is put back:
         // a collection in progress holds it aside for a moment. Defaults to a minute.
         graceMs?: number;
+        // Upper bound on recognized files visited in one call; defaults to MAX_SWEPT_FILES.
+        maxFiles?: number;
+        // Look only at moved-aside files (what recovery needs), not counting the rest.
+        asideOnly?: boolean;
         // Test seam: runs after a file was judged removable and before it is removed, so the
         // race it stands for (an upload landing in that gap) can be reproduced.
         beforeRemove?: (file: string) => Promise<void>;
@@ -220,6 +224,7 @@ export async function sweepOrphanArtifactFiles(
 ): Promise<{ removed: number; restored: number }> {
     const root = path.join(options.dataDir, "artifacts");
     const graceMs = options.graceMs ?? 60_000;
+    const maxFiles = options.maxFiles ?? MAX_SWEPT_FILES;
     let removed = 0;
     let restored = 0;
     let seen = 0;
@@ -229,8 +234,8 @@ export async function sweepOrphanArtifactFiles(
         const names = await fs.readdir(path.join(root, owner)).catch(() => [] as string[]);
         for (const name of names) {
             const aside = ASIDE_FILE.test(name);
-            if (!aside && !KEY_FILE.test(name)) continue;
-            if (++seen > MAX_SWEPT_FILES) return { removed, restored };
+            if (!aside && (options.asideOnly || !KEY_FILE.test(name))) continue;
+            if (++seen > maxFiles) return { removed, restored };
             const file = path.join(root, owner, name);
             const base = aside ? name.slice(0, name.indexOf(".tar.gz") + ".tar.gz".length) : name;
             const baseKey = `artifacts/${owner}/${base}`;
@@ -290,6 +295,10 @@ export async function recoverInterruptedCollections(
         // Nothing ordinary is removed: only what belongs to a live artifact is touched.
         retentionSeconds: Number.POSITIVE_INFINITY,
         graceMs: 0,
+        // Every moved-aside file is looked at once, however many ordinary archives there are:
+        // a bound that stopped early could leave a live artifact without its file.
+        asideOnly: true,
+        maxFiles: Number.POSITIVE_INFINITY,
     });
     return { restored };
 }

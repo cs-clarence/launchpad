@@ -575,6 +575,33 @@ describe("a collection that died before its commit", () => {
         expect(await exists(a.aside)).toBe(false);
     });
 
+    it("looks at every moved-aside file however many ordinary archives there are, while an ordinary sweep is bounded", async () => {
+        // Ordinary archives that a bounded sweep would spend its whole budget on.
+        for (let i = 0; i < 5; i++) await artifact();
+        const a = await interrupted();
+        // Looking only at moved-aside files, a budget of one is enough: nothing else is counted.
+        const only = await sweepOrphanArtifactFiles(testDb.db, {
+            dataDir,
+            retentionSeconds: Number.POSITIVE_INFINITY,
+            graceMs: 0,
+            maxFiles: 1,
+            asideOnly: true,
+        });
+        expect(only.restored).toBe(1);
+        expect(await fs.readFile(a.file, "utf8")).toBe("archive");
+        // An ordinary sweep honors its bound.
+        const b = await interrupted();
+        const bounded = await sweepOrphanArtifactFiles(testDb.db, {
+            dataDir,
+            retentionSeconds: 3600,
+            graceMs: 0,
+            maxFiles: 1,
+        });
+        expect(bounded.restored + bounded.removed).toBeLessThanOrEqual(1);
+        await recoverInterruptedCollections(testDb.db, { dataDir });
+        expect(await fs.readFile(b.file, "utf8")).toBe("archive");
+    });
+
     it("drops the spare copy when the archive is already back", async () => {
         const a = await interrupted();
         await fs.writeFile(a.file, "already back");
