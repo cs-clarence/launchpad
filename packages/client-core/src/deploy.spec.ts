@@ -533,6 +533,139 @@ describe("what is refused before anything is sent", () => {
     });
 });
 
+describe("choosing which files are published", () => {
+    const names = async (archive: Buffer) => {
+        const { list } = await import("tar");
+        const out: string[] = [];
+        const file = path.join(dir, "selected.tar.gz");
+        await fs.writeFile(file, archive);
+        await list({ file, onReadEntry: (e) => out.push(e.path) });
+        return out.toSorted();
+    };
+    const pick = (include: string[], exclude: string[], prefix = "dist") => ({
+        include,
+        exclude,
+        prefix,
+    });
+
+    it("packs only included files, patterns being relative to the directory above", async () => {
+        const root = await site({ "notes/todo.txt": "x", "assets/map.js.map": "x" });
+        const packed = await packDirectory(
+            root,
+            undefined,
+            pick(["dist/**"], ["**/*.map", "dist/notes/**"]),
+        );
+        expect(await names(packed.archive)).toEqual(["assets/app.js", "index.html"]);
+        // The same patterns, relative to the packed directory itself.
+        const here = await packDirectory(
+            root,
+            undefined,
+            pick(["**"], ["notes/**", "**/*.map"], ""),
+        );
+        expect(await names(here.archive)).toEqual(["assets/app.js", "index.html"]);
+    });
+
+    it("lets an exclusion win over an inclusion, however specific", async () => {
+        const root = await site();
+        await expect(
+            packDirectory(
+                root,
+                undefined,
+                pick(["dist/index.html", "dist/assets/**"], ["dist/index.html"]),
+            ),
+        ).rejects.toThrow(/no index\.html/);
+        const packed = await packDirectory(
+            root,
+            undefined,
+            pick(["dist/index.html", "dist/assets/app.js"], ["dist/assets/app.js"]),
+        );
+        expect(await names(packed.archive)).toEqual(["index.html"]);
+    });
+
+    it("does not judge what is not selected, but still refuses a secret that is", async () => {
+        const root = await site({ ".env": "SECRET=1", "keys/server.pem": "x" });
+        await fs.symlink("/etc/passwd", path.join(root, "link"));
+        const safe = await packDirectory(
+            root,
+            undefined,
+            pick(["dist/index.html", "dist/assets/**"], ["dist/.env"]),
+        );
+        expect(await names(safe.archive)).toEqual(["assets/app.js", "index.html"]);
+        for (const include of ["dist/**", "dist/.env", "dist/keys/*", "dist/link"]) {
+            await expect(
+                packDirectory(root, undefined, pick([include], ["nothing-matches"])),
+                include,
+            ).rejects.toThrow(/secret|not a regular file/);
+        }
+    });
+
+    it("refuses a secret-named directory above the packed one, and ignores deep unselected trees", async () => {
+        const aws = path.join(dir, ".aws", "site");
+        await fs.mkdir(aws, { recursive: true });
+        await fs.writeFile(path.join(aws, "index.html"), "x");
+        await expect(
+            packDirectory(aws, undefined, pick([".aws/**"], ["nothing"], ".aws/site")),
+        ).rejects.toThrow(/secret/);
+        const root = await site();
+        await fs.mkdir(path.join(root, "a", "b", "c", "d", "e"), { recursive: true });
+        await fs.writeFile(path.join(root, "a", "b", "c", "d", "e", "deep.txt"), "x");
+        const shallow = { maxArchiveBytes: 1e6, maxEntries: 100, maxDepth: 3 };
+        const packed = await packDirectory(root, shallow, pick(["dist/index.html"], ["nothing"]));
+        expect(await names(packed.archive)).toEqual(["index.html"]);
+        await expect(packDirectory(root, shallow, pick(["dist/**"], ["nothing"]))).rejects.toThrow(
+            /deeper/,
+        );
+    });
+
+    it("does not send an archive in place of a directory when a selection was given", async () => {
+        const root = await site();
+        const file = path.join(dir, "x.tar.gz");
+        await fs.writeFile(file, (await packDirectory(root)).archive);
+        const { ctx, calls } = controller({ previews: [previewBody()], statuses: ["succeeded"] });
+        await expect(
+            deploy(ctx, args(file, { selection: pick(["dist/**"], ["x"]) })),
+        ).rejects.toThrow(/needs a directory/);
+        expect(calls.some((c) => c.path.endsWith("/artifacts"))).toBe(false);
+    });
+
+    it("refuses patterns that could reach outside the directory or mean something else", async () => {
+        const root = await site();
+        for (const bad of [
+            "/etc/**",
+            "../x/**",
+            "dist/../../x",
+            "!dist/**",
+            "#x",
+            "a\\b",
+            "",
+            "x".repeat(300),
+            "a\u0001b",
+        ]) {
+            await expect(packDirectory(root, undefined, pick([bad], ["x"])), bad).rejects.toThrow(
+                /pattern|1 to/,
+            );
+            await expect(
+                packDirectory(root, undefined, pick(["dist/**"], [bad])),
+                bad,
+            ).rejects.toThrow(/pattern|1 to/);
+        }
+        await expect(packDirectory(root, undefined, pick([], ["x"]))).rejects.toThrow(/1 to 100/);
+        await expect(packDirectory(root, undefined, pick(["dist/**"], []))).rejects.toThrow(
+            /1 to 100/,
+        );
+        await expect(
+            packDirectory(
+                root,
+                undefined,
+                pick(
+                    Array.from({ length: 101 }, (_, i) => `a${i}`),
+                    ["x"],
+                ),
+            ),
+        ).rejects.toThrow(/1 to 100/);
+    });
+});
+
 describe("packing", () => {
     it("carries relative names and no local ownership", async () => {
         const root = await site();

@@ -30,7 +30,8 @@ The local stdio MCP adapter lives in `apps/mcp/src/server.ts`. It uses only
 client-core and the SDK, never controller services or the CLI executable. Per-call
 `working_dir` and `launchpad.json` context resolution lives in
 `packages/client-core/src/workspace.ts`; it never changes cwd or saved selections.
-The CLI's deploy command uses the same resolver. MCP output is bounded and uses
+The CLI's deploy command uses the same resolver. File selection for deploys (operator
+include/exclude globs, exclude wins) lives in `packages/client-core/src/pack.ts`. MCP output is bounded and uses
 the same `safeOutput` redaction/control stripping as the CLI (client-core).
 
 The health endpoint reports static metadata, not PostgreSQL/Dokku readiness.

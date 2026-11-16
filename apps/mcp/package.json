@@ -25,6 +25,7 @@
         "@launchpad/vite-config": "workspace:^",
         "@launchpad/vitest-config": "workspace:^",
         "@types/bun": "catalog:",
+        "tar": "catalog:",
         "typescript": "catalog:",
         "vite": "catalog:",
         "vitest": "catalog:"

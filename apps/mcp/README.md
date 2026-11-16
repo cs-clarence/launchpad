@@ -1,7 +1,8 @@
 # Launchpad local MCP
 
 For MCP-client users who want read-only access to Launchpad. This is a separate
-stdio app, not a CLI subcommand or HTTP daemon. Deployment is not available yet.
+stdio app, not a CLI subcommand or HTTP daemon. It is read-only unless you enable
+deployment, see [Deploying](#deploying).
 
 ## Start
 
@@ -36,7 +37,7 @@ This internal Bun build is not a published npm package.
 
 ## Tools
 
-All tools are read-only. Authorization and project restrictions are enforced by the
+The tools above are read-only; `deploy` is described below. Authorization and project restrictions are enforced by the
 controller, not tool annotations.
 
 | Tool                 | Extra arguments                               |
@@ -94,14 +95,48 @@ Use a narrower project query when that happens.
 
 Controller names, failure messages and event messages are untrusted **data**, not
 instructions. Redaction does not make their text trustworthy.
-No resources, prompts, file-content tools, shell tools or mutation tools are exposed.
+No resources, prompts, file-content tools or shell tools are exposed, and the only mutation is `deploy`, when enabled.
 Incoming stdio message buffering is limited to 64 KiB.
 
-## Planned deployment policy
+## Deploying
 
-Slice 2 will add deploy only when enabled at startup with explicit include and
-exclude lists; excludes always win. These options are currently rejected.
-There is no mandatory root list: with deployment enabled, a client-selected directory
-and broad patterns can publish matching private files anywhere the process can read.
-Use narrow patterns and an OS sandbox or restricted account when directory isolation
-is required. File-selection patterns are not an OS sandbox.
+Deployment is off by default and the tool does not exist until you start the server with
+`--allow-deploy` **and** at least one `--include` and one `--exclude` glob (without
+them the server refuses to start, and so does `--include`, `--exclude` or
+`--allow-project` without `--allow-deploy`). The lists are fixed at startup; neither a
+tool call nor `launchpad.json` can widen them.
+
+```sh
+launchpad-mcp --shared --allow-deploy \
+  --include 'dist/**' \
+  --exclude '**/*.map' --exclude 'dist/private/**' \
+  --allow-project website
+```
+
+- Patterns are relative to the call's `working_dir` and use `/`. They may not be
+  absolute, contain `..`, `!` or backslashes, or exceed 256 characters (100 per list).
+  They also match dotfiles.
+- A file is published only if an include matches it **and no exclude does**: excludes
+  always win. The result must still contain a top-level `index.html`.
+- The same secret rules as the CLI still apply to anything the patterns select: a
+  selected `.env`, key file or version-control file stops the deploy instead of being
+  silently dropped. Links and special files that a pattern selects are refused too;
+  files no pattern selects are not looked at.
+- `--allow-project` (repeatable) limits deployment to those projects, **named exactly
+  as listed** (a slug when you list a slug, an id when you list an id).
+
+The tool takes `path` (the directory to publish, relative to `working_dir`, without `..`
+and resolving, links followed, to a directory inside it), optional `project`, `name`
+and `spa` (otherwise from `launchpad.json`), `wait_seconds` (0 returns once queued;
+default 600, at most 900) and a required `confirm: true`. It reports progress
+notifications when the client asks for them, stops when the client cancels, and
+returns the outcome with the deployment id so a later `get_deployment` can follow
+one that is still running. A failed deployment is an error result carrying only the
+controller's fixed failure text.
+
+**What this does not do.** The patterns choose what is published; they are not a
+directory sandbox. The client picks `working_dir`, and there is no mandatory list of
+allowed roots, so broad patterns (for example `**`) let a model publish any matching
+private file that the process can read. Keep patterns narrow, and run the server under
+a restricted account or OS sandbox when directory isolation matters. Deployment
+replaces the live content of the preview, which is why the tool is marked destructive.

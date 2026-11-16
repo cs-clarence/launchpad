@@ -1,5 +1,5 @@
 #!/usr/bin/env bun
-import { createContext, readWorkspace, safeOutput } from "@launchpad/client-core";
+import { ClientCoreError, createContext, readWorkspace, safeOutput } from "@launchpad/client-core";
 import { CommanderError } from "@commander-js/extra-typings";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { createMcpServer } from "./server";
@@ -23,8 +23,12 @@ async function main() {
 
 void main().catch((error: unknown) => {
     if (error instanceof CommanderError && error.code === "commander.helpDisplayed") return;
+    // These two carry messages written for the operator, never file contents or keys.
+    const known = error instanceof CommanderError || error instanceof ClientCoreError;
     diagnostic(
-        "Could not start launchpad-mcp. Check options, working directory and launchpad.json.\n",
+        known
+            ? `${error.message}\n`
+            : "Could not start launchpad-mcp. Check options, working directory and launchpad.json.\n",
     );
     process.exitCode = 2;
 });

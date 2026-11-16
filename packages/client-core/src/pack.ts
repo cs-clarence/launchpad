@@ -1,5 +1,6 @@
 import { constants as fsConstants, promises as fs } from "node:fs";
 import path from "node:path";
+import picomatch from "picomatch";
 import { create } from "tar";
 import { ClientCoreError } from "./errors";
 
@@ -59,6 +60,51 @@ function checkName(relative: string, segments: string[], limits: PackLimits) {
     }
 }
 
+// Which files of a directory may be published, chosen by the operator's patterns and
+// matched against each file's path relative to `base` (the directory the patterns are
+// relative to, which may be above the packed directory). Exclusion always wins.
+export interface FileSelection {
+    include: string[];
+    exclude: string[];
+    // The packed directory's path relative to the directory the patterns are relative to.
+    prefix: string;
+}
+
+const MAX_PATTERNS = 100;
+const MAX_PATTERN_LENGTH = 256;
+
+// Patterns are checked as input: a pattern that could reach outside the directory, or
+// that means something other than "this path", is refused instead of repaired.
+export function compileSelection(include: string[], exclude: string[]) {
+    for (const [kind, list] of [
+        ["include", include],
+        ["exclude", exclude],
+    ] as const) {
+        if (list.length === 0 || list.length > MAX_PATTERNS) {
+            refuse(`Give 1 to ${MAX_PATTERNS} ${kind} patterns.`);
+        }
+        for (const pattern of list) {
+            if (
+                pattern.length === 0 ||
+                pattern.length > MAX_PATTERN_LENGTH ||
+                /[\\\u0000-\u001f\u007f]/.test(pattern) ||
+                pattern.startsWith("/") ||
+                pattern.startsWith("!") ||
+                pattern.startsWith("#") ||
+                pattern.split("/").includes("..")
+            ) {
+                refuse(
+                    `The ${kind} pattern ${show(pattern)} must be a relative glob without "..", "!", backslashes or control characters.`,
+                );
+            }
+        }
+    }
+    const options = { dot: true, nonegate: true, nocomment: true, posixSlashes: true } as const;
+    const included = picomatch(include, options);
+    const excluded = picomatch(exclude, options);
+    return (relative: string) => included(relative) && !excluded(relative);
+}
+
 export interface Packed {
     archive: Buffer;
     files: number;
@@ -68,8 +114,16 @@ export interface Packed {
 export async function packDirectory(
     directory: string,
     limits: PackLimits = DEFAULT_PACK_LIMITS,
+    selection?: FileSelection,
 ): Promise<Packed> {
     const root = path.resolve(directory);
+    const selected = selection && compileSelection(selection.include, selection.exclude);
+    const within = (rel: string) => (selection!.prefix ? `${selection!.prefix}/${rel}` : rel);
+    // Everything packed sits below the prefix, so a secret-named directory in it taints
+    // every selected file, although the walk only sees names below the packed directory.
+    if (selection?.prefix) {
+        checkName(selection.prefix, selection.prefix.split("/"), { ...limits, maxDepth: 1e9 });
+    }
     const rootStat = await fs.lstat(root).catch(() => undefined);
     if (!rootStat) refuse(`${show(directory)} does not exist.`);
     if (rootStat.isSymbolicLink() || !rootStat.isDirectory()) {
@@ -84,7 +138,11 @@ export async function packDirectory(
         for (const entry of entries) {
             const rel = relative === "" ? entry.name : `${relative}/${entry.name}`;
             const segments = rel.split("/");
-            checkName(rel, segments, limits);
+            // With a selection, only what it selects must pass the rules below: the rest
+            // of the directory is not published and so is not judged.
+            if (selected && !entry.isDirectory() && !selected(within(rel))) continue;
+            // Directories are judged by what they hold, so an unselected deep tree passes.
+            if (!selected || !entry.isDirectory()) checkName(rel, segments, limits);
             if (entry.isDirectory()) {
                 // Looked at again without following links: the listing may be stale, and a
                 // directory swapped for a link since must not be descended into.
@@ -109,7 +167,11 @@ export async function packDirectory(
     };
     await walk("");
     if (!files.includes("index.html")) {
-        refuse("The directory has no index.html at its top level.");
+        refuse(
+            selected
+                ? "The selected files have no index.html at the top level of the directory."
+                : "The directory has no index.html at its top level.",
+        );
     }
 
     const stream = create({ gzip: true, cwd: root, portable: true, noPax: false }, files);
