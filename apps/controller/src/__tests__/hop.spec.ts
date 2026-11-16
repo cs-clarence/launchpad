@@ -1526,6 +1526,8 @@ describe("previews and deployments over HTTP", () => {
             return client;
         };
         const clients: Client[] = [];
+        let standIn: Promise<void> | undefined;
+        let stopStandIn = false;
         try {
             await fs.mkdir(path.join(root, "dist", "private"), { recursive: true });
             await fs.writeFile(path.join(root, "dist", "index.html"), "<p>hello</p>");
@@ -1558,8 +1560,8 @@ describe("previews and deployments over HTTP", () => {
             // No worker runs in this suite, so a stand-in finishes the deployment the way one
             // would (the state machine itself is tested in the services): it waits for the
             // queued row, then marks it succeeded while the tool is still following it.
-            const standIn = (async () => {
-                for (let i = 0; i < 200; i++) {
+            standIn = (async () => {
+                for (let i = 0; i < 200 && !stopStandIn; i++) {
                     const row = await testDb.db
                         .selectFrom("deployment")
                         .innerJoin("preview", "preview.id", "deployment.preview_id")
@@ -1582,7 +1584,7 @@ describe("previews and deployments over HTTP", () => {
                     }
                     await new Promise((resolve) => setTimeout(resolve, 50));
                 }
-                throw new Error("the deployment was never queued");
+                if (!stopStandIn) throw new Error("the deployment was never queued");
             })();
             const deployed = await client.callTool({
                 name: "deploy",
@@ -1666,6 +1668,10 @@ describe("previews and deployments over HTTP", () => {
                 artifactsBefore,
             );
         } finally {
+            // Stop the stand-in and wait for it, so it never touches the database after the
+            // test, even when the call above failed.
+            stopStandIn = true;
+            await standIn?.catch(() => {});
             for (const client of clients) await client.close().catch(() => {});
             await fs.rm(root, { recursive: true, force: true });
             await fs.rm(config, { recursive: true, force: true });
