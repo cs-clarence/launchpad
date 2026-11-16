@@ -14,3 +14,4 @@ export * from "./archive";
 export * from "./artifact-config";
 export * from "./artifacts";
 export * from "./deployments";
+export * from "./lifecycle";

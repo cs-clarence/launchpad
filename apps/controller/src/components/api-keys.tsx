@@ -24,6 +24,7 @@ const SCOPES = [
     ["preview:read", "Read previews, their deployments and progress"],
     ["preview:create", "Create previews"],
     ["preview:deploy", "Upload builds and deploy to previews"],
+    ["preview:delete", "Delete previews"],
 ] as const;
 const DEFAULT_SCOPES = ["organization:read", "project:read"];
 

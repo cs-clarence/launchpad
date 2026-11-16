@@ -13,7 +13,42 @@ import {
     nameSchema,
     ORGANIZATION_ROLES,
     slugSchema,
+    durationSchema,
+    parseDuration,
 } from "./index";
+
+describe("durations", () => {
+    it("reads whole seconds, minutes, hours and days, and nothing else", () => {
+        expect(parseDuration("90s")).toBe(90);
+        expect(parseDuration("90m")).toBe(5400);
+        expect(parseDuration("24h")).toBe(86_400);
+        expect(parseDuration("7d")).toBe(604_800);
+        for (const bad of [
+            "",
+            "0d",
+            "-1d",
+            "1.5h",
+            "7",
+            "d",
+            "7 d",
+            " 7d",
+            "7D",
+            "1w",
+            "07d",
+
+            "NaN",
+        ]) {
+            expect(parseDuration(bad), bad).toBeNull();
+            expect(durationSchema.safeParse(bad).success, bad).toBe(false);
+        }
+        expect(durationSchema.safeParse("24h").success).toBe(true);
+        // The same lifetime in other units is accepted; whether it is allowed is the
+        // caller's limit, not the parser's.
+        expect(parseDuration("31536000s")).toBe(365 * 86_400);
+        expect(durationSchema.safeParse("31536000s").success).toBe(true);
+        expect(parseDuration("9".repeat(400) + "d")).toBeNull();
+    });
+});
 
 describe("contracts", () => {
     it("never offers a management scope to API keys", () => {
@@ -25,7 +60,12 @@ describe("contracts", () => {
 
     it("offers the preview scopes, so a key can deploy without managing anything", () => {
         expect(API_KEY_SCOPES).toEqual(
-            expect.arrayContaining(["preview:read", "preview:create", "preview:deploy"]),
+            expect.arrayContaining([
+                "preview:read",
+                "preview:create",
+                "preview:deploy",
+                "preview:delete",
+            ]),
         );
         expect(createDeploymentSchema.safeParse({ artifactId: crypto.randomUUID() }).success).toBe(
             true,

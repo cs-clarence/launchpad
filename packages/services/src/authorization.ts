@@ -14,6 +14,7 @@ export type OrganizationAction =
     | "preview:read"
     | "preview:create"
     | "preview:deploy"
+    | "preview:delete"
     | "preview:resolve"
     | "apikey:manage";
 
@@ -28,6 +29,7 @@ const DEPLOYER: OrganizationAction[] = [
     "project:create",
     "preview:create",
     "preview:deploy",
+    "preview:delete",
 ];
 const ADMIN: OrganizationAction[] = [
     ...DEPLOYER,

@@ -127,6 +127,9 @@ export interface PreviewTable {
     hostname: string;
     desired_state: Generated<"active" | "deleting" | "deleted">;
     active_deployment_id: string | null;
+    // null: never expires. deleted_at is set exactly when desired_state is "deleted".
+    expires_at: Date | null;
+    deleted_at: Date | null;
     created_by: string;
     created_at: Generated<Date>;
 }
@@ -177,6 +180,36 @@ export interface DeploymentEventTable {
     created_at: Generated<Date>;
 }
 
+export type DeletionStatus = "queued" | "running" | "succeeded" | "reconciliation-needed";
+export type DeletionStep = "destroy" | "images";
+
+export interface DeletionOperationTable {
+    id: Generated<string>;
+    organization_id: string;
+    preview_id: string;
+    reason: "manual" | "expired";
+    status: Generated<DeletionStatus>;
+    attempt: Generated<number>;
+    // null: the system (scheduled expiry)
+    requested_by: string | null;
+    failure_code: string | null;
+    failure_message: string | null;
+    lease_owner: string | null;
+    lease_expires_at: Date | null;
+    step_done: DeletionStep | null;
+    step_pending: DeletionStep | null;
+    created_at: Generated<Date>;
+    updated_at: Generated<Date>;
+    finished_at: Date | null;
+}
+
+export interface WorkerHeartbeatTable {
+    worker_id: string;
+    version: string;
+    started_at: Generated<Date>;
+    last_seen_at: Generated<Date>;
+}
+
 export interface IdempotencyKeyTable {
     organization_id: string;
     principal: string;
@@ -203,6 +236,8 @@ export interface Database {
     preview: PreviewTable;
     deployment: DeploymentTable;
     deployment_event: DeploymentEventTable;
+    deletion_operation: DeletionOperationTable;
+    worker_heartbeat: WorkerHeartbeatTable;
     idempotency_key: IdempotencyKeyTable;
     organization: OrganizationTable;
     member: MemberTable;
