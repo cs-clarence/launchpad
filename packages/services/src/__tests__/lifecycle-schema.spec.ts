@@ -1,4 +1,7 @@
 import { randomUUID } from "node:crypto";
+import { promises as fs } from "node:fs";
+import path from "node:path";
+import { migrateToLatest } from "@launchpad/database";
 import { createTestDatabase } from "@launchpad/database/testing";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createOrganization, createPreview, createProject, type Principal } from "../index";
@@ -229,5 +232,82 @@ describe("the lifecycle schema", () => {
                     .execute(),
             ),
         ).toMatch(/version/);
+    });
+});
+
+describe("upgrading a database that already holds a deleted preview", () => {
+    it("backfills deleted_at instead of failing on the new check", async () => {
+        const legacy = await createTestDatabase();
+        // Beside the real migrations, because the first one imports "../auth-schema".
+        const source = path.resolve(import.meta.dirname, "../../../database/src/migrations");
+        const folder = await fs.mkdtemp(path.join(path.dirname(source), ".tmp-migrations-"));
+        try {
+            // Only the migrations that existed before the lifecycle schema.
+            for (const name of (await fs.readdir(source)).filter((f) => f < "20261116")) {
+                await fs.copyFile(path.join(source, name), path.join(folder, name));
+            }
+            await migrateToLatest(legacy.db, folder);
+            const id = randomUUID();
+            await legacy.db
+                .insertInto("user")
+                .values({
+                    id,
+                    name: "root",
+                    email: "root@example.com",
+                    emailVerified: false,
+                    image: null,
+                    role: "operator",
+                })
+                .execute();
+            await legacy.db
+                .insertInto("audit_event")
+                .values({
+                    actor: "operator-cli",
+                    action: "user.provisioned",
+                    target_type: "user",
+                    target_id: id,
+                })
+                .execute();
+            const operator = { userId: id, instanceRole: "operator" } as Principal;
+            const organization = (
+                await createOrganization(legacy.db, operator, {
+                    name: "Old",
+                    slug: "old",
+                    ownerEmail: "root@example.com",
+                })
+            ).id;
+            const old = await createProject(legacy.db, operator, organization, {
+                name: "Site",
+                slug: "site",
+            });
+            const preview = await createPreview(
+                legacy.db,
+                operator,
+                organization,
+                old.id,
+                { slug: "gone" },
+                {
+                    previewDomain: "previews.example.com",
+                    maxPreviews: 10,
+                },
+            );
+            await legacy.db
+                .updateTable("preview")
+                .set({ desired_state: "deleted" })
+                .where("id", "=", preview.id)
+                .execute();
+
+            await migrateToLatest(legacy.db);
+            const row = await legacy.db
+                .selectFrom("preview")
+                .select(["desired_state", "deleted_at"])
+                .where("id", "=", preview.id)
+                .executeTakeFirstOrThrow();
+            expect(row.desired_state).toBe("deleted");
+            expect(row.deleted_at).toBeInstanceOf(Date);
+        } finally {
+            await fs.rm(folder, { recursive: true, force: true });
+            await legacy.destroy();
+        }
     });
 });

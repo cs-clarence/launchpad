@@ -30,7 +30,9 @@ const DURATION_UNITS = { s: 1, m: 60, h: 3600, d: 86_400 } as const;
 // A lifetime such as "90m", "24h" or "7d": whole units of seconds, minutes, hours or days.
 // Returns seconds, or null for anything else (no fractions, signs, spaces or zero).
 export function parseDuration(text: string): number | null {
-    const match = /^([1-9][0-9]{0,6})([smhd])$/.exec(text);
+    // Any number of digits: whether the value is usable is for the safe-integer check and
+    // for the caller's limit, so "31536000s" is the same lifetime as "365d".
+    const match = /^([1-9][0-9]*)([smhd])$/.exec(text);
     if (!match) return null;
     const seconds = Number(match[1]) * DURATION_UNITS[match[2] as keyof typeof DURATION_UNITS];
     return Number.isSafeInteger(seconds) ? seconds : null;

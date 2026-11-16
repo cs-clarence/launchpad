@@ -8,6 +8,11 @@ export async function up(db: Kysely<any>): Promise<void> {
     await sql`alter table preview
         add column expires_at timestamptz,
         add column deleted_at timestamptz`.execute(db);
+    // Nothing in the application writes the deleted state yet, but the earlier schema
+    // allowed it: a row written by hand must not stop the upgrade on the new check. The
+    // original time is not known, so the time of this migration stands in for it.
+    await sql`update preview set deleted_at = now()
+        where desired_state = 'deleted' and deleted_at is null`.execute(db);
     await sql`alter table preview add constraint preview_deleted_at_matches_state
         check ((desired_state = 'deleted') = (deleted_at is not null))`.execute(db);
     // What the expiry scheduler scans: only live previews that have a lifetime.

@@ -12,3 +12,4 @@ docs/guidelines/
 .agents/skills/
 .agents/agent-choices.local.md
 apps/controller/src/routeTree.gen.ts
+packages/database/src/.tmp-migrations-*/

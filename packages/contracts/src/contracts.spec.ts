@@ -42,6 +42,11 @@ describe("durations", () => {
             expect(durationSchema.safeParse(bad).success, bad).toBe(false);
         }
         expect(durationSchema.safeParse("24h").success).toBe(true);
+        // The same lifetime in other units is accepted; whether it is allowed is the
+        // caller's limit, not the parser's.
+        expect(parseDuration("31536000s")).toBe(365 * 86_400);
+        expect(durationSchema.safeParse("31536000s").success).toBe(true);
+        expect(parseDuration("9".repeat(400) + "d")).toBeNull();
     });
 });
 
