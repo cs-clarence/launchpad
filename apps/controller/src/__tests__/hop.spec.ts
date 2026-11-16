@@ -1555,6 +1555,35 @@ describe("previews and deployments over HTTP", () => {
             const client = await connect(deployKey, policy);
             clients.push(client);
             expect((await client.listTools()).tools.map((t) => t.name)).toContain("deploy");
+            // No worker runs in this suite, so a stand-in finishes the deployment the way one
+            // would (the state machine itself is tested in the services): it waits for the
+            // queued row, then marks it succeeded while the tool is still following it.
+            const standIn = (async () => {
+                for (let i = 0; i < 200; i++) {
+                    const row = await testDb.db
+                        .selectFrom("deployment")
+                        .innerJoin("preview", "preview.id", "deployment.preview_id")
+                        .select(["deployment.id", "deployment.preview_id"])
+                        .where("preview.slug", "=", "from-mcp")
+                        .where("deployment.status", "=", "queued")
+                        .executeTakeFirst();
+                    if (row) {
+                        await testDb.db
+                            .updateTable("deployment")
+                            .set({ status: "succeeded", finished_at: new Date() })
+                            .where("id", "=", row.id)
+                            .execute();
+                        await testDb.db
+                            .updateTable("preview")
+                            .set({ active_deployment_id: row.id })
+                            .where("id", "=", row.preview_id)
+                            .execute();
+                        return;
+                    }
+                    await new Promise((resolve) => setTimeout(resolve, 50));
+                }
+                throw new Error("the deployment was never queued");
+            })();
             const deployed = await client.callTool({
                 name: "deploy",
                 arguments: {
@@ -1563,9 +1592,10 @@ describe("previews and deployments over HTTP", () => {
                     project: "site",
                     name: "from-mcp",
                     confirm: true,
-                    wait_seconds: 0,
+                    wait_seconds: 60,
                 },
             });
+            await standIn;
             expect(deployed.isError, JSON.stringify(deployed)).toBe(false);
             const data = (
                 deployed.structuredContent as {
@@ -1577,7 +1607,7 @@ describe("previews and deployments over HTTP", () => {
                     };
                 }
             ).data;
-            expect(data.outcome).toBe("queued");
+            expect(data.outcome).toBe("succeeded");
             expect(data.preview.hostname).toMatch(/^from-mcp-[a-z0-9]{6}\.previews\.example\.com$/);
 
             // The controller stored exactly what the policy allowed.
@@ -1598,7 +1628,7 @@ describe("previews and deployments over HTTP", () => {
                 arguments: { working_dir: root, deployment_id: data.deployment.id },
             });
             expect(followed.structuredContent).toMatchObject({
-                data: { id: data.deployment.id, status: "queued", failure: null },
+                data: { id: data.deployment.id, status: "succeeded", failure: null },
             });
             const listed = await client.callTool({
                 name: "list_previews",
@@ -1606,8 +1636,16 @@ describe("previews and deployments over HTTP", () => {
             });
             expect(JSON.stringify(listed.structuredContent)).toContain("from-mcp");
 
-            // A key without the deploy scope is refused by the controller, not by a hint.
-            const limited = await connect(readKey, policy);
+            // A key that can do everything but deploy is refused by the controller, at the
+            // deploy scope, not by a hint and not for lacking some earlier permission.
+            const noDeploy = await mintKey("no-deploy", [
+                "preview:read",
+                "preview:create",
+                "project:read",
+            ]);
+            const artifactsBefore = (await testDb.db.selectFrom("artifact").select("id").execute())
+                .length;
+            const limited = await connect(noDeploy, policy);
             clients.push(limited);
             const refused = await limited.callTool({
                 name: "deploy",
@@ -1621,7 +1659,12 @@ describe("previews and deployments over HTTP", () => {
                 },
             });
             expect(refused.isError).toBe(true);
-            expect(JSON.stringify(refused.structuredContent)).toMatch(/forbidden|permission/);
+            expect(refused.structuredContent).toMatchObject({
+                data: { code: "forbidden", status: 403 },
+            });
+            expect((await testDb.db.selectFrom("artifact").select("id").execute()).length).toBe(
+                artifactsBefore,
+            );
         } finally {
             for (const client of clients) await client.close().catch(() => {});
             await fs.rm(root, { recursive: true, force: true });

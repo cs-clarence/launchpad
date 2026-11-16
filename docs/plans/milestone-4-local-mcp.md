@@ -144,5 +144,6 @@ resources/prompts, browser login.
   read tools, deploy within the include/exclude policy (the stored archive is inspected),
   following the queued deployment, and a read-only key refused by the controller. A second
   test copies the built MCP and CLI files alone into an empty directory and runs them.
-  The controller's integration task now builds the MCP and CLI first. The deployment stays
-  queued (no worker runs there); the live Dokku run remains pending (milestone 3).
+  The controller's integration task now builds the MCP and CLI first. No worker runs there, so a stand-in
+  marks the queued deployment succeeded while the tool follows it (the state machine and the
+  worker have their own tests); the live Dokku run remains pending (milestone 3).
