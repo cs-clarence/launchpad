@@ -19,6 +19,8 @@ import {
     artifactSchema,
     createdApiKeySchema,
     createdDeploymentSchema,
+    requestedDeletionSchema,
+    deletionSchema,
     deploymentEventsSchema,
     deploymentSchema,
     previewListSchema,
@@ -196,6 +198,7 @@ beforeAll(async () => {
     // Deployments are on here (no worker runs in these tests); `direct` leaves them off.
     proxied = await start(true, {
         LAUNCHPAD_DEPLOYMENTS: "on",
+        LAUNCHPAD_LIFECYCLE: "on",
         LAUNCHPAD_PREVIEW_DOMAIN: "previews.example.com",
     });
     smtp = startFakeSmtp();
@@ -1757,6 +1760,218 @@ describe("previews and deployments over HTTP", () => {
         ).toBe(409);
     });
 
+    it("extends and deletes with scopes and project limits, and resolves with sessions only", async () => {
+        const create = async (projectId: string, slug: string) =>
+            previewSchema.parse(
+                await (
+                    await call(
+                        deployKey,
+                        `/organizations/${orgId}/projects/${projectId}/previews`,
+                        { method: "POST", body: { slug, ttl: "1h" } },
+                    )
+                ).json(),
+            );
+        const own = await create(p1, "lifecycle");
+        const other = await create(p2, "lifecycle-other");
+        const ownPath = `/organizations/${orgId}/previews/${own.id}`;
+        const otherPath = `/organizations/${orgId}/previews/${other.id}`;
+        const deleteKey = await mintKey("delete-only", ["preview:delete"], [p1]);
+        const limitedRead = await mintKey("read-one", ["preview:read"], [p1]);
+        expect(
+            await status(
+                call(readKey, `${ownPath}/extend`, { method: "POST", body: { ttl: "1h" } }),
+            ),
+        ).toBe(403);
+        expect(
+            await status(
+                call(deleteKey, `${ownPath}/extend`, { method: "POST", body: { ttl: "1h" } }),
+            ),
+        ).toBe(403);
+        expect(
+            await status(
+                call(limitedKey, `${otherPath}/extend`, { method: "POST", body: { ttl: "1h" } }),
+            ),
+        ).toBe(404);
+        expect(
+            await status(
+                call(deployKey, `/organizations/${otherOrgId}/previews/${own.id}/extend`, {
+                    method: "POST",
+                    body: { ttl: "1h" },
+                }),
+            ),
+        ).toBe(404);
+        for (const ttl of ["0h", "31d", "garbage", "none"]) {
+            expect(
+                await status(
+                    call(limitedKey, `${ownPath}/extend`, { method: "POST", body: { ttl } }),
+                ),
+                ttl,
+            ).toBe(422);
+        }
+        const extend = () =>
+            call(limitedKey, `${ownPath}/extend`, {
+                method: "POST",
+                body: { ttl: "1h" },
+                headers: { "idempotency-key": "extend-http-1" },
+            });
+        const extended = previewSchema.parse(await (await extend()).json());
+        expect(Date.parse(extended.expiresAt!)).toBeGreaterThan(Date.parse(own.expiresAt!));
+        expect(previewSchema.parse(await (await extend()).json()).expiresAt).toBe(
+            extended.expiresAt,
+        );
+        const later = previewSchema.parse(
+            await (
+                await call(limitedKey, `${ownPath}/extend`, {
+                    method: "POST",
+                    body: { ttl: "1h" },
+                    headers: { "idempotency-key": "extend-http-2" },
+                })
+            ).json(),
+        );
+        expect(Date.parse(later.expiresAt!)).toBeGreaterThan(Date.parse(extended.expiresAt!));
+        // A replay does not extend again, but it returns today's row rather than a snapshot.
+        expect(previewSchema.parse(await (await extend()).json()).expiresAt).toBe(later.expiresAt);
+        expect(
+            await status(
+                call(limitedKey, `${ownPath}/extend`, {
+                    method: "POST",
+                    body: { ttl: "2h" },
+                    headers: { "idempotency-key": "extend-http-1" },
+                }),
+            ),
+        ).toBe(409);
+        expect(await status(call(readKey, ownPath, { method: "DELETE" }))).toBe(403);
+        expect(await status(call(deleteKey, otherPath, { method: "DELETE" }))).toBe(404);
+        expect(
+            await status(
+                call(deleteKey, `/organizations/${otherOrgId}/previews/${own.id}`, {
+                    method: "DELETE",
+                }),
+            ),
+        ).toBe(404);
+        expect((await api(viewer, ownPath, { method: "DELETE" })).status).toBe(403);
+        const response = await call(deleteKey, ownPath, { method: "DELETE" });
+        expect(response.status).toBe(202);
+        const deletion = requestedDeletionSchema.parse(await response.json());
+        expect(
+            requestedDeletionSchema.parse(
+                await (await call(deleteKey, ownPath, { method: "DELETE" })).json(),
+            ),
+        ).toEqual(deletion);
+        expect(
+            await status(
+                call(limitedKey, `${ownPath}/extend`, { method: "POST", body: { ttl: "1h" } }),
+            ),
+        ).toBe(409);
+        const opPath = `/organizations/${orgId}/deletions/${deletion.operationId}`;
+        expect(await status(call(deleteKey, opPath))).toBe(403);
+        const operationResponse = await call(limitedRead, opPath);
+        expect(operationResponse.status).toBe(200);
+        const opBody = await operationResponse.json();
+        expect(deletionSchema.parse(opBody)).toMatchObject({
+            previewId: own.id,
+            status: "queued",
+            failure: null,
+        });
+        // No lease owner, fence or remote output leaks onto the read surface.
+        expect(Object.keys(opBody).sort()).toEqual(
+            ["id", "previewId", "status", "reason", "failure", "createdAt", "finishedAt"].sort(),
+        );
+        const otherDelete = requestedDeletionSchema.parse(
+            await (await api(owner, otherPath, { method: "DELETE" })).json(),
+        );
+        expect(
+            await status(
+                call(limitedRead, `/organizations/${orgId}/deletions/${otherDelete.operationId}`),
+            ),
+        ).toBe(404);
+        expect(
+            await status(
+                call(readKey, `/organizations/${otherOrgId}/deletions/${deletion.operationId}`),
+            ),
+        ).toBe(404);
+        expect(await status(call(readKey, `/organizations/${orgId}/deletions/not-a-uuid`))).toBe(
+            404,
+        );
+        const resolution = `${opPath}/resolution`;
+        expect(
+            await status(
+                call(deleteKey, resolution, { method: "POST", body: { outcome: "deleted" } }),
+            ),
+        ).toBe(403);
+        expect(
+            (await api(viewer, resolution, { method: "POST", body: { outcome: "deleted" } }))
+                .status,
+        ).toBe(403);
+        expect(
+            (await api(owner, resolution, { method: "POST", body: { outcome: "deleted" } })).status,
+        ).toBe(409);
+        await testDb.db
+            .updateTable("deletion_operation")
+            .set({ status: "reconciliation-needed" })
+            .where("id", "=", deletion.operationId)
+            .execute();
+        // A stale session or a cross-origin cookie cannot authorize reconciliation.
+        const sessions = await testDb.db
+            .selectFrom("session")
+            .innerJoin("user", "user.id", "session.userId")
+            .select("session.id")
+            .where("user.email", "=", "user@example.com")
+            .execute();
+        const sessionIds = sessions.map((s) => s.id);
+        await testDb.db
+            .updateTable("session")
+            .set({ createdAt: new Date(Date.now() - 3_600_000) })
+            .where("id", "in", sessionIds)
+            .execute();
+        try {
+            expect(
+                (await api(owner, resolution, { method: "POST", body: { outcome: "deleted" } }))
+                    .status,
+            ).toBe(403);
+            expect(
+                deletionSchema.parse(await (await call(limitedRead, opPath)).json()).status,
+            ).toBe("reconciliation-needed");
+        } finally {
+            await testDb.db
+                .updateTable("session")
+                .set({ createdAt: new Date() })
+                .where("id", "in", sessionIds)
+                .execute();
+        }
+        const crossOrigin = await fetch(`${proxied.base}/api/v1${resolution}`, {
+            method: "POST",
+            headers: {
+                cookie: owner,
+                origin: "https://evil.example.com",
+                "content-type": "application/json",
+            },
+            body: JSON.stringify({ outcome: "deleted" }),
+        });
+        expect(crossOrigin.status).toBe(403);
+        expect(
+            (await api(owner, resolution, { method: "POST", body: { outcome: "maybe" } })).status,
+        ).toBe(422);
+        expect(
+            (await api(owner, resolution, { method: "POST", body: { outcome: "retry" } })).status,
+        ).toBe(200);
+        expect(deletionSchema.parse(await (await call(limitedRead, opPath)).json()).status).toBe(
+            "queued",
+        );
+        await testDb.db
+            .updateTable("deletion_operation")
+            .set({ status: "reconciliation-needed" })
+            .where("id", "=", deletion.operationId)
+            .execute();
+        expect(
+            (await api(owner, resolution, { method: "POST", body: { outcome: "deleted" } })).status,
+        ).toBe(200);
+        expect(deletionSchema.parse(await (await call(limitedRead, opPath)).json()).status).toBe(
+            "succeeded",
+        );
+        expect(await status(call(deleteKey, ownPath, { method: "DELETE" }))).toBe(404);
+    });
+
     it("is off unless deployments are on: reads work, creating and deploying are refused", async () => {
         const cookieOwner = await (async () => {
             const response = await signIn(direct, "user@example.com", USER_PASSWORD);
@@ -1777,6 +1992,9 @@ describe("previews and deployments over HTTP", () => {
                 body: body === undefined ? undefined : JSON.stringify(body),
             });
         expect((await request(`/organizations/${orgId}/previews`)).status).toBe(200);
+        expect(
+            (await request(`/organizations/${orgId}/previews/${previewId}`, "DELETE")).status,
+        ).toBe(409);
         expect(
             (
                 await request(`/organizations/${orgId}/projects/${p1}/previews`, "POST", {
@@ -1834,6 +2052,23 @@ describe("server function bodies", () => {
 });
 
 describe("OpenAPI reference", () => {
+    it("describes extension replay as returning the current preview, not the original response", async () => {
+        const response = await fetch(`${proxied.base}/api/openapi/json`);
+        const spec = (await response.json()) as {
+            paths: Record<
+                string,
+                {
+                    post: {
+                        description: string;
+                    };
+                }
+            >;
+        };
+        const extend =
+            spec.paths["/api/v1/organizations/{orgId}/previews/{previewId}/extend"]!.post;
+        expect(extend.description).toContain("returns the current preview");
+        expect(extend.description).toContain("does not extend again");
+    });
     const operations = [
         "get /api/v1/me",
         "get /api/v1/organizations",
@@ -1854,6 +2089,10 @@ describe("OpenAPI reference", () => {
         "get /api/v1/organizations/{orgId}/previews",
         "post /api/v1/organizations/{orgId}/projects/{projectId}/previews",
         "get /api/v1/organizations/{orgId}/previews/{previewId}",
+        "delete /api/v1/organizations/{orgId}/previews/{previewId}",
+        "post /api/v1/organizations/{orgId}/previews/{previewId}/extend",
+        "get /api/v1/organizations/{orgId}/deletions/{operationId}",
+        "post /api/v1/organizations/{orgId}/deletions/{operationId}/resolution",
         "post /api/v1/organizations/{orgId}/previews/{previewId}/deployments",
         "get /api/v1/organizations/{orgId}/previews/{previewId}/deployments",
         "get /api/v1/organizations/{orgId}/deployments/{deploymentId}",

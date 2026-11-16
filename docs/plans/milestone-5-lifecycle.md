@@ -140,6 +140,15 @@ and an operator can see whether the system is healthy and how far behind it is.
    restore the milestone 3 intent using the existing artifact and deployment APIs,
    with role checks, upload limits, progress/error feedback and deployment status.
    Keep it a separate reviewable dashboard follow-up if slice 5 becomes too large.
+   Execution refinement (2026-11-17): 5a exposes DELETE, extension, deletion status
+   and session-only resolution, with contracts, SDK and HTTP authorization tests;
+   5b adds client-core/CLI and dashboard controls. DELETE is naturally idempotent
+   by preview id (repeats return the queued operation); extension forwards
+   `Idempotency-Key`. Deletion status is read-scoped and project-filtered, exposing
+   only fixed failure text, never lease details or remote output. Resolution needs
+   a fresh admin/owner session, never an API key. Verify 5a with contract/SDK tests,
+   built-controller HTTP integration and the full gate. Undo by reverting the routes;
+   lifecycle remains off by default and no schema changes are needed.
 6. **Status.** Heartbeat writes, `GET /api/v1/status` (operator only), docs.
 7. **MCP.** `delete_preview` behind `--allow-delete`; e2e through the built binary.
 8. **Milestone Opus review** and fixes.
@@ -217,3 +226,12 @@ content could be re-published by hand from storage, and after it nothing can.
   its clock; retention at least 1h; a lifecycle round at least every 30 s; the collector takes the
   owner lock and skips a malformed key; the sweep skips symlinked owner directories. Documented
   only: one database per Dokku host and per data directory.
+- Slice 5a: lifecycle HTTP routes and SDK. DELETE queues and returns the operation
+  (naturally idempotent by preview id); extension forwards the idempotency key. Added
+  deletion status contracts and a public-fields-only reader, with an organization-scoped
+  project lookup for limited keys. Delete, extend and reads check scopes and project
+  reach; resolution is fresh-session-only. Built-server HTTP tests cover these boundaries,
+  repeat requests, validation, off-by-default deletion, and retry/deleted resolution.
+  Removing the delete project's allow-list check makes the HTTP test fail (202 vs 404).
+  Local gate, integration and Node-container gate pass. CLI/dashboard work is slice 5b;
+  the approved upload/deploy panel may follow as its own PR.
