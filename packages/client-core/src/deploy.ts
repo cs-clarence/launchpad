@@ -26,7 +26,10 @@ export type DeployOutcome =
 export type Progress =
     | { kind: "step"; message: string }
     | { kind: "event"; seq: number; phase: string; level: string; message: string }
-    | { kind: "status"; status: string };
+    | { kind: "status"; status: string }
+    // Sent as soon as the deployment is accepted, so a caller that stops waiting still has
+    // the id to follow it with.
+    | { kind: "queued"; deploymentId: string };
 
 export interface DeployInput {
     // A built directory (packed here) or an existing `.tar.gz`.
@@ -107,7 +110,7 @@ export async function deploy(ctx: Context, input: DeployInput): Promise<DeployRe
         );
     }
     const packed = stat.isDirectory()
-        ? await packDirectory(input.source, undefined, input.selection)
+        ? await packDirectory(input.source, undefined, input.selection, input.signal)
         : await readArchive(input.source);
 
     // The preview is settled before the upload: a stored archive is kept for good, so
@@ -145,6 +148,7 @@ export async function deploy(ctx: Context, input: DeployInput): Promise<DeployRe
         sleep,
         input.signal,
     );
+    progress({ kind: "queued", deploymentId: queued.id });
     const base = {
         preview: { id: preview.id, slug: preview.slug, hostname: preview.hostname },
         artifact: { id: artifact.id, reused: artifact.reused, sizeBytes: artifact.sizeBytes },

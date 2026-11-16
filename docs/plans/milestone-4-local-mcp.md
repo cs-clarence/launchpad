@@ -147,3 +147,17 @@ resources/prompts, browser login.
   The controller's integration task now builds the MCP and CLI first. No worker runs there, so a stand-in
   marks the queued deployment succeeded while the tool follows it (the state machine and the
   worker have their own tests); the live Dokku run remains pending (milestone 3).
+
+## Milestone review (Opus 5.5)
+
+No blocking finding was left open. Fixed: a file named `@x` made the archiver merge in an
+unchecked archive (entries are now added one by one); `--allow-project` could be
+sidestepped through another profile or organization (it now takes project ids and judges
+the resolved project); the walk had no bound and ignored cancellation (directories no
+include can reach are skipped, 100,000 entries cap, signal checked); the default wait
+exceeded typical client timeouts (45 s, deployment id sent when queued); invisible Unicode
+format characters survived output cleaning; excludes failed open for directory names,
+`[!x]` and case; a `launchpad.json` owned by someone else was trusted; precedence of the
+startup profile and the file's preview name; deploys from inside credential directories or
+the client's store; stdin buffer 1 MiB. Accepted and documented: the file swap race by a
+concurrent local writer, and path-existence information in errors.

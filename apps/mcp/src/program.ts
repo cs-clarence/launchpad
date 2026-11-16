@@ -16,7 +16,7 @@ export function startupOptions(argv: string[], write: (text: string) => void) {
     const program = new Command()
         .name("launchpad-mcp")
         .description(
-            "Local stdio MCP server, read-only unless --allow-deploy is given. Shared mode takes working_dir per call.",
+            "Local stdio MCP server, read-only unless --allow-deploy is given. Shared mode takes working_dir per call.\n\nWARNING: with --allow-deploy the client chooses working_dir and there is no list of allowed roots, so broad --include patterns let a model publish any matching file this process can read. Keep patterns narrow, and run under a restricted account or sandbox if directory isolation matters.",
         )
         .option("--shared", "no implicit working directory; serve multiple project contexts")
         .option("--working-dir <directory>", "absolute default directory for tool calls")
@@ -36,7 +36,7 @@ export function startupOptions(argv: string[], write: (text: string) => void) {
         )
         .option(
             "--allow-project <project>",
-            "restrict deployment to this project, as a slug or id exactly as given to the tool (repeatable)",
+            "restrict deployment to this project id (repeatable); a slug is not accepted, as it can name another project under another profile or organization",
             collect,
             [] as string[],
         )
@@ -59,11 +59,21 @@ export function startupOptions(argv: string[], write: (text: string) => void) {
             "error: --allow-deploy needs at least one --include and one --exclude (excludes always win)",
         );
     }
+    const notIds = options.allowProject.filter(
+        (p) => !/^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(p),
+    );
+    if (notIds.length > 0) {
+        throw new CommanderError(
+            2,
+            "launchpad.deployPolicy",
+            "error: --allow-project takes a project id (see: launchpad projects list)",
+        );
+    }
     const deploy: DeployPolicy | undefined = options.allowDeploy
         ? {
               include: options.include,
               exclude: options.exclude,
-              allowProjects: options.allowProject,
+              allowProjects: options.allowProject.map((p) => p.toLowerCase()),
           }
         : undefined;
     return {

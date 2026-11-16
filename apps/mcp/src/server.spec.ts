@@ -259,6 +259,14 @@ describe("read-only MCP protocol", () => {
             expect(JSON.parse(content.text)).toEqual(result.structuredContent);
     });
 
+    it("strips invisible format characters that can hide text from a reader", () => {
+        const hidden = "a\u202eb\u200bc\u{E0041}\u{E0042}d\u2028e";
+        const result = toolResult({ [hidden]: hidden });
+        expect(JSON.stringify(result.structuredContent)).toBe(
+            '{"data":{"abcde":"abcde"},"truncated":false}',
+        );
+    });
+
     it("bounds the complete result even when JSON text is escaped a second time", () => {
         for (const char of ['"', "\\"]) {
             const result = toolResult({ text: char.repeat(14_000) });

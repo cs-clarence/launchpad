@@ -6,7 +6,9 @@ import { redact } from "./redact";
 export function safeOutput(text: string): string {
     return redact(
         stripVTControlCharacters(redact(text))
-            .replace(/[\p{Cc}]/gu, (c) => (c === "\n" || c === "\t" ? c : ""))
+            // Controls and invisible format characters (bidi overrides, zero-width and tag
+            // characters, which can carry hidden text) go; newline and tab stay for layout.
+            .replace(/[\p{Cc}\p{Cf}\u2028\u2029]/gu, (c) => (c === "\n" || c === "\t" ? c : ""))
             .replace(/(\[redacted\])[A-Za-z0-9_-]+/g, "$1"),
     );
 }

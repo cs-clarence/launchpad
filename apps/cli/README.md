@@ -42,7 +42,9 @@ and `--profile <name>`.
 working directory upward.
 The file requires `organization` (id or slug) and `project` (id or slug), with
 optional `profile` and preview `name`. `--profile`, `--project` and `--name` override
-file values; without file defaults, project and name must be supplied as flags.
+file values; without file defaults, project and name must be supplied as flags. The
+file's `name` goes with the file's project: naming another with `--project` needs `--name`.
+A file owned by another user is ignored.
 Files are strictly validated, bounded to 16 KiB and must not be symlinks.
 Organization selection from the file requires `organization:read`; it is checked
 against the key's organizations and never saved. With no file, existing

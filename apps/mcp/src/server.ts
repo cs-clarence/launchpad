@@ -10,8 +10,10 @@ import {
     getDeployment,
     deploymentEvents,
     workspaceContext,
+    checkLocation,
     compileSelection,
     deploy,
+    resolveProject,
 } from "@launchpad/client-core";
 import { promises as fs } from "node:fs";
 import path from "node:path";
@@ -101,7 +103,8 @@ export function createMcpServer(context: Context, options: ServerOptions = {}) {
                     }
                     const workspace = await workspaceContext(context, {
                         workingDir,
-                        profile: input.profile ?? options.profile,
+                        profile: input.profile,
+                        defaultProfile: options.profile,
                         organization: input.organization,
                         project:
                             "project" in input ? (input.project as string | undefined) : undefined,
@@ -171,7 +174,15 @@ export function createMcpServer(context: Context, options: ServerOptions = {}) {
             name: z.string().min(1).max(40).optional().describe("Preview name."),
             spa: z.boolean().optional(),
             confirm: z.literal(true).describe("Must be true: this publishes files."),
-            wait_seconds: z.number().int().min(0).max(900).optional(),
+            wait_seconds: z
+                .number()
+                .int()
+                .min(0)
+                .max(900)
+                .optional()
+                .describe(
+                    "How long to follow the deployment (default 45; 0 returns once queued). Clients often give up sooner, so the deployment id is sent as soon as it is queued and returned on timeout.",
+                ),
         };
         server.registerTool(
             "deploy",
@@ -198,7 +209,8 @@ export function createMcpServer(context: Context, options: ServerOptions = {}) {
                     }
                     const workspace = await workspaceContext(context, {
                         workingDir,
-                        profile: input.profile ?? options.profile,
+                        profile: input.profile,
+                        defaultProfile: options.profile,
                         organization: input.organization,
                         project: input.project,
                     });
@@ -210,9 +222,17 @@ export function createMcpServer(context: Context, options: ServerOptions = {}) {
                             "Set project and name, or configure them in launchpad.json.",
                         );
                     }
+                    // The project is judged by what it is (its id, on the controller and in the
+                    // organization this call resolved to), not by the text it was named with:
+                    // a slug means different projects under another profile or organization.
+                    const target = await resolveProject(
+                        workspace.context,
+                        project,
+                        workspace.profile,
+                    );
                     if (
                         policy.allowProjects.length > 0 &&
-                        !policy.allowProjects.includes(project)
+                        !policy.allowProjects.includes(target.projectId)
                     ) {
                         throw new ClientCoreError(
                             "bad-input",
@@ -220,11 +240,12 @@ export function createMcpServer(context: Context, options: ServerOptions = {}) {
                         );
                     }
                     const source = await sourceWithin(workspace.directory, input.path);
+                    checkLocation(source.directory, [context.store.directory]);
                     const progressToken = extra._meta?.progressToken;
                     let steps = 0;
                     const result = await deploy(workspace.context, {
                         source: source.directory,
-                        project,
+                        project: target.projectId,
                         name,
                         spa: input.spa,
                         selection: {
@@ -234,7 +255,7 @@ export function createMcpServer(context: Context, options: ServerOptions = {}) {
                         },
                         profile: workspace.profile,
                         wait: input.wait_seconds !== 0,
-                        waitTimeoutMs: (input.wait_seconds ?? 600) * 1000,
+                        waitTimeoutMs: (input.wait_seconds ?? 45) * 1000,
                         signal: extra.signal,
                         onProgress: (p) => {
                             if (progressToken === undefined) return;
@@ -243,7 +264,9 @@ export function createMcpServer(context: Context, options: ServerOptions = {}) {
                                     ? p.message
                                     : p.kind === "status"
                                       ? `Status: ${p.status}`
-                                      : `[${p.phase}] ${p.message}`;
+                                      : p.kind === "queued"
+                                        ? `Queued deployment ${p.deploymentId}`
+                                        : `[${p.phase}] ${p.message}`;
                             void extra
                                 .sendNotification({
                                     method: "notifications/progress",

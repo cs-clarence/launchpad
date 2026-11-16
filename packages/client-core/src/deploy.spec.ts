@@ -3,6 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
+    checkLocation,
     ClientCoreError,
     createContext,
     deploy,
@@ -626,6 +627,77 @@ describe("choosing which files are published", () => {
             deploy(ctx, args(file, { selection: pick(["dist/**"], ["x"]) })),
         ).rejects.toThrow(/needs a directory/);
         expect(calls.some((c) => c.path.endsWith("/artifacts"))).toBe(false);
+    });
+
+    it("never merges an archive named by a file starting with @, selected or not", async () => {
+        const { create } = await import("tar");
+        const outside = path.join(dir, "outside");
+        await fs.mkdir(outside);
+        await fs.writeFile(path.join(outside, "creds.txt"), "SECRET=1");
+        const loot = path.join(dir, "loot.tar");
+        await create({ file: loot, cwd: outside }, ["creds.txt"]);
+        const bytes = await fs.readFile(loot);
+        // Selected mode: an unselected symlink to the archive, and a plain file of that name.
+        const root = await site();
+        await fs.writeFile(path.join(root, "@loot.bin"), bytes);
+        await fs.symlink(loot, path.join(root, "loot.bin"));
+        const picked = await packDirectory(
+            root,
+            undefined,
+            pick(["dist/@*", "dist/index.html"], ["nothing"]),
+        );
+        expect(await names(picked.archive)).toEqual(["@loot.bin", "index.html"]);
+        // Plain mode (the CLI): the same file, no selection.
+        await fs.rm(path.join(root, "loot.bin"));
+        const plain = await packDirectory(root);
+        expect(await names(plain.archive)).toEqual(["@loot.bin", "assets/app.js", "index.html"]);
+    });
+
+    it("excludes a directory named without a glob, ignores case, and honors [!x]", async () => {
+        const root = await site({
+            "private/key.txt": "x",
+            "Admin/a.txt": "x",
+            "b/ok.txt": "x",
+            "c/ok.txt": "x",
+        });
+        const packed = await packDirectory(
+            root,
+            undefined,
+            pick(["dist/**"], ["dist/private", "DIST/ADMIN/**", "dist/[!a]/ok.txt"]),
+        );
+        expect(await names(packed.archive)).toEqual(["assets/app.js", "index.html"]);
+    });
+
+    it("does not walk directories nothing can select, and stops when cancelled", async () => {
+        const root = await site({ "other/x.txt": "x" });
+        await fs.chmod(path.join(root, "other"), 0o000);
+        try {
+            const packed = await packDirectory(
+                root,
+                undefined,
+                pick(["dist/index.html"], ["nothing"]),
+            );
+            expect(await names(packed.archive)).toEqual(["index.html"]);
+        } finally {
+            await fs.chmod(path.join(root, "other"), 0o755);
+        }
+        const cancelled = new AbortController();
+        cancelled.abort();
+        await expect(
+            packDirectory(root, undefined, pick(["dist/**"], ["nothing"]), cancelled.signal),
+        ).rejects.toBeDefined();
+    });
+
+    it("refuses a location inside secret data or this client's own store", () => {
+        expect(() => checkLocation("/home/u/.aws/site")).toThrow(/credential/);
+        expect(() => checkLocation("/home/u/.kube")).toThrow(/credential/);
+        expect(() => checkLocation("/home/u/site", ["/home/u/.config/launchpad"])).not.toThrow();
+        expect(() =>
+            checkLocation("/home/u/.config/launchpad/x", ["/home/u/.config/launchpad"]),
+        ).toThrow(/holds this client's credentials/);
+        expect(() =>
+            checkLocation("/home/u/.config/launchpad", ["/home/u/.config/launchpad"]),
+        ).toThrow();
     });
 
     it("refuses patterns that could reach outside the directory or mean something else", async () => {

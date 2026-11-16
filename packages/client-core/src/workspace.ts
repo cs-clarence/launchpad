@@ -20,6 +20,11 @@ const workspaceSchema = z.strictObject({
 export type WorkspaceConfig = z.infer<typeof workspaceSchema>;
 export const MAX_WORKSPACE_CONFIG_BYTES = 16 * 1024;
 
+/** A file is trusted only if the current user owns it. Where there are no user ids, it is. */
+export function ownedByCurrentUser(owner: number, current: number | undefined): boolean {
+    return current === undefined || owner === current;
+}
+
 function badConfig(): never {
     // Do not include the file's contents, parsing error, or arbitrary path in output.
     throw new ClientCoreError(
@@ -35,6 +40,9 @@ async function readConfig(file: string): Promise<WorkspaceConfig | null> {
     });
     if (!entry) return null;
     if (!entry.isFile()) badConfig();
+    // Another user's file in a shared directory (a planted /tmp/launchpad.json) must not
+    // choose this user's profile, organization or project: it is not looked at.
+    if (!ownedByCurrentUser(entry.uid, process.getuid?.())) return null;
     const handle = await fs
         .open(file, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0) | (constants.O_NONBLOCK ?? 0))
         .catch((error: NodeJS.ErrnoException) => {
@@ -106,10 +114,17 @@ export async function readWorkspace(workingDir: string) {
  */
 export async function workspaceContext(
     ctx: Context,
-    input: { workingDir: string; profile?: string; organization?: string; project?: string },
+    input: {
+        workingDir: string;
+        profile?: string;
+        organization?: string;
+        project?: string;
+        // Used only when neither the call nor launchpad.json names a profile.
+        defaultProfile?: string;
+    },
 ) {
     const workspace = await readWorkspace(input.workingDir);
-    let profile = input.profile ?? workspace.config?.profile;
+    let profile = input.profile ?? workspace.config?.profile ?? input.defaultProfile;
     const organization = input.organization ?? workspace.config?.organization;
     let scoped = ctx;
     if (organization) {
@@ -130,7 +145,11 @@ export async function workspaceContext(
         context: scoped,
         profile,
         project: input.project ?? workspace.config?.project,
-        name: workspace.config?.name,
+        // The file's preview name belongs to the file's project, not to one named instead.
+        name:
+            input.project === undefined || input.project === workspace.config?.project
+                ? workspace.config?.name
+                : undefined,
         directory: workspace.directory,
         // Only what an argument or launchpad.json selected, not the inherited environment.
         organization,

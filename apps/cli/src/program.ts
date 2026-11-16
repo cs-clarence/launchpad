@@ -285,7 +285,9 @@ export function buildProgram(rawIo: Io) {
                                   ? p.message
                                   : p.kind === "status"
                                     ? `Status: ${p.status}`
-                                    : `  [${p.phase}] ${p.message}`,
+                                    : p.kind === "queued"
+                                      ? `Queued deployment ${p.deploymentId}`
+                                      : `  [${p.phase}] ${p.message}`,
                           ),
             });
             const organization = workspace.organization;
