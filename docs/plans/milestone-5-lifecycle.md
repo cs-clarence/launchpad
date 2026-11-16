@@ -43,7 +43,9 @@ and an operator can see whether the system is healthy and how far behind it is.
    Previews that exist today have no expiry (`null` = never) until extended or given one;
    a later operator command can apply the default to them (not built here).
 2. **Extension.** `POST …/previews/:id/extend {ttl}` sets `expires_at` to
-   `greatest(now, expires_at) + ttl`, capped at `now + max TTL`. It succeeds only while the
+   `greatest(now, expires_at) + ttl`, capped at `now + max TTL`. Each requested `ttl` must be
+   positive (zero and negative are refused, so an extension can never move expiry to or
+   before now), and at most the maximum. It succeeds only while the
    preview is `active`; once expiry has claimed it, extension is a conflict (see the race
    rule below).
 3. **Who may delete.** New permission `preview:delete` for deployer, admin and owner,
@@ -123,7 +125,10 @@ and an operator can see whether the system is healthy and how far behind it is.
 4. **Worker ports and cleanup.** Real ports (`apps:exists`/`apps:destroy` through the existing
    adapter, exact-tag `docker image rm`), artifact collection and the orphan sweep, scheduler
    loop in the worker (off unless `LAUNCHPAD_LIFECYCLE=on`), extension of the opt-in live
-   task (destroy a `lp-test-` app and verify a neighbour app is untouched). **Opus review
+   task (destroy a disposable app and verify a neighbour app is untouched). The ownership pattern
+   is an argument of the ports: production fixes it to `^lp-[a-z0-9]{10}$` (it is not
+   configurable from the environment), and only the live test passes a separate, guarded
+   `^lp-test-[a-z0-9]{6}$` one, as the milestone 3 live task already does. **Opus review
    of slices 2–4 before continuing.**
 5. **API, SDK, CLI, dashboard.** `DELETE` and `extend` routes (idempotency keys, 202, scopes,
    project-limited keys through the owning project), `expiresAt` on previews, SDK, client
