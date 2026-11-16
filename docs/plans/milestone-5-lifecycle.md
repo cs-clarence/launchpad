@@ -1,6 +1,7 @@
 # Milestone 5: previews expire and recover predictably
 
-Status: **proposed, awaiting the user's approval**. Extends `docs/plans/application.md`
+Status: **approved by the user (2026-11-16)**: the default values, who may delete, deferring
+runtime logs, and `--allow-delete` for the MCP tool. Extends `docs/plans/application.md`
 milestone 5 and `docs/design/application.md` ("Lifecycle, storage and operations",
 "Jobs, concurrency and reconciliation"). High risk.
 
