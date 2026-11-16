@@ -689,18 +689,21 @@ describe("running a deletion", () => {
                 throw dokkuError("uncertain");
             },
         });
+        let probes = 0;
         for (let i = 0; i < MAX_DELETION_ATTEMPTS + 2; i++) {
-            const next = await claim();
-            if (!next) {
-                await testDb.db
-                    .updateTable("deletion_operation")
-                    .set({ lease_expires_at: new Date(Date.now() - 1) })
-                    .where("preview_id", "=", p.id)
-                    .execute();
-                continue;
-            }
+            // Let the retry delay pass, so every pass runs a probe.
+            await testDb.db
+                .updateTable("deletion_operation")
+                .set({ lease_expires_at: new Date(Date.now() - 1) })
+                .where("preview_id", "=", p.id)
+                .execute();
+            const next = (await claim())!;
+            expect(next).toBeTruthy();
             expect(await runDeletion(testDb.db, next, fake.ports, on)).toBe("retry");
+            probes++;
         }
+        expect(probes).toBe(MAX_DELETION_ATTEMPTS + 2);
+        expect((await operation(p.id)).attempt).toBe(0);
         expect(fake.count.destroy).toBe(0);
     });
 
