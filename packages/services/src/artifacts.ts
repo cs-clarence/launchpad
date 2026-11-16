@@ -146,6 +146,7 @@ async function countArtifacts(db: Db, organizationId: string): Promise<number> {
         .selectFrom("artifact")
         .select((eb) => eb.fn.countAll<string>().as("n"))
         .where("organization_id", "=", organizationId)
+        .where("collected_at", "is", null)
         .executeTakeFirstOrThrow();
     return Number(row.n);
 }
@@ -298,7 +299,9 @@ async function finalize(
 
     return db.transaction().execute(async (trx) => {
         // One finalizer per organization: the quota and the digest check cannot race.
-        await sql`select pg_advisory_xact_lock(hashtextextended(${`artifacts:${organizationId}`}, 0))`.execute(
+        // The lock is per owner directory, the same one the orphan sweep takes before it
+        // removes a file there, so a sweep never deletes an archive stored under it.
+        await sql`select pg_advisory_xact_lock(hashtextextended(${`artifacts:${key.split("/")[1]}`}, 0))`.execute(
             trx,
         );
         // Authority is re-read under the lock: a caller removed during a long upload
@@ -306,13 +309,53 @@ async function finalize(
         await requireMembership(trx, principal, organizationId, "preview:deploy");
         const existing = await trx
             .selectFrom("artifact")
-            .select(["id", "created_at", "size_bytes", "expanded_bytes", "entry_count"])
+            .select([
+                "id",
+                "created_at",
+                "size_bytes",
+                "expanded_bytes",
+                "entry_count",
+                "collected_at",
+            ])
             .where("organization_id", "=", organizationId)
             .where("digest", "=", digest)
+            .forUpdate()
             .executeTakeFirst();
-        if (existing) return shape(existing, true);
+        if (existing && existing.collected_at === null) {
+            // Live: reused as it is, unless its archive is missing (a collection died after
+            // moving it aside and the sweep has not put it back yet): then this upload is what
+            // stores it.
+            const present = await fs.stat(final).then(
+                () => true,
+                () => false,
+            );
+            if (present) return shape(existing, true);
+            await fs.mkdir(path.dirname(final), { recursive: true, mode: 0o700 });
+            await fs.rename(temp, final);
+            return shape(existing, false);
+        }
         if ((await countArtifacts(trx, organizationId)) >= limits.maxArtifacts) {
             throw new ServiceError("conflict", "This organization has too many stored artifacts.");
+        }
+        if (existing) {
+            // Collected earlier: the row remains but the archive is gone. The same digest is
+            // the same bytes, so storing it again makes the very same artifact usable.
+            await fs.mkdir(path.dirname(final), { recursive: true, mode: 0o700 });
+            await fs.rename(temp, final);
+            try {
+                const restored = await trx
+                    .updateTable("artifact")
+                    // created_at is when the current archive was stored: the retention
+                    // period for an unused one starts again.
+                    .set({ collected_at: null, created_at: sql<Date>`now()` })
+                    .where("id", "=", existing.id)
+                    .returning(["id", "created_at", "size_bytes", "expanded_bytes", "entry_count"])
+                    .executeTakeFirstOrThrow();
+                return shape(restored, false);
+            } catch (error) {
+                await fs.rm(final, { force: true });
+                throw error;
+            }
         }
         const existed = await fs.stat(final).then(
             () => true,

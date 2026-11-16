@@ -109,6 +109,44 @@ describe("the docker vocabulary", () => {
         await expect(docker.remove("nginx:latest")).resolves.toBeUndefined();
     });
 
+    it("removes one image by exact tag and says so if it could not, and accepts one already gone", async () => {
+        const ok = await recording();
+        await ok.docker.removeImage(TAG);
+        expect(await lines(ok.argv)).toEqual(["rmi", "--force", TAG]);
+
+        const gone = await recording(`echo "Error: No such image: ${TAG}" >&2; exit 1`);
+        await expect(gone.docker.removeImage(TAG)).resolves.toBeUndefined();
+
+        const busy = await recording(`echo "conflict: image is being used" >&2; exit 1`);
+        const error = await busy.docker.removeImage(TAG).catch((e: unknown) => e);
+        expect(error).toBeInstanceOf(DockerError);
+        expect((error as DockerError).message).toBe("Removing the image failed.");
+    });
+
+    it("refuses to remove any image that is not one of ours, before running anything", async () => {
+        const { docker, argv } = await recording();
+        for (const tag of [
+            "",
+            "nginx:latest",
+            "launchpad/site:latest",
+            `${TAG};ls`,
+            "-a",
+            `${TAG}\n`,
+            "launchpad/site",
+        ]) {
+            await expect(docker.removeImage(tag), tag).rejects.toThrow(/Refused/);
+        }
+        await expect(fs.stat(argv)).rejects.toThrow();
+    });
+
+    it("bounds a strict image removal with its own deadline", async () => {
+        const bin = await fakeDocker(tmp.dir, "exec sleep 30");
+        const docker = createDocker({ binary: bin, removeTimeoutMs: 300 });
+        const started = Date.now();
+        await expect(docker.removeImage(TAG)).rejects.toBeInstanceOf(DockerError);
+        expect(Date.now() - started).toBeLessThan(5000);
+    });
+
     it("kills a build that outlives its signal", async () => {
         const { docker } = await recording("exec sleep 30");
         const controller = new AbortController();

@@ -6,6 +6,8 @@ only process that holds Dokku SSH credentials and Docker access. The HTTP contro
 has neither. Keep this page current when settings or steps change.
 
 Off unless `LAUNCHPAD_DEPLOYMENTS=on`; while off it idles and reads no other setting.
+Scheduled expiry, deletion and artifact cleanup are a second, separate switch,
+`LAUNCHPAD_LIFECYCLE=on` (default `off`); see [Lifecycle](#lifecycle).
 
 ## Settings
 
@@ -74,3 +76,31 @@ it fails at once with a message. The settings are listed at the top of
   prune, on purpose.
 - Failure details (a failed build's output, say) are kept on the error for operators but
   are not logged yet; the log lines carry only outcomes.
+
+## Lifecycle
+
+Off unless `LAUNCHPAD_LIFECYCLE=on` (and deployments are on). Between deployments the worker
+then does three things, in this order, each bounded: it **claims previews whose lifetime has
+run out** (queueing their deletion), **runs at most one deletion**, and, every ten minutes,
+**collects archives and sweeps orphaned archive files**. Settings: `LAUNCHPAD_DEFAULT_TTL`,
+`LAUNCHPAD_MAX_TTL`, `LAUNCHPAD_ALLOW_NO_EXPIRY`, `LAUNCHPAD_ARTIFACT_RETENTION` (see the
+controller README); a value that is set but invalid stops the worker at startup.
+
+A deletion destroys **one Dokku app and one preview's own images, nothing else**:
+
+- the app is destroyed only if its recorded name is of the generated kind (`lp-` and ten
+  letters or digits), and the Dokku client independently refuses any other name; the worker
+  asks `apps:exists` before every destroy, so a destroy whose answer was lost is not repeated
+  (and if the app is still there, it is tried again within five attempts, then held for an
+  administrator, who resolves it);
+- images are removed by their exact recorded tag (`docker rmi --force <tag>`), and an image
+  that cannot be removed does not block the deletion (it is recorded as `images-left-behind`);
+- there is no prune, no volume, no network, no database and no listing in the vocabulary,
+  and a test reads the sources and fails if one appears.
+
+Archives are collected only when older than the retention, not pointed at by any deployment of
+a preview that is not deleted (a live preview keeps the archive its rollback is rebuilt from),
+not by an unfinished deployment, and not by a preview deleted within the retention. The row
+stays (marked collected) and the file goes after it; uploading the same bytes again stores the
+archive again. Switch the lifecycle off to stop all of this at once: nothing is deleted, and
+all rows and jobs are kept.

@@ -17,3 +17,5 @@ export * from "./deployments";
 export * from "./lifecycle";
 export * from "./deletions";
 export * from "./expiry";
+export * from "./artifact-gc";
+export * from "./lifecycle-run";

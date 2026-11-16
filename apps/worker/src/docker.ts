@@ -117,6 +117,26 @@ export function createDocker(options: { binary?: string; removeTimeoutMs?: numbe
             return { stream: child.stdout as AsyncIterable<Uint8Array>, done };
         },
 
+        // Removes exactly this image, forced, and says so if it could not. An image that is
+        // already gone is not a failure. Never a prune, never anything but one tag this
+        // worker makes.
+        async removeImage(tag: string, signal?: AbortSignal): Promise<void> {
+            if (!TAG.test(tag)) {
+                throw new Error("Refused: not an image tag this worker makes.");
+            }
+            const { exited } = start(
+                ["rmi", "--force", tag],
+                AbortSignal.any([
+                    AbortSignal.timeout(removeTimeoutMs),
+                    ...(signal ? [signal] : []),
+                ]),
+            );
+            const result = await exited;
+            if (result.exitCode !== 0 && !/No such image/i.test(result.stderr)) {
+                throw new DockerError("Removing the image failed.", result.stderr);
+            }
+        },
+
         // Best effort: removes exactly this image, never a prune.
         async remove(tag: string): Promise<void> {
             if (!TAG.test(tag)) return;

@@ -3,7 +3,9 @@ import path from "node:path";
 import {
     artifactLimitsFromEnv,
     deploymentsEnabled,
+    lifecycleConfigFromEnv,
     resolveLimits,
+    type LifecycleConfig,
     type ArchiveLimits,
 } from "@launchpad/services";
 import { DEFAULT_BASE_IMAGE, checkBaseImage } from "./template";
@@ -27,6 +29,8 @@ export interface WorkerConfig {
     leaseMs: number;
     // The same limits the controller enforces at upload, from the same settings.
     archiveLimits: ArchiveLimits;
+    // Scheduled expiry, deletion and cleanup; off unless LAUNCHPAD_LIFECYCLE=on.
+    lifecycle: LifecycleConfig;
 }
 
 // Each step's deadline is 80% of the lease and the image load alone may take 10 minutes
@@ -92,6 +96,7 @@ export function loadConfig(
                 MAX_LEASE_MS,
             ),
             archiveLimits: archiveLimits(env),
+            lifecycle: lifecycleConfigFromEnv(env),
         },
     };
 }
