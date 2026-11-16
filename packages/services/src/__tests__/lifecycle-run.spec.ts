@@ -589,8 +589,11 @@ describe("a collection that died before its commit", () => {
         });
         expect(only.restored).toBe(1);
         expect(await fs.readFile(a.file, "utf8")).toBe("archive");
-        // An ordinary sweep honors its bound.
+        // An ordinary sweep honors its bound: with three restorable archives waiting, a budget of
+        // one cannot put them all back.
         const b = await interrupted();
+        await interrupted();
+        await interrupted();
         const bounded = await sweepOrphanArtifactFiles(testDb.db, {
             dataDir,
             retentionSeconds: 3600,
@@ -598,7 +601,9 @@ describe("a collection that died before its commit", () => {
             maxFiles: 1,
         });
         expect(bounded.restored + bounded.removed).toBeLessThanOrEqual(1);
-        await recoverInterruptedCollections(testDb.db, { dataDir });
+        // Recovery finishes what the bounded sweep left.
+        const rest = await recoverInterruptedCollections(testDb.db, { dataDir });
+        expect(rest.restored + bounded.restored).toBe(3);
         expect(await fs.readFile(b.file, "utf8")).toBe("archive");
     });
 
