@@ -84,10 +84,12 @@ describe("the lifecycle ports", () => {
 });
 
 describe("the worker loop and the lifecycle", () => {
+    let touches = 0;
     const untouched = new Proxy(
         {},
         {
             get: () => {
+                touches++;
                 throw new Error("touched");
             },
         },
@@ -117,6 +119,9 @@ describe("the worker loop and the lifecycle", () => {
         setTimeout(() => stop.abort(), 250);
         await done;
         expect(calls).toEqual([]);
+        // The loop catches a database error and carries on, so the calls alone would not
+        // show a touch: count it.
+        expect(touches).toBe(0);
     });
 });
 

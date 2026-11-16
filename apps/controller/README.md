@@ -191,7 +191,8 @@ default off): then expired previews are deleted, and stored archives are collect
 
 A length-less (chunked) upload is a 411. An identical archive already stored for the
 organization is reused (`reused: true`); archives are deduplicated within an
-organization only. Artifacts are not deleted until the cleanup milestone, so an
+organization only. Stored archives stay until the worker's lifecycle collects them (off by default; after
+`LAUNCHPAD_ARTIFACT_RETENTION` and only when no live preview needs them), so until then an
 organization at its ceiling is refused even for an identical archive (redeploy an
-existing artifact by id instead). A stale staging file from a crash is swept at the
+existing artifact by id instead); collected archives no longer count toward the ceiling. A stale staging file from a crash is swept at the
 next start. `/_serverFn/**` request bodies are bounded to 64 KiB like the rest of the API.

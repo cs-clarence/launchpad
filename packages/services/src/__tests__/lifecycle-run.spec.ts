@@ -357,6 +357,186 @@ describe("a deployment waiting on an artifact being collected", () => {
     });
 });
 
+describe("collection racing deployments and uploads", () => {
+    it("judges a candidate again once it is locked: a deployment that committed in between keeps the archive", async () => {
+        const a = await artifact();
+        const preview = await makePreview();
+        let deployed = "";
+        const result = await collectArtifacts(testDb.db, {
+            dataDir,
+            retentionSeconds: 3600,
+            limit: 1000,
+            // The deployment commits after the candidate was chosen and before it is locked.
+            afterCandidate: async (id) => {
+                if (id === a.id && !deployed) deployed = await deploy(preview, a.id, "succeeded");
+            },
+        });
+        expect(deployed).not.toBe("");
+        expect(result.collected).not.toContain(a.id);
+        expect(await exists(a.file)).toBe(true);
+        expect(await collected(a.id)).toBe(false);
+    });
+
+    it("never removes an archive that a re-upload restored between the commit and the removal", async () => {
+        const bytes = tarGz([
+            ...SITE,
+            { name: "restored.txt", content: `restored ${randomUUID()}` },
+        ]);
+        const limits = { maxConcurrentUploads: 50 };
+        const stream = () =>
+            new ReadableStream<Uint8Array>({
+                start(c) {
+                    c.enqueue(bytes);
+                    c.close();
+                },
+            });
+        const first = await uploadArtifact(
+            testDb.db,
+            people.dee!,
+            org,
+            stream(),
+            { contentLength: bytes.length },
+            { dataDir, limits },
+        );
+        await testDb.db
+            .updateTable("artifact")
+            .set({ created_at: new Date(Date.now() - 2 * HOUR) })
+            .where("id", "=", first.id)
+            .execute();
+        const stored = path.join(dataDir, artifactStorageKey(org, first.digest));
+        const result = await collectArtifacts(testDb.db, {
+            dataDir,
+            retentionSeconds: 3600,
+            limit: 1000,
+            afterCommit: async (id) => {
+                if (id !== first.id) return;
+                // The row is collected and the file is aside; now the same bytes are uploaded.
+                const again = await uploadArtifact(
+                    testDb.db,
+                    people.dee!,
+                    org,
+                    stream(),
+                    { contentLength: bytes.length },
+                    { dataDir, limits },
+                );
+                expect(again).toMatchObject({ id: first.id, reused: false });
+            },
+        });
+        expect(result.collected).toContain(first.id);
+        expect(await exists(stored)).toBe(true);
+        expect(await collected(first.id)).toBe(false);
+        // No moved-aside file is left behind either.
+        const leftovers = (await fs.readdir(path.dirname(stored))).filter((f) =>
+            f.endsWith(".gone"),
+        );
+        expect(leftovers).toEqual([]);
+        expect(
+            await code(
+                enqueueDeployment(
+                    testDb.db,
+                    people.dee!,
+                    org,
+                    await makePreview(),
+                    { artifactId: first.id },
+                    { enabled: true },
+                ),
+            ),
+        ).toBe("ok");
+    });
+
+    it("puts the archive back if the collection could not commit", async () => {
+        const a = await artifact();
+        await expect(
+            collectArtifacts(testDb.db, {
+                dataDir,
+                retentionSeconds: 3600,
+                limit: 1000,
+                afterCandidate: async (id) => {
+                    if (id === a.id) throw new Error("boom");
+                },
+            }),
+        ).rejects.toThrow("boom");
+        expect(await exists(a.file)).toBe(true);
+        expect(await collected(a.id)).toBe(false);
+    });
+
+    it("cannot delete an archive an upload stores in the gap between the sweep's check and its removal", async () => {
+        const digest = createHash("sha256").update(randomUUID()).digest("hex");
+        const key = artifactStorageKey(org, digest);
+        const file = path.join(dataDir, key);
+        await fs.mkdir(path.dirname(file), { recursive: true });
+        await fs.writeFile(file, "old");
+        const aged = new Date(Date.now() - 2 * HOUR);
+        await fs.utimes(file, aged, aged);
+        await testDb.db
+            .insertInto("artifact")
+            .values({
+                organization_id: org,
+                digest,
+                size_bytes: 1,
+                expanded_bytes: 1,
+                entry_count: 1,
+                storage_key: key,
+                created_by: people.dee!.userId,
+                collected_at: new Date(),
+                created_at: aged,
+            } as never)
+            .execute();
+        const owner = key.split("/")[1]!;
+        let finalizing: Promise<void> | undefined;
+        await sweepOrphanArtifactFiles(testDb.db, {
+            dataDir,
+            retentionSeconds: 3600,
+            // An upload finalizing starts now, with the sweep's check already made.
+            beforeRemove: async (target) => {
+                if (target !== file) return;
+                finalizing = testDb.db.transaction().execute(async (trx) => {
+                    await sql`select pg_advisory_xact_lock(hashtextextended(${`artifacts:${owner}`}, 0))`.execute(
+                        trx,
+                    );
+                    await fs.writeFile(file, "restored");
+                    await trx
+                        .updateTable("artifact")
+                        .set({ collected_at: null, created_at: new Date() })
+                        .where("storage_key", "=", key)
+                        .execute();
+                });
+                // Long enough that, with no lock in the way, it would be done before the removal.
+                await new Promise((r) => setTimeout(r, 400));
+            },
+        });
+        await finalizing;
+        expect(await fs.readFile(file, "utf8")).toBe("restored");
+        expect(
+            await collected(
+                (
+                    await testDb.db
+                        .selectFrom("artifact")
+                        .select("id")
+                        .where("storage_key", "=", key)
+                        .executeTakeFirstOrThrow()
+                ).id,
+            ),
+        ).toBe(false);
+    });
+
+    it("removes moved-aside files of an interrupted collection once they are old enough", async () => {
+        const digest = createHash("sha256").update(randomUUID()).digest("hex");
+        const key = artifactStorageKey(org, digest);
+        const aside = path.join(dataDir, `${key}.0123456789abcdef.gone`);
+        await fs.mkdir(path.dirname(aside), { recursive: true });
+        await fs.writeFile(aside, "x");
+        // Just moved: kept, whatever the file's own age.
+        const aged = new Date(Date.now() - 2 * HOUR);
+        await fs.utimes(aside, aged, aged);
+        await sweepOrphanArtifactFiles(testDb.db, { dataDir, retentionSeconds: 3600 });
+        expect(await exists(aside)).toBe(true);
+        // Aside for longer than the retention: removed.
+        await sweepOrphanArtifactFiles(testDb.db, { dataDir, retentionSeconds: 0 });
+        expect(await exists(aside)).toBe(false);
+    });
+});
+
 describe("storing a collected archive again", () => {
     it("makes the same artifact usable, and starts its retention again", async () => {
         const bytes = tarGz([...SITE, { name: "again.txt", content: "again" }]);
@@ -393,6 +573,8 @@ describe("storing a collected archive again", () => {
             { dataDir, limits },
         );
         expect(again).toMatchObject({ id: first.id, reused: false });
+        // The answer carries the new time, not the old one the retention no longer uses.
+        expect(again.createdAt.getTime()).toBeGreaterThan(Date.now() - 60_000);
         expect(await exists(stored)).toBe(true);
         expect(await collected(first.id)).toBe(false);
         // Young again, so the next collection leaves it.

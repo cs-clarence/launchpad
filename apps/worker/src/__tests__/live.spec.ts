@@ -242,7 +242,11 @@ describe("deleting a preview's app on a real Dokku", () => {
             "lp-test-ab",
             `${PREFIX}${suffix()};ls`,
         ]) {
-            await expect(lifecycle.dokku.apps.destroy(name), name).rejects.toBeDefined();
+            // Refused locally, before anything is sent: the error is the validator's.
+            await expect(lifecycle.dokku.apps.destroy(name), name).rejects.toMatchObject({
+                kind: "invalid-argument",
+                operation: "apps:destroy",
+            });
         }
     });
 });

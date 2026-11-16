@@ -1,7 +1,8 @@
+import { randomBytes } from "node:crypto";
 import { promises as fs } from "node:fs";
 import path from "node:path";
-import type { Database } from "@launchpad/database";
-import { type Kysely, sql } from "kysely";
+import type { ArtifactTable, Database } from "@launchpad/database";
+import { type Kysely, type SelectQueryBuilder, sql } from "kysely";
 import { resolveArtifactPath } from "./artifacts";
 import { LIFECYCLE_AUDIT } from "./lifecycle";
 
@@ -18,8 +19,62 @@ const UNFINISHED = [
 
 export const COLLECT_BATCH = 50;
 
+// The eligibility rule, applied to a query over `artifact as a`. It is used twice per
+// collection: to pick a candidate, and again after the row is locked, because a deployment
+// can commit in between and the first answer is then out of date.
+function eligible<O>(
+    query: SelectQueryBuilder<Database & { a: ArtifactTable }, "a", O>,
+    retentionSeconds: number,
+): SelectQueryBuilder<Database & { a: ArtifactTable }, "a", O> {
+    const q = query;
+    return q
+        .where("a.collected_at", "is", null)
+        .where(
+            "a.created_at",
+            "<",
+            sql<Date>`clock_timestamp() - ${retentionSeconds} * interval '1 second'`,
+        )
+        .where(({ not, exists, selectFrom }) =>
+            not(
+                exists(
+                    selectFrom("deployment as d")
+                        .innerJoin("preview as p", (join) =>
+                            join
+                                .onRef("p.id", "=", "d.preview_id")
+                                .onRef("p.organization_id", "=", "d.organization_id"),
+                        )
+                        .select("d.id")
+                        .whereRef("d.artifact_id", "=", "a.id")
+                        .whereRef("d.organization_id", "=", "a.organization_id")
+                        .where((eb) =>
+                            eb.or([
+                                eb("p.desired_state", "<>", "deleted"),
+                                eb("d.status", "in", [...UNFINISHED]),
+                                eb(
+                                    "p.deleted_at",
+                                    ">",
+                                    sql<Date>`clock_timestamp() - ${retentionSeconds} * interval '1 second'`,
+                                ),
+                            ]),
+                        ),
+                ),
+            ),
+        );
+}
+
+export interface CollectOptions {
+    dataDir: string;
+    retentionSeconds: number;
+    limit?: number;
+    // Test seams: run between choosing a candidate and locking it, and between the commit
+    // and the removal of the old file. They exist so the races they stand for can be
+    // reproduced deterministically; nothing in production sets them.
+    afterCandidate?: (artifactId: string) => Promise<void>;
+    afterCommit?: (artifactId: string) => Promise<void>;
+}
+
 // Collects stored archives nothing can need any more, one artifact per transaction. An
-// artifact is eligible only when ALL of these hold, judged under the row lock:
+// artifact is eligible only when ALL of these hold:
 //   - it is older than the retention period;
 //   - no deployment of a preview that is not `deleted` points at it (so a live preview keeps
 //     the archive its rollback is rebuilt from), and none that is unfinished or held for
@@ -27,11 +82,16 @@ export const COLLECT_BATCH = 50;
 //   - no preview that used it was deleted within the retention period (so what was just
 //     deleted can still be recovered by hand during that time).
 // An upload nobody deployed is simply old enough. The row stays (marked collected) because
-// deployments and audit records still point at it; the archive file goes after the row is
-// marked, never before, so a row never claims an archive that is missing.
+// deployments and audit records still point at it.
+//
+// Concurrency: a candidate is chosen, then locked, then judged AGAIN in a new statement (a
+// deployment may have committed in between; once the row is locked none can). The archive is
+// moved aside to a name only this collection knows, inside the transaction, and removed after
+// the commit: a re-upload that restores the archive in the meantime writes the real name and
+// is never touched, and a failed commit puts the file back.
 export async function collectArtifacts(
     db: Db,
-    options: { dataDir: string; retentionSeconds: number; limit?: number },
+    options: CollectOptions,
 ): Promise<{ collected: string[] }> {
     const limit = options.limit ?? COLLECT_BATCH;
     if (!Number.isSafeInteger(limit) || limit < 1) {
@@ -41,86 +101,115 @@ export async function collectArtifacts(
         throw new Error("retentionSeconds must not be negative.");
     }
     const collected: string[] = [];
-    for (let i = 0; i < limit; i++) {
-        const done = await db.transaction().execute(async (trx) => {
-            const row = await trx
-                .selectFrom("artifact as a")
-                .select(["a.id", "a.organization_id", "a.storage_key"])
-                .where("a.collected_at", "is", null)
-                .where(
-                    "a.created_at",
-                    "<",
-                    sql<Date>`clock_timestamp() - ${options.retentionSeconds} * interval '1 second'`,
+    const skipped: string[] = [];
+    for (let round = 0; round < limit * 4 && collected.length < limit; round++) {
+        let moved: { from: string; to: string } | null = null;
+        let outcome:
+            | { kind: "none" }
+            | { kind: "skip"; id: string }
+            | { kind: "collected"; id: string; to: string | null };
+        try {
+            outcome = await db.transaction().execute(async (trx) => {
+                const candidate = await (() => {
+                    const q = eligible(
+                        trx
+                            .selectFrom("artifact as a")
+                            .select(["a.id", "a.organization_id", "a.storage_key"]),
+                        options.retentionSeconds,
+                    );
+                    return (skipped.length > 0 ? q.where("a.id", "not in", skipped) : q)
+                        .orderBy("a.created_at")
+                        .limit(1)
+                        .executeTakeFirst();
+                })();
+                if (!candidate) return { kind: "none" } as const;
+                await options.afterCandidate?.(candidate.id);
+                const locked = await trx
+                    .selectFrom("artifact")
+                    .select("id")
+                    .where("id", "=", candidate.id)
+                    .where("collected_at", "is", null)
+                    .forUpdate()
+                    .skipLocked()
+                    .executeTakeFirst();
+                if (!locked) return { kind: "skip", id: candidate.id } as const;
+                // A new statement, so it sees what committed while this one waited.
+                const still = await eligible(
+                    trx.selectFrom("artifact as a").select("a.id"),
+                    options.retentionSeconds,
                 )
-                .where(({ not, exists, selectFrom }) =>
-                    not(
-                        exists(
-                            selectFrom("deployment as d")
-                                .innerJoin("preview as p", (join) =>
-                                    join
-                                        .onRef("p.id", "=", "d.preview_id")
-                                        .onRef("p.organization_id", "=", "d.organization_id"),
-                                )
-                                .select("d.id")
-                                .whereRef("d.artifact_id", "=", "a.id")
-                                .whereRef("d.organization_id", "=", "a.organization_id")
-                                .where((eb) =>
-                                    eb.or([
-                                        eb("p.desired_state", "<>", "deleted"),
-                                        eb("d.status", "in", [...UNFINISHED]),
-                                        eb(
-                                            "p.deleted_at",
-                                            ">",
-                                            sql<Date>`clock_timestamp() - ${options.retentionSeconds} * interval '1 second'`,
-                                        ),
-                                    ]),
-                                ),
-                        ),
-                    ),
-                )
-                .orderBy("a.created_at")
-                .limit(1)
-                .forUpdate("a")
-                .skipLocked()
-                .executeTakeFirst();
-            if (!row) return null;
-            await trx
-                .updateTable("artifact")
-                .set({ collected_at: sql<Date>`now()` })
-                .where("id", "=", row.id)
-                .execute();
-            await trx
-                .insertInto("audit_event")
-                .values({
-                    actor: "system",
-                    action: LIFECYCLE_AUDIT.artifactCollected,
-                    target_type: "artifact",
-                    target_id: row.id,
-                    organization_id: row.organization_id,
-                })
-                .execute();
-            return row;
-        });
-        if (!done) break;
-        // After the commit: a crash here leaves a file with a collected row, which the orphan
-        // sweep removes. The path is rebuilt from the stored key by the one checked resolver.
-        await fs.rm(resolveArtifactPath(options.dataDir, done.storage_key), { force: true });
-        collected.push(done.id);
+                    .where("a.id", "=", candidate.id)
+                    .executeTakeFirst();
+                if (!still) return { kind: "skip", id: candidate.id } as const;
+                await trx
+                    .updateTable("artifact")
+                    .set({ collected_at: sql<Date>`now()` })
+                    .where("id", "=", candidate.id)
+                    .execute();
+                await trx
+                    .insertInto("audit_event")
+                    .values({
+                        actor: "system",
+                        action: LIFECYCLE_AUDIT.artifactCollected,
+                        target_type: "artifact",
+                        target_id: candidate.id,
+                        organization_id: candidate.organization_id,
+                    })
+                    .execute();
+                const final = resolveArtifactPath(options.dataDir, candidate.storage_key);
+                const aside = `${final}.${randomBytes(8).toString("hex")}.gone`;
+                const renamed = await fs.rename(final, aside).then(
+                    () => true,
+                    (error: NodeJS.ErrnoException) => {
+                        if (error.code === "ENOENT") return false;
+                        throw error;
+                    },
+                );
+                if (renamed) moved = { from: final, to: aside };
+                return { kind: "collected", id: candidate.id, to: renamed ? aside : null } as const;
+            });
+        } catch (error) {
+            // The commit did not happen: the row still claims an archive, so it goes back.
+            const undo = moved as { from: string; to: string } | null;
+            if (undo) await fs.rename(undo.to, undo.from).catch(() => undefined);
+            throw error;
+        }
+        if (outcome.kind === "none") break;
+        if (outcome.kind === "skip") {
+            skipped.push(outcome.id);
+            continue;
+        }
+        await options.afterCommit?.(outcome.id);
+        if (outcome.to) await fs.rm(outcome.to, { force: true });
+        collected.push(outcome.id);
     }
     return { collected };
 }
 
 const KEY_DIR = /^[0-9a-f]{32}$/;
 const KEY_FILE = /^[0-9a-f]{64}\.tar\.gz$/;
+// What a collection moves an archive to before removing it for good.
+const ASIDE_FILE = /^[0-9a-f]{64}\.tar\.gz\.[0-9a-f]{16}\.gone$/;
 export const MAX_SWEPT_FILES = 10_000;
 
-// Removes archive files nothing refers to: no artifact row names them, or the row is
-// marked collected, and the file is older than the retention period (a file younger than
-// that may be an upload whose row is not committed yet). Only files named the way this
-// module stores them, two levels below `artifacts/`, are looked at. The walk is bounded.
+// Removes archive files nothing refers to: no live artifact row names them (none, or one
+// marked collected), and the file is older than the retention period (a younger one may be an
+// upload whose row is not committed yet). Moved-aside files of an interrupted collection are
+// removed once they have been aside that long. Only files named the way this module stores
+// them, two levels below `artifacts/`, are looked at. The walk is bounded.
+//
+// Each removal is made under the owner's upload lock, the one finalizing an upload holds
+// while it stores the archive and makes its row live: the file and the row are looked at
+// again under it, so an upload that lands after the first look is never deleted.
 export async function sweepOrphanArtifactFiles(
     db: Db,
-    options: { dataDir: string; retentionSeconds: number },
+    options: {
+        dataDir: string;
+        retentionSeconds: number;
+        // Test seam: runs after a file was judged removable and before it is removed, so the
+        // race it stands for (an upload landing in that gap) can be reproduced.
+        beforeRemove?: (file: string) => Promise<void>;
+    },
 ): Promise<{ removed: number }> {
     const root = path.join(options.dataDir, "artifacts");
     let removed = 0;
@@ -130,22 +219,35 @@ export async function sweepOrphanArtifactFiles(
         if (!KEY_DIR.test(owner)) continue;
         const names = await fs.readdir(path.join(root, owner)).catch(() => [] as string[]);
         for (const name of names) {
-            if (!KEY_FILE.test(name)) continue;
+            const aside = ASIDE_FILE.test(name);
+            if (!aside && !KEY_FILE.test(name)) continue;
             if (++seen > MAX_SWEPT_FILES) return { removed };
             const file = path.join(root, owner, name);
-            const stat = await fs.lstat(file).catch(() => null);
-            if (!stat?.isFile()) continue;
-            if (Date.now() - stat.mtimeMs <= options.retentionSeconds * 1000) continue;
             const key = `artifacts/${owner}/${name}`;
-            const live = await db
-                .selectFrom("artifact")
-                .select("id")
-                .where("storage_key", "=", key)
-                .where("collected_at", "is", null)
-                .executeTakeFirst();
-            if (live) continue;
-            await fs.rm(file, { force: true });
-            removed++;
+            const gone = await db.transaction().execute(async (trx) => {
+                await sql`select pg_advisory_xact_lock(hashtextextended(${`artifacts:${owner}`}, 0))`.execute(
+                    trx,
+                );
+                const stat = await fs.lstat(file).catch(() => null);
+                if (!stat?.isFile()) return false;
+                // A moved-aside file keeps its archive's modification time; the move itself
+                // is what ctime records.
+                const since = aside ? stat.ctimeMs : stat.mtimeMs;
+                if (Date.now() - since <= options.retentionSeconds * 1000) return false;
+                if (!aside) {
+                    const live = await trx
+                        .selectFrom("artifact")
+                        .select("id")
+                        .where("storage_key", "=", key)
+                        .where("collected_at", "is", null)
+                        .executeTakeFirst();
+                    if (live) return false;
+                }
+                await options.beforeRemove?.(file);
+                await fs.rm(file, { force: true });
+                return true;
+            });
+            if (gone) removed++;
         }
     }
     return { removed };

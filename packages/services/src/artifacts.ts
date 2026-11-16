@@ -299,7 +299,9 @@ async function finalize(
 
     return db.transaction().execute(async (trx) => {
         // One finalizer per organization: the quota and the digest check cannot race.
-        await sql`select pg_advisory_xact_lock(hashtextextended(${`artifacts:${organizationId}`}, 0))`.execute(
+        // The lock is per owner directory, the same one the orphan sweep takes before it
+        // removes a file there, so a sweep never deletes an archive stored under it.
+        await sql`select pg_advisory_xact_lock(hashtextextended(${`artifacts:${key.split("/")[1]}`}, 0))`.execute(
             trx,
         );
         // Authority is re-read under the lock: a caller removed during a long upload
@@ -329,18 +331,19 @@ async function finalize(
             await fs.mkdir(path.dirname(final), { recursive: true, mode: 0o700 });
             await fs.rename(temp, final);
             try {
-                await trx
+                const restored = await trx
                     .updateTable("artifact")
                     // created_at is when the current archive was stored: the retention
                     // period for an unused one starts again.
                     .set({ collected_at: null, created_at: sql<Date>`now()` })
                     .where("id", "=", existing.id)
-                    .execute();
+                    .returning(["id", "created_at", "size_bytes", "expanded_bytes", "entry_count"])
+                    .executeTakeFirstOrThrow();
+                return shape(restored, false);
             } catch (error) {
                 await fs.rm(final, { force: true });
                 throw error;
             }
-            return shape(existing, false);
         }
         const existed = await fs.stat(final).then(
             () => true,
