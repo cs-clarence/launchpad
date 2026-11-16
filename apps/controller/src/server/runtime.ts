@@ -2,7 +2,12 @@ import { createAuth, createMailer, loadAuthConfig } from "@launchpad/auth";
 import { createDatabase } from "@launchpad/database";
 import type { InvitationDeps } from "@launchpad/services";
 import path from "node:path";
-import { deploymentsEnabled, PREVIEW_DOMAIN_PATTERN, sweepStaleUploads } from "@launchpad/services";
+import {
+    deploymentsEnabled,
+    lifecycleConfigFromEnv,
+    PREVIEW_DOMAIN_PATTERN,
+    sweepStaleUploads,
+} from "@launchpad/services";
 import { getDomain } from "tldts";
 import { createApi } from "./api";
 import { artifactLimitsFromEnv } from "./artifact-config";
@@ -22,7 +27,13 @@ function requireEnv(name: string): string {
 export function previewSettings(env: Record<string, string | undefined>, origin: string) {
     const enabled = deploymentsEnabled(env.LAUNCHPAD_DEPLOYMENTS);
     const previewDomain = (env.LAUNCHPAD_PREVIEW_DOMAIN ?? "").toLowerCase();
-    if (!enabled) return { enabled, previewDomain: previewDomain || "previews.example.com" };
+    if (!enabled) {
+        return {
+            enabled,
+            previewDomain: previewDomain || "previews.example.com",
+            lifecycle: lifecycleConfigFromEnv(env),
+        };
+    }
     if (!previewDomain) {
         throw new Error("LAUNCHPAD_PREVIEW_DOMAIN is required when deployments are on.");
     }
@@ -53,7 +64,7 @@ export function previewSettings(env: Record<string, string | undefined>, origin:
     if (maxPreviews !== undefined && (!Number.isSafeInteger(maxPreviews) || maxPreviews < 1)) {
         throw new Error("LAUNCHPAD_MAX_PREVIEWS must be a positive integer.");
     }
-    return { enabled, previewDomain, maxPreviews };
+    return { enabled, previewDomain, maxPreviews, lifecycle: lifecycleConfigFromEnv(env) };
 }
 
 // Composed on first use so importing the module (build, tests, route

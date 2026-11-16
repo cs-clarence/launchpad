@@ -1,10 +1,11 @@
 import { createHash, randomInt } from "node:crypto";
-import { createPreviewSchema } from "@launchpad/contracts";
+import { createPreviewSchema, extendPreviewSchema, parseDuration } from "@launchpad/contracts";
 import type { Database } from "@launchpad/database";
 import { type Kysely, sql } from "kysely";
 import { z } from "zod";
 import type { Principal } from "./authorization";
 import { ServiceError } from "./errors";
+import { DEFAULT_LIFECYCLE, LIFECYCLE_AUDIT, type LifecycleConfig } from "./lifecycle";
 import { parseInput, recordAudit, requireMembership } from "./organizations";
 
 type Db = Kysely<Database>;
@@ -20,6 +21,8 @@ export interface PreviewDeps {
     previewDomain: string;
     // Live previews per organization. Defaults to MAX_PREVIEWS_PER_ORGANIZATION.
     maxPreviews?: number;
+    // Lifetimes. Defaults to DEFAULT_LIFECYCLE.
+    lifecycle?: LifecycleConfig;
 }
 
 export const PREVIEW_DOMAIN_PATTERN =
@@ -56,6 +59,7 @@ function shape(row: {
     hostname: string;
     desired_state: "active" | "deleting" | "deleted";
     active_deployment_id: string | null;
+    expires_at: Date | null;
     created_at: Date;
 }) {
     return {
@@ -65,8 +69,30 @@ function shape(row: {
         hostname: row.hostname,
         state: row.desired_state,
         activeDeploymentId: row.active_deployment_id,
+        expiresAt: row.expires_at,
         createdAt: row.created_at,
     };
+}
+
+// A requested lifetime in seconds, or null for none. The operator's limits decide what is
+// allowed: nothing above the maximum, and no "none" unless they permit it.
+export function resolveLifetime(
+    requested: string | undefined,
+    config: LifecycleConfig,
+): number | null {
+    if (requested === undefined) return config.defaultTtlSeconds;
+    if (requested === "none") {
+        if (!config.allowNoExpiry) {
+            throw new ServiceError("invalid", "Previews on this instance must expire.");
+        }
+        return null;
+    }
+    const seconds = parseDuration(requested);
+    if (seconds === null) throw new ServiceError("invalid", "The lifetime is not valid.");
+    if (seconds > config.maxTtlSeconds) {
+        throw new ServiceError("invalid", "That lifetime is longer than this instance allows.");
+    }
+    return seconds;
 }
 
 const COLUMNS = [
@@ -76,6 +102,7 @@ const COLUMNS = [
     "hostname",
     "desired_state",
     "active_deployment_id",
+    "expires_at",
     "created_at",
 ] as const;
 
@@ -162,8 +189,9 @@ export async function createPreview(
         throw new ServiceError("not-found", "Project not found.");
     }
     const data = parseInput(createPreviewSchema, input);
+    const lifetime = resolveLifetime(data.ttl, deps.lifecycle ?? DEFAULT_LIFECYCLE);
     const key = idempotencyKey === undefined ? undefined : parseInput(keySchema, idempotencyKey);
-    const requestHash = hashRequest({ projectId, slug: data.slug });
+    const requestHash = hashRequest({ projectId, slug: data.slug, ttl: data.ttl ?? "" });
     const endpoint = "preview.create";
     const bound = principal.credentialId ?? principal.userId;
 
@@ -249,6 +277,12 @@ export async function createPreview(
                     app_name: names.appName,
                     hostname: names.hostname,
                     active_deployment_id: null,
+                    // Read after the creator lock above, so a wait for it is not part of
+                    // the lifetime.
+                    expires_at:
+                        lifetime === null
+                            ? null
+                            : sql<Date>`clock_timestamp() + make_interval(secs => ${lifetime})`,
                     created_by: principal.userId,
                 })
                 .onConflict((oc) => oc.doNothing())
@@ -309,4 +343,120 @@ export async function previewProjectId(
         .executeTakeFirst();
     if (!row) throw new ServiceError("not-found", "Preview not found.");
     return row.project_id;
+}
+
+// Gives a preview more time, or a lifetime if it had none. With `clock` read after the
+// preview row is locked (not the transaction's start), the new expiry is
+// `max(expires_at, min(max(clock, expires_at) + ttl, clock + maxTtl))`: it never shortens
+// a lifetime, and a long wait for the lock cannot leave it already past. It races safely
+// with expiry: both take the row lock, so exactly one wins, and an extension that comes
+// after expiry has claimed the preview is a conflict.
+export async function extendPreview(
+    db: Db,
+    principal: Principal,
+    organizationId: string,
+    previewId: string,
+    input: unknown,
+    deps: PreviewDeps,
+    idempotencyKey?: string,
+) {
+    await requireMembership(db, principal, organizationId, "preview:deploy");
+    if (!z.uuid().safeParse(previewId).success) {
+        throw new ServiceError("not-found", "Preview not found.");
+    }
+    const config = deps.lifecycle ?? DEFAULT_LIFECYCLE;
+    const data = parseInput(extendPreviewSchema, input);
+    const key = idempotencyKey === undefined ? undefined : parseInput(keySchema, idempotencyKey);
+    // "none" removes the lifetime, which only an instance that allows it may do.
+    const seconds = resolveLifetime(data.ttl, config);
+    const requestHash = hashRequest({ previewId, ttl: data.ttl });
+    const endpoint = "preview.extend";
+    const bound = principal.credentialId ?? principal.userId;
+
+    return db.transaction().execute(async (trx) => {
+        await requireMembership(trx, principal, organizationId, "preview:deploy");
+        const row = await trx
+            .selectFrom("preview")
+            .select(COLUMNS)
+            .where("organization_id", "=", organizationId)
+            .where("id", "=", previewId)
+            .forUpdate()
+            .executeTakeFirst();
+        if (!row) throw new ServiceError("not-found", "Preview not found.");
+        if (row.desired_state !== "active") {
+            throw new ServiceError("conflict", "That preview is expired or being deleted.");
+        }
+        if (key !== undefined) {
+            // One request at a time per complete scoped key, even across previews.
+            await sql`select pg_advisory_xact_lock(hashtextextended(${`idempotency:${organizationId}:${bound}:${endpoint}:${key}`}, 0))`.execute(
+                trx,
+            );
+            await trx
+                .deleteFrom("idempotency_key")
+                .where("expires_at", "<=", sql<Date>`now()`)
+                .where("organization_id", "=", organizationId)
+                .execute();
+            const seen = await trx
+                .selectFrom("idempotency_key")
+                .select(["request_hash", "resource_id"])
+                .where("organization_id", "=", organizationId)
+                .where("principal", "=", bound)
+                .where("endpoint", "=", endpoint)
+                .where("key", "=", key)
+                .executeTakeFirst();
+            if (seen) {
+                if (seen.request_hash !== requestHash) {
+                    throw new ServiceError(
+                        "conflict",
+                        "That idempotency key was used with a different request.",
+                    );
+                }
+                // A repeat is not extended again.
+                return shape(row);
+            }
+        }
+        const clock = (await sql<{ c: Date }>`select clock_timestamp() as c`.execute(trx)).rows[0]!
+            .c;
+        let next: Date | null;
+        if (seconds === null) {
+            next = null;
+        } else {
+            const current = row.expires_at;
+            const base = current && current > clock ? current : clock;
+            const wanted = new Date(base.getTime() + seconds * 1000);
+            const cap = new Date(clock.getTime() + config.maxTtlSeconds * 1000);
+            const capped = wanted < cap ? wanted : cap;
+            next = current && current > capped ? current : capped;
+        }
+        const updated = await trx
+            .updateTable("preview")
+            .set({ expires_at: next })
+            .where("organization_id", "=", organizationId)
+            .where("id", "=", previewId)
+            .returning(COLUMNS)
+            .executeTakeFirstOrThrow();
+        if (key !== undefined) {
+            await trx
+                .insertInto("idempotency_key")
+                .values({
+                    organization_id: organizationId,
+                    principal: bound,
+                    endpoint,
+                    key,
+                    request_hash: requestHash,
+                    resource_id: previewId,
+                    expires_at: new Date(Date.now() + IDEMPOTENCY_TTL_MS),
+                })
+                .execute();
+        }
+        await recordAudit(trx, {
+            actor: principal,
+            action: LIFECYCLE_AUDIT.previewExpiryChanged,
+            targetType: "preview",
+            targetId: previewId,
+            organizationId,
+            detail: `${row.expires_at?.toISOString() ?? "never"} -> ${next?.toISOString() ?? "never"}`,
+        });
+        return shape(updated);
+    });
 }

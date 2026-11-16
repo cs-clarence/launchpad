@@ -78,6 +78,7 @@ function fixture(options: ServerOptions = {}, failure = false) {
                         hostname: "review.example.com",
                         state: "active",
                         activeDeploymentId: null,
+                        expiresAt: null,
                         createdAt: NOW,
                     });
                 const deployment = {

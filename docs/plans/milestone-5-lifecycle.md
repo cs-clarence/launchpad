@@ -171,3 +171,13 @@ content could be re-published by hand from storage, and after it nothing can.
   `worker_heartbeat`), `preview:delete` (deployer and above, and a key scope), `parseDuration`,
   and the lifecycle configuration loader with its audit action names. No behavior changes: the
   new columns are unused and the settings are not read by anything yet.
+- Slice 2 (expiry and extension, services): new previews get an expiry (`ttl` on create, the
+  default otherwise, `none` only where allowed; part of the idempotent request); `extendPreview`
+  with the approved formula (clock read after the row lock, never shortens, capped from now,
+  positive only, `preview:deploy`, idempotent); `queueDeletion` (shared with manual deletion in
+  the next slice: flips the preview to `deleting`, cancels queued deployments, queues the
+  operation in one commit); `expirePreviews` (bounded batches, `FOR UPDATE SKIP LOCKED`,
+  re-checked under the lock). `expiresAt` is now on the preview contract. Races are tested
+  against PostgreSQL: expiry vs extension on 24 previews at once (exactly one wins each),
+  concurrent sweeps, a long lock wait, an outage worked off in batches. The scheduler loop is
+  slice 4; nothing destroys anything yet.

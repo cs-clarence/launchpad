@@ -70,7 +70,22 @@ export const createApiKeySchema = z
         message: "A project-limited API key cannot create projects.",
     });
 
-export const createPreviewSchema = z.object({ slug: slugSchema });
+// How long a preview lives: a duration such as "24h" or "7d", or "none" for no expiry
+// (refused unless the operator allows it). Omitted, the operator's default applies.
+export const lifetimeSchema = z.union([durationSchema, z.literal("none")]);
+
+export const createPreviewSchema = z.object({
+    slug: slugSchema,
+    ttl: lifetimeSchema.optional().meta({
+        description: 'Lifetime such as "24h" or "7d", at most the instance maximum.',
+    }),
+});
+export const extendPreviewSchema = z.strictObject({
+    ttl: lifetimeSchema.meta({
+        description:
+            'How much longer, such as "24h". Never shortens a lifetime; capped at the instance maximum from now.',
+    }),
+});
 export const previewStateSchema = z.enum(["active", "deleting", "deleted"]);
 
 const role = z.enum(ORGANIZATION_ROLES);
@@ -146,6 +161,7 @@ export const previewSchema = z.strictObject({
     hostname: z.string(),
     state: previewStateSchema,
     activeDeploymentId: z.uuid().nullable(),
+    expiresAt: timestamp.nullable().meta({ description: "null: the preview never expires." }),
     createdAt: timestamp,
 });
 
