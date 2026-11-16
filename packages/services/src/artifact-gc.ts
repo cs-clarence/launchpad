@@ -194,11 +194,15 @@ export const MAX_SWEPT_FILES = 10_000;
 
 // Removes archive files nothing refers to: no live artifact row names them (none, or one
 // marked collected), and the file is older than the retention period (a younger one may be an
-// upload whose row is not committed yet). Moved-aside files of an interrupted collection are
-// removed once they have been aside that long. Only files named the way this module stores
-// them, two levels below `artifacts/`, are looked at. The walk is bounded.
+// upload whose row is not committed yet). Only files named the way this module stores them,
+// two levels below `artifacts/`, are looked at. The walk is bounded.
 //
-// Each removal is made under the owner's upload lock, the one finalizing an upload holds
+// A moved-aside file belongs to a collection. If its artifact is collected (or unknown) it is
+// removed once it has been aside for the retention. If the artifact is still live, the
+// collection never committed (its process died between the move and the commit): the
+// archive is the only copy, so it is put back, never removed.
+//
+// Each change is made under the owner's upload lock, the one finalizing an upload holds
 // while it stores the archive and makes its row live: the file and the row are looked at
 // again under it, so an upload that lands after the first look is never deleted.
 export async function sweepOrphanArtifactFiles(
@@ -206,13 +210,18 @@ export async function sweepOrphanArtifactFiles(
     options: {
         dataDir: string;
         retentionSeconds: number;
+        // How long a moved-aside file of a live artifact is left alone before it is put back:
+        // a collection in progress holds it aside for a moment. Defaults to a minute.
+        graceMs?: number;
         // Test seam: runs after a file was judged removable and before it is removed, so the
         // race it stands for (an upload landing in that gap) can be reproduced.
         beforeRemove?: (file: string) => Promise<void>;
     },
-): Promise<{ removed: number }> {
+): Promise<{ removed: number; restored: number }> {
     const root = path.join(options.dataDir, "artifacts");
+    const graceMs = options.graceMs ?? 60_000;
     let removed = 0;
+    let restored = 0;
     let seen = 0;
     const owners = await fs.readdir(root).catch(() => [] as string[]);
     for (const owner of owners) {
@@ -221,34 +230,66 @@ export async function sweepOrphanArtifactFiles(
         for (const name of names) {
             const aside = ASIDE_FILE.test(name);
             if (!aside && !KEY_FILE.test(name)) continue;
-            if (++seen > MAX_SWEPT_FILES) return { removed };
+            if (++seen > MAX_SWEPT_FILES) return { removed, restored };
             const file = path.join(root, owner, name);
-            const key = `artifacts/${owner}/${name}`;
-            const gone = await db.transaction().execute(async (trx) => {
+            const base = aside ? name.slice(0, name.indexOf(".tar.gz") + ".tar.gz".length) : name;
+            const baseKey = `artifacts/${owner}/${base}`;
+            const outcome = await db.transaction().execute(async (trx) => {
                 await sql`select pg_advisory_xact_lock(hashtextextended(${`artifacts:${owner}`}, 0))`.execute(
                     trx,
                 );
                 const stat = await fs.lstat(file).catch(() => null);
-                if (!stat?.isFile()) return false;
+                if (!stat?.isFile()) return "kept" as const;
+                const live = await trx
+                    .selectFrom("artifact")
+                    .select("id")
+                    .where("storage_key", "=", baseKey)
+                    .where("collected_at", "is", null)
+                    .executeTakeFirst();
                 // A moved-aside file keeps its archive's modification time; the move itself
                 // is what ctime records.
                 const since = aside ? stat.ctimeMs : stat.mtimeMs;
-                if (Date.now() - since <= options.retentionSeconds * 1000) return false;
-                if (!aside) {
-                    const live = await trx
-                        .selectFrom("artifact")
-                        .select("id")
-                        .where("storage_key", "=", key)
-                        .where("collected_at", "is", null)
-                        .executeTakeFirst();
-                    if (live) return false;
+                const age = Date.now() - since;
+                if (aside && live) {
+                    if (age <= graceMs) return "kept" as const;
+                    const target = path.join(root, owner, base);
+                    const present = await fs.lstat(target).then(
+                        () => true,
+                        () => false,
+                    );
+                    if (present) {
+                        // The archive is back (a re-upload repaired it): this copy is spare.
+                        await fs.rm(file, { force: true });
+                        return "removed" as const;
+                    }
+                    await fs.rename(file, target);
+                    return "restored" as const;
                 }
+                if (age <= options.retentionSeconds * 1000) return "kept" as const;
+                if (!aside && live) return "kept" as const;
                 await options.beforeRemove?.(file);
                 await fs.rm(file, { force: true });
-                return true;
+                return "removed" as const;
             });
-            if (gone) removed++;
+            if (outcome === "removed") removed++;
+            if (outcome === "restored") restored++;
         }
     }
-    return { removed };
+    return { removed, restored };
+}
+
+// For a worker's start, before it claims anything: puts back every archive a collection that
+// died before its commit left aside, so a live artifact never points at a missing file. No
+// grace period: nothing of this process is mid-collection, and the worker is the only one.
+export async function recoverInterruptedCollections(
+    db: Db,
+    options: { dataDir: string },
+): Promise<{ restored: number }> {
+    const { restored } = await sweepOrphanArtifactFiles(db, {
+        dataDir: options.dataDir,
+        // Nothing ordinary is removed: only what belongs to a live artifact is touched.
+        retentionSeconds: Number.POSITIVE_INFINITY,
+        graceMs: 0,
+    });
+    return { restored };
 }

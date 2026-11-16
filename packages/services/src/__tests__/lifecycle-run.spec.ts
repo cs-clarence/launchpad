@@ -14,6 +14,7 @@ import {
     createProject,
     DEFAULT_LIFECYCLE,
     enqueueDeployment,
+    recoverInterruptedCollections,
     requestPreviewDeletion,
     runLifecycleOnce,
     ServiceError,
@@ -382,7 +383,7 @@ describe("collection racing deployments and uploads", () => {
             ...SITE,
             { name: "restored.txt", content: `restored ${randomUUID()}` },
         ]);
-        const limits = { maxConcurrentUploads: 50 };
+        const limits = { maxConcurrentUploads: 50, maxArtifacts: 100_000 };
         const stream = () =>
             new ReadableStream<Uint8Array>({
                 start(c) {
@@ -537,10 +538,98 @@ describe("collection racing deployments and uploads", () => {
     });
 });
 
+describe("a collection that died before its commit", () => {
+    // What the crash leaves: the row live, the archive moved aside under its own name.
+    const interrupted = async () => {
+        const a = await artifact();
+        const aside = `${a.file}.0123456789abcdef.gone`;
+        await fs.rename(a.file, aside);
+        return { ...a, aside };
+    };
+
+    it("is put back at the worker's start, before anything can read the missing archive", async () => {
+        const a = await interrupted();
+        expect(await exists(a.file)).toBe(false);
+        expect(await recoverInterruptedCollections(testDb.db, { dataDir })).toMatchObject({
+            restored: 1,
+        });
+        expect(await fs.readFile(a.file, "utf8")).toBe("archive");
+        expect(await exists(a.aside)).toBe(false);
+        expect(await collected(a.id)).toBe(false);
+    });
+
+    it("is never swept away as the only copy, however old, and is put back after the grace period", async () => {
+        const a = await interrupted();
+        // Within the grace period a collection in progress may be holding it aside.
+        const kept = await sweepOrphanArtifactFiles(testDb.db, { dataDir, retentionSeconds: 0 });
+        expect(kept.restored).toBe(0);
+        expect(await exists(a.aside)).toBe(true);
+        // Past it, even with the retention long over, it is restored rather than removed.
+        const swept = await sweepOrphanArtifactFiles(testDb.db, {
+            dataDir,
+            retentionSeconds: 0,
+            graceMs: 0,
+        });
+        expect(swept.restored).toBeGreaterThanOrEqual(1);
+        expect(await fs.readFile(a.file, "utf8")).toBe("archive");
+        expect(await exists(a.aside)).toBe(false);
+    });
+
+    it("drops the spare copy when the archive is already back", async () => {
+        const a = await interrupted();
+        await fs.writeFile(a.file, "already back");
+        await sweepOrphanArtifactFiles(testDb.db, { dataDir, retentionSeconds: 3600, graceMs: 0 });
+        expect(await exists(a.aside)).toBe(false);
+        expect(await fs.readFile(a.file, "utf8")).toBe("already back");
+    });
+
+    it("is repaired by an upload of the same bytes instead of being reported as reused with no file", async () => {
+        const bytes = tarGz([...SITE, { name: "repair.txt", content: `repair ${randomUUID()}` }]);
+        const limits = { maxConcurrentUploads: 50, maxArtifacts: 100_000 };
+        const stream = () =>
+            new ReadableStream<Uint8Array>({
+                start(c) {
+                    c.enqueue(bytes);
+                    c.close();
+                },
+            });
+        const first = await uploadArtifact(
+            testDb.db,
+            people.dee!,
+            org,
+            stream(),
+            { contentLength: bytes.length },
+            { dataDir, limits },
+        );
+        const stored = path.join(dataDir, artifactStorageKey(org, first.digest));
+        await fs.rename(stored, `${stored}.0123456789abcdef.gone`);
+        const again = await uploadArtifact(
+            testDb.db,
+            people.dee!,
+            org,
+            stream(),
+            { contentLength: bytes.length },
+            { dataDir, limits },
+        );
+        expect(again).toMatchObject({ id: first.id, reused: false });
+        expect((await fs.readFile(stored)).equals(bytes)).toBe(true);
+        // A live upload whose archive is present is still reused, untouched.
+        const third = await uploadArtifact(
+            testDb.db,
+            people.dee!,
+            org,
+            stream(),
+            { contentLength: bytes.length },
+            { dataDir, limits },
+        );
+        expect(third).toMatchObject({ id: first.id, reused: true });
+    });
+});
+
 describe("storing a collected archive again", () => {
     it("makes the same artifact usable, and starts its retention again", async () => {
         const bytes = tarGz([...SITE, { name: "again.txt", content: "again" }]);
-        const limits = { maxConcurrentUploads: 50 };
+        const limits = { maxConcurrentUploads: 50, maxArtifacts: 100_000 };
         const stream = () =>
             new ReadableStream<Uint8Array>({
                 start(c) {

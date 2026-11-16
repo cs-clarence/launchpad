@@ -58,9 +58,11 @@ export async function runLifecycleOnce(
         result.collected = (
             await collectArtifacts(db, { dataDir: options.dataDir, retentionSeconds })
         ).collected.length;
-        result.swept = (
-            await sweepOrphanArtifactFiles(db, { dataDir: options.dataDir, retentionSeconds })
-        ).removed;
+        const swept = await sweepOrphanArtifactFiles(db, {
+            dataDir: options.dataDir,
+            retentionSeconds,
+        });
+        result.swept = swept.removed + swept.restored;
     }
     return result;
 }

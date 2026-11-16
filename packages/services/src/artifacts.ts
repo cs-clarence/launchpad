@@ -321,7 +321,19 @@ async function finalize(
             .where("digest", "=", digest)
             .forUpdate()
             .executeTakeFirst();
-        if (existing && existing.collected_at === null) return shape(existing, true);
+        if (existing && existing.collected_at === null) {
+            // Live: reused as it is, unless its archive is missing (a collection died after
+            // moving it aside and the sweep has not put it back yet): then this upload is what
+            // stores it.
+            const present = await fs.stat(final).then(
+                () => true,
+                () => false,
+            );
+            if (present) return shape(existing, true);
+            await fs.mkdir(path.dirname(final), { recursive: true, mode: 0o700 });
+            await fs.rename(temp, final);
+            return shape(existing, false);
+        }
         if ((await countArtifacts(trx, organizationId)) >= limits.maxArtifacts) {
             throw new ServiceError("conflict", "This organization has too many stored artifacts.");
         }
