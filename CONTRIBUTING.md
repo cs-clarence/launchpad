@@ -19,7 +19,8 @@ Run tasks with `omni -i run <task>...` (`-i` passes your shell environment, such
 parallel, and caches results keyed on each project's sources, so a second run of an
 unchanged project is instant and a changed dependency re-runs its dependents.
 `-p <project>` limits a run to one project (`omni -i run check -p @launchpad/auth`),
-`--no-cache` forces a fresh run, and `-d` prints what would run.
+`--force all` forces a fresh run; `--no-cache` only prevents saving new results.
+Use both for a fresh run that does not populate the cache. `-d` prints what would run.
 The `bun run <name>` scripts in the root `package.json` are only aliases for the
 same Omni tasks; package-level scripts are the commands Omni executes.
 

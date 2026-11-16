@@ -7,3 +7,5 @@ export * from "./deploy";
 export { DEFAULT_PACK_LIMITS, packDirectory, readArchive } from "./pack";
 export type { PackLimits, Packed } from "./pack";
 export * from "./previews";
+export * from "./workspace";
+export { safeOutput } from "./output";

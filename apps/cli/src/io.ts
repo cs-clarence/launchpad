@@ -4,6 +4,7 @@ import { createContext, type Context } from "@launchpad/client-core";
 // Everything the commands need from the outside world, so tests can replace it.
 export interface Io {
     context: Context;
+    workingDir?: string;
     out(text: string): void;
     err(text: string): void;
     interactive: boolean;
@@ -64,6 +65,7 @@ function readSecret(prompt: string): Promise<string> {
 export function realIo(env: Record<string, string | undefined> = process.env): Io {
     return {
         context: createContext(env),
+        workingDir: process.cwd(),
         out: (text) => void process.stdout.write(text + "\n"),
         err: (text) => void process.stderr.write(text + "\n"),
         interactive: Boolean(process.stdin.isTTY && process.stderr.isTTY),

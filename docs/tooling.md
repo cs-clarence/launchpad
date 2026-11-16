@@ -16,6 +16,11 @@ when tools, generators, or their commands change.
   required by declaration tooling, as in Pureform.
 - Vite builds libraries and the controller; Nitro's `bun` preset emits the
   controller's `.output/`. No custom HTTP/static-file server is maintained.
+- The CLI and the separate local MCP app use Bun executable builds. Build MCP with
+  `omni -i run build -p @launchpad/mcp`; it emits `apps/mcp/dist/index.js`.
+  MCP uses the official MIT-licensed `@modelcontextprotocol/sdk` (pinned in the
+  catalog at 1.32.2) for stdio framing, capability negotiation and tool schemas,
+  not a custom protocol implementation. Only stdio modules are imported.
 - Vitest, Oxfmt, and Oxlint provide tests, formatting, and linting. Commands are
   in [CONTRIBUTING.md](../CONTRIBUTING.md).
 

@@ -14,6 +14,8 @@ import {
     useOrganization,
     useProfile,
     whoami,
+    workspaceContext,
+    ClientCoreError,
 } from "@launchpad/client-core";
 import { describe, EXIT, ExitWith } from "./errors";
 import type { Io } from "./io";
@@ -32,6 +34,8 @@ const text = (rows: string[][]) => {
         )
         .join("\n");
 };
+
+const shellArg = (value: string) => `'${value.replace(/'/g, "'\\''")}'`;
 
 // Where a key comes from. Never a command-line value: that lands in shell history and
 // in the process list.
@@ -75,6 +79,9 @@ export function buildProgram(rawIo: Io) {
     // come from the server and may contain key-shaped text. Redacting inside a JSON
     // document keeps it valid JSON.
     const io: Io = {
+        get workingDir() {
+            return rawIo.workingDir;
+        },
         get context() {
             return rawIo.context;
         },
@@ -233,8 +240,8 @@ export function buildProgram(rawIo: Io) {
         .description(
             "Deploy a built static site to a preview. The directory is packed here (links, secrets and version-control data are refused), uploaded, and followed until it is live.",
         )
-        .requiredOption("--project <project>", "the project's slug or id")
-        .requiredOption("--name <name>", "the preview's name (created if it does not exist)")
+        .option("--project <project>", "the project's slug or id (or launchpad.json)")
+        .option("--name <name>", "the preview's name (or launchpad.json)")
         .option("--spa", "serve index.html for unknown paths, for single-page apps")
         .option("--no-wait", "return as soon as the deployment is queued")
         .option("--timeout <seconds>", "stop waiting after this long (default 900)", "900")
@@ -248,14 +255,27 @@ export function buildProgram(rawIo: Io) {
                     "error: --timeout is a whole number of seconds, from 1 to 86400",
                 );
             }
-            const result = await deploy(io.context, {
-                source,
+            const workspace = await workspaceContext(io.context, {
+                workingDir: io.workingDir ?? process.cwd(),
+                profile,
                 project: options.project,
-                name: options.name,
+            });
+            const project = workspace.project;
+            const name = options.name ?? workspace.name;
+            if (!project || !name) {
+                throw new ClientCoreError(
+                    "bad-input",
+                    "Set --project and --name, or configure them in launchpad.json.",
+                );
+            }
+            const result = await deploy(workspace.context, {
+                source,
+                project,
+                name,
                 spa: options.spa,
                 wait: options.wait,
                 waitTimeoutMs: seconds * 1000,
-                profile,
+                profile: workspace.profile,
                 // Progress goes to stderr so stdout stays the result; none with --json.
                 onProgress: json
                     ? undefined
@@ -268,15 +288,25 @@ export function buildProgram(rawIo: Io) {
                                     : `  [${p.phase}] ${p.message}`,
                           ),
             });
+            const organization = workspace.organization;
+            const follow = (id: string) =>
+                [
+                    "launchpad",
+                    ...(workspace.profile ? ["--profile", shellArg(workspace.profile)] : []),
+                    "deployments",
+                    "status",
+                    id,
+                    ...(organization ? ["--organization", shellArg(organization)] : []),
+                ].join(" ");
             print(command, result, () => {
                 const id = result.deployment.id;
                 switch (result.outcome) {
                     case "succeeded":
                         return `Deployed ${result.preview.hostname} (deployment ${id}).`;
                     case "queued":
-                        return `Queued deployment ${id} for ${result.preview.hostname}. Check it with: launchpad deployments status ${id}`;
+                        return `Queued deployment ${id} for ${result.preview.hostname}. Check it with: ${follow(id)}`;
                     case "timeout":
-                        return `Still ${result.deployment.status} after ${seconds}s; it was not cancelled. Check it with: launchpad deployments status ${id}`;
+                        return `Still ${result.deployment.status} after ${seconds}s; it was not cancelled. Check it with: ${follow(id)}`;
                     case "reconciliation-needed":
                         return `Deployment ${id} needs an administrator: the host must be checked before ${result.preview.hostname} can be deployed again.`;
                     default: {
@@ -301,9 +331,14 @@ export function buildProgram(rawIo: Io) {
         .description("List previews.")
         .option("--project <project>", "only this project's previews (slug or id)")
         .action(async (options, command) => {
-            const result = await listPreviews(io.context, {
-                project: options.project,
+            const workspace = await workspaceContext(io.context, {
+                workingDir: io.workingDir ?? process.cwd(),
                 profile: wants(command).profile,
+                project: options.project,
+            });
+            const result = await listPreviews(workspace.context, {
+                project: workspace.project,
+                profile: workspace.profile,
             });
             print(command, result, () =>
                 result.items.length === 0
@@ -325,10 +360,13 @@ export function buildProgram(rawIo: Io) {
         .argument("<previewId>", "the preview's id")
         .description("Show a preview and its recent deployments.")
         .action(async (previewId, _options, command) => {
-            const profile = wants(command).profile;
+            const workspace = await workspaceContext(io.context, {
+                workingDir: io.workingDir ?? process.cwd(),
+                profile: wants(command).profile,
+            });
             const [preview, recent] = await Promise.all([
-                getPreview(io.context, previewId, profile),
-                listDeployments(io.context, previewId, profile),
+                getPreview(workspace.context, previewId, workspace.profile),
+                listDeployments(workspace.context, previewId, workspace.profile),
             ]);
             print(command, { preview, deployments: recent.items }, () =>
                 [
@@ -350,9 +388,18 @@ export function buildProgram(rawIo: Io) {
     deployments
         .command("status")
         .argument("<deploymentId>", "the deployment's id")
+        .option(
+            "--organization <organization>",
+            "organization id or slug, overriding launchpad.json",
+        )
         .description("Show a deployment's status and failure.")
-        .action(async (deploymentId, _options, command) => {
-            const result = await getDeployment(io.context, deploymentId, wants(command).profile);
+        .action(async (deploymentId, options, command) => {
+            const workspace = await workspaceContext(io.context, {
+                workingDir: io.workingDir ?? process.cwd(),
+                profile: wants(command).profile,
+                organization: options.organization,
+            });
+            const result = await getDeployment(workspace.context, deploymentId, workspace.profile);
             print(command, result, () =>
                 [
                     `Deployment: ${result.id}`,
@@ -369,6 +416,10 @@ export function buildProgram(rawIo: Io) {
         .command("events")
         .argument("<deploymentId>", "the deployment's id")
         .option("--after <seq>", "only events after this sequence number", "0")
+        .option(
+            "--organization <organization>",
+            "organization id or slug, overriding launchpad.json",
+        )
         .description("Show a deployment's progress events.")
         .action(async (deploymentId, options, command) => {
             const after = Number(options.after);
@@ -379,9 +430,14 @@ export function buildProgram(rawIo: Io) {
                     "error: --after is a sequence number (0 or more)",
                 );
             }
-            const result = await deploymentEvents(io.context, deploymentId, {
-                after,
+            const workspace = await workspaceContext(io.context, {
+                workingDir: io.workingDir ?? process.cwd(),
                 profile: wants(command).profile,
+                organization: options.organization,
+            });
+            const result = await deploymentEvents(workspace.context, deploymentId, {
+                after,
+                profile: workspace.profile,
             });
             print(command, result, () =>
                 result.items.length === 0

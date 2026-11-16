@@ -57,6 +57,9 @@ function controller(options: { statuses: string[]; failure?: unknown; denyUpload
                 expiresAt: NOW,
             });
         }
+        if (p === "/organizations") {
+            return json([{ id: ORG, slug: "one", name: "One", role: "deployer" }]);
+        }
         if (p === `/organizations/${ORG}/projects`) {
             return json([{ id: PROJECT, slug: "site", name: "Site", createdAt: NOW }]);
         }
@@ -115,15 +118,17 @@ function controller(options: { statuses: string[]; failure?: unknown; denyUpload
     }) as unknown as typeof fetch;
 }
 
-async function cli(args: string[], fetchImpl: typeof fetch) {
+async function cli(args: string[], fetchImpl: typeof fetch, organization?: string) {
     const out: string[] = [];
     const err: string[] = [];
     const io: Io = {
+        workingDir: dir,
         context: createContext(
             {
                 LAUNCHPAD_CONFIG_DIR: dir,
                 LAUNCHPAD_CONTROLLER: "https://control.example.com",
                 LAUNCHPAD_API_KEY: KEY,
+                LAUNCHPAD_ORG: organization,
             },
             { fetch: fetchImpl },
         ),
@@ -162,6 +167,81 @@ const deployArgs = (...extra: string[]) => [
 ];
 
 describe("launchpad deploy", () => {
+    it("reads status in the workspace organization, and makes follow-up commands explicit", async () => {
+        await fs.writeFile(
+            path.join(dir, "launchpad.json"),
+            JSON.stringify({
+                organization: "one",
+                project: PROJECT,
+                name: "review",
+            }),
+        );
+        const result = await cli(
+            ["deployments", "status", DEPLOYMENT],
+            controller({ statuses: ["succeeded"] }),
+            "stale-org",
+        );
+        expect(result).toMatchObject({ code: EXIT.ok, err: "" });
+        expect(result.out).toContain("succeeded");
+        for (const args of [
+            ["previews", "list"],
+            ["previews", "get", PREVIEW],
+            ["deployments", "events", DEPLOYMENT],
+        ]) {
+            const read = await cli(args, controller({ statuses: ["succeeded"] }), "stale-org");
+            expect(read, args.join(" ")).toMatchObject({ code: EXIT.ok, err: "" });
+        }
+        const queued = await cli(
+            ["deploy", site, "--no-wait"],
+            controller({ statuses: ["queued"] }),
+        );
+        expect(queued.out).toContain("--organization 'one'");
+        await fs.unlink(path.join(dir, "launchpad.json"));
+        // An organization only inherited from the environment is not repeated: the hint
+        // would then need a permission the plain command does not.
+        const inherited = await cli(
+            deployArgs("--no-wait"),
+            controller({ statuses: ["queued"] }),
+            ORG,
+        );
+        expect(inherited.out).not.toContain("--organization");
+        const explicit = await cli(
+            ["deployments", "status", DEPLOYMENT, "--organization", ORG],
+            controller({ statuses: ["succeeded"] }),
+            "stale-org",
+        );
+        expect(explicit).toMatchObject({ code: EXIT.ok, err: "" });
+    });
+    it("uses launchpad.json defaults, with explicit flags taking precedence", async () => {
+        await fs.writeFile(
+            path.join(dir, "launchpad.json"),
+            JSON.stringify({
+                organization: "one",
+                project: PROJECT,
+                name: "review",
+            }),
+        );
+        const result = await cli(
+            ["deploy", site, "--no-wait"],
+            controller({ statuses: ["succeeded"] }),
+        );
+        expect(result).toMatchObject({ code: EXIT.ok, err: expect.not.stringContaining("error") });
+        // An unknown project default is overridden by the explicit project flag.
+        await fs.writeFile(
+            path.join(dir, "launchpad.json"),
+            JSON.stringify({
+                organization: "one",
+                project: "unknown",
+                name: "review",
+            }),
+        );
+        const explicit = await cli(
+            deployArgs("--no-wait"),
+            controller({ statuses: ["succeeded"] }),
+        );
+        expect(explicit.code).toBe(EXIT.ok);
+    });
+
     it("deploys, shows progress on stderr and the result on stdout, and exits 0", async () => {
         const result = await cli(deployArgs("--spa"), controller({ statuses: ["succeeded"] }));
         expect(result.code).toBe(EXIT.ok);

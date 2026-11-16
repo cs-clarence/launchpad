@@ -125,3 +125,12 @@ read-only key returns a safe error); protocol correctness; output bounds.
 
 Deletion tools (after milestone 5), log tools (no log endpoint yet), HTTP/remote MCP,
 resources/prompts, browser login.
+
+## Progress
+
+- Slice 1 implemented: separate read-only stdio app; eight read tools; shared-mode
+  `working_dir` with optional startup default; strict, bounded `launchpad.json`
+  resolution shared with CLI deploy; per-call contexts without saved-state mutation;
+  redacted, bounded JSON results. Tests exercise real MCP client/server transports,
+  concurrent project contexts, stdio purity, permission errors, invalid config and
+  CLI file defaults. Deployment flags/tools remain unavailable until slice 2.
