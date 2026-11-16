@@ -257,6 +257,7 @@ export function createMcpServer(context: Context, options: ServerOptions = {}) {
                             include: policy.include,
                             exclude: policy.exclude,
                             prefix: source.prefix,
+                            protectedPaths: [store],
                         },
                         profile: workspace.profile,
                         wait: input.wait_seconds !== 0,

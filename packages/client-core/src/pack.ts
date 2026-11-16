@@ -96,6 +96,9 @@ export interface FileSelection {
     exclude: string[];
     // The packed directory's path relative to the directory the patterns are relative to.
     prefix: string;
+    // Real paths (such as this client's credential store) that no selected file may be in,
+    // even when it sits below the packed directory and a pattern matches it.
+    protectedPaths?: string[];
 }
 
 const MAX_PATTERNS = 100;
@@ -221,6 +224,19 @@ export async function packDirectory(
             // What is not selected is not published and so is not judged.
             if (choice && !choice.selects(within(rel))) continue;
             checkName(rel, segments, limits);
+            const here = path.join(root, rel);
+            for (const guarded of selection?.protectedPaths ?? []) {
+                const inside = path.relative(guarded, here);
+                if (
+                    inside !== ".." &&
+                    !inside.startsWith(`..${path.sep}`) &&
+                    !path.isAbsolute(inside)
+                ) {
+                    refuse(
+                        `${show(rel)} is in this client's credential store and must not be deployed.`,
+                    );
+                }
+            }
             if (entry.isFile()) {
                 files.push(rel);
                 if (files.length > limits.maxEntries) {

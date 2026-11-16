@@ -393,6 +393,19 @@ describe("the deploy tool", () => {
         expect(uploads).toEqual([]);
     });
 
+    it("never publishes the credential store from a directory above it", async () => {
+        await fs.mkdir(path.join(dir, "cfg"), { recursive: true });
+        await fs.writeFile(path.join(dir, "cfg", "credentials.json"), "{}");
+        const { client, uploads } = await connect({
+            workingDir: dir,
+            deploy: { ...POLICY, include: ["**"], exclude: ["nothing"] },
+        });
+        const result = await call(client, { path: "." });
+        expect(result.isError).toBe(true);
+        expect(text(result)).toContain("credential store");
+        expect(uploads).toEqual([]);
+    });
+
     it("refuses a deploy from inside this client's own credential store or a secret directory", async () => {
         const store = path.join(dir, "cfg");
         await fs.mkdir(store, { recursive: true });

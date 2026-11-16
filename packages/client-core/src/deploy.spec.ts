@@ -697,6 +697,18 @@ describe("choosing which files are published", () => {
         }
     });
 
+    it("refuses a selected file inside a protected path that sits below the packed directory", async () => {
+        const root = await site({ "cfg/credentials.json": "{}" });
+        const store = path.join(root, "cfg");
+        const selection = { ...pick(["dist/**"], ["nothing"]), protectedPaths: [store] };
+        await expect(packDirectory(root, undefined, selection)).rejects.toThrow(/credential store/);
+        // Not selected, it is simply not published.
+        const narrow = { ...pick(["dist/index.html"], ["nothing"]), protectedPaths: [store] };
+        expect(await names((await packDirectory(root, undefined, narrow)).archive)).toEqual([
+            "index.html",
+        ]);
+    });
+
     it("refuses a location inside secret data or this client's own store", () => {
         expect(() => checkLocation("/home/u/.aws/site")).toThrow(/credential/);
         expect(() => checkLocation("/home/u/.kube")).toThrow(/credential/);
