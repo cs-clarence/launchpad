@@ -46,6 +46,31 @@ describe("worker configuration", () => {
         expect(loaded.config.dataDir.endsWith("/data2")).toBe(true);
     });
 
+    it("keeps the lifecycle off unless asked, and reads its settings with the same rules as the controller", () => {
+        const off = loadConfig(full);
+        if (!off.enabled) throw new Error("expected enabled");
+        expect(off.config.lifecycle).toMatchObject({
+            enabled: false,
+            defaultTtlSeconds: 7 * 86_400,
+        });
+        const on = loadConfig({
+            ...full,
+            LAUNCHPAD_LIFECYCLE: "on",
+            LAUNCHPAD_ARTIFACT_RETENTION: "48h",
+        });
+        if (!on.enabled) throw new Error("expected enabled");
+        expect(on.config.lifecycle).toMatchObject({
+            enabled: true,
+            artifactRetentionSeconds: 172_800,
+        });
+        expect(() => loadConfig({ ...full, LAUNCHPAD_LIFECYCLE: "yes" })).toThrow(
+            /LAUNCHPAD_LIFECYCLE/,
+        );
+        expect(() => loadConfig({ ...full, LAUNCHPAD_DEFAULT_TTL: "99d" })).toThrow(
+            /must not be longer/,
+        );
+    });
+
     it("applies defaults and checks numbers and references", () => {
         const loaded = loadConfig(full);
         if (!loaded.enabled) throw new Error("expected enabled");

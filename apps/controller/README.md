@@ -185,9 +185,9 @@ may be at most `LAUNCHPAD_MAX_TTL` (default `30d`). `"ttl": "none"` is refused u
 `LAUNCHPAD_ALLOW_NO_EXPIRY=on`. Durations are a whole number and `s`, `m`, `h` or `d`; a set
 but invalid value stops the controller at startup, as does a default longer than the maximum.
 Previews created before lifetimes existed have no expiry until given one. **Nothing is
-deleted yet:** expiry is recorded, and the scheduler, deletion and cleanup (switched on by
-`LAUNCHPAD_LIFECYCLE=on`, retention `LAUNCHPAD_ARTIFACT_RETENTION`, default `7d`) arrive in
-the next parts of the milestone, off by default.
+deleted unless the worker runs the lifecycle** (`LAUNCHPAD_LIFECYCLE=on` on the worker,
+default off): then expired previews are deleted, and stored archives are collected after
+`LAUNCHPAD_ARTIFACT_RETENTION` (default `7d`); see `apps/worker/README.md`.
 
 A length-less (chunked) upload is a 411. An identical archive already stored for the
 organization is reused (`reused: true`); archives are deduplicated within an

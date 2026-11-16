@@ -175,6 +175,11 @@ export async function enqueueDeployment(
                 .select("id")
                 .where("organization_id", "=", organizationId)
                 .where("id", "=", parsed.data.artifactId)
+                // A collected archive is gone: it cannot be deployed. The share lock keeps
+                // the collector (which takes the row for update) from collecting it between
+                // this check and the deployment that will point at it.
+                .where("collected_at", "is", null)
+                .forShare()
                 .executeTakeFirst();
             if (!artifact) throw new ServiceError("not-found", "Artifact not found.");
             const row = await trx

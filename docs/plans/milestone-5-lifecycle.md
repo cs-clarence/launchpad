@@ -194,3 +194,14 @@ content could be re-published by hand from storage, and after it nothing can.
   the same path, and deploy vs delete on 20 previews at once; mutation checks confirmed the
   ownership check, the existence check, the wait for deployments and the fence each fail a test
   when removed. The real ports and the scheduler loop are slice 4.
+- Slice 4 (worker ports and cleanup): the real ports (`lifecycle-ports.ts`: exists, destroy and
+  exact-tag `docker rmi`, nothing else; the Dokku client's own name pattern is the second guard),
+  `runLifecycleOnce` in the services (expiry claim, at most one deletion, periodic collection) called
+  by the worker between deployments and off unless `LAUNCHPAD_LIFECYCLE=on`, artifact collection
+  (`collected_at` tombstone, migration `…_015`; eligibility: retention, no deployment of a
+  non-deleted preview, none unfinished, none deleted within the retention; share lock in
+  `enqueueDeployment` against the collector; re-upload restores the archive) and the orphan file
+  sweep, a test that reads the sources and fails on any prune/volume/network/database verb or an
+  unlisted Dokku operation, and a live test of destroy against a neighbour app (written, **not
+  run**: it needs a disposable Dokku). Mutation checks: live-preview protection, retention, and the
+  share lock each fail a test when removed. The Opus review of slices 2-4 follows.

@@ -3,6 +3,7 @@ import { createDokkuClient } from "@launchpad/dokku";
 import { sweepScratch } from "./build";
 import { loadConfig } from "./config";
 import { createDocker } from "./docker";
+import { createLifecyclePorts } from "./lifecycle-ports";
 import { createDeployPorts } from "./ports";
 import { runWorker } from "./worker";
 
@@ -26,15 +27,17 @@ async function main() {
     // A worker killed mid-build leaves its scratch directory behind.
     await sweepScratch(config.dataDir);
     const db = createDatabase(config.databaseUrl, { max: 4 });
+    const dokku = createDokkuClient({ ...config.dokku });
+    const docker = createDocker({ binary: config.dockerBinary });
     const ports = createDeployPorts({
-        dokku: createDokkuClient({ ...config.dokku }),
-        docker: createDocker({ binary: config.dockerBinary }),
+        dokku,
+        docker,
         dataDir: config.dataDir,
         limits: config.archiveLimits,
         baseImage: config.baseImage,
         probe: { proxyUrl: config.proxyUrl, timeoutMs: 90_000, intervalMs: 1500 },
     });
-    log({ event: "started", worker: config.workerId });
+    log({ event: "started", worker: config.workerId, lifecycle: config.lifecycle.enabled });
     try {
         await runWorker(db, ports, {
             owner: config.workerId,
@@ -43,6 +46,11 @@ async function main() {
             pollMs: config.pollMs,
             signal: shutdown.signal,
             log,
+            lifecycle: {
+                ports: createLifecyclePorts({ dokku, docker }),
+                config: config.lifecycle,
+                dataDir: config.dataDir,
+            },
         });
     } finally {
         await db.destroy();

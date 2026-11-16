@@ -2,8 +2,12 @@ import type { Database } from "@launchpad/database";
 import {
     claimNext,
     runDeployment,
+    runLifecycleOnce,
     type DeployPorts,
     type DeploymentDeps,
+    type LifecycleConfig,
+    type LifecyclePorts,
+    type LifecycleState,
     type RunOutcome,
 } from "@launchpad/services";
 import type { Kysely } from "kysely";
@@ -15,6 +19,9 @@ export interface WorkerOptions {
     pollMs: number;
     signal: AbortSignal;
     log?: (line: Record<string, unknown>) => void;
+    // Scheduled expiry, deletion and cleanup. Absent, or with `config.enabled` false, the
+    // worker only deploys.
+    lifecycle?: { ports: LifecyclePorts; config: LifecycleConfig; dataDir: string };
 }
 
 // Claims and runs at most one deployment. "idle" means there was nothing to do.
@@ -51,10 +58,30 @@ export async function runWorker(
     ports: DeployPorts,
     options: WorkerOptions,
 ): Promise<void> {
+    const state: LifecycleState = { lastCollect: 0 };
     while (!options.signal.aborted) {
         try {
             const result = await runOnce(db, ports, options);
-            if (result === "idle") await sleep(options.pollMs, options.signal);
+            // Deployments first: lifecycle work only fills the time between them.
+            let busy = result !== "idle";
+            if (!busy && options.lifecycle?.config.enabled) {
+                const round = await runLifecycleOnce(
+                    db,
+                    options.lifecycle.ports,
+                    {
+                        owner: options.owner,
+                        config: options.lifecycle.config,
+                        dataDir: options.lifecycle.dataDir,
+                        signal: options.signal,
+                    },
+                    state,
+                );
+                if (round.expired > 0 || round.deletion !== "none" || round.collected > 0) {
+                    options.log?.({ event: "lifecycle", ...round });
+                    busy = round.deletion !== "none" && round.deletion !== "retry";
+                }
+            }
+            if (!busy) await sleep(options.pollMs, options.signal);
         } catch {
             options.log?.({ event: "worker-error" });
             await sleep(Math.max(options.pollMs, 5000), options.signal);

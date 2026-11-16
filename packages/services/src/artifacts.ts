@@ -146,6 +146,7 @@ async function countArtifacts(db: Db, organizationId: string): Promise<number> {
         .selectFrom("artifact")
         .select((eb) => eb.fn.countAll<string>().as("n"))
         .where("organization_id", "=", organizationId)
+        .where("collected_at", "is", null)
         .executeTakeFirstOrThrow();
     return Number(row.n);
 }
@@ -306,13 +307,40 @@ async function finalize(
         await requireMembership(trx, principal, organizationId, "preview:deploy");
         const existing = await trx
             .selectFrom("artifact")
-            .select(["id", "created_at", "size_bytes", "expanded_bytes", "entry_count"])
+            .select([
+                "id",
+                "created_at",
+                "size_bytes",
+                "expanded_bytes",
+                "entry_count",
+                "collected_at",
+            ])
             .where("organization_id", "=", organizationId)
             .where("digest", "=", digest)
+            .forUpdate()
             .executeTakeFirst();
-        if (existing) return shape(existing, true);
+        if (existing && existing.collected_at === null) return shape(existing, true);
         if ((await countArtifacts(trx, organizationId)) >= limits.maxArtifacts) {
             throw new ServiceError("conflict", "This organization has too many stored artifacts.");
+        }
+        if (existing) {
+            // Collected earlier: the row remains but the archive is gone. The same digest is
+            // the same bytes, so storing it again makes the very same artifact usable.
+            await fs.mkdir(path.dirname(final), { recursive: true, mode: 0o700 });
+            await fs.rename(temp, final);
+            try {
+                await trx
+                    .updateTable("artifact")
+                    // created_at is when the current archive was stored: the retention
+                    // period for an unused one starts again.
+                    .set({ collected_at: null, created_at: sql<Date>`now()` })
+                    .where("id", "=", existing.id)
+                    .execute();
+            } catch (error) {
+                await fs.rm(final, { force: true });
+                throw error;
+            }
+            return shape(existing, false);
         }
         const existed = await fs.stat(final).then(
             () => true,

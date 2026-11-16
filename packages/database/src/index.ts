@@ -116,6 +116,8 @@ export interface ArtifactTable {
     storage_key: string;
     created_by: string;
     created_at: Generated<Date>;
+    // Set once the stored archive has been collected; the row stays as a record.
+    collected_at: Date | null;
 }
 
 export interface PreviewTable {

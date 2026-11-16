@@ -9,6 +9,7 @@ import { artifactStorageKey, type DeployContext, type DeployPorts } from "@launc
 import { tarGz, type FixtureEntry } from "@launchpad/services/testing";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createDocker } from "../docker";
+import { createLifecyclePorts } from "../lifecycle-ports";
 import { createDeployPorts } from "../ports";
 import { compactId } from "../template";
 
@@ -201,5 +202,47 @@ describe("a static preview on a real Dokku", () => {
 
         await ports.rollback(second, first, new AbortController().signal);
         expect((await get(first.hostname, "/")).id).toBe(compactId(first.deploymentId));
+    });
+});
+
+// Deleting is the destructive half, so it is checked against the real host with care: the
+// only app destroyed is one this run created, through the same ports a deletion uses, and
+// a neighbouring app made by this run must still be there afterwards.
+describe("deleting a preview's app on a real Dokku", () => {
+    it("destroys exactly the named app, asks before it acts, and leaves a neighbour alone", async () => {
+        const lifecycle = createLifecyclePorts({
+            dokku,
+            docker: createDocker({ binary: env.LAUNCHPAD_DOCKER_BIN || "docker" }),
+        });
+        const signal = new AbortController().signal;
+        const target = `${PREFIX}${suffix()}`;
+        const neighbour = `${PREFIX}${suffix()}`;
+        for (const app of [target, neighbour]) {
+            if (await dokku.apps.exists(app, signal))
+                throw new Error(`${app} already exists; refusing to use it.`);
+            created.add(app);
+            await dokku.apps.create(app, signal);
+        }
+        expect(await lifecycle.dokku.apps.exists(target, signal)).toBe(true);
+        await lifecycle.dokku.apps.destroy(target, signal);
+        expect(await lifecycle.dokku.apps.exists(target, signal)).toBe(false);
+        // Asking again, as a retry after a lost answer would, finds it gone.
+        expect(await lifecycle.dokku.apps.exists(target, signal)).toBe(false);
+        expect(await lifecycle.dokku.apps.exists(neighbour, signal)).toBe(true);
+    });
+
+    it("refuses an app name outside the guarded test pattern, so a real preview or the demo cannot be reached", async () => {
+        const lifecycle = createLifecyclePorts({
+            dokku,
+            docker: createDocker({ binary: env.LAUNCHPAD_DOCKER_BIN || "docker" }),
+        });
+        for (const name of [
+            "view-demo",
+            "lp-abcdefghij",
+            "lp-test-ab",
+            `${PREFIX}${suffix()};ls`,
+        ]) {
+            await expect(lifecycle.dokku.apps.destroy(name), name).rejects.toBeDefined();
+        }
     });
 });
