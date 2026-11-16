@@ -166,6 +166,8 @@ export interface DeletionClaim {
     organizationId: string;
     previewId: string;
     attempt: number;
+    // The fencing generation: monotonic across claims, unlike the retry budget.
+    fence: number;
     owner: string;
     leaseMs: number;
     stepDone: "destroy" | "images" | null;
@@ -194,6 +196,7 @@ export async function claimDeletion(
                 "op.organization_id",
                 "op.preview_id",
                 "op.attempt",
+                "op.fence",
                 "op.step_done",
                 "op.step_pending",
             ])
@@ -221,6 +224,7 @@ export async function claimDeletion(
             .executeTakeFirst();
         if (!next) return null;
         const attempt = next.attempt + 1;
+        const fence = next.fence + 1;
         if (attempt > MAX_DELETION_ATTEMPTS) {
             // Abandoned too often to trust: held for a person, never guessed at.
             await trx
@@ -233,6 +237,7 @@ export async function claimDeletion(
                     lease_owner: null,
                     lease_expires_at: null,
                     attempt,
+                    fence,
                 })
                 .where("id", "=", next.id)
                 .execute();
@@ -242,6 +247,7 @@ export async function claimDeletion(
             .updateTable("deletion_operation")
             .set({
                 attempt,
+                fence,
                 lease_owner: owner,
                 lease_expires_at: sql<Date>`clock_timestamp() + ${leaseMs} * interval '1 millisecond'`,
                 updated_at: sql<Date>`now()`,
@@ -253,6 +259,7 @@ export async function claimDeletion(
             organizationId: next.organization_id,
             previewId: next.preview_id,
             attempt,
+            fence,
             owner,
             leaseMs,
             stepDone: next.step_done,
@@ -272,8 +279,8 @@ type Patch = Partial<{
     retryAfterMs: number;
 }>;
 
-// Every state write goes through here: it applies only while this attempt still holds a
-// live lease on an operation that is still running, and it extends the lease.
+// Every state write goes through here: it applies only while this claim (by its fence)
+// still holds a live lease on an operation that is still running, and it extends the lease.
 async function fenced(trx: Trx | Db, claim: DeletionClaim, patch: Patch) {
     const { finished, retryAfterMs, ...columns } = patch;
     // Finishing, or handing the operation to a person, lets go of the lease; giving it up
@@ -299,7 +306,7 @@ async function fenced(trx: Trx | Db, claim: DeletionClaim, patch: Patch) {
             ...lease,
         })
         .where("id", "=", claim.operationId)
-        .where("attempt", "=", claim.attempt)
+        .where("fence", "=", claim.fence)
         .where("lease_owner", "=", claim.owner)
         // The statement-time clock: a write that waited past the lease must not commit under it.
         .where("lease_expires_at", ">", sql<Date>`clock_timestamp()`)
@@ -564,6 +571,8 @@ export async function resolveDeletion(
             .forUpdate()
             .executeTakeFirst();
         if (!op) throw new ServiceError("not-found", "Deletion not found.");
+        // Authority is re-read now that the locks are held: it can change while waiting for them.
+        await requireMembership(trx, principal, organizationId, "preview:resolve");
         if (op.status !== "reconciliation-needed") {
             throw new ServiceError("conflict", "That deletion is not awaiting reconciliation.");
         }
@@ -588,6 +597,7 @@ export async function resolveDeletion(
                 .updateTable("deletion_operation")
                 .set({
                     status: "queued",
+                    // The retry budget starts again; the fence does not.
                     attempt: 0,
                     failure_code: null,
                     failure_message: null,

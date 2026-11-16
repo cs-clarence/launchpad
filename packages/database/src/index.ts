@@ -190,6 +190,8 @@ export interface DeletionOperationTable {
     reason: "manual" | "expired";
     status: Generated<DeletionStatus>;
     attempt: Generated<number>;
+    // Only ever goes up, one per claim; `attempt` is the retry budget and can be reset.
+    fence: Generated<number>;
     // null: the system (scheduled expiry)
     requested_by: string | null;
     failure_code: string | null;

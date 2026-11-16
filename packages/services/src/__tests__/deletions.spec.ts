@@ -774,6 +774,80 @@ describe("resolving a deletion held for a person", () => {
         expect(fake.count.destroy).toBe(1);
     });
 
+    it("keeps the fence going up when the retry budget is reset, so an old claim stays stale", async () => {
+        await drain();
+        const p = await make();
+        await request(p.id);
+        // An old claim that is never heard from again, while later attempts use up the budget.
+        const old = (await claim("w1"))!;
+        expect(old).toMatchObject({ attempt: 1, fence: 1 });
+        await expireLease(old);
+        const fake = host([p.app], {
+            destroy: (app) => {
+                fake.present.add(app);
+                throw dokkuError("uncertain");
+            },
+        });
+        const rest = await runAll(p.id, fake.ports);
+        expect(rest.at(-1)).toBe("reconciliation-needed");
+        const held = await operation(p.id);
+        expect(held.fence).toBeGreaterThan(old.fence);
+        await resolveDeletion(testDb.db, people.ben!, org, held.id, "retry");
+        const reset = await operation(p.id);
+        expect(reset).toMatchObject({ attempt: 0, fence: held.fence });
+        // The same owner claims again and gets attempt 1 again, but a new fence.
+        const fresh = (await claim("w1"))!;
+        expect(fresh).toMatchObject({ attempt: 1 });
+        expect(fresh.fence).toBeGreaterThan(held.fence);
+        // The old claim has the same owner and the same attempt number as the new one: only
+        // the fence tells them apart.
+        const untouched = host([p.app]);
+        expect(await runDeletion(testDb.db, old, untouched.ports, on)).toBe("stale");
+        expect(untouched.calls).toEqual([]);
+        expect(await runDeletion(testDb.db, fresh, untouched.ports, on)).toBe("succeeded");
+    });
+
+    it("refuses an administrator removed while the resolution waited for the locks", async () => {
+        const { p, op } = await held();
+        await newUser("leaver3");
+        await addMember(testDb.db, people.ann!, org, {
+            email: "leaver3@example.com",
+            role: "admin",
+        });
+        let release!: () => void;
+        let locked!: () => void;
+        const hold = new Promise<void>((resolve) => (release = resolve));
+        const acquired = new Promise<void>((resolve) => (locked = resolve));
+        const holder = testDb.db.transaction().execute(async (trx) => {
+            await sql`select 1 from preview where id = ${p.id} for update`.execute(trx);
+            locked();
+            await hold;
+        });
+        let waiting: Promise<string> | undefined;
+        try {
+            await Promise.race([acquired, holder]);
+            waiting = code(resolveDeletion(testDb.db, people.leaver3!, org, op.id, "deleted"));
+            // Past both pre-lock checks and stuck on the preview lock: only now is the
+            // administrator removed.
+            for (let i = 0; i < 250; i++) {
+                const { rows } = await sql<{
+                    n: string;
+                }>`select count(*)::text as n from pg_stat_activity where datname = current_database() and wait_event_type = 'Lock'`.execute(
+                    testDb.db,
+                );
+                if (Number(rows[0]!.n) > 0) break;
+                await new Promise((r) => setTimeout(r, 20));
+            }
+            await removeMember(testDb.db, people.ann!, org, people.leaver3!.userId);
+        } finally {
+            release();
+            await holder;
+        }
+        expect(await waiting).toBe("not-found");
+        expect((await operation(p.id)).status).toBe("reconciliation-needed");
+        expect((await preview(p.id)).desired_state).toBe("deleting");
+    });
+
     it("is for administrators, once, inside the organization", async () => {
         const { op } = await held();
         expect(await code(resolveDeletion(testDb.db, people.dee!, org, op.id, "deleted"))).toBe(
