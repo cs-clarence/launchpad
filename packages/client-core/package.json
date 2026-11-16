@@ -24,6 +24,7 @@
     },
     "dependencies": {
         "@launchpad/sdk": "workspace:^",
+        "picomatch": "catalog:",
         "tar": "catalog:",
         "zod": "catalog:"
     },
@@ -32,6 +33,7 @@
         "@launchpad/vite-config": "workspace:^",
         "@launchpad/vitest-config": "workspace:^",
         "@types/bun": "catalog:",
+        "@types/picomatch": "catalog:",
         "typescript": "catalog:",
         "vite": "catalog:",
         "vitest": "catalog:"

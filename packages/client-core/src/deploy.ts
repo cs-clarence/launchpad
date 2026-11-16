@@ -8,7 +8,7 @@ import {
 } from "@launchpad/sdk";
 import { ClientCoreError } from "./errors";
 import { clientFor, type Context, resolve } from "./operations";
-import { packDirectory, readArchive } from "./pack";
+import { type FileSelection, packDirectory, readArchive } from "./pack";
 import { resolveProjectId } from "./project";
 
 const TERMINAL = new Set(["succeeded", "failed", "cancelled", "reconciliation-needed"]);
@@ -35,6 +35,8 @@ export interface DeployInput {
     project: string;
     name: string;
     spa?: boolean;
+    // Limits which files of a directory are published (never applies to an archive).
+    selection?: FileSelection;
     wait?: boolean;
     waitTimeoutMs?: number;
     pollMs?: number;
@@ -97,7 +99,7 @@ export async function deploy(ctx: Context, input: DeployInput): Promise<DeployRe
     if (!stat) throw new ClientCoreError("bad-input", "The source does not exist.");
     progress({ kind: "step", message: "Packing the site" });
     const packed = stat.isDirectory()
-        ? await packDirectory(input.source)
+        ? await packDirectory(input.source, undefined, input.selection)
         : await readArchive(input.source);
 
     // The preview is settled before the upload: a stored archive is kept for good, so

@@ -134,3 +134,8 @@ resources/prompts, browser login.
   redacted, bounded JSON results. Tests exercise real MCP client/server transports,
   concurrent project contexts, stdio purity, permission errors, invalid config and
   CLI file defaults. Deployment flags/tools remain unavailable until slice 2.
+- Slice 2 implemented: `--allow-deploy` with mandatory include/exclude lists (exclude wins,
+  pattern validation, fixed at startup), the `deploy` tool (`confirm`, project allow-list,
+  path confined to `working_dir`, progress and cancellation), and the selection in the
+  shared packer (`picomatch`, pinned in the catalog). Selected secrets and links are still
+  refused; unselected files are not judged.
