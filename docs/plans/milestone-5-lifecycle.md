@@ -136,7 +136,10 @@ and an operator can see whether the system is healthy and how far behind it is.
 5. **API, SDK, CLI, dashboard.** `DELETE` and `extend` routes (idempotency keys, 202, scopes,
    project-limited keys through the owning project), `expiresAt` on previews, SDK, client
    core, `previews delete|extend` and `deploy --ttl`, dashboard expiry display and
-   role-aware buttons.
+   role-aware buttons. User approved dashboard site upload/deploy on 2026-11-17:
+   restore the milestone 3 intent using the existing artifact and deployment APIs,
+   with role checks, upload limits, progress/error feedback and deployment status.
+   Keep it a separate reviewable dashboard follow-up if slice 5 becomes too large.
 6. **Status.** Heartbeat writes, `GET /api/v1/status` (operator only), docs.
 7. **MCP.** `delete_preview` behind `--allow-delete`; e2e through the built binary.
 8. **Milestone Opus review** and fixes.
@@ -147,8 +150,9 @@ Concurrent deploy/delete/extend (PostgreSQL); expiry after downtime; a crash and
 timeout at each destroy step, including success-then-timeout; a stale worker; the database
 unavailable during a lease (the worker stops, nothing is destroyed twice); foreign and
 orphan apps untouched; an artifact still needed for rollback never collected; a test that
-no prune, volume or database command exists. Live: only with a disposable Dokku the user
-starts, `lp-test-` prefix, never CI, never touching `view-demo`.
+no prune, volume or database command exists. Live: only with a disposable Dokku,
+`lp-test-` prefix, never CI, never touching `view-demo`. On 2026-11-17 the user
+explicitly authorized the agent to start that disposable Dokku with Docker.
 
 ## Not in this milestone
 

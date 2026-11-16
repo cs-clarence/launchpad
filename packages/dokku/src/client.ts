@@ -150,7 +150,8 @@ export function createDokkuClient(connection: DokkuConnection, options: DokkuCli
                 const name = appName("apps:create", app, pattern);
                 await execute("apps:create", true, ["apps:create", name], "mutate", { signal });
             },
-            // The remote reports a missing app with exit status 1 and says so; any other
+            // Dokku 0.38.34 reports a missing app with status 20; also accept status 1.
+            // it must also name this app in the message. Any other
             // failure is an error, not "false".
             exists: async (app: string, signal?: AbortSignal) => {
                 const name = appName("apps:exists", app, pattern);
@@ -158,13 +159,13 @@ export function createDokkuClient(connection: DokkuConnection, options: DokkuCli
                     await execute("apps:exists", false, ["apps:exists", name], "quick", { signal });
                     return true;
                 } catch (error) {
-                    // Exit status 1 and this app named in the message: other failures that
+                    // A missing-app exit status and this app named in the message: other failures that
                     // happen to say "does not exist" (a missing config file, say) are errors.
                     const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
                     if (
                         error instanceof DokkuError &&
                         error.kind === "failed" &&
-                        error.exitCode === 1 &&
+                        (error.exitCode === 1 || error.exitCode === 20) &&
                         new RegExp(`\\bApp ${escaped} does not exist`, "i").test(error.detail)
                     ) {
                         return false;
