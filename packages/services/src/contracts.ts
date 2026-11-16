@@ -13,6 +13,8 @@ export {
     previewListSchema,
     createDeploymentSchema,
     createdDeploymentSchema,
+    extendPreviewSchema,
+    lifetimeSchema,
     resolveDeploymentSchema,
     deploymentSchema,
     deploymentListSchema,

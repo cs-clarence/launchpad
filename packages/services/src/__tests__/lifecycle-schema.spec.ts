@@ -75,13 +75,14 @@ const fails = (promise: Promise<unknown>) =>
     );
 
 describe("the lifecycle schema", () => {
-    it("gives existing and new previews no expiry and no deletion time", async () => {
+    it("starts a preview with the default lifetime and no deletion time", async () => {
         const row = await testDb.db
             .selectFrom("preview")
             .select(["expires_at", "deleted_at", "desired_state"])
             .where("id", "=", previewId)
             .executeTakeFirstOrThrow();
-        expect(row).toEqual({ expires_at: null, deleted_at: null, desired_state: "active" });
+        expect(row.expires_at).toBeInstanceOf(Date);
+        expect(row).toMatchObject({ deleted_at: null, desired_state: "active" });
     });
 
     it("ties deleted_at to the deleted state, in both directions", async () => {
@@ -280,17 +281,19 @@ describe("upgrading a database that already holds a deleted preview", () => {
                 name: "Site",
                 slug: "site",
             });
-            const preview = await createPreview(
-                legacy.db,
-                operator,
-                organization,
-                old.id,
-                { slug: "gone" },
-                {
-                    previewDomain: "previews.example.com",
-                    maxPreviews: 10,
-                },
-            );
+            // Inserted as the old schema had it: it has no expiry column yet.
+            const preview = await legacy.db
+                .insertInto("preview")
+                .values({
+                    organization_id: organization,
+                    project_id: old.id,
+                    slug: "gone",
+                    app_name: "lp-cccccccccc",
+                    hostname: "gone-cccccc.previews.example.com",
+                    created_by: id,
+                } as never)
+                .returning("id")
+                .executeTakeFirstOrThrow();
             await legacy.db
                 .updateTable("preview")
                 .set({ desired_state: "deleted" })

@@ -260,6 +260,7 @@ const PREVIEW = {
     hostname: "review-a1b2c3.previews.example.com",
     state: "active",
     activeDeploymentId: null,
+    expiresAt: null,
     createdAt: "2026-11-15T00:00:00.000Z",
 };
 const DEPLOYMENT = {

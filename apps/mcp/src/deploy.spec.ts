@@ -56,6 +56,7 @@ function controller(
         hostname: "review.example.com",
         state: "active",
         activeDeploymentId: null,
+        expiresAt: null,
         createdAt: NOW,
     };
     const deployment = (status: string) => ({

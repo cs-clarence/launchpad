@@ -26,6 +26,7 @@ const preview = {
     hostname: HOST,
     state: "active",
     activeDeploymentId: null,
+    expiresAt: null,
     createdAt: NOW,
 };
 const deployment = (status: string, failure: unknown = null) => ({

@@ -39,6 +39,7 @@ const previewBody = (slug = "review") => ({
     hostname: HOST,
     state: "active",
     activeDeploymentId: null,
+    expiresAt: null,
     createdAt: NOW,
 });
 const deploymentBody = (status: string, failure: unknown = null) => ({
