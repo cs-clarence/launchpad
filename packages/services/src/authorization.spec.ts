@@ -13,6 +13,7 @@ describe("organization authorization matrix", () => {
             "project:create",
             "preview:create",
             "preview:deploy",
+            "preview:delete",
         ],
         admin: [
             "organization:read",
@@ -22,6 +23,7 @@ describe("organization authorization matrix", () => {
             "project:create",
             "preview:create",
             "preview:deploy",
+            "preview:delete",
             "member:manage",
             "project:delete",
             "apikey:manage",
@@ -34,6 +36,7 @@ describe("organization authorization matrix", () => {
             "project:create",
             "preview:create",
             "preview:deploy",
+            "preview:delete",
             "member:manage",
             "project:delete",
             "apikey:manage",

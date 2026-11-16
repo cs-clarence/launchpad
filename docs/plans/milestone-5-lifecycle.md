@@ -162,3 +162,12 @@ The preview row and its deployments, events and audit records stay (hostnames ar
 `app_name` and `hostname` are unique). The Dokku app and its images are gone; artifacts are
 kept for the retention period and then collected, so within that window a deleted preview's
 content could be re-published by hand from storage, and after it nothing can.
+
+## Progress
+
+- Slice 1 (data model and permissions): migration `20261116_013_preview_lifecycle`
+  (`expires_at`, `deleted_at` with a check tying it to the deleted state, an expiry index,
+  `deletion_operation` with the fenced lease columns and one unfinished per preview,
+  `worker_heartbeat`), `preview:delete` (deployer and above, and a key scope), `parseDuration`,
+  and the lifecycle configuration loader with its audit action names. No behavior changes: the
+  new columns are unused and the settings are not read by anything yet.

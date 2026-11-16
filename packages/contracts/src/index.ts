@@ -19,10 +19,26 @@ export const API_KEY_SCOPES = [
     "preview:read",
     "preview:create",
     "preview:deploy",
+    "preview:delete",
 ] as const;
 export type ApiKeyScopeName = (typeof API_KEY_SCOPES)[number];
 
 export const MAX_KEY_LIFETIME_DAYS = 365;
+
+const DURATION_UNITS = { s: 1, m: 60, h: 3600, d: 86_400 } as const;
+
+// A lifetime such as "90m", "24h" or "7d": whole units of seconds, minutes, hours or days.
+// Returns seconds, or null for anything else (no fractions, signs, spaces or zero).
+export function parseDuration(text: string): number | null {
+    const match = /^([1-9][0-9]{0,6})([smhd])$/.exec(text);
+    if (!match) return null;
+    const seconds = Number(match[1]) * DURATION_UNITS[match[2] as keyof typeof DURATION_UNITS];
+    return Number.isSafeInteger(seconds) ? seconds : null;
+}
+
+export const durationSchema = z
+    .string()
+    .refine((value) => parseDuration(value) !== null, "use a whole number and s, m, h or d");
 
 export const slugSchema = z
     .string()
