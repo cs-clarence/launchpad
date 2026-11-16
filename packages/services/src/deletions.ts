@@ -433,10 +433,12 @@ async function execute(
         // its successor then asks whether the app is still there before doing anything.
         await fenced(db, claim, { status: "running", step_pending: "destroy" });
         const signal = AbortSignal.timeout(Math.max(1, Math.floor(deadline - performance.now())));
+        let destroying = false;
         try {
             guard();
             if (await ports.dokku.apps.exists(row.app_name, signal)) {
                 guard();
+                destroying = true;
                 await ports.dokku.apps.destroy(row.app_name, signal);
             }
         } catch (error) {
@@ -452,7 +454,8 @@ async function execute(
             // The connection never opened, so the command certainly did not run: an outage of
             // the host is waited out, not counted against the attempts that would otherwise
             // send every pending deletion to a person.
-            if (kind === "not-started") {
+            // A probe that timed out never asked for a destroy either: nothing to be unsure of.
+            if (kind === "not-started" || (!destroying && kind === "uncertain")) {
                 await fenced(db, claim, {
                     attempt: claim.attempt - 1,
                     retryAfterMs: 60_000,

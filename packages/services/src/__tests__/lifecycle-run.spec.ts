@@ -943,7 +943,7 @@ describe("collection edge cases", () => {
     it("does not follow a symlinked owner directory when sweeping", async () => {
         const outside = await fs.mkdtemp(path.join(os.tmpdir(), "lp-outside-"));
         const digest = createHash("sha256").update(randomUUID()).digest("hex");
-        const victim = path.join(outside, `${digest}.tgz`);
+        const victim = path.join(outside, `${digest}.tar.gz`);
         await fs.writeFile(victim, "x");
         await fs.utimes(victim, new Date(0), new Date(0));
         const other = createHash("sha256").update(randomUUID()).digest("hex").slice(0, 32);

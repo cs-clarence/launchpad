@@ -680,6 +680,30 @@ describe("running a deletion", () => {
         expect(fake.count.destroy).toBe(1);
     });
 
+    it("does not use up attempts when only the existence probe was uncertain", async () => {
+        await drain();
+        const p = await make();
+        await request(p.id);
+        const fake = host([p.app], {
+            exists: () => {
+                throw dokkuError("uncertain");
+            },
+        });
+        for (let i = 0; i < MAX_DELETION_ATTEMPTS + 2; i++) {
+            const next = await claim();
+            if (!next) {
+                await testDb.db
+                    .updateTable("deletion_operation")
+                    .set({ lease_expires_at: new Date(Date.now() - 1) })
+                    .where("preview_id", "=", p.id)
+                    .execute();
+                continue;
+            }
+            expect(await runDeletion(testDb.db, next, fake.ports, on)).toBe("retry");
+        }
+        expect(fake.count.destroy).toBe(0);
+    });
+
     it("holds a preview that is not being deleted, sending nothing to Dokku", async () => {
         await drain();
         const p = await make();

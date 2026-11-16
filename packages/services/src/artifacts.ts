@@ -342,7 +342,14 @@ async function finalize(
             }
             await fs.mkdir(path.dirname(final), { recursive: true, mode: 0o700 });
             await fs.rename(temp, final);
-            return shape(existing, false);
+            // Stored again, so its retention starts again too.
+            const restored = await trx
+                .updateTable("artifact")
+                .set({ created_at: sql<Date>`now()` })
+                .where("id", "=", existing.id)
+                .returning(["id", "created_at", "size_bytes", "expanded_bytes", "entry_count"])
+                .executeTakeFirstOrThrow();
+            return shape(restored, false);
         }
         if ((await countArtifacts(trx, organizationId)) >= limits.maxArtifacts) {
             throw new ServiceError("conflict", "This organization has too many stored artifacts.");
