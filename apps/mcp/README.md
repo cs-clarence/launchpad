@@ -61,7 +61,9 @@ resolve a project slug, and `organization:read` to list or override organization
 ### Project context
 
 The nearest `launchpad.json`, walking from the canonical working directory up to
-the filesystem root, supplies project context:
+the filesystem root, supplies project context. A file owned by another user is ignored
+(on a shared host, someone else's `/tmp/launchpad.json` must not choose your profile or
+project). Profile precedence: the call's `profile`, then the file's, then `--profile`:
 
 ```json
 {
@@ -97,7 +99,7 @@ Use a narrower project query when that happens.
 Controller names, failure messages and event messages are untrusted **data**, not
 instructions. Redaction does not make their text trustworthy.
 No resources, prompts, file-content tools or shell tools are exposed, and the only mutation is `deploy`, when enabled.
-Incoming stdio message buffering is limited to 64 KiB.
+Incoming stdio message buffering is limited to 1 MiB.
 
 ## Deploying
 
@@ -111,10 +113,13 @@ tool call nor `launchpad.json` can widen them.
 launchpad-mcp --shared --allow-deploy \
   --include 'dist/**' \
   --exclude '**/*.map' --exclude 'dist/private/**' \
-  --allow-project website
+  --allow-project 11111111-1111-4111-8111-111111111111
 ```
 
-- Patterns are relative to the call's `working_dir` and use `/`. They may not be
+- Patterns are relative to the call's `working_dir` and use `/`. An exclude also covers
+  everything below a directory it names (`dist/private` excludes `dist/private/key.txt`),
+  ignores case, and `[!x]` means "not x". Directories no include pattern can reach, or an
+  exclude covers, are not walked, and a tree of more than 100,000 entries is refused. They may not be
   absolute, contain `..`, `!` or backslashes, or exceed 256 characters (100 per list).
   They also match dotfiles.
 - A file is published only if an include matches it **and no exclude does**: excludes
@@ -122,14 +127,20 @@ launchpad-mcp --shared --allow-deploy \
 - The same secret rules as the CLI still apply to anything the patterns select: a
   selected `.env`, key file or version-control file stops the deploy instead of being
   silently dropped. Links and special files that a pattern selects are refused too;
-  files no pattern selects are not looked at.
-- `--allow-project` (repeatable) limits deployment to those projects, **named exactly
-  as listed** (a slug when you list a slug, an id when you list an id).
+  files no pattern selects are not judged.
+- `--allow-project <project-id>` (repeatable) limits deployment to those projects. It takes
+  **ids**, not slugs, and is checked against the project the call actually resolves to
+  (on the selected controller and organization): a slug names a different project under
+  another profile or organization, so a slug could not be a safe restriction. Find ids with
+  `launchpad projects list`. A per-call `profile` or `organization` therefore cannot reach
+  a same-named project elsewhere.
 
 The tool takes `path` (the directory to publish, relative to `working_dir`, without `..`
 and resolving, links followed, to a directory inside it), optional `project`, `name`
-and `spa` (otherwise from `launchpad.json`), `wait_seconds` (0 returns once queued;
-default 600, at most 900) and a required `confirm: true`. It reports progress
+and `spa` (otherwise from `launchpad.json`; the file's `name` applies only to the file's own
+project), `wait_seconds` (0 returns once queued;
+default 45, at most 900; many clients give up sooner than that, so the deployment id is
+sent in a progress notification as soon as it is queued and returned on timeout) and a required `confirm: true`. It reports progress
 notifications when the client asks for them, stops when the client cancels, and
 returns the outcome with the deployment id so a later `get_deployment` can follow
 one that is still running. A failed deployment is an error result carrying only the

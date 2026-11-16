@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
     createContext,
     MAX_WORKSPACE_CONFIG_BYTES,
+    ownedByCurrentUser,
     readWorkspace,
     workspaceContext,
     resolve,
@@ -20,6 +21,51 @@ afterEach(async () => {
 const config = { organization: "one", project: "site", name: "review" };
 const save = (where: string, value: unknown) =>
     fs.writeFile(path.join(where, "launchpad.json"), JSON.stringify(value));
+
+describe("workspace context rules", () => {
+    it("trusts a launchpad.json only if the current user owns it", () => {
+        expect(ownedByCurrentUser(1000, 1000)).toBe(true);
+        expect(ownedByCurrentUser(0, 1000)).toBe(false);
+        expect(ownedByCurrentUser(1000, undefined)).toBe(true);
+    });
+
+    it("orders the profile: the call, then the file, then the startup default; and keeps the file's name to its own project", async () => {
+        const ctx = createContext(
+            { LAUNCHPAD_CONFIG_DIR: path.join(dir, "credentials") },
+            { fetch: orgsFetch },
+        );
+        await ctx.store.update((saved) => {
+            for (const name of ["from-call", "from-file", "startup"]) {
+                saved.profiles[name] = {
+                    controller: "https://control.example.com",
+                    apiKey: `lp_${name.replace("-", "")}${"a".repeat(30)}`,
+                    organizationId: null,
+                    savedAt: "2026-11-16T00:00:00.000Z",
+                };
+            }
+        });
+        const at = { workingDir: dir, defaultProfile: "startup" };
+        await save(dir, {
+            project: "site",
+            organization: "one",
+            profile: "from-file",
+            name: "review",
+        });
+        expect((await workspaceContext(ctx, { ...at, profile: "from-call" })).profile).toBe(
+            "from-call",
+        );
+        expect((await workspaceContext(ctx, at)).profile).toBe("from-file");
+        await save(dir, { project: "site", organization: "one", name: "review" });
+        expect((await workspaceContext(ctx, at)).profile).toBe("startup");
+        // Naming another project drops the file's preview name; the same project keeps it.
+        expect((await workspaceContext(ctx, at)).name).toBe("review");
+        expect((await workspaceContext(ctx, { ...at, project: "site" })).name).toBe("review");
+        expect((await workspaceContext(ctx, { ...at, project: "other" })).name).toBeUndefined();
+    });
+});
+
+const orgsFetch = (async (_url: string, _init: RequestInit) =>
+    Response.json([{ id: "org-one", slug: "one", name: "One", role: "owner" }])) as typeof fetch;
 
 describe("workspace context", () => {
     it("pins the profile selected during organization validation if the current selection changes", async () => {

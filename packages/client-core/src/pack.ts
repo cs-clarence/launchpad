@@ -1,7 +1,7 @@
 import { constants as fsConstants, promises as fs } from "node:fs";
 import path from "node:path";
 import picomatch from "picomatch";
-import { create } from "tar";
+import { Pack } from "tar";
 import { ClientCoreError } from "./errors";
 
 // Packs a directory into the `.tar.gz` the controller accepts. The controller validates
@@ -20,10 +20,38 @@ export const DEFAULT_PACK_LIMITS: PackLimits = {
     maxDepth: 16,
 };
 
-const SECRET_DIRECTORIES = new Set([".git", ".svn", ".hg", ".ssh", ".aws", ".gnupg"]);
-const SECRET_FILES = new Set([".npmrc", ".netrc", ".htpasswd", ".pgpass", ".dockercfg"]);
+const SECRET_DIRECTORIES = new Set([
+    ".git",
+    ".svn",
+    ".hg",
+    ".ssh",
+    ".aws",
+    ".gnupg",
+    ".kube",
+    ".docker",
+]);
+const SECRET_FILES = new Set([
+    ".npmrc",
+    ".netrc",
+    ".htpasswd",
+    ".pgpass",
+    ".dockercfg",
+    ".git-credentials",
+    ".pypirc",
+]);
 const SECRET_FILE_PATTERNS = [/^\.env(\..*)?$/, /^id_(rsa|dsa|ecdsa|ed25519)(\.pub)?$/];
-const SECRET_EXTENSIONS = new Set([".pem", ".key", ".p12", ".pfx", ".jks", ".keystore"]);
+const SECRET_EXTENSIONS = new Set([
+    ".pem",
+    ".key",
+    ".p12",
+    ".pfx",
+    ".jks",
+    ".keystore",
+    ".tfstate",
+]);
+// Every name looked at while walking, selected or not: a very large tree is refused
+// rather than walked for as long as it takes.
+const MAX_VISITED = 100_000;
 
 // A printable form of a local name for a message.
 const show = (name: string) =>
@@ -68,6 +96,9 @@ export interface FileSelection {
     exclude: string[];
     // The packed directory's path relative to the directory the patterns are relative to.
     prefix: string;
+    // Real paths (such as this client's credential store) that no selected file may be in,
+    // even when it sits below the packed directory and a pattern matches it.
+    protectedPaths?: string[];
 }
 
 const MAX_PATTERNS = 100;
@@ -99,10 +130,40 @@ export function compileSelection(include: string[], exclude: string[]) {
             }
         }
     }
-    const options = { dot: true, nonegate: true, nocomment: true, posixSlashes: true } as const;
-    const included = picomatch(include, options);
-    const excluded = picomatch(exclude, options);
-    return (relative: string) => included(relative) && !excluded(relative);
+    // picomatch reads "[!a]" as a set containing "!" and "a", which silently never matches
+    // what a shell user means ("not a"), so an exclusion written that way would fail open.
+    // It is rewritten to "[^a]", which picomatch does read as "not a".
+    const posix = (patterns: string[]) => patterns.map((pattern) => pattern.replaceAll("[!", "[^"));
+    include = posix(include);
+    exclude = posix(exclude);
+    // Exclusions ignore case (a file system may), and apply to every directory above a
+    // file too, so "dist/private" excludes what is inside it.
+    const base = { dot: true, nocomment: true, posixSlashes: true } as const;
+    const included = picomatch(include, base);
+    const excluded = picomatch(exclude, { ...base, nocase: true });
+    const bases = include.map((pattern) => picomatch.scan(pattern).base.replace(/\/+$/, ""));
+    const excludes = (relative: string) => {
+        const parts = relative.split("/");
+        for (let end = 1; end <= parts.length; end++) {
+            const part = parts.slice(0, end).join("/");
+            if (excluded(part) || excluded(`${part}/`)) return true;
+        }
+        return false;
+    };
+    return {
+        // Whether a file may be published.
+        selects: (relative: string) => included(relative) && !excludes(relative),
+        // Whether a directory could hold anything an include reaches and no exclude covers.
+        mayContain: (directory: string) =>
+            !excludes(directory) &&
+            bases.some(
+                (b) =>
+                    b === "" ||
+                    directory === b ||
+                    directory.startsWith(`${b}/`) ||
+                    b.startsWith(`${directory}/`),
+            ),
+    };
 }
 
 export interface Packed {
@@ -115,9 +176,10 @@ export async function packDirectory(
     directory: string,
     limits: PackLimits = DEFAULT_PACK_LIMITS,
     selection?: FileSelection,
+    signal?: AbortSignal,
 ): Promise<Packed> {
     const root = path.resolve(directory);
-    const selected = selection && compileSelection(selection.include, selection.exclude);
+    const choice = selection && compileSelection(selection.include, selection.exclude);
     const within = (rel: string) => (selection!.prefix ? `${selection!.prefix}/${rel}` : rel);
     // Everything packed sits below the prefix, so a secret-named directory in it taints
     // every selected file, although the walk only sees names below the packed directory.
@@ -132,18 +194,24 @@ export async function packDirectory(
 
     const files: string[] = [];
     let bytes = 0;
+    let visited = 0;
     const walk = async (relative: string): Promise<void> => {
+        signal?.throwIfAborted();
         const entries = await fs.readdir(path.join(root, relative), { withFileTypes: true });
         entries.sort((a, b) => a.name.localeCompare(b.name));
         for (const entry of entries) {
+            if (++visited > MAX_VISITED) {
+                refuse(
+                    `The directory holds more than ${MAX_VISITED} entries to look through. Deploy a smaller directory.`,
+                );
+            }
             const rel = relative === "" ? entry.name : `${relative}/${entry.name}`;
             const segments = rel.split("/");
-            // With a selection, only what it selects must pass the rules below: the rest
-            // of the directory is not published and so is not judged.
-            if (selected && !entry.isDirectory() && !selected(within(rel))) continue;
-            // Directories are judged by what they hold, so an unselected deep tree passes.
-            if (!selected || !entry.isDirectory()) checkName(rel, segments, limits);
             if (entry.isDirectory()) {
+                // With a selection, only a directory that could hold something selected is
+                // entered; the rest is neither walked nor judged.
+                if (choice && !choice.mayContain(within(rel))) continue;
+                if (!choice) checkName(rel, segments, limits);
                 // Looked at again without following links: the listing may be stale, and a
                 // directory swapped for a link since must not be descended into.
                 const now = await fs.lstat(path.join(root, rel));
@@ -151,7 +219,25 @@ export async function packDirectory(
                     refuse(`${show(rel)} changed while it was being read.`);
                 }
                 await walk(rel);
-            } else if (entry.isFile()) {
+                continue;
+            }
+            // What is not selected is not published and so is not judged.
+            if (choice && !choice.selects(within(rel))) continue;
+            checkName(rel, segments, limits);
+            const here = path.join(root, rel);
+            for (const guarded of selection?.protectedPaths ?? []) {
+                const inside = path.relative(guarded, here);
+                if (
+                    inside !== ".." &&
+                    !inside.startsWith(`..${path.sep}`) &&
+                    !path.isAbsolute(inside)
+                ) {
+                    refuse(
+                        `${show(rel)} is in this client's credential store and must not be deployed.`,
+                    );
+                }
+            }
+            if (entry.isFile()) {
                 files.push(rel);
                 if (files.length > limits.maxEntries) {
                     refuse(`The directory has more than ${limits.maxEntries} files.`);
@@ -168,16 +254,21 @@ export async function packDirectory(
     await walk("");
     if (!files.includes("index.html")) {
         refuse(
-            selected
+            choice
                 ? "The selected files have no index.html at the top level of the directory."
                 : "The directory has no index.html at its top level.",
         );
     }
 
-    const stream = create({ gzip: true, cwd: root, portable: true, noPax: false }, files);
+    // Entries are added one by one: `create` would read a list entry that starts with "@"
+    // as an archive to merge in, adding files that were never checked.
+    const stream = new Pack({ gzip: true, cwd: root, portable: true, noPax: false });
+    for (const file of files) stream.add(file);
+    stream.end();
     const chunks: Buffer[] = [];
     let size = 0;
     for await (const chunk of stream as AsyncIterable<Buffer>) {
+        signal?.throwIfAborted();
         size += chunk.length;
         if (size > limits.maxArchiveBytes) {
             refuse(
@@ -187,6 +278,26 @@ export async function packDirectory(
         chunks.push(chunk);
     }
     return { archive: Buffer.concat(chunks), files: files.length, bytes };
+}
+
+// The directory being published, as an absolute real path, must not itself sit inside
+// credential or version-control data, nor inside any directory in `protectedDirectories`
+// (such as the credential store of this client).
+export function checkLocation(directory: string, protectedDirectories: string[] = []) {
+    const lower = path.resolve(directory).split(path.sep);
+    if (lower.some((segment) => SECRET_DIRECTORIES.has(segment.toLowerCase()))) {
+        refuse(
+            "That directory is inside credential or version-control data and cannot be deployed.",
+        );
+    }
+    for (const guarded of protectedDirectories) {
+        const relative = path.relative(guarded, directory);
+        // A parent is the segment "..", not any name that merely starts with two dots.
+        const outside = relative === ".." || relative.startsWith(`..${path.sep}`);
+        if (!outside && !path.isAbsolute(relative)) {
+            refuse("That directory holds this client's credentials and cannot be deployed.");
+        }
+    }
 }
 
 // An existing archive is sent as it is (the controller validates it); only its size is

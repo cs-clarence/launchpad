@@ -17,7 +17,7 @@ async function main() {
     };
     server.server.onerror = () => diagnostic("MCP transport error.\n");
     await server.connect(
-        new StdioServerTransport(process.stdin, process.stdout, { maxBufferSize: 64 * 1024 }),
+        new StdioServerTransport(process.stdin, process.stdout, { maxBufferSize: 1024 * 1024 }),
     );
 }
 

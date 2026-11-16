@@ -1,8 +1,9 @@
 import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
+    checkLocation,
     ClientCoreError,
     createContext,
     deploy,
@@ -626,6 +627,98 @@ describe("choosing which files are published", () => {
             deploy(ctx, args(file, { selection: pick(["dist/**"], ["x"]) })),
         ).rejects.toThrow(/needs a directory/);
         expect(calls.some((c) => c.path.endsWith("/artifacts"))).toBe(false);
+    });
+
+    it("never merges an archive named by a file starting with @, selected or not", async () => {
+        const { create } = await import("tar");
+        const outside = path.join(dir, "outside");
+        await fs.mkdir(outside);
+        await fs.writeFile(path.join(outside, "creds.txt"), "SECRET=1");
+        const loot = path.join(dir, "loot.tar");
+        await create({ file: loot, cwd: outside }, ["creds.txt"]);
+        const bytes = await fs.readFile(loot);
+        // Selected mode: an unselected symlink to the archive, and a plain file of that name.
+        const root = await site();
+        await fs.writeFile(path.join(root, "@loot.bin"), bytes);
+        await fs.symlink(loot, path.join(root, "loot.bin"));
+        const picked = await packDirectory(
+            root,
+            undefined,
+            pick(["dist/@*", "dist/index.html"], ["nothing"]),
+        );
+        expect(await names(picked.archive)).toEqual(["@loot.bin", "index.html"]);
+        // Plain mode (the CLI): the same file, no selection.
+        await fs.rm(path.join(root, "loot.bin"));
+        const plain = await packDirectory(root);
+        expect(await names(plain.archive)).toEqual(["@loot.bin", "assets/app.js", "index.html"]);
+    });
+
+    it("excludes a directory named without a glob, ignores case, and honors [!x]", async () => {
+        const root = await site({
+            "private/key.txt": "x",
+            "Admin/a.txt": "x",
+            "b/ok.txt": "x",
+            "c/ok.txt": "x",
+        });
+        const packed = await packDirectory(
+            root,
+            undefined,
+            pick(["dist/**"], ["dist/private", "DIST/ADMIN/**", "dist/[!a]/ok.txt"]),
+        );
+        expect(await names(packed.archive)).toEqual(["assets/app.js", "index.html"]);
+    });
+
+    it("does not walk directories nothing can select, and stops when cancelled", async () => {
+        const root = await site({ "other/x.txt": "x" });
+        const walked: string[] = [];
+        const readdir = fs.readdir.bind(fs);
+        const spy = vi.spyOn(fs, "readdir").mockImplementation(((
+            target: string,
+            ...rest: unknown[]
+        ) => {
+            walked.push(String(target));
+            return (readdir as (...a: unknown[]) => unknown)(target, ...rest);
+        }) as typeof fs.readdir);
+        try {
+            const packed = await packDirectory(
+                root,
+                undefined,
+                pick(["dist/index.html"], ["nothing"]),
+            );
+            expect(await names(packed.archive)).toEqual(["index.html"]);
+            expect(walked.some((w) => w.endsWith("other"))).toBe(false);
+            const cancelled = new AbortController();
+            cancelled.abort();
+            await expect(
+                packDirectory(root, undefined, pick(["dist/**"], ["nothing"]), cancelled.signal),
+            ).rejects.toMatchObject({ name: "AbortError" });
+        } finally {
+            spy.mockRestore();
+        }
+    });
+
+    it("refuses a selected file inside a protected path that sits below the packed directory", async () => {
+        const root = await site({ "cfg/credentials.json": "{}" });
+        const store = path.join(root, "cfg");
+        const selection = { ...pick(["dist/**"], ["nothing"]), protectedPaths: [store] };
+        await expect(packDirectory(root, undefined, selection)).rejects.toThrow(/credential store/);
+        // Not selected, it is simply not published.
+        const narrow = { ...pick(["dist/index.html"], ["nothing"]), protectedPaths: [store] };
+        expect(await names((await packDirectory(root, undefined, narrow)).archive)).toEqual([
+            "index.html",
+        ]);
+    });
+
+    it("refuses a location inside secret data or this client's own store", () => {
+        expect(() => checkLocation("/home/u/.aws/site")).toThrow(/credential/);
+        expect(() => checkLocation("/home/u/.kube")).toThrow(/credential/);
+        expect(() => checkLocation("/home/u/site", ["/home/u/.config/launchpad"])).not.toThrow();
+        expect(() =>
+            checkLocation("/home/u/.config/launchpad/x", ["/home/u/.config/launchpad"]),
+        ).toThrow(/holds this client's credentials/);
+        expect(() =>
+            checkLocation("/home/u/.config/launchpad", ["/home/u/.config/launchpad"]),
+        ).toThrow();
     });
 
     it("refuses patterns that could reach outside the directory or mean something else", async () => {

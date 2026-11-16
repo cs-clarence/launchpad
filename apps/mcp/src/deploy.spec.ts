@@ -12,6 +12,7 @@ import { createMcpServer, type ServerOptions } from "./server";
 const KEY = "lp_" + "a".repeat(43);
 const ORG = "org-one";
 const PROJECT = "11111111-1111-4111-8111-111111111111";
+const OTHER_PROJECT = "55555555-5555-4555-8555-555555555555";
 const PREVIEW = "22222222-2222-4222-8222-222222222222";
 const ARTIFACT = "33333333-3333-4333-8333-333333333333";
 const DEPLOYMENT = "44444444-4444-4444-8444-444444444444";
@@ -41,7 +42,11 @@ afterEach(async () => {
 const json = (body: unknown, status = 200) =>
     new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
 
-function controller(final = "succeeded", failure: unknown = null) {
+function controller(
+    final = "succeeded",
+    failure: unknown = null,
+    configDir = path.join(dir, "cfg"),
+) {
     const calls: { method: string; path: string }[] = [];
     const uploads: Buffer[] = [];
     const preview = {
@@ -81,7 +86,15 @@ function controller(final = "succeeded", failure: unknown = null) {
                 expiresAt: NOW,
             });
         if (p === `/organizations/${ORG}/projects`)
-            return json([{ id: PROJECT, slug: "site", name: "Site", createdAt: NOW }]);
+            // The same slug names a different project on another controller.
+            return json([
+                {
+                    id: u.host.startsWith("prod") ? OTHER_PROJECT : PROJECT,
+                    slug: "site",
+                    name: "Site",
+                    createdAt: NOW,
+                },
+            ]);
         if (p === `/organizations/${ORG}/artifacts`) {
             uploads.push(Buffer.from(init.body as Buffer));
             return json(
@@ -111,7 +124,7 @@ function controller(final = "succeeded", failure: unknown = null) {
         {
             LAUNCHPAD_CONTROLLER: "https://control.example.com",
             LAUNCHPAD_API_KEY: KEY,
-            LAUNCHPAD_CONFIG_DIR: path.join(dir, "cfg"),
+            LAUNCHPAD_CONFIG_DIR: configDir,
         },
         { fetch: fetchImpl },
     );
@@ -164,18 +177,22 @@ describe("startup policy", () => {
                 "--exclude",
                 "**/*.map",
                 "--allow-project",
-                "site",
+                PROJECT.toUpperCase(),
             ).deploy,
         ).toEqual({
             include: ["dist/**"],
             exclude: ["**/*.map"],
-            allowProjects: ["site"],
+            allowProjects: [PROJECT],
         });
+        // A slug can name another project under another profile or organization.
+        expect(() =>
+            parse("--allow-deploy", "--include", "a", "--exclude", "b", "--allow-project", "site"),
+        ).toThrow(/project id/);
         expect(() => parse("--allow-deploy")).toThrow(/--include and one --exclude/);
         expect(() => parse("--allow-deploy", "--include", "dist/**")).toThrow(/--exclude/);
         expect(() => parse("--allow-deploy", "--exclude", "x")).toThrow(/--include/);
         expect(() => parse("--include", "dist/**")).toThrow(/need --allow-deploy/);
-        expect(() => parse("--allow-project", "site")).toThrow(/need --allow-deploy/);
+        expect(() => parse("--allow-project", PROJECT)).toThrow(/need --allow-deploy/);
     });
 
     it("refuses an unusable pattern at startup, not at the first call", () => {
@@ -296,20 +313,117 @@ describe("the deploy tool", () => {
         expect(uploads).toEqual([]);
     });
 
-    it("honors the project allow-list, naming the project as listed", async () => {
-        const { client, uploads } = await connect({
+    it("judges the project by its id, so another profile cannot reach a same-named project", async () => {
+        const { client, uploads, ctx } = await connect({
             workingDir: dir,
-            deploy: { ...POLICY, allowProjects: ["docs"] },
+            profile: "staging",
+            deploy: { ...POLICY, allowProjects: [PROJECT] },
         });
-        const refused = await call(client, {});
+        for (const name of ["staging", "prod"]) {
+            await ctx.store.update((saved) => {
+                saved.profiles[name] = {
+                    controller: `https://${name}.example.com`,
+                    apiKey: KEY,
+                    organizationId: ORG,
+                    savedAt: NOW,
+                };
+            });
+        }
+        const refused = await call(client, { profile: "prod" });
         expect(refused.isError).toBe(true);
         expect(text(refused)).toContain("not allowed");
         expect(uploads).toEqual([]);
-        const allowed = await connect({
+        // The startup profile is the default, and its project is the one listed.
+        expect((await call(client, {})).isError).toBe(false);
+        expect(uploads).toHaveLength(1);
+        const other = await connect({
             workingDir: dir,
-            deploy: { ...POLICY, allowProjects: ["site"] },
+            deploy: { ...POLICY, allowProjects: [OTHER_PROJECT] },
         });
-        expect((await call(allowed.client, {})).isError).toBe(false);
+        const denied = await call(other.client, {});
+        expect(text(denied)).toContain("not allowed");
+    });
+
+    it("sends the deployment id as soon as it is queued, and stops when the client cancels", async () => {
+        const { client } = await connect(
+            { workingDir: dir, deploy: POLICY },
+            controller("building"),
+        );
+        const seen: string[] = [];
+        const abort = new AbortController();
+        await expect(
+            client.callTool(
+                {
+                    name: "deploy",
+                    arguments: {
+                        working_dir: dir,
+                        path: "dist",
+                        project: "site",
+                        name: "review",
+                        confirm: true,
+                        wait_seconds: 30,
+                    },
+                },
+                undefined,
+                {
+                    signal: abort.signal,
+                    onprogress: (p) => {
+                        seen.push(p.message ?? "");
+                        if (p.message?.startsWith("Queued deployment")) abort.abort();
+                    },
+                },
+            ),
+        ).rejects.toBeDefined();
+        expect(seen.some((m) => m === `Queued deployment ${DEPLOYMENT}`)).toBe(true);
+    });
+
+    it("compares the credential store as a real path, so a symlinked store path is still protected", async () => {
+        const real = path.join(dir, "real-store");
+        await fs.mkdir(real, { recursive: true });
+        await fs.writeFile(path.join(real, "index.html"), "x");
+        const alias = path.join(dir, "store-alias");
+        await fs.symlink(real, alias);
+        const { client, uploads } = await connect(
+            { workingDir: dir, deploy: { ...POLICY, include: ["**"], exclude: ["nothing"] } },
+            controller("succeeded", null, alias),
+        );
+        const result = await call(client, { path: "real-store" });
+        expect(result.isError).toBe(true);
+        expect(text(result)).toContain("credentials");
+        expect(uploads).toEqual([]);
+    });
+
+    it("never publishes the credential store from a directory above it", async () => {
+        await fs.mkdir(path.join(dir, "cfg"), { recursive: true });
+        await fs.writeFile(path.join(dir, "cfg", "credentials.json"), "{}");
+        const { client, uploads } = await connect({
+            workingDir: dir,
+            deploy: { ...POLICY, include: ["**"], exclude: ["nothing"] },
+        });
+        const result = await call(client, { path: "." });
+        expect(result.isError).toBe(true);
+        expect(text(result)).toContain("credential store");
+        expect(uploads).toEqual([]);
+    });
+
+    it("refuses a deploy from inside this client's own credential store or a secret directory", async () => {
+        const store = path.join(dir, "cfg");
+        await fs.mkdir(store, { recursive: true });
+        await fs.writeFile(path.join(store, "index.html"), "x");
+        const { client, uploads } = await connect({
+            workingDir: dir,
+            deploy: { ...POLICY, include: ["**"], exclude: ["nothing"] },
+        });
+        const stored = await call(client, { path: "cfg" });
+        expect(stored.isError).toBe(true);
+        expect(text(stored)).toContain("credentials");
+        const aws = path.join(dir, ".aws", "site");
+        await fs.mkdir(aws, { recursive: true });
+        await fs.writeFile(path.join(aws, "index.html"), "x");
+        const inside = await call(client, { working_dir: aws, path: "." });
+        expect(inside.isError).toBe(true);
+        expect(text(inside)).toContain("credential or version-control");
+        expect(uploads).toEqual([]);
     });
 
     it("reports a failed deployment as an error with only safe, cleaned text", async () => {
