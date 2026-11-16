@@ -278,6 +278,14 @@ describe("the deploy tool", () => {
         expect(uploads).toEqual([]);
     });
 
+    it("tells the client that deployment exists only when it does", async () => {
+        const off = await connect({ workingDir: dir });
+        expect(off.client.getInstructions()).toContain("read-only tools");
+        const on = await connect({ workingDir: dir, deploy: POLICY });
+        expect(on.client.getInstructions()).toContain("replaces a preview's live content");
+        expect(on.client.getInstructions()).toContain("untrusted data");
+    });
+
     it("refuses an index.html the exclusions removed", async () => {
         const { client, uploads } = await connect({
             workingDir: dir,

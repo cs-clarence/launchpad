@@ -119,6 +119,11 @@ export async function packDirectory(
     const root = path.resolve(directory);
     const selected = selection && compileSelection(selection.include, selection.exclude);
     const within = (rel: string) => (selection!.prefix ? `${selection!.prefix}/${rel}` : rel);
+    // Everything packed sits below the prefix, so a secret-named directory in it taints
+    // every selected file, although the walk only sees names below the packed directory.
+    if (selection?.prefix) {
+        checkName(selection.prefix, selection.prefix.split("/"), { ...limits, maxDepth: 1e9 });
+    }
     const rootStat = await fs.lstat(root).catch(() => undefined);
     if (!rootStat) refuse(`${show(directory)} does not exist.`);
     if (rootStat.isSymbolicLink() || !rootStat.isDirectory()) {
@@ -136,10 +141,8 @@ export async function packDirectory(
             // With a selection, only what it selects must pass the rules below: the rest
             // of the directory is not published and so is not judged.
             if (selected && !entry.isDirectory() && !selected(within(rel))) continue;
+            // Directories are judged by what they hold, so an unselected deep tree passes.
             if (!selected || !entry.isDirectory()) checkName(rel, segments, limits);
-            else if (segments.length > limits.maxDepth) {
-                refuse(`${show(rel)} is nested deeper than ${limits.maxDepth} levels.`);
-            }
             if (entry.isDirectory()) {
                 // Looked at again without following links: the listing may be stale, and a
                 // directory swapped for a link since must not be descended into.

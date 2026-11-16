@@ -98,6 +98,14 @@ export async function deploy(ctx: Context, input: DeployInput): Promise<DeployRe
     const stat = await fs.lstat(input.source).catch(() => undefined);
     if (!stat) throw new ClientCoreError("bad-input", "The source does not exist.");
     progress({ kind: "step", message: "Packing the site" });
+    // A selection only describes a directory. If the source stopped being one since it was
+    // checked, an archive must not be sent in its place and skip the operator's patterns.
+    if (input.selection && !stat.isDirectory()) {
+        throw new ClientCoreError(
+            "bad-input",
+            "The source changed; a selected deploy needs a directory.",
+        );
+    }
     const packed = stat.isDirectory()
         ? await packDirectory(input.source, undefined, input.selection)
         : await readArchive(input.source);

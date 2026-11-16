@@ -599,6 +599,35 @@ describe("choosing which files are published", () => {
         }
     });
 
+    it("refuses a secret-named directory above the packed one, and ignores deep unselected trees", async () => {
+        const aws = path.join(dir, ".aws", "site");
+        await fs.mkdir(aws, { recursive: true });
+        await fs.writeFile(path.join(aws, "index.html"), "x");
+        await expect(
+            packDirectory(aws, undefined, pick([".aws/**"], ["nothing"], ".aws/site")),
+        ).rejects.toThrow(/secret/);
+        const root = await site();
+        await fs.mkdir(path.join(root, "a", "b", "c", "d", "e"), { recursive: true });
+        await fs.writeFile(path.join(root, "a", "b", "c", "d", "e", "deep.txt"), "x");
+        const shallow = { maxArchiveBytes: 1e6, maxEntries: 100, maxDepth: 3 };
+        const packed = await packDirectory(root, shallow, pick(["dist/index.html"], ["nothing"]));
+        expect(await names(packed.archive)).toEqual(["index.html"]);
+        await expect(packDirectory(root, shallow, pick(["dist/**"], ["nothing"]))).rejects.toThrow(
+            /deeper/,
+        );
+    });
+
+    it("does not send an archive in place of a directory when a selection was given", async () => {
+        const root = await site();
+        const file = path.join(dir, "x.tar.gz");
+        await fs.writeFile(file, (await packDirectory(root)).archive);
+        const { ctx, calls } = controller({ previews: [previewBody()], statuses: ["succeeded"] });
+        await expect(
+            deploy(ctx, args(file, { selection: pick(["dist/**"], ["x"]) })),
+        ).rejects.toThrow(/needs a directory/);
+        expect(calls.some((c) => c.path.endsWith("/artifacts"))).toBe(false);
+    });
+
     it("refuses patterns that could reach outside the directory or mean something else", async () => {
         const root = await site();
         for (const bad of [
