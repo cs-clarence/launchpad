@@ -104,3 +104,19 @@ not by an unfinished deployment, and not by a preview deleted within the retenti
 stays (marked collected) and the file goes after it; uploading the same bytes again stores the
 archive again. Switch the lifecycle off to stop all of this at once: nothing is deleted, and
 all rows and jobs are kept.
+
+### Things to know before switching the lifecycle on
+
+- Use one database per Dokku host and per data directory. "Owned" means "has a row in this
+  database", so a second installation (or a database copied from production) pointed at the same
+  Dokku or data directory would destroy or sweep the first one's apps and archives.
+- The first time the lifecycle is switched on, previews that are already overdue get a one-time
+  24 h grace (recorded in the database) instead of being deleted within minutes.
+- The controller and the worker read `LAUNCHPAD_LIFECYCLE` separately; set both. The controller
+  refuses deletion requests while it is off.
+- Images loaded onto the Dokku host with `git:load-image` are not removed by the worker; only
+  the worker's own Docker daemon is cleaned. Resolving a held deletion as "deleted" trusts the
+  administrator and removes no images.
+- Shutdown may wait out a Dokku destroy of up to about a minute; this is safe because the next
+  attempt asks whether the app still exists first.
+- The artifact retention must be at least 1h.

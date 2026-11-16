@@ -249,6 +249,8 @@ export async function createPreview(
             .select("id")
             .where("project_id", "=", projectId)
             .where("slug", "=", data.slug)
+            // A deleted preview no longer holds its name.
+            .where("desired_state", "<>", "deleted")
             .executeTakeFirst();
         if (taken) {
             throw new ServiceError("conflict", "A preview with that name already exists.");

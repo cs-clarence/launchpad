@@ -329,10 +329,27 @@ async function finalize(
                 () => true,
                 () => false,
             );
-            if (present) return shape(existing, true);
+            if (present) {
+                // Using it again restarts its clock, so the collector cannot take it between
+                // this answer and the deployment that is about to point at it.
+                const touched = await trx
+                    .updateTable("artifact")
+                    .set({ created_at: sql<Date>`now()` })
+                    .where("id", "=", existing.id)
+                    .returning(["id", "created_at", "size_bytes", "expanded_bytes", "entry_count"])
+                    .executeTakeFirstOrThrow();
+                return shape(touched, true);
+            }
             await fs.mkdir(path.dirname(final), { recursive: true, mode: 0o700 });
             await fs.rename(temp, final);
-            return shape(existing, false);
+            // Stored again, so its retention starts again too.
+            const restored = await trx
+                .updateTable("artifact")
+                .set({ created_at: sql<Date>`now()` })
+                .where("id", "=", existing.id)
+                .returning(["id", "created_at", "size_bytes", "expanded_bytes", "entry_count"])
+                .executeTakeFirstOrThrow();
+            return shape(restored, false);
         }
         if ((await countArtifacts(trx, organizationId)) >= limits.maxArtifacts) {
             throw new ServiceError("conflict", "This organization has too many stored artifacts.");

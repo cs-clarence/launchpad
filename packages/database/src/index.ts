@@ -207,6 +207,12 @@ export interface DeletionOperationTable {
     finished_at: Date | null;
 }
 
+export interface InstanceStateTable {
+    key: string;
+    value: string;
+    set_at: Generated<Date>;
+}
+
 export interface WorkerHeartbeatTable {
     worker_id: string;
     version: string;
@@ -242,6 +248,7 @@ export interface Database {
     deployment_event: DeploymentEventTable;
     deletion_operation: DeletionOperationTable;
     worker_heartbeat: WorkerHeartbeatTable;
+    instance_state: InstanceStateTable;
     idempotency_key: IdempotencyKeyTable;
     organization: OrganizationTable;
     member: MemberTable;

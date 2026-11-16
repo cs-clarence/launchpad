@@ -205,3 +205,11 @@ content could be re-published by hand from storage, and after it nothing can.
   unlisted Dokku operation, and a live test of destroy against a neighbour app (written, **not
   run**: it needs a disposable Dokku). Mutation checks: live-preview protection, retention, and the
   share lock each fail a test when removed. The Opus review of slices 2-4 follows.
+- Opus review fixes (slices 2-4): no safety blockers. Fixed: a name is free again once its preview
+  is deleted (partial unique index, migration `…_016`); a one-time 24 h grace the first time the
+  lifecycle is switched on (marker in `instance_state`); deletion refused while the lifecycle is
+  off; an unreachable host no longer uses up the attempts and retries back off exponentially;
+  deletion waits an hour after a deployment was held for reconciliation; a reused upload restarts
+  its clock; retention at least 1h; a lifecycle round at least every 30 s; the collector takes the
+  owner lock and skips a malformed key; the sweep skips symlinked owner directories. Documented
+  only: one database per Dokku host and per data directory.

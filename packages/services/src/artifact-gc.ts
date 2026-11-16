@@ -123,7 +123,21 @@ export async function collectArtifacts(
                         .executeTakeFirst();
                 })();
                 if (!candidate) return { kind: "none" } as const;
+                // A key that is not one this module wrote cannot be moved or removed: leave the
+                // row alone, and do not let it be the oldest candidate every round.
+                let final: string;
+                try {
+                    final = resolveArtifactPath(options.dataDir, candidate.storage_key);
+                } catch {
+                    return { kind: "skip", id: candidate.id } as const;
+                }
                 await options.afterCandidate?.(candidate.id);
+                // The owner's upload lock first, then the row, in the order finalizing an upload
+                // takes them, so the two cannot wait on each other; and so a sweep or a
+                // recovery (which take it per file) never sees an archive half moved.
+                await sql`select pg_advisory_xact_lock(hashtextextended(${`artifacts:${candidate.storage_key.split("/")[1]}`}, 0))`.execute(
+                    trx,
+                );
                 const locked = await trx
                     .selectFrom("artifact")
                     .select("id")
@@ -156,7 +170,6 @@ export async function collectArtifacts(
                         organization_id: candidate.organization_id,
                     })
                     .execute();
-                const final = resolveArtifactPath(options.dataDir, candidate.storage_key);
                 const aside = `${final}.${randomBytes(8).toString("hex")}.gone`;
                 const renamed = await fs.rename(final, aside).then(
                     () => true,
@@ -231,6 +244,9 @@ export async function sweepOrphanArtifactFiles(
     const owners = await fs.readdir(root).catch(() => [] as string[]);
     for (const owner of owners) {
         if (!KEY_DIR.test(owner)) continue;
+        // A plain directory only: a link here could point the sweep outside the data directory.
+        const entry = await fs.lstat(path.join(root, owner)).catch(() => null);
+        if (!entry?.isDirectory()) continue;
         const names = await fs.readdir(path.join(root, owner)).catch(() => [] as string[]);
         for (const name of names) {
             const aside = ASIDE_FILE.test(name);
@@ -285,7 +301,9 @@ export async function sweepOrphanArtifactFiles(
 
 // For a worker's start, before it claims anything: puts back every archive a collection that
 // died before its commit left aside, so a live artifact never points at a missing file. No
-// grace period: nothing of this process is mid-collection, and the worker is the only one.
+// grace period is needed: a collection in progress (this worker's or another's) holds the
+// owner's upload lock, which every file here is judged under, so it is seen either before it
+// moved the archive or after it committed.
 export async function recoverInterruptedCollections(
     db: Db,
     options: { dataDir: string },

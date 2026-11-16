@@ -72,8 +72,13 @@ export async function requestPreviewDeletion(
     principal: Principal,
     organizationId: string,
     previewId: string,
+    deps: { enabled: boolean },
 ) {
     await requireMembership(db, principal, organizationId, "preview:delete");
+    // Nothing would ever process it: a preview left `deleting` can neither be deployed nor
+    // revived, and its app would keep serving. The controller and the worker read
+    // LAUNCHPAD_LIFECYCLE separately, so both must agree.
+    if (!deps.enabled) throw new ServiceError("conflict", "Deletion is not enabled.");
     if (!z.uuid().safeParse(previewId).success) {
         throw new ServiceError("not-found", "Preview not found.");
     }
@@ -134,8 +139,13 @@ export interface DeletionDeps {
     enabled: boolean;
     // Which recorded app names may be destroyed. Defaults to OWNED_APP_PATTERN.
     ownedApp?: RegExp;
-    // How long a failed attempt waits before it is tried again. Defaults to 30 s per attempt.
+    // How long a failed attempt waits before it is tried again. Defaults to a minute that
+    // doubles with each attempt, at most half an hour.
     retryBackoffMs?: (attempt: number) => number;
+    // How long a deployment held for reconciliation keeps a deletion waiting: its image load
+    // may still be running on the Dokku host after it was abandoned. Defaults to an hour,
+    // twice the longest lease.
+    heldDeploymentWaitMs?: number;
 }
 
 export interface DeletionContext {
@@ -179,8 +189,9 @@ const WAITING_DEPLOYMENT = ["queued", "preparing", "building", "deploying", "ver
 // Claims the next deletion that may start: a queued one, or one whose lease has run out
 // (its worker died). It does not start while a deployment of the preview is still
 // running: that one finishes first, and an operation that waits is simply left for the
-// next poll. A deployment held for reconciliation does not block it: destroying the app is
-// what puts the host right either way.
+// next poll. A deployment held for reconciliation blocks it only for a while after it was
+// abandoned (its image load may still be running on the host); once that has passed, it does
+// not: destroying the app is what puts the host right either way.
 export async function claimDeletion(
     db: Db,
     owner: string,
@@ -213,7 +224,19 @@ export async function claimDeletion(
                         selectFrom("deployment as d")
                             .select("d.id")
                             .whereRef("d.preview_id", "=", "op.preview_id")
-                            .where("d.status", "in", [...WAITING_DEPLOYMENT]),
+                            .where((eb) =>
+                                eb.or([
+                                    eb("d.status", "in", [...WAITING_DEPLOYMENT]),
+                                    eb.and([
+                                        eb("d.status", "=", "reconciliation-needed"),
+                                        eb(
+                                            "d.updated_at",
+                                            ">",
+                                            sql<Date>`now() - ${deps.heldDeploymentWaitMs ?? 3_600_000} * interval '1 millisecond'`,
+                                        ),
+                                    ]),
+                                ]),
+                            ),
                     ),
                 ),
             )
@@ -274,6 +297,8 @@ type Patch = Partial<{
     step_pending: "destroy" | "images" | null;
     failure_code: string | null;
     failure_message: string | null;
+    // The retry budget used so far. Lowered when an attempt did not really count.
+    attempt: number;
     finished: boolean;
     // Give the operation up for now, to be claimed again after this long (0: at once).
     retryAfterMs: number;
@@ -358,7 +383,9 @@ async function execute(
     deps: DeletionDeps,
     options: DeletionRunOptions,
 ): Promise<DeletionOutcome> {
-    const backoff = deps.retryBackoffMs ?? ((attempt: number) => 30_000 * attempt);
+    const backoff =
+        deps.retryBackoffMs ??
+        ((attempt: number) => Math.min(60_000 * 2 ** (attempt - 1), 30 * 60_000));
     const row = await db
         .selectFrom("deletion_operation as op")
         .innerJoin("preview", (join) =>
@@ -406,10 +433,12 @@ async function execute(
         // its successor then asks whether the app is still there before doing anything.
         await fenced(db, claim, { status: "running", step_pending: "destroy" });
         const signal = AbortSignal.timeout(Math.max(1, Math.floor(deadline - performance.now())));
+        let destroying = false;
         try {
             guard();
             if (await ports.dokku.apps.exists(row.app_name, signal)) {
                 guard();
+                destroying = true;
                 await ports.dokku.apps.destroy(row.app_name, signal);
             }
         } catch (error) {
@@ -421,6 +450,19 @@ async function execute(
             if (kind === "invalid-argument" || kind === "trust") {
                 await hold("destroy-rejected", "Dokku refused to destroy the app.");
                 return "reconciliation-needed";
+            }
+            // The connection never opened, so the command certainly did not run: an outage of
+            // the host is waited out, not counted against the attempts that would otherwise
+            // send every pending deletion to a person.
+            // A probe that timed out never asked for a destroy either: nothing to be unsure of.
+            if (kind === "not-started" || (!destroying && kind === "uncertain")) {
+                await fenced(db, claim, {
+                    attempt: claim.attempt - 1,
+                    retryAfterMs: 60_000,
+                    failure_code: "destroy-waiting",
+                    failure_message: "Dokku could not be reached; it will be tried again.",
+                });
+                return "retry";
             }
             if (claim.attempt >= MAX_DELETION_ATTEMPTS) {
                 await hold("destroy-uncertain", "Destroying the app did not finish clearly.");

@@ -8,6 +8,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
     addMember,
     artifactStorageKey,
+    beginLifecycle,
     collectArtifacts,
     createOrganization,
     createPreview,
@@ -876,7 +877,7 @@ describe("one round of lifecycle work", () => {
             .execute();
         const old = await artifact();
         const { ports, calls } = fakePorts();
-        const state = { lastCollect: 0 };
+        const state = { lastCollect: 0, started: true };
         const options = {
             owner: "w",
             config: on,
@@ -908,7 +909,7 @@ describe("one round of lifecycle work", () => {
 
     it("leaves a deletion untouched when asked to shut down first", async () => {
         const p = await makePreview();
-        await requestPreviewDeletion(testDb.db, people.dee!, org, p);
+        await requestPreviewDeletion(testDb.db, people.dee!, org, p, { enabled: true });
         const stop = new AbortController();
         stop.abort();
         const { ports, calls } = fakePorts();
@@ -921,5 +922,75 @@ describe("one round of lifecycle work", () => {
             }),
         ).toEqual({ expired: 0, deletion: "none", collected: 0, swept: 0 });
         expect(calls).toEqual([]);
+    });
+});
+
+describe("collection edge cases", () => {
+    it("skips a row whose storage key is malformed and still collects the rest", async () => {
+        const bad = await artifact(5 * HOUR);
+        await testDb.db
+            .updateTable("artifact")
+            .set({ storage_key: "../escape" })
+            .where("id", "=", bad.id)
+            .execute();
+        const good = await artifact(3 * HOUR);
+        const result = await collect();
+        expect(result).toBeDefined();
+        expect(await collected(bad.id)).toBe(false);
+        expect(await collected(good.id)).toBe(true);
+    });
+
+    it("does not follow a symlinked owner directory when sweeping", async () => {
+        const outside = await fs.mkdtemp(path.join(os.tmpdir(), "lp-outside-"));
+        const digest = createHash("sha256").update(randomUUID()).digest("hex");
+        const victim = path.join(outside, `${digest}.tar.gz`);
+        await fs.writeFile(victim, "x");
+        await fs.utimes(victim, new Date(0), new Date(0));
+        const other = createHash("sha256").update(randomUUID()).digest("hex").slice(0, 32);
+        await fs.mkdir(path.join(dataDir, "artifacts"), { recursive: true });
+        await fs.symlink(outside, path.join(dataDir, "artifacts", other));
+        await sweepOrphanArtifactFiles(testDb.db, { dataDir, retentionSeconds: 3600 });
+        expect(await exists(victim)).toBe(true);
+        await fs.rm(path.join(dataDir, "artifacts", other));
+        await fs.rm(outside, { recursive: true, force: true });
+    });
+});
+
+describe("the first switch-on", () => {
+    it("gives overdue previews a grace once, and does nothing the second time", async () => {
+        await testDb.db.deleteFrom("instance_state").execute();
+        const p = await makePreview();
+        await testDb.db
+            .updateTable("preview")
+            .set({ expires_at: new Date(Date.now() - 1000) })
+            .where("id", "=", p)
+            .execute();
+        const first = await beginLifecycle(testDb.db, 3600);
+        expect(first.first).toBe(true);
+        expect(first.graced).toBeGreaterThanOrEqual(1);
+        const row = await testDb.db
+            .selectFrom("preview")
+            .select("expires_at")
+            .where("id", "=", p)
+            .executeTakeFirstOrThrow();
+        expect(row.expires_at!.getTime()).toBeGreaterThan(Date.now() + 3000_000);
+        await testDb.db
+            .updateTable("preview")
+            .set({ expires_at: new Date(Date.now() - 1000) })
+            .where("id", "=", p)
+            .execute();
+        expect(await beginLifecycle(testDb.db, 3600)).toEqual({ first: false, graced: 0 });
+        const again = await testDb.db
+            .selectFrom("preview")
+            .select("expires_at")
+            .where("id", "=", p)
+            .executeTakeFirstOrThrow();
+        expect(again.expires_at!.getTime()).toBeLessThan(Date.now());
+        const audit = await testDb.db
+            .selectFrom("audit_event")
+            .select("id")
+            .where("action", "=", "lifecycle.enabled")
+            .execute();
+        expect(audit.length).toBeGreaterThanOrEqual(1);
     });
 });

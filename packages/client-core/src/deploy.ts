@@ -241,8 +241,19 @@ async function findOrCreatePreview(
         }
         return undefined;
     };
+    // A preview of that name that is expiring or being deleted cannot take a deployment,
+    // and its name is free again only once it is gone.
+    const usable = (found: Preview): Preview => {
+        if (found.state !== "active") {
+            throw new ClientCoreError(
+                "bad-input",
+                `The preview "${slug}" is being deleted. Try again in a few minutes, when its name is free.`,
+            );
+        }
+        return found;
+    };
     const existing = await find();
-    if (existing) return existing;
+    if (existing) return usable(existing);
     signal?.throwIfAborted();
     // One key for every attempt: if a create committed but its answer was lost, the
     // retry gets that same preview back instead of a conflict.
@@ -263,7 +274,7 @@ async function findOrCreatePreview(
         // Created by someone else between the list and the create: use theirs.
         if (error instanceof LaunchpadApiError && error.status === 409) {
             const raced = await find();
-            if (raced) return raced;
+            if (raced) return usable(raced);
         }
         throw error;
     }
