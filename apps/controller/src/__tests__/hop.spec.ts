@@ -1819,6 +1819,18 @@ describe("previews and deployments over HTTP", () => {
         expect(previewSchema.parse(await (await extend()).json()).expiresAt).toBe(
             extended.expiresAt,
         );
+        const later = previewSchema.parse(
+            await (
+                await call(limitedKey, `${ownPath}/extend`, {
+                    method: "POST",
+                    body: { ttl: "1h" },
+                    headers: { "idempotency-key": "extend-http-2" },
+                })
+            ).json(),
+        );
+        expect(Date.parse(later.expiresAt!)).toBeGreaterThan(Date.parse(extended.expiresAt!));
+        // A replay does not extend again, but it returns today's row rather than a snapshot.
+        expect(previewSchema.parse(await (await extend()).json()).expiresAt).toBe(later.expiresAt);
         expect(
             await status(
                 call(limitedKey, `${ownPath}/extend`, {
@@ -2040,6 +2052,23 @@ describe("server function bodies", () => {
 });
 
 describe("OpenAPI reference", () => {
+    it("describes extension replay as returning the current preview, not the original response", async () => {
+        const response = await fetch(`${proxied.base}/api/openapi/json`);
+        const spec = (await response.json()) as {
+            paths: Record<
+                string,
+                {
+                    post: {
+                        description: string;
+                    };
+                }
+            >;
+        };
+        const extend =
+            spec.paths["/api/v1/organizations/{orgId}/previews/{previewId}/extend"]!.post;
+        expect(extend.description).toContain("returns the current preview");
+        expect(extend.description).toContain("does not extend again");
+    });
     const operations = [
         "get /api/v1/me",
         "get /api/v1/organizations",

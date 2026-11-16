@@ -117,7 +117,7 @@ export function operation(op: Operation): DocumentDecoration {
                           in: "header" as const,
                           required: false,
                           description:
-                              "Up to 128 characters. A repeated request with the same key returns the first result; the same key with a different request is a conflict. Kept for 24 hours.",
+                              "Up to 128 characters. A repeated request with the same key does not apply the mutation again; the same key with a different request is a conflict. Kept for 24 hours.",
                           schema: { type: "string" },
                       },
                   ]
@@ -340,7 +340,7 @@ export const docs = {
         tags: ["Previews"],
         summary: "Extend a preview's lifetime",
         description:
-            "Needs deployer or higher and preview:deploy for keys. Never shortens an expiry; capped at the instance maximum from now. Extending a never-expiring preview with a duration gives it an expiry. A deleting preview cannot be extended.",
+            "Needs deployer or higher and preview:deploy for keys. Never shortens an expiry; capped at the instance maximum from now. Extending a never-expiring preview with a duration gives it an expiry. Replaying an idempotency key does not extend again and returns the current preview, which may differ from the original response. A deleting preview cannot be extended.",
         path: ["orgId", "previewId"],
         idempotent: true,
         body: extendPreviewSchema,

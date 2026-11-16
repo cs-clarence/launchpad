@@ -24,7 +24,8 @@ Depends on `zod` and `@launchpad/contracts` only; no filesystem or credential st
 - `client.previews.create(orgId, projectId, { slug, ttl: "24h" })` chooses a lifetime.
 - `client.previews.extend(orgId, previewId, { ttl: "24h" }, { idempotencyKey })` returns
   the resulting preview without extending again on a retry with that key. Requires
-  `preview:deploy`. Extending a never-expiring preview with a duration gives it an expiry.
+  `preview:deploy`. A replay returns the current preview, which may differ from the original
+  response after another extension. Extending a never-expiring preview with a duration gives it an expiry.
 - `client.previews.delete(orgId, previewId)` queues deletion and returns
   `{ operationId, state: "deleting" }`. Requires `preview:delete` and enabled lifecycle.
   Repeating while deleting returns the same operation; after deletion it is 404.

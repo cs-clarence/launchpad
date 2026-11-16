@@ -42,7 +42,8 @@ export type Deployment = z.infer<typeof deploymentSchema>;
 export type DeploymentEvents = z.infer<typeof deploymentEventsSchema>;
 export type Artifact = z.infer<typeof artifactSchema>;
 export interface RequestOptions {
-    // Repeating a request with the same key returns the first result.
+    // Repeating a request with the same key does not apply the mutation again.
+    // The returned resource may reflect its current state, not the original response.
     idempotencyKey?: string;
     signal?: AbortSignal;
 }

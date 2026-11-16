@@ -204,8 +204,9 @@ project. Cookie mutations keep the same-origin requirement.
 | `GET /deletions/:operationId`                                                                         | 200 deletion status, reason, fixed failure text, creation/finish times | `preview:read`                                         |
 | `POST /deletions/:operationId/resolution` with `{ "outcome": "retry" }` or `{ "outcome": "deleted" }` | 200 `{ ok: true }`                                                     | Session only: admin/owner, signed in within 15 minutes |
 
-Extension accepts `Idempotency-Key`: repeating it does not extend again; a different
-request with that key is 409. Extension never shortens an expiry and is capped at the
+Extension accepts `Idempotency-Key`: repeating it does not extend again and returns
+the current preview, not a snapshot of the original response; a different request
+with that key is 409. Extension never shortens an expiry and is capped at the
 instance maximum from now. Extending a never-expiring preview with a duration **gives it
 an expiry**. Once deleting, extension is 409.
 
