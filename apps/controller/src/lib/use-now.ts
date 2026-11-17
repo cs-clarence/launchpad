@@ -1,10 +1,14 @@
 import { useEffect, useState } from "react";
 
-// The server's clock as of `clientNow`, given what the server said when it loaded the page
-// and what the browser's clock said at that moment: it keeps the server's time, so a wrong
-// browser clock does not show.
-export function serverTime(serverNow: number, clientAtLoad: number, clientNow: number): number {
-    return serverNow + (clientNow - clientAtLoad);
+// A clock that starts at the server's time and moves on by what a monotonic timer has
+// advanced, so neither a wrong browser clock nor a correction of it while the page is open
+// shows. `monotonic` is replaceable for tests.
+export function createClock(
+    serverNow: number,
+    monotonic: () => number = () => performance.now(),
+): () => number {
+    const start = monotonic();
+    return () => serverNow + (monotonic() - start);
 }
 
 // The first render uses exactly the server's time (so the page the server sent and the one
@@ -13,12 +17,9 @@ export function serverTime(serverNow: number, clientAtLoad: number, clientNow: n
 export function useNow(serverNow: number, everyMs = 30_000): number {
     const [now, setNow] = useState(serverNow);
     useEffect(() => {
-        const clientAtLoad = Date.now();
+        const clock = createClock(serverNow);
         setNow(serverNow);
-        const timer = setInterval(
-            () => setNow(serverTime(serverNow, clientAtLoad, Date.now())),
-            everyMs,
-        );
+        const timer = setInterval(() => setNow(clock()), everyMs);
         return () => clearInterval(timer);
     }, [serverNow, everyMs]);
     return now;

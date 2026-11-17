@@ -9,7 +9,7 @@ import {
     mergeEvents,
     statusLabel,
 } from "./previews";
-import { serverTime } from "./use-now";
+import { createClock } from "./use-now";
 
 const event = (seq: number) => ({
     seq,
@@ -102,10 +102,27 @@ describe("extend choices", () => {
 });
 
 describe("the page clock", () => {
-    it("moves on from the server's time by what the browser clock has advanced", () => {
-        expect(serverTime(1_000, 50_000, 50_000)).toBe(1_000);
-        expect(serverTime(1_000, 50_000, 80_000)).toBe(31_000);
-        // A browser clock that is wrong does not show: only its advance counts.
-        expect(serverTime(1_000, 9_999_999, 10_029_999)).toBe(31_000);
+    it("moves on from the server's time by what a monotonic timer has advanced", () => {
+        let timer = 50_000;
+        const clock = createClock(1_000, () => timer);
+        expect(clock()).toBe(1_000);
+        timer = 80_000;
+        expect(clock()).toBe(31_000);
+    });
+
+    it("ignores the wall clock, so a correction of it cannot move the time backwards", () => {
+        let timer = 5_000;
+        const clock = createClock(1_000, () => timer);
+        const realNow = Date.now;
+        try {
+            timer = 35_000;
+            expect(clock()).toBe(31_000);
+            // The browser's clock is put back an hour.
+            Date.now = () => realNow() - 3_600_000;
+            timer = 65_000;
+            expect(clock()).toBe(61_000);
+        } finally {
+            Date.now = realNow;
+        }
     });
 });
