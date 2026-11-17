@@ -903,8 +903,6 @@ export function createApi(deps: {
                         },
                     ),
             )
-            // The archive is the request body itself (not multipart), so it streams: the
-            // caller is authorized first and nothing is buffered here.
             .post(
                 "/v1/organizations/:orgId/deployments/:deploymentId/resolution",
                 { detail: docs.resolveDeployment },
@@ -929,6 +927,8 @@ export function createApi(deps: {
                     );
                 },
             )
+            // The archive is the request body itself (not multipart), so it streams: the
+            // caller is authorized first and nothing is buffered here.
             .post(
                 "/v1/organizations/:orgId/artifacts",
                 { detail: docs.uploadArtifact },
@@ -954,8 +954,8 @@ export function createApi(deps: {
                                     "Send the archive as application/gzip.",
                                 );
                             }
-                            // Stored archives are never deleted yet: none are taken while
-                            // deployments are off.
+                            // An archive is only for a deployment, and counts toward the organization's
+                            // ceiling until collected: none are taken while deployments are off.
                             if (!previews.enabled) {
                                 throw new ServiceError("conflict", "Deployments are not enabled.");
                             }

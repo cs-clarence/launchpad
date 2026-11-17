@@ -66,6 +66,6 @@ for operator logs only; do not return it to API clients.
 
 Unit tests need no Dokku or network. The real transport is exercised with stand-in
 `ssh` executables that record their arguments and environment, hang, flood output, read
-or ignore standard input; the client with a fake transport. There is no live-engine
-test in this package yet: that opt-in task arrives with the worker (milestone 3, slice 5)
-and will touch only a disposable Dokku the developer started.
+or ignore standard input; the client with a fake transport. The live-engine tests are the worker's opt-in suite
+(`omni -i run test:live -p @launchpad/worker`, see `apps/worker/README.md`); it touches only a
+disposable Dokku the developer started.

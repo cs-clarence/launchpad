@@ -50,3 +50,16 @@ lock. The caller is authorized before the first byte is read and re-checked unde
 the lock. Storage keys are exactly `artifacts/<32 hex>/<64 hex>.tar.gz` (a hash of
 the organization, then the archive digest); `resolveArtifactPath` refuses anything
 else. Test archives (including hostile ones) are built by `@launchpad/services/testing`.
+
+## Deployments, lifecycle and status (milestones 3 to 5)
+
+See [patterns](../../docs/patterns/README.md) for the file map. In short: `deployments.ts` is the
+queue, the lease and the state machine for a deployment (`enqueueDeployment`, `claimNext`,
+`runDeployment`, `resolveReconciliation`); `expiry.ts`, `deletions.ts`, `artifact-gc.ts` and
+`lifecycle-run.ts` are expiry, the deletion operation (fenced, with an ownership pattern for what it
+may destroy), artifact collection and one round of lifecycle work for the worker; `deadline.ts` is
+the lease deadline (monotonic and wall clock); `status.ts` is the worker heartbeat and the
+operator-only status. Everything that destroys is off unless the lifecycle is on, and every write
+by a worker is fenced so a stale worker cannot record anything. Each has integration tests against
+a disposable PostgreSQL, with fakes for the Dokku and Docker ports; the worker's opt-in live suite
+covers the real ones.

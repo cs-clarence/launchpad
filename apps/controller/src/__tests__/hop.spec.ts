@@ -2368,7 +2368,7 @@ describe("previews and deployments over HTTP", () => {
                 })
             ).status,
         ).toBe(409);
-        // Stored archives are never deleted yet, so none are taken while it is off.
+        // With deployments off the worker is idle, so nothing would use or collect an archive: none are taken.
         expect(
             (
                 await fetch(`${direct.base}/api/v1/organizations/${orgId}/artifacts`, {

@@ -1,7 +1,8 @@
 # Launchpad application design
 
-Status: proposed, awaiting design approval. This is a target architecture, not a
-description of implemented behavior. For contributors planning the application;
+Status: approved and largely built (milestones 0 to 5; see `docs/plans/application.md` and
+the milestone plans). This is the target architecture: where a later note says a part is
+deferred (runtime logs, for one), that wins. For contributors planning the application;
 keep it aligned with the implementation plan and record accepted costly
 decisions separately before building on them.
 
@@ -248,7 +249,7 @@ GET    /api/v1/organizations/:orgId/previews/:previewId
 POST   /api/v1/organizations/:orgId/previews/:previewId/deployments
 GET    /api/v1/organizations/:orgId/deployments/:deploymentId
 GET    /api/v1/organizations/:orgId/deployments/:deploymentId/events
-GET    /api/v1/organizations/:orgId/previews/:previewId/logs
+GET    /api/v1/organizations/:orgId/previews/:previewId/logs   (deferred in milestone 5: not built)
 DELETE /api/v1/organizations/:orgId/previews/:previewId
 ```
 
@@ -331,7 +332,7 @@ launchpad login --controller https://control.example.com
 launchpad org use acme
 launchpad deploy ./dist --project website --name demo --spa --ttl 24h
 launchpad previews list
-launchpad deployments logs <deployment-id>
+launchpad deployments logs <deployment-id>    # deferred in milestone 5: not built
 launchpad previews delete <preview-id>
 launchpad-mcp --shared --allow-deploy --include 'dist/**' --exclude 'dist/private/**'
 ```
@@ -342,8 +343,8 @@ organization profiles; non-interactive mode produces stable JSON/exit codes.
 
 Local stdio MCP tools call the same client-core operations as the CLI, without
 spawning the CLI or importing privileged controller services. Tools include
-listing projects/previews, deploying a directory, reading status/logs, and
-requesting preview deletion. Responses are structured and bounded.
+listing projects/previews, deploying a directory, reading status, and
+requesting preview deletion (runtime logs are deferred). Responses are structured and bounded.
 
 MCP server startup is not permission to deploy arbitrary local files:
 

@@ -22,9 +22,9 @@ implemented. Design and boundaries are in [application design](../design/applica
 - **Collaboration/time:** first resolve contracts and run risk spikes with one
   owner; then bounded milestones. Estimate after the spikes, not a promised
   calendar duration. No agents launched for this plan.
-- **Chosen next step:** milestone 0 is partly done (see the readiness gate).
-  Finish the deferred gates before the milestone that needs each, then start
-  milestone 1 only with the user's go-ahead.
+- **Chosen next step (when this was written):** milestone 0 was partly done; the deferred gates
+  were to pass before the milestone that needs each. Milestones 0 to 5 are now built (see the
+  progress notes and `docs/plans/milestone-5-lifecycle.md`); milestone 6 is next.
 - **Reassessment triggers:** hostile tenants/builds, multi-host orchestration,
   public signup, OAuth-provider expansion, hosted MCP, automatic Git-provider PR
   builds, or a different deployment engine.
@@ -267,6 +267,42 @@ document which metadata/URLs can be restored.
   least-privilege CI identity, package-content checks and image provenance.
 - Docs for local/private management, Cloudflare/Tailscale preview routing,
   onboarding, API keys, MCP roots/permissions, restore and upgrade.
+- **Restore order and the lifecycle.** The worker's orphan sweep removes an archive file once it is
+  older than the retention and no live row refers to it, start-up recovery trusts the database, and
+  a deletion destroys the Dokku app of a row it was given. So a restore runbook must say:
+    1. switch the lifecycle **and deployments off** (worker and controller), then **stop every
+       worker and wait until each process has exited** (turning a setting off takes effect only when
+       the worker restarts). A worker's exit does not prove that a Dokku destroy it had under way
+       has finished: on a stop it only ends its local SSH client, and the command may still be
+       running on the host, including the plugin triggers Dokku runs after an app is gone. A missing
+       app is therefore **not** proof that a destroy has settled either. So **wait** after the last
+       worker stopped for longer than the longest Dokku command and the deletion lease (five minutes
+       by default; longer if the host's destroy triggers are slow) before touching anything;
+    2. restore the database and the data directory from the same moment;
+    3. check that every live artifact has its file (uploading the same archive again repairs a row
+       whose file is missing);
+    4. **detect, do not yet fix, what Dokku no longer matches**: for every live preview, check that
+       its app exists (`apps:exists` by the recorded name) and **list** each one whose app is gone
+       (destroyed after the backup, or by a settled in-flight deletion). An app Dokku has that no
+       restored row names is left alone, as Launchpad never destroys what it has no row for. A tool
+       for this check is not built and is tracked as a follow-up;
+    5. switch **deployments on and start the workers, with the lifecycle still off**: nothing
+       expires or is deleted yet;
+    6. for each listed preview an administrator keeps, redeploy it (a deployment's first step
+       recreates a missing app, so deploying its active artifact again restores it; redeploying
+       does not need the lifecycle). A restored preview whose expiry has already passed must be
+       **extended** now if it is to be kept, because the lifecycle is about to start and the
+       first-enable grace applies only once, to a database that has never had it on;
+    7. switch the lifecycle on (worker and controller), and then delete the listed previews the
+       administrator chose to end (a manual deletion is refused while the lifecycle is off).
+       Restoring an older database with the lifecycle on deletes the archives uploaded since (once they
+       are older than the retention); restoring an older data directory leaves live rows whose files
+       are missing, which makes a new deployment of that artifact fail at its build, and a rollback to
+       it end in `rollback-failed` and hold the deployment for an administrator. One database per Dokku
+       host and per data directory still holds. The restore drill must exercise each step, including
+       a destroy that was in flight when the workers were stopped being allowed to settle, and a
+       preview whose app was destroyed after the backup being found in step 4 and redeployed or
+       ended in step 7, with an expired restored preview extended in step 6 and not deleted.
 
 **Verify:** clean-machine install from packed tarballs and image artifacts,
 supported Node/Bun platforms, npm execution without workspace dependencies,
@@ -405,6 +441,7 @@ at integrated release milestones. Record skipped checks and remaining risks.
 - [x] Independent review of the milestone 0 results; findings applied.
 - [ ] Product license and authenticated registry ownership verified before release.
 
-No feature code was changed. The design is not approval to implement the whole
-roadmap. Preserve accepted decisions in `docs/decisions/` and start only the
-approved next slice once the deferred gates for it have passed.
+Milestones 0 to 5 are implemented (milestone 6 is next); the notes above record their state
+when they were written. The design is not approval to implement the whole roadmap. Preserve
+accepted decisions in `docs/decisions/` and start only the approved next slice once the
+deferred gates for it have passed.

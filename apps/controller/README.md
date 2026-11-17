@@ -14,19 +14,19 @@ Keep this page current when the entry points or runtime change.
 
 ## Configuration
 
-| Variable                          | Meaning                                                                                                                                                                                                |
-| --------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `DATABASE_URL`                    | PostgreSQL connection string (required)                                                                                                                                                                |
-| `LAUNCHPAD_AUTH_SECRET`           | Random secret, at least 32 characters (required)                                                                                                                                                       |
-| `LAUNCHPAD_BASE_URL`              | Public controller URL; its origin is the only trusted origin (required)                                                                                                                                |
-| `LAUNCHPAD_ENROLLMENT`            | `operator` (default) or `invitation` (requires SMTP)                                                                                                                                                   |
-| `LAUNCHPAD_PUBLIC_SIGNUP`         | `false` by default; sign-up is a separate policy from SMTP                                                                                                                                             |
-| `LAUNCHPAD_SMTP_URL`              | Optional; set with `LAUNCHPAD_EMAIL_FROM` to enable email recovery and invitations. `smtps://` or `smtp://` (STARTTLS required unless loopback); no query options                                      |
-| `HOST` / `PORT`                   | Listen address and port of the built server (default `127.0.0.1`-style host, port `3000`)                                                                                                              |
-| `LAUNCHPAD_DATA_DIR`              | Directory only the controller can write; uploaded archives are staged in `tmp/` and kept under `artifacts/` (default `.data/controller`). Mount durable storage here in production                     |
-| `LAUNCHPAD_MAX_UPLOAD_BYTES` etc. | Optional upload limits, all positive integers; a set but invalid value stops startup. See [Artifact uploads](#artifact-uploads)                                                                        |
-| `LAUNCHPAD_API_DOCS`              | `true` (default) serves the OpenAPI document and Scalar reference; `false` removes them                                                                                                                |
-| `LAUNCHPAD_TRUSTED_PROXY`         | `false` (default): the TCP peer address is the client address. `true`: exactly one trusted proxy that appends to `X-Forwarded-For`; its rightmost entry is used. Never set `true` without such a proxy |
+| Variable                          | Meaning                                                                                                                                                                                                                                                                                                                        |
+| --------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `DATABASE_URL`                    | PostgreSQL connection string (required)                                                                                                                                                                                                                                                                                        |
+| `LAUNCHPAD_AUTH_SECRET`           | Random secret, at least 32 characters (required)                                                                                                                                                                                                                                                                               |
+| `LAUNCHPAD_BASE_URL`              | Public controller URL; its origin is the only trusted origin (required)                                                                                                                                                                                                                                                        |
+| `LAUNCHPAD_ENROLLMENT`            | `operator` (default) or `invitation` (requires SMTP)                                                                                                                                                                                                                                                                           |
+| `LAUNCHPAD_PUBLIC_SIGNUP`         | `false` by default; sign-up is a separate policy from SMTP                                                                                                                                                                                                                                                                     |
+| `LAUNCHPAD_SMTP_URL`              | Optional; set with `LAUNCHPAD_EMAIL_FROM` to enable email recovery and invitations. `smtps://` or `smtp://` (STARTTLS required unless loopback); no query options                                                                                                                                                              |
+| `HOST` / `PORT`                   | Listen address and port of the built server (default `127.0.0.1`-style host, port `3000`)                                                                                                                                                                                                                                      |
+| `LAUNCHPAD_DATA_DIR`              | Directory shared with the worker, readable and writable by **one user** (the controller's and the worker's alike: the worker builds in `build/` and collects and restores archives); uploaded archives are staged in `tmp/` and kept under `artifacts/` (default `.data/controller`). Mount durable storage here in production |
+| `LAUNCHPAD_MAX_UPLOAD_BYTES` etc. | Optional upload limits, all positive integers; a set but invalid value stops startup. See [Artifact uploads](#artifact-uploads)                                                                                                                                                                                                |
+| `LAUNCHPAD_API_DOCS`              | `true` (default) serves the OpenAPI document and Scalar reference; `false` removes them                                                                                                                                                                                                                                        |
+| `LAUNCHPAD_TRUSTED_PROXY`         | `false` (default): the TCP peer address is the client address. `true`: exactly one trusted proxy that appends to `X-Forwarded-For`; its rightmost entry is used. Never set `true` without such a proxy                                                                                                                         |
 
 ## API reference
 
@@ -138,7 +138,7 @@ Authenticated organization pages and server-function responses are `no-store`.
 An owner or admin issues organization API keys from the API (`POST
 /api/v1/organizations/{orgId}/api-keys`, signed in). The secret is shown once. Automation
 sends `Authorization: Bearer lp_…`. A key is limited to its organization, to the scopes it
-was given (read and project actions only), optionally to named projects, and never exceeds
+was given (`project:read`, `project:create`, `preview:read`, `preview:create`, `preview:deploy` (upload, deploy and extend) and `preview:delete`), optionally to named projects, and never exceeds
 its creator's current role; it stops working when it expires, is revoked, or its creator
 leaves the organization. Keys cannot manage keys, members, invitations or organizations.
 
@@ -152,8 +152,8 @@ failure does not restore keys. Use operator recovery if necessary.
 
 ## Artifact uploads
 
-`POST /api/v1/organizations/{orgId}/artifacts` (signed in; deployers and above; API
-keys are not accepted yet) stores a static site. The body is the archive itself, a
+`POST /api/v1/organizations/{orgId}/artifacts` (signed in, or an API key with
+`preview:deploy`; deployers and above) stores a static site. The body is the archive itself, a
 `.tar.gz`, sent with `Content-Type: application/gzip` and a `Content-Length`. It is
 not multipart: the caller is authorized first, then the body streams to a private
 staging file (never buffered in memory), is hashed, validated and finalized.
@@ -192,6 +192,29 @@ Retention must be at least `1h`. The first time the worker enables lifecycle for
 database, every preview that would expire within 24 h (overdue or about to be) is given 24 h from
 then, once; switching it off and on again later gives no grace, and what expired in between is
 deleted, as after any downtime.
+
+### What deletion keeps, and what is not here yet
+
+- The preview's row, deployments, events and audit records stay for the record. Its app name and
+  hostname are never reused; its **name** (slug) is free again in the project once it is deleted.
+- The Dokku app is destroyed. Images the worker built on its own Docker engine are removed by exact
+  tag; images loaded onto a **separate** Dokku host with `git:load-image` are not removed (disk
+  there grows with each deployment until you clear them). If an image cannot be removed the deletion
+  still finishes and records `images-left-behind`.
+- A stored archive is collected by the worker (a collection runs every ten minutes) only when
+  **nothing live needs it**: no preview that still exists, and no unfinished deployment, refers
+  to it, and `LAUNCHPAD_ARTIFACT_RETENTION` (default 7 days, at least 1 hour) has passed since the
+  last preview that used it was deleted (or since an upload nobody deployed was stored). Until
+  then it counts toward `LAUNCHPAD_MAX_ARTIFACTS`: **deleting a preview does not free the
+  artifact ceiling at once**, and if another live preview shares the same archive (identical
+  uploads are deduplicated within an organization) deleting one preview does not start any
+  collection deadline for it. Within the window a deleted preview's content could be
+  re-published by hand from storage.
+- Not built: runtime logs (a static site writes none worth keeping, and deployment progress is in
+  the events), restoring a deleted preview, backup and restore, quotas set per organization (the limits that exist
+  are instance-wide), and a
+  report of Dokku apps that Launchpad did not create. The follow-ups are tracked in
+  `docs/plans/milestone-5-lifecycle.md`.
 
 ### Instance status
 

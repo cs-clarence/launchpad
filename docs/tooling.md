@@ -158,7 +158,7 @@ automatic push hooks are configured.
 
 Root `.env.local.example` configures the existing Dokku Compose setup. The
 controller's settings (PostgreSQL, authentication, email, API docs) are documented
-in `apps/controller/README.md` and `apps/controller/.env.local.example`; SSH to Dokku is not wired yet. Do not bake
+in `apps/controller/README.md` and `apps/controller/.env.local.example`; the worker's SSH settings to Dokku are in `apps/worker/README.md`. Do not bake
 credentials into an image.
 
 `apps/controller/Dockerfile` is a multistage Bun image recipe, built from the

@@ -37,4 +37,19 @@ publishing images/namespaces.
 
 ## Status
 
-Queued. Application milestone 2 is still in progress.
+Queued. Application milestones 0 to 5 are built; milestone 6 (backup, restore, release) remains.
+Requirements this work must meet that the application milestones surfaced:
+
+- The controller and the worker share one data directory and must run as **one user** with read
+  and write access; the worker also needs the Docker engine it builds on and SSH to Dokku.
+- The worker's stop timeout must outlast a load or rollback (about 24 minutes at the default
+  lease); a stop that kills it earlier leaves that deployment held for an administrator (`load-uncertain`).
+- Both processes need `LAUNCHPAD_LIFECYCLE` and `LAUNCHPAD_DEPLOYMENTS` to agree; ship a worker
+  environment example (`apps/worker/.env.local.example` exists) and document the agreement.
+- The worker validates uploaded archives with the same limits as the controller
+  (`LAUNCHPAD_MAX_EXPANDED_BYTES`, `LAUNCHPAD_MAX_ARCHIVE_ENTRIES`, `LAUNCHPAD_MAX_ARCHIVE_DEPTH`):
+  give both processes the same values, or valid uploads fail at extraction.
+- Run the migrations as an explicit step before either process starts, one database per Dokku host
+  and per data directory.
+- Decide where images for previews live when Dokku is a separate engine (the worker does not remove
+  images it loaded onto another host).
