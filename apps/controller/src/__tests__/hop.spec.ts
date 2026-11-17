@@ -1517,6 +1517,9 @@ describe("previews and deployments over HTTP", () => {
                 (p) => p.id === timed.preview.id,
             )!;
             expect(Date.parse(before.expiresAt!) - Date.now()).toBeLessThan(2 * 3_600_000 + 60_000);
+            expect(Date.parse(before.expiresAt!) - Date.now()).toBeGreaterThan(
+                2 * 3_600_000 - 5 * 60_000,
+            );
             const extended = await extendPreview(ctx, timed.preview.id, { ttl: "24h" });
             expect(Date.parse(extended.expiresAt!)).toBeGreaterThan(Date.parse(before.expiresAt!));
             const remover = createContext({

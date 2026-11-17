@@ -440,6 +440,34 @@ describe("preview lifetimes", () => {
         expect(result.out).toContain("Deletion queued");
         expect(result.out).toContain(`launchpad previews deletion '${PID}'`);
         expect(sent.filter((s) => s.method === "DELETE")).toHaveLength(1);
+        // The follow-up names the profile, or it could ask another controller.
+        const profiled = await cli(["--profile", "default", "previews", "delete", PID, "--yes"]);
+        expect(profiled.out).toContain(`launchpad --profile 'default' previews deletion '${PID}'`);
+    });
+
+    it("reports a missing confirmation as JSON, and rejects a bad lifetime with a usage code", async () => {
+        await loggedIn();
+        const missing = await cli(["previews", "delete", PID, "--json"]);
+        expect(missing.code).toBe(EXIT.usage);
+        expect(sent.filter((s) => s.method === "DELETE")).toEqual([]);
+        // --ttl on deploy reaches the library, which refuses it before sending anything.
+        const site = await fs.mkdtemp(path.join(dir, "site-"));
+        await fs.writeFile(path.join(site, "index.html"), "<p>hi</p>");
+        const badDeploy = await cli([
+            "deploy",
+            site,
+            "--project",
+            "site",
+            "--name",
+            "review",
+            "--ttl",
+            "soon",
+        ]);
+        expect(badDeploy.code).toBe(EXIT.usage);
+        expect(sent).toEqual([]);
+        const bad = await cli(["previews", "extend", PID, "--ttl", "soon"]);
+        expect(bad.code).toBe(EXIT.usage);
+        expect(sent.filter((s) => s.path.endsWith("/extend"))).toEqual([]);
     });
 
     it("shows a deletion's status and its note, and when a person is needed", async () => {

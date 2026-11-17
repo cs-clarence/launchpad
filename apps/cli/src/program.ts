@@ -442,7 +442,9 @@ export function buildProgram(rawIo: Io) {
                 command,
                 result,
                 () =>
-                    `Deletion queued (operation ${result.operationId}). Follow it with: launchpad previews deletion ${shellArg(previewId)}`,
+                    `Deletion queued (operation ${result.operationId}). Follow it with: launchpad ${
+                        workspace.profile ? `--profile ${shellArg(workspace.profile)} ` : ""
+                    }previews deletion ${shellArg(previewId)}`,
             );
         });
     previews

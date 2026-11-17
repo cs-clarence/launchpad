@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { checkLifetime, retrying } from "./deploy";
 import { clientFor, type Context, resolve } from "./operations";
 import { resolveProjectId } from "./project";
 
@@ -54,19 +55,32 @@ export async function deploymentEvents(
     return client.deployments.events(organizationId, deploymentId, options.after);
 }
 
-// Gives a preview more time (never less) and returns it with the resulting expiry. Every
-// retry carries one key, so a lost answer cannot extend it twice.
+// Gives a preview more time (never less) and returns it with the resulting expiry. Only a
+// request that got no answer is repeated, and with the one key, so a lost answer cannot
+// extend it twice within this call. Running the command again is a new request and adds
+// the time again.
 export async function extendPreview(
     ctx: Context,
     previewId: string,
-    options: { ttl: string; profile?: string; idempotencyKey?: string },
+    options: {
+        ttl: string;
+        profile?: string;
+        idempotencyKey?: string;
+        sleep?: (ms: number) => Promise<void>;
+    },
 ) {
+    checkLifetime(options.ttl);
     const { client, organizationId } = await scoped(ctx, options.profile);
-    return client.previews.extend(
-        organizationId,
-        previewId,
-        { ttl: options.ttl },
-        { idempotencyKey: options.idempotencyKey ?? `extend-${randomUUID()}` },
+    const idempotencyKey = options.idempotencyKey ?? `extend-${randomUUID()}`;
+    return retrying(
+        () =>
+            client.previews.extend(
+                organizationId,
+                previewId,
+                { ttl: options.ttl },
+                { idempotencyKey },
+            ),
+        options.sleep ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms))),
     );
 }
 

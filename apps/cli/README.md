@@ -74,12 +74,14 @@ returns once it is queued). Progress goes to stderr; stdout is the result, a sin
 - **Failures** carry fixed, safe text (for example, the new release did not become ready and the previous one
   was restored). `reconciliation-needed` means an administrator must check the host, then record the outcome in the dashboard (the preview page) or with `POST …/deployments/{id}/resolution`; until then the preview takes no new deployment.
 - **Lifetimes.** A new preview expires after the server's default (7 days unless set), or after
-  `deploy --ttl 24h` (at most the server's maximum); `--ttl` is not applied to a preview that already
-  exists. `previews list` and `get` show when each expires (`never`, or its state if it is going away).
-  `previews extend <id> --ttl 7d` gives more time, never less, and a preview that never expired gets an
-  expiry; it needs `preview:deploy`. A deployment to a preview that is being deleted stops before
+  `deploy --ttl 24h` (refused if longer than the server's maximum; `none` where the operator allows
+  previews that never expire); `--ttl` is not applied to a preview that already exists (`--json` reports
+  `ttlApplied: false`), and a value that is not a duration is refused before anything is uploaded. `previews list` and `get` show when each expires (`never`, or its state if it is going away).
+  `previews extend <id> --ttl 7d` gives more time, never less (a longer request is capped at the
+  maximum from now), and a preview that never expired gets an expiry; `--ttl none` removes it where
+  allowed. It needs `preview:deploy`. Running it again after a timeout adds the time again. A deployment to a preview that is being deleted stops before
   uploading, because its name is free again only once it is gone.
-- **Deleting** needs `preview:delete` and the controller and worker to have the lifecycle on. `previews delete
+- **Deleting** needs `preview:delete` and the controller and worker to have deployments and the lifecycle on. `previews delete
   <id> --yes` cannot be undone; it only queues the deletion (the worker carries it out), so follow it with
   `previews deletion <id>`, which also shows a deletion expiry started. A deletion in
   `reconciliation-needed` needs an administrator (a session, never a key).
