@@ -27,7 +27,7 @@ Depends on `zod` and `@launchpad/contracts` only; no filesystem or credential st
   `preview:deploy`. A replay returns the current preview, which may differ from the original
   response after another extension. Extending a never-expiring preview with a duration gives it an expiry.
 - `client.previews.delete(orgId, previewId)` queues deletion and returns
-  `{ operationId, state: "deleting" }`. Requires `preview:delete` and enabled lifecycle.
+  `{ operationId, state: "deleting" }`. Requires `preview:delete`, and deployments and the lifecycle turned on in the controller and the worker.
   Repeating while deleting returns the same operation; after deletion it is 404.
 - `client.deletions.forPreview(orgId, previewId)` finds a preview's latest deletion, whoever
   started it. `client.deletions.get(orgId, operationId)` polls the operation with `preview:read`.
@@ -37,7 +37,7 @@ Depends on `zod` and `@launchpad/contracts` only; no filesystem or credential st
 These calls accept `{ signal }` as their final options argument. Project-limited keys
 can reach only previews and deletion operations in their allowed projects. See the
 [controller reference](../../apps/controller/README.md#preview-lifecycle-api) for states,
-errors and what deletion keeps.
+errors and [what deletion keeps](../../apps/controller/README.md#what-deletion-keeps-and-what-is-not-here-yet).
 
 ## Transport verification
 

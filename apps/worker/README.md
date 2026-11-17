@@ -11,16 +11,16 @@ Scheduled expiry, deletion and artifact cleanup are a second, separate switch,
 
 ## Settings
 
-| Variable                                                                                                                                                                                            | Meaning                                                                                                                                      |
-| --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
-| `LAUNCHPAD_DEPLOYMENTS`                                                                                                                                                                             | `on` or `off` (default `off`); anything else is an error                                                                                     |
-| `DATABASE_URL`, `LAUNCHPAD_DATA_DIR`                                                                                                                                                                | same as the controller; artifacts are read from the data directory                                                                           |
-| `DOKKU_SSH_HOST`, `DOKKU_SSH_PORT` (22), `DOKKU_SSH_USER` (`dokku`)                                                                                                                                 | the Dokku host                                                                                                                               |
-| `DOKKU_SSH_KEY_PATH`, `DOKKU_SSH_KNOWN_HOSTS_PATH`                                                                                                                                                  | key (mode 600) and the host key pinned out of band; see `packages/dokku`                                                                     |
-| `LAUNCHPAD_PREVIEW_PROXY_URL`                                                                                                                                                                       | where the worker reaches Dokku's proxy for the readiness probe, e.g. `http://dokku:80` (no DNS needed; the preview's name is sent as `Host`) |
-| `LAUNCHPAD_BASE_IMAGE`                                                                                                                                                                              | the web server image, default `nginx:1.27-alpine`; pin by digest in production                                                               |
-| `LAUNCHPAD_DOCKER_BIN`, `DOCKER_HOST`                                                                                                                                                               | the Docker client and engine                                                                                                                 |
-| `LAUNCHPAD_WORKER_ID` (hostname-pid; 1 to 128 characters), `LAUNCHPAD_VERSION` (shown to the operator; `unknown` if unset), `LAUNCHPAD_WORKER_POLL_MS` (2000), `LAUNCHPAD_WORKER_LEASE_MS` (900000) | identity, polling and lease                                                                                                                  |
+| Variable                                                                                                                                                                                            | Meaning                                                                                                                                                                                                                   |
+| --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `LAUNCHPAD_DEPLOYMENTS`                                                                                                                                                                             | `on` or `off` (default `off`); anything else is an error                                                                                                                                                                  |
+| `DATABASE_URL`, `LAUNCHPAD_DATA_DIR`                                                                                                                                                                | same as the controller; the data directory is shared with it and must be readable and writable by the **same user** (the worker builds in `build/` and collects, moves and restores archives, which the controller wrote) |
+| `DOKKU_SSH_HOST`, `DOKKU_SSH_PORT` (22), `DOKKU_SSH_USER` (`dokku`)                                                                                                                                 | the Dokku host                                                                                                                                                                                                            |
+| `DOKKU_SSH_KEY_PATH`, `DOKKU_SSH_KNOWN_HOSTS_PATH`                                                                                                                                                  | key (mode 600) and the host key pinned out of band; see `packages/dokku`                                                                                                                                                  |
+| `LAUNCHPAD_PREVIEW_PROXY_URL`                                                                                                                                                                       | where the worker reaches Dokku's proxy for the readiness probe, e.g. `http://dokku:80` (no DNS needed; the preview's name is sent as `Host`)                                                                              |
+| `LAUNCHPAD_BASE_IMAGE`                                                                                                                                                                              | the web server image, default `nginx:1.27-alpine`; pin by digest in production                                                                                                                                            |
+| `LAUNCHPAD_DOCKER_BIN`, `DOCKER_HOST`                                                                                                                                                               | the Docker client and engine                                                                                                                                                                                              |
+| `LAUNCHPAD_WORKER_ID` (hostname-pid; 1 to 128 characters), `LAUNCHPAD_VERSION` (shown to the operator; `unknown` if unset), `LAUNCHPAD_WORKER_POLL_MS` (2000), `LAUNCHPAD_WORKER_LEASE_MS` (900000) | identity, polling and lease                                                                                                                                                                                               |
 
 ## What a deployment does
 
@@ -57,8 +57,10 @@ is given twice the usual lease, since it builds, loads and probes in one go.
 
 `omni -i run test:live -p @launchpad/worker` runs the worker's real steps against a real
 Dokku and Docker: the fixture site, a real 404, SPA deep links, replacing a release and
-rolling back. It is opt-in, never part of `test` or CI, and needs a **disposable** Dokku
-you start yourself. It only creates apps named `lp-test-<6 characters>`, records them,
+rolling back, and destroying one app with the worker's real destroy port while a neighbour
+app is left alone (the ports are called directly; `runDeletion` itself is tested against fakes).
+It is opt-in, never part of `test` or CI, and needs a **disposable** Dokku (the throwaway
+container the test setup describes). It only creates apps named `lp-test-<6 characters>`, records them,
 and destroys only those at the end; it never touches any other app. Without its settings
 it fails at once with a message. The settings are listed at the top of
 `src/__tests__/live.spec.ts`.
@@ -84,7 +86,9 @@ then does three things, in this order, each bounded: it **claims previews whose 
 run out** (queueing their deletion), **runs at most one deletion**, and, every ten minutes,
 **collects archives and sweeps orphaned archive files**. Settings: `LAUNCHPAD_DEFAULT_TTL`,
 `LAUNCHPAD_MAX_TTL`, `LAUNCHPAD_ALLOW_NO_EXPIRY`, `LAUNCHPAD_ARTIFACT_RETENTION` (see the
-controller README); a value that is set but invalid stops the worker at startup.
+controller README; the lifetimes are applied by the controller when a preview is created or
+extended, and only the retention changes what the worker does); a value that is set but invalid
+stops the worker at startup. Set `LAUNCHPAD_LIFECYCLE` on the controller too.
 
 A deletion destroys **one Dokku app and one preview's own images, nothing else**:
 

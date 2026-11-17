@@ -3,11 +3,15 @@
 Custom Dokku image with the `http-auth` plugin for local preview deployments.
 
 The controller has operator login, organizations, members, projects, optional
-email invitations and recovery, and an OpenAPI reference. It does **not deploy
-anything yet**: uploads, jobs and the Dokku worker are later milestones (see
-[the plan](docs/plans/application.md)). See [Controller](#controller) below and
-[the controller README](apps/controller/README.md). The Docker commands in the
-earlier sections manage the existing Dokku engine, not the controller.
+email invitations and recovery, and an OpenAPI reference. With deployments on, a worker
+deploys built static sites (uploaded as archives from the CLI, the dashboard or the MCP
+server) to previews on Dokku; with the lifecycle on, previews expire, can be extended or
+deleted, and are cleaned up. Both are **off by default**, and nothing is published or
+deployed from this repository's CI. Backup and restore, quotas and a production Compose
+setup are still to come (see [the plan](docs/plans/application.md)). See
+[Controller](#controller) below, [the controller README](apps/controller/README.md) and
+[the worker README](apps/worker/README.md). The Docker commands in the earlier sections
+manage the existing Dokku engine, not the controller.
 
 ## Configuration
 
@@ -145,11 +149,10 @@ Build generates the ignored TanStack route tree and production Bun output; it
 does not start the app. The controller Dockerfile is in
 `apps/controller/Dockerfile`, separate from the root Dokku image.
 
-Authentication, organizations, projects and email flows are implemented and
-tested against a disposable PostgreSQL; see the controller README for
-configuration and first run. Deployment commands, uploads/jobs and SSH
-connectivity are not implemented. No controller or PostgreSQL service has been
-added to Compose.
+Authentication, organizations, projects, email flows, uploads, deployments, expiry and
+deletion are implemented and tested against a disposable PostgreSQL (and, opt-in, a disposable
+Dokku); see the controller and worker READMEs for configuration and first run. No controller,
+worker or PostgreSQL service has been added to Compose yet.
 
 See [CONTRIBUTING.md](CONTRIBUTING.md), [tooling](docs/tooling.md), and
 [package patterns](docs/patterns/README.md). Keep these docs current when setup

@@ -267,6 +267,14 @@ document which metadata/URLs can be restored.
   least-privilege CI identity, package-content checks and image provenance.
 - Docs for local/private management, Cloudflare/Tailscale preview routing,
   onboarding, API keys, MCP roots/permissions, restore and upgrade.
+- **Restore order and the lifecycle.** The worker's orphan sweep removes any archive file with no
+  live row once it is older than the retention, and recovery trusts the database. So a restore
+  runbook must say: bring the lifecycle **off** (worker and controller) before restoring, restore
+  the database and the data directory from the same moment, check that every live artifact has its
+  file, and only then switch it on. Restoring an older database with the lifecycle on deletes
+  archives uploaded since; restoring an older data directory leaves rows whose files are missing
+  (a rollback then ends in `rollback-unavailable`). One database per Dokku host and per data
+  directory still holds. Test it in the restore drill.
 
 **Verify:** clean-machine install from packed tarballs and image artifacts,
 supported Node/Bun platforms, npm execution without workspace dependencies,

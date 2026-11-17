@@ -2368,7 +2368,7 @@ describe("previews and deployments over HTTP", () => {
                 })
             ).status,
         ).toBe(409);
-        // Stored archives are never deleted yet, so none are taken while it is off.
+        // Without the lifecycle nothing collects stored archives, so none are taken while it is off.
         expect(
             (
                 await fetch(`${direct.base}/api/v1/organizations/${orgId}/artifacts`, {

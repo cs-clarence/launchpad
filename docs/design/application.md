@@ -248,7 +248,7 @@ GET    /api/v1/organizations/:orgId/previews/:previewId
 POST   /api/v1/organizations/:orgId/previews/:previewId/deployments
 GET    /api/v1/organizations/:orgId/deployments/:deploymentId
 GET    /api/v1/organizations/:orgId/deployments/:deploymentId/events
-GET    /api/v1/organizations/:orgId/previews/:previewId/logs
+GET    /api/v1/organizations/:orgId/previews/:previewId/logs   (deferred in milestone 5: not built)
 DELETE /api/v1/organizations/:orgId/previews/:previewId
 ```
 
@@ -331,7 +331,7 @@ launchpad login --controller https://control.example.com
 launchpad org use acme
 launchpad deploy ./dist --project website --name demo --spa --ttl 24h
 launchpad previews list
-launchpad deployments logs <deployment-id>
+launchpad deployments logs <deployment-id>    # deferred in milestone 5: not built
 launchpad previews delete <preview-id>
 launchpad-mcp --shared --allow-deploy --include 'dist/**' --exclude 'dist/private/**'
 ```
