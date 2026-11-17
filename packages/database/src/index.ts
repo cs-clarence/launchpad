@@ -216,6 +216,7 @@ export interface InstanceStateTable {
 export interface WorkerHeartbeatTable {
     worker_id: string;
     version: string;
+    lifecycle_enabled: Generated<boolean>;
     started_at: Generated<Date>;
     last_seen_at: Generated<Date>;
 }

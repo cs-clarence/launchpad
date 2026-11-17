@@ -24,6 +24,7 @@ import {
     createdDeploymentSchema,
     requestedDeletionSchema,
     deletionSchema,
+    statusSchema,
     deploymentEventsSchema,
     deploymentSchema,
     previewListSchema,
@@ -2176,6 +2177,34 @@ describe("previews and deployments over HTTP", () => {
         expect(opened).not.toContain("Deploy a new version");
     });
 
+    it("shows the operator how the instance is doing, and nobody else", async () => {
+        // A worker has reported in, with the lifecycle on, like the controller.
+        await testDb.db
+            .insertInto("worker_heartbeat")
+            .values({ worker_id: "hop-worker", version: "0.0.0", lifecycle_enabled: true })
+            .onConflict((oc) => oc.column("worker_id").doUpdateSet({ last_seen_at: new Date() }))
+            .execute();
+        const operatorCookie = await login("op@example.com", PASSWORD, "198.51.100.64");
+        const read = await api(operatorCookie, "/status");
+        expect(read.status).toBe(200);
+        const report = statusSchema.parse(await read.json());
+        expect(report.dependencies).toEqual({ database: "ok", dataDirectory: "ok" });
+        expect(report.controller).toEqual({
+            deploymentsEnabled: true,
+            lifecycleEnabled: true,
+            deletionsAccepted: true,
+        });
+        expect(report.workers.find((w) => w.id === "hop-worker")).toMatchObject({
+            live: true,
+            lifecycleEnabled: true,
+        });
+        // Ordinary members, even owners, and keys, whatever their scopes, are refused; so is no one.
+        expect((await api(owner, "/status")).status).toBe(403);
+        expect((await api(viewer, "/status")).status).toBe(403);
+        expect(await status(call(deployKey, "/status"))).toBe(403);
+        expect((await fetch(`${proxied.base}/api/v1/status`)).status).toBe(401);
+    });
+
     it("is off unless deployments are on: reads work, creating and deploying are refused", async () => {
         const cookieOwner = await (async () => {
             const response = await signIn(direct, "user@example.com", USER_PASSWORD);
@@ -2305,6 +2334,7 @@ describe("OpenAPI reference", () => {
         "get /api/v1/organizations/{orgId}/projects",
         "post /api/v1/organizations/{orgId}/projects",
         "get /api/v1/key",
+        "get /api/v1/status",
         "post /api/v1/organizations/{orgId}/artifacts",
         "get /api/v1/organizations/{orgId}/previews",
         "post /api/v1/organizations/{orgId}/projects/{projectId}/previews",

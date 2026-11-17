@@ -11,16 +11,16 @@ Scheduled expiry, deletion and artifact cleanup are a second, separate switch,
 
 ## Settings
 
-| Variable                                                                                       | Meaning                                                                                                                                      |
-| ---------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
-| `LAUNCHPAD_DEPLOYMENTS`                                                                        | `on` or `off` (default `off`); anything else is an error                                                                                     |
-| `DATABASE_URL`, `LAUNCHPAD_DATA_DIR`                                                           | same as the controller; artifacts are read from the data directory                                                                           |
-| `DOKKU_SSH_HOST`, `DOKKU_SSH_PORT` (22), `DOKKU_SSH_USER` (`dokku`)                            | the Dokku host                                                                                                                               |
-| `DOKKU_SSH_KEY_PATH`, `DOKKU_SSH_KNOWN_HOSTS_PATH`                                             | key (mode 600) and the host key pinned out of band; see `packages/dokku`                                                                     |
-| `LAUNCHPAD_PREVIEW_PROXY_URL`                                                                  | where the worker reaches Dokku's proxy for the readiness probe, e.g. `http://dokku:80` (no DNS needed; the preview's name is sent as `Host`) |
-| `LAUNCHPAD_BASE_IMAGE`                                                                         | the web server image, default `nginx:1.27-alpine`; pin by digest in production                                                               |
-| `LAUNCHPAD_DOCKER_BIN`, `DOCKER_HOST`                                                          | the Docker client and engine                                                                                                                 |
-| `LAUNCHPAD_WORKER_ID`, `LAUNCHPAD_WORKER_POLL_MS` (2000), `LAUNCHPAD_WORKER_LEASE_MS` (900000) | identity, polling and lease                                                                                                                  |
+| Variable                                                                                                                                                                                            | Meaning                                                                                                                                      |
+| --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| `LAUNCHPAD_DEPLOYMENTS`                                                                                                                                                                             | `on` or `off` (default `off`); anything else is an error                                                                                     |
+| `DATABASE_URL`, `LAUNCHPAD_DATA_DIR`                                                                                                                                                                | same as the controller; artifacts are read from the data directory                                                                           |
+| `DOKKU_SSH_HOST`, `DOKKU_SSH_PORT` (22), `DOKKU_SSH_USER` (`dokku`)                                                                                                                                 | the Dokku host                                                                                                                               |
+| `DOKKU_SSH_KEY_PATH`, `DOKKU_SSH_KNOWN_HOSTS_PATH`                                                                                                                                                  | key (mode 600) and the host key pinned out of band; see `packages/dokku`                                                                     |
+| `LAUNCHPAD_PREVIEW_PROXY_URL`                                                                                                                                                                       | where the worker reaches Dokku's proxy for the readiness probe, e.g. `http://dokku:80` (no DNS needed; the preview's name is sent as `Host`) |
+| `LAUNCHPAD_BASE_IMAGE`                                                                                                                                                                              | the web server image, default `nginx:1.27-alpine`; pin by digest in production                                                               |
+| `LAUNCHPAD_DOCKER_BIN`, `DOCKER_HOST`                                                                                                                                                               | the Docker client and engine                                                                                                                 |
+| `LAUNCHPAD_WORKER_ID` (hostname-pid; 1 to 128 characters), `LAUNCHPAD_VERSION` (shown to the operator; `unknown` if unset), `LAUNCHPAD_WORKER_POLL_MS` (2000), `LAUNCHPAD_WORKER_LEASE_MS` (900000) | identity, polling and lease                                                                                                                  |
 
 ## What a deployment does
 
@@ -104,6 +104,14 @@ not by an unfinished deployment, and not by a preview deleted within the retenti
 stays (marked collected) and the file goes after it; uploading the same bytes again stores the
 archive again. Switch the lifecycle off to stop all of this at once: nothing is deleted, and
 all rows and jobs are kept.
+
+### Heartbeat
+
+The worker writes a row (`worker_heartbeat`: id, version, whether it runs the lifecycle, when it
+started, when it last reported) when it starts and every 10 s after, from a timer of its own, so
+a long build does not make it look dead. A failed write is logged (`heartbeat-error`, no detail)
+and the work goes on. The operator reads these through `GET /api/v1/status` (see the controller
+README), which also warns when the controller and the workers disagree about the lifecycle.
 
 ### Things to know before switching the lifecycle on
 

@@ -265,3 +265,23 @@ content could be re-published by hand from storage, and after it nothing can.
   cannot deploy, and replaced by a note when deployments are off. Verify: unit tests of the flow
   with a fake API (steps, keys, resuming, failures), HTTP tests of what each role sees, and the
   existing API tests of the calls it makes. Not covered: a browser test of the file picker.
+- Slice 6 (status; Medium risk: one additive column, one new operator-only read route, a write from a timer in
+  the worker): `worker_heartbeat` gains `lifecycle_enabled` (migration 017, forward-only); the worker
+  writes its row on start and about every 10 s from a timer of its own, so a long build does not look dead (a failed write is logged and never stops the work; rows
+  idle for a day are pruned); `GET /api/v1/status` is session-only and operator-only and returns database
+  and data-directory readiness, the controller's settings, each worker's age and settings, the deployment
+  backlog (queued, running, held, oldest queued age), overdue expiries, deletions by status, artifact
+  count/bytes, and plain-language warnings (no live worker while there is work; the controller has the
+  lifecycle on but no live worker does, which is how a deletion gets stuck). It returns only counts and
+  ages and the workers' ids (hostname-pid), no preview ids, names or text from remote output. Verify: service tests over crafted data, an HTTP test
+  of who may read it, a worker test that heartbeats are throttled and failures harmless. A dashboard
+  panel is not part of this slice.
+- Slice 6 review (Opus 5.5, before the push; no blockers) fixed: the data directory is created when the
+  controller starts (on its first request) when deployments are on and not checked when they are off, and only a directory
+  counts; `deletionsAccepted` (lifecycle and deployments) is what workers are compared with, with a
+  warning when the lifecycle is on without deployments; work is counted only where it will be done
+  and a running deployment with no worker is work; a running deployment that has not moved for an
+  hour (longer than a rollback at the longest lease) is a warning (`oldestRunningSeconds`): a stuck worker still beats, so this is how it shows;
+  a beat in flight finishes before shutdown and the first does not hold up start or stop; the worker
+  id is limited to what a heartbeat can store; the version comes from `LAUNCHPAD_VERSION` when set.
+  Not changed: the list holds 50 workers (ordered, no total).

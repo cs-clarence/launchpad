@@ -46,6 +46,10 @@ with its three-step flow (create, upload, deploy, resumable) in `src/lib/deploy-
 `apiCall` in `src/lib/api.ts`; `src/lib/use-now.ts` keeps the displayed time moving from
 the server's `now`.
 
+Operator status is `getStatus` in `packages/services/src/status.ts` behind session-only
+`GET /api/v1/status`; the worker's `recordHeartbeat` writes `worker_heartbeat` from a timer in
+`apps/worker/src/worker.ts`.
+
 The health endpoint reports static metadata, not PostgreSQL/Dokku readiness.
 Lifecycle requests are now exposed by `src/server/api.ts`: delete and extend enforce key
 scope plus project limits through `previewProjectId`; deletion reads use

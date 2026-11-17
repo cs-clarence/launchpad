@@ -112,6 +112,53 @@ export const DELETION_NOTE_CODES = {
         "unexpected-state",
     ],
 } as const;
+export const statusSchema = z.strictObject({
+    generatedAt: z.string().meta({ format: "date-time" }),
+    dependencies: z.strictObject({
+        database: z.literal("ok"),
+        dataDirectory: z
+            .enum(["ok", "missing", "not-writable", "not-a-directory", "not-checked"])
+            .meta({
+                description: "`not-checked` while deployments are off: nothing uses it then.",
+            }),
+    }),
+    controller: z.strictObject({
+        deploymentsEnabled: z.boolean(),
+        lifecycleEnabled: z.boolean(),
+        deletionsAccepted: z.boolean().meta({
+            description: "Both are on: the controller takes new deletions.",
+        }),
+    }),
+    workers: z.array(
+        z.strictObject({
+            id: z.string(),
+            version: z.string(),
+            lifecycleEnabled: z.boolean(),
+            startedAt: z.string().meta({ format: "date-time" }),
+            lastSeenSecondsAgo: z.number().int().min(0),
+            live: z.boolean().meta({ description: "Reported within the last minute." }),
+        }),
+    ),
+    deployments: z.strictObject({
+        queued: z.number().int(),
+        running: z.number().int(),
+        held: z.number().int().meta({ description: "Waiting for an administrator." }),
+        oldestQueuedSeconds: z.number().int().nullable(),
+        oldestRunningSeconds: z.number().int().nullable().meta({
+            description: "Since the least recently moved running deployment last moved.",
+        }),
+    }),
+    expiry: z.strictObject({
+        overdue: z.number().int().meta({ description: "Past their expiry and not yet claimed." }),
+    }),
+    deletions: z.strictObject({
+        waiting: z.number().int(),
+        held: z.number().int().meta({ description: "Waiting for an administrator." }),
+    }),
+    artifacts: z.strictObject({ stored: z.number().int(), bytes: z.number() }),
+    warnings: z.array(z.string()).meta({ description: "What looks wrong, in plain words." }),
+});
+
 export const deletionSchema = z.strictObject({
     id: z.uuid(),
     previewId: z.uuid(),
