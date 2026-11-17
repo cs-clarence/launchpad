@@ -3,7 +3,18 @@ import type { z } from "zod";
 import type { deploymentSchema } from "@launchpad/contracts";
 import { useEffect, useState } from "react";
 import { apiRequest } from "../lib/api";
-import { isInProgress, mergeEvents, statusLabel, type ProgressEvent } from "../lib/previews";
+import { useNow } from "../lib/use-now";
+import {
+    deletionLabel,
+    deletionNeedsPerson,
+    describeExpiry,
+    extendChoices,
+    isDeletionInProgress,
+    isInProgress,
+    mergeEvents,
+    statusLabel,
+    type ProgressEvent,
+} from "../lib/previews";
 import { getDeploymentProgressFn, getPreviewDetailFn } from "../server/data";
 import { getCurrentUser } from "../server/session";
 
@@ -15,16 +26,33 @@ export const Route = createFileRoute("/orgs_/$orgId/previews/$previewId")({
     },
     loader: ({ params }) =>
         getPreviewDetailFn({ data: { orgId: params.orgId, previewId: params.previewId } }),
-    errorComponent: () => (
-        <main className="mx-auto max-w-4xl px-6 py-12">
-            <p role="alert">Preview not found.</p>
+    errorComponent: PreviewUnavailable,
+    component: PreviewDetail,
+});
+
+// Shown when the page cannot be loaded: the preview may be gone, or the server may just be
+// out of reach for a moment, so it does not claim to know which and lets the reader try again.
+function PreviewUnavailable() {
+    const router = useRouter();
+    return (
+        <main className="mx-auto max-w-4xl space-y-4 px-6 py-12">
+            <p role="alert">
+                This preview is not available right now. It may have been deleted, or the server
+                could not be reached.
+            </p>
+            <button
+                type="button"
+                className="btn preset-tonal"
+                onClick={() => void router.invalidate()}
+            >
+                Try again
+            </button>{" "}
             <Link className="anchor" to="/">
                 Back to organizations
             </Link>
         </main>
-    ),
-    component: PreviewDetail,
-});
+    );
+}
 
 type Deployment = z.infer<typeof deploymentSchema>;
 
@@ -180,9 +208,223 @@ function Progress(props: {
     );
 }
 
+type View = ReturnType<typeof Route.useLoaderData>;
+
+type Present = Omit<View, "preview"> & { preview: NonNullable<View["preview"]> };
+
+function Lifecycle(props: { view: Present }) {
+    const { view } = props;
+    const router = useRouter();
+    const [busy, setBusy] = useState(false);
+    const [error, setError] = useState<string | null>(null);
+    const now = useNow(view.now);
+    const offered = extendChoices(view.maxTtlSeconds);
+    const [ttl, setTtl] = useState<string>(offered.initial);
+    const orgId = view.organization.id;
+    const previewId = view.preview.id;
+    const deletion = view.deletion;
+
+    // A deletion moves on its own: look again until it is done or needs a person, one look
+    // at a time and not while the tab is hidden.
+    const waiting = deletion !== null && isDeletionInProgress(deletion.status);
+    useEffect(() => {
+        if (!waiting) return;
+        let looking = false;
+        const timer = setInterval(async () => {
+            if (looking || document.hidden) return;
+            looking = true;
+            try {
+                // Ask first and refresh only on an answer: a refresh that fails would replace
+                // the page with its error, and the next look would never happen.
+                await getPreviewDetailFn({ data: { orgId, previewId } });
+                await router.invalidate({ sync: true });
+            } catch {
+                // The next look tries again; the page keeps what it has.
+            } finally {
+                looking = false;
+            }
+        }, 4000);
+        return () => clearInterval(timer);
+    }, [waiting, router]);
+
+    async function act(run: () => Promise<{ ok: true } | { ok: false; message: string }>) {
+        setBusy(true);
+        setError(null);
+        try {
+            const result = await run();
+            if (!result.ok) setError(result.message);
+            else await router.invalidate({ sync: true });
+        } finally {
+            setBusy(false);
+        }
+    }
+    const extend = () =>
+        act(() =>
+            apiRequest("POST", `/organizations/${orgId}/previews/${previewId}/extend`, { ttl }),
+        );
+    const remove = () => {
+        const sure = window.confirm(
+            `Delete ${view.preview.hostname}? The site will be taken down shortly and this cannot be undone.`,
+        );
+        if (!sure) return;
+        void act(() => apiRequest("DELETE", `/organizations/${orgId}/previews/${previewId}`));
+    };
+    const resolve = (outcome: "retry" | "deleted") => {
+        const sure = window.confirm(
+            outcome === "retry"
+                ? "Try the deletion again? Check the host first."
+                : "Record that the app is already gone from the host? Check the host first; images are not removed.",
+        );
+        if (!sure || !deletion) return;
+        void act(() =>
+            apiRequest("POST", `/organizations/${orgId}/deletions/${deletion.id}/resolution`, {
+                outcome,
+            }),
+        );
+    };
+
+    return (
+        <section className="space-y-3">
+            <h2 className="h4">Lifetime</h2>
+            {view.lifecycleEnabled || view.preview.state !== "active" ? (
+                <p
+                    suppressHydrationWarning
+                    // A fixed format with the zone, so the server's and the browser's agree.
+                    title={
+                        view.preview.expiresAt
+                            ? new Date(view.preview.expiresAt).toISOString()
+                            : undefined
+                    }
+                >
+                    {describeExpiry(view.preview, now)}
+                </p>
+            ) : (
+                <p>
+                    This server does not delete previews automatically (the lifecycle is off), so
+                    there is no countdown.
+                </p>
+            )}
+            {view.preview.state === "active" && view.canExtend && view.lifecycleEnabled ? (
+                <p className="space-x-2">
+                    <label>
+                        Extend by{" "}
+                        <select
+                            className="select inline-block w-auto"
+                            value={ttl}
+                            disabled={busy}
+                            onChange={(event) => setTtl(event.target.value)}
+                        >
+                            {offered.choices.map((choice) => (
+                                <option key={choice} value={choice}>
+                                    {choice}
+                                </option>
+                            ))}
+                        </select>
+                    </label>
+                    <button
+                        type="button"
+                        className="btn preset-tonal"
+                        disabled={busy}
+                        onClick={extend}
+                    >
+                        Extend
+                    </button>
+                    <span className="text-sm">
+                        Never shortens it, and never goes past the server's maximum from now. A
+                        preview with no expiry gets one.
+                    </span>
+                </p>
+            ) : null}
+            {view.preview.state === "active" && view.canDelete ? (
+                view.deletionsAvailable ? (
+                    <button
+                        type="button"
+                        className="btn preset-filled-error-500"
+                        disabled={busy}
+                        onClick={remove}
+                    >
+                        Delete this preview
+                    </button>
+                ) : (
+                    <p className="text-sm">
+                        Deleting is not turned on for this server (deployments and the lifecycle
+                        must both be on).
+                    </p>
+                )
+            ) : null}
+            {deletion ? (
+                <div className="space-y-2">
+                    <p role="status">
+                        Deletion:{" "}
+                        <span className="badge preset-tonal">{deletionLabel(deletion.status)}</span>
+                        {deletion.reason === "expired" ? " (it expired)" : ""}
+                    </p>
+                    {deletion.failure ? (
+                        <p role={deletionNeedsPerson(deletion.status) ? "alert" : "status"}>
+                            {deletion.failure.message} <code>{deletion.failure.code}</code>
+                        </p>
+                    ) : null}
+                    {deletionNeedsPerson(deletion.status) ? (
+                        view.canResolve ? (
+                            <div className="space-y-2">
+                                <p>After checking the host, choose what to do:</p>
+                                <button
+                                    type="button"
+                                    className="btn preset-tonal"
+                                    disabled={busy}
+                                    onClick={() => resolve("retry")}
+                                >
+                                    Try the deletion again
+                                </button>{" "}
+                                <button
+                                    type="button"
+                                    className="btn preset-tonal"
+                                    disabled={busy}
+                                    onClick={() => resolve("deleted")}
+                                >
+                                    The app is already gone
+                                </button>
+                            </div>
+                        ) : (
+                            <p role="alert">Ask an organization administrator to resolve this.</p>
+                        )
+                    ) : null}
+                </div>
+            ) : null}
+            {error ? <p role="alert">{error}</p> : null}
+        </section>
+    );
+}
+
 function PreviewDetail() {
-    const view = Route.useLoaderData();
-    const [latest, ...older] = view.deployments;
+    const loaded = Route.useLoaderData();
+    const [latest, ...older] = loaded.deployments;
+    if (!loaded.preview) {
+        // Deleted while the page was open (or before it was): its deletion is all that is left.
+        const deletion = loaded.deletion!;
+        return (
+            <main className="mx-auto max-w-4xl space-y-6 px-6 py-12">
+                <Link
+                    className="anchor"
+                    to="/orgs/$orgId/previews"
+                    params={{ orgId: loaded.organization.id }}
+                >
+                    Previews
+                </Link>
+                <h1 className="h2">This preview was deleted</h1>
+                <p role="status">
+                    Deletion:{" "}
+                    <span className="badge preset-tonal">{deletionLabel(deletion.status)}</span>
+                </p>
+                {deletion.failure ? (
+                    <p>
+                        {deletion.failure.message} <code>{deletion.failure.code}</code>
+                    </p>
+                ) : null}
+            </main>
+        );
+    }
+    const view: Present = { ...loaded, preview: loaded.preview };
     return (
         <main className="mx-auto max-w-4xl space-y-6 px-6 py-12">
             <Link
@@ -193,6 +435,7 @@ function PreviewDetail() {
                 Previews
             </Link>
             <h1 className="h2">{view.preview.hostname}</h1>
+            <Lifecycle view={view} />
             {latest ? (
                 <section className="space-y-3">
                     <h2 className="h4">Latest deployment</h2>

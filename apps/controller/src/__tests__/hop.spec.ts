@@ -2021,6 +2021,95 @@ describe("previews and deployments over HTTP", () => {
         expect(await status(call(deleteKey, ownPath, { method: "DELETE" }))).toBe(404);
     });
 
+    it("shows lifetimes and the controls each role may use on the preview page", async () => {
+        const page = async (cookie: string, id: string) =>
+            (
+                await fetch(`${proxied.base}/orgs/${orgId}/previews/${id}`, { headers: { cookie } })
+            ).text();
+        const fresh = previewSchema.parse(
+            await (
+                await call(deployKey, `/organizations/${orgId}/projects/${p1}/previews`, {
+                    method: "POST",
+                    body: { slug: "page-lifecycle", ttl: "5h" },
+                })
+            ).json(),
+        );
+        // The list shows the lifetime too, and the page is reachable at its own address.
+        const list = await (
+            await fetch(`${proxied.base}/orgs/${orgId}/previews`, { headers: { cookie: owner } })
+        ).text();
+        expect(list).toContain(fresh.hostname);
+        expect(list).toContain("Expires in");
+        const owned = await page(owner, fresh.id);
+        expect(owned).toContain("Expires in");
+        expect(owned).toContain("Extend by");
+        expect(owned).toContain("Delete this preview");
+        // A viewer sees the lifetime and none of the controls.
+        const viewed = await page(viewer, fresh.id);
+        expect(viewed).toContain("Expires in");
+        expect(viewed).not.toContain("Extend by");
+        expect(viewed).not.toContain("Delete this preview");
+        // A held deletion: an administrator may resolve it, a viewer is told to ask one.
+        const queued = requestedDeletionSchema.parse(
+            await (
+                await api(owner, `/organizations/${orgId}/previews/${fresh.id}`, {
+                    method: "DELETE",
+                })
+            ).json(),
+        );
+        await testDb.db
+            .updateTable("deletion_operation")
+            .set({
+                status: "reconciliation-needed",
+                failure_code: "destroy-uncertain",
+                failure_message: "Destroying the app did not finish clearly.",
+            })
+            .where("id", "=", queued.operationId)
+            .execute();
+        const held = await page(owner, fresh.id);
+        expect(held).toContain("Being deleted");
+        expect(held).toContain("Try the deletion again");
+        expect(held).toContain("destroy-uncertain");
+        expect(held).not.toContain("Extend by");
+        const heldViewer = await page(viewer, fresh.id);
+        expect(heldViewer).toContain("Ask an organization administrator to resolve this");
+        expect(heldViewer).not.toContain("Try the deletion again");
+        // Once the deletion has finished, the page says so instead of "not found".
+        await testDb.db
+            .updateTable("deletion_operation")
+            .set({
+                status: "succeeded",
+                finished_at: new Date(),
+                failure_code: "resolved-deleted",
+                failure_message: "Resolved by an administrator.",
+            })
+            .where("id", "=", queued.operationId)
+            .execute();
+        await testDb.db
+            .updateTable("preview")
+            .set({ desired_state: "deleted", deleted_at: new Date() })
+            .where("id", "=", fresh.id)
+            .execute();
+        const gone = await page(owner, fresh.id);
+        expect(gone).toContain("This preview was deleted");
+        expect(gone).toContain("Removed");
+        for (const control of ["Extend by", "Delete this preview", "Try the deletion again"]) {
+            expect(gone).not.toContain(control);
+        }
+        // A missing preview, or one asked for through an organization it is not in, is "not
+        // available" and never "deleted": nothing says whether it exists.
+        const nowhere = await page(owner, randomUUID());
+        expect(nowhere).toContain("not available");
+        expect(nowhere).not.toContain("was deleted");
+        const foreign = await (
+            await fetch(`${proxied.base}/orgs/${otherOrgId}/previews/${fresh.id}`, {
+                headers: { cookie: owner },
+            })
+        ).text();
+        expect(foreign).toContain("not available");
+        expect(foreign).not.toContain("was deleted");
+    });
+
     it("is off unless deployments are on: reads work, creating and deploying are refused", async () => {
         const cookieOwner = await (async () => {
             const response = await signIn(direct, "user@example.com", USER_PASSWORD);
@@ -2041,6 +2130,14 @@ describe("previews and deployments over HTTP", () => {
                 body: body === undefined ? undefined : JSON.stringify(body),
             });
         expect((await request(`/organizations/${orgId}/previews`)).status).toBe(200);
+        // Its page explains why there is no delete button, instead of offering one that fails.
+        const offPage = await (
+            await fetch(`${direct.base}/orgs/${orgId}/previews/${previewId}`, {
+                headers: { cookie: cookieOwner },
+            })
+        ).text();
+        expect(offPage).toContain("Deleting is not turned on");
+        expect(offPage).not.toContain("Delete this preview");
         expect(
             (await request(`/organizations/${orgId}/previews/${previewId}`, "DELETE")).status,
         ).toBe(409);

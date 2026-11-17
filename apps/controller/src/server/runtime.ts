@@ -104,7 +104,7 @@ function compose() {
         // Serves the OpenAPI document and Scalar reference; set to "false" to remove them.
         docs: process.env.LAUNCHPAD_API_DOCS !== "false",
     });
-    return { config, db, auth, api, invitations, features };
+    return { config, db, auth, api, invitations, features, previews };
 }
 
 let runtime: ReturnType<typeof compose> | undefined;

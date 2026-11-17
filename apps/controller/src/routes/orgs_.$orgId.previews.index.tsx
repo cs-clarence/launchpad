@@ -1,9 +1,10 @@
 import { createFileRoute, Link, redirect } from "@tanstack/react-router";
-import { statusLabel } from "../lib/previews";
+import { describeExpiry, statusLabel } from "../lib/previews";
+import { useNow } from "../lib/use-now";
 import { getPreviewsViewFn } from "../server/data";
 import { getCurrentUser } from "../server/session";
 
-export const Route = createFileRoute("/orgs_/$orgId/previews")({
+export const Route = createFileRoute("/orgs_/$orgId/previews/")({
     beforeLoad: async () => {
         if (!(await getCurrentUser())) {
             throw redirect({ to: "/login" });
@@ -23,6 +24,7 @@ export const Route = createFileRoute("/orgs_/$orgId/previews")({
 
 function Previews() {
     const view = Route.useLoaderData();
+    const now = useNow(view.now);
     return (
         <main className="mx-auto max-w-4xl space-y-6 px-6 py-12">
             <Link className="anchor" to="/orgs/$orgId" params={{ orgId: view.organization.id }}>
@@ -53,6 +55,12 @@ function Previews() {
                             <div className="text-sm">
                                 {preview.projectName ?? "Unknown project"} ·{" "}
                                 <code>{preview.slug}</code>
+                                {view.lifecycleEnabled || preview.state !== "active" ? (
+                                    <span suppressHydrationWarning>
+                                        {" · "}
+                                        {describeExpiry(preview, now)}
+                                    </span>
+                                ) : null}
                             </div>
                         </li>
                     ))}

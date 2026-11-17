@@ -191,6 +191,20 @@ default off): then expired previews are deleted, and stored archives are collect
 Retention must be at least `1h`. The first time the worker enables lifecycle for this
 database, already-overdue previews get a one-time 24 h grace.
 
+### Dashboard preview page
+
+`/orgs/:orgId/previews` lists previews with when each expires; a preview's page
+(`/orgs/:orgId/previews/:previewId`) shows its lifetime and the controls its role may use:
+**Extend** (deployer and above), **Delete this preview** (deployer and above, with a
+confirmation; hidden, with a note, when deleting is not turned on), and for a deletion
+that needs a person, **Try the deletion again** / **The app is already gone** (administrators
+and owners, with a confirmation; the API also needs a sign-in from the last 15 minutes). A
+deletion in progress refreshes itself, and a preview deleted while its page is open
+shows the finished deletion (a page watching a deletion in progress looks again by itself; one that was not must be reloaded). Where the lifecycle is off nothing expires, so the page says so
+instead of showing a countdown, and the lifetime choices are limited to the server's maximum. Buttons are hidden for roles that could not use them,
+but only the API enforces permissions. A preview that is being deleted shows its deletion, even
+when expiry started it.
+
 ### Preview lifecycle API
 
 All paths below are under `/api/v1/organizations/:orgId`. Mutations require deployer
