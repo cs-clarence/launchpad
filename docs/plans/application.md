@@ -274,10 +274,10 @@ document which metadata/URLs can be restored.
        worker and wait until each process has exited** (turning a setting off takes effect only when
        the worker restarts). A worker's exit does not prove that a Dokku destroy it had under way
        has finished: on a stop it only ends its local SSH client, and the command may still be
-       running on the host. So also let remote destroys **settle** before touching anything: in the
-       live database, list every deletion operation with `step_pending = 'destroy'` and confirm
-       with `apps:exists` that each of those apps is gone, or wait longer than the longest Dokku
-       command and the deletion lease (five minutes by default) after the last worker stopped;
+       running on the host, including the plugin triggers Dokku runs after an app is gone. A missing
+       app is therefore **not** proof that a destroy has settled either. So **wait** after the last
+       worker stopped for longer than the longest Dokku command and the deletion lease (five minutes
+       by default; longer if the host's destroy triggers are slow) before touching anything;
     2. restore the database and the data directory from the same moment;
     3. check that every live artifact has its file (uploading the same archive again repairs a row
        whose file is missing);
@@ -286,9 +286,15 @@ document which metadata/URLs can be restored.
        (destroyed after the backup, or by a settled in-flight deletion). An app Dokku has that no
        restored row names is left alone, as Launchpad never destroys what it has no row for. A tool
        for this check is not built and is tracked as a follow-up;
-    5. switch deployments and the lifecycle on, and start the workers;
-    6. now, for each listed preview, an administrator either redeploys it (a deployment's first step
-       recreates a missing app, so deploying its active artifact again restores it) or deletes it.
+    5. switch **deployments on and start the workers, with the lifecycle still off**: nothing
+       expires or is deleted yet;
+    6. for each listed preview an administrator keeps, redeploy it (a deployment's first step
+       recreates a missing app, so deploying its active artifact again restores it; redeploying
+       does not need the lifecycle). A restored preview whose expiry has already passed must be
+       **extended** now if it is to be kept, because the lifecycle is about to start and the
+       first-enable grace applies only once, to a database that has never had it on;
+    7. switch the lifecycle on (worker and controller), and then delete the listed previews the
+       administrator chose to end (a manual deletion is refused while the lifecycle is off).
        Restoring an older database with the lifecycle on deletes the archives uploaded since (once they
        are older than the retention); restoring an older data directory leaves live rows whose files
        are missing, which makes a new deployment of that artifact fail at its build, and a rollback to
@@ -296,7 +302,7 @@ document which metadata/URLs can be restored.
        host and per data directory still holds. The restore drill must exercise each step, including
        a destroy that was in flight when the workers were stopped being allowed to settle, and a
        preview whose app was destroyed after the backup being found in step 4 and redeployed or
-       ended in step 6.
+       ended in step 7, with an expired restored preview extended in step 6 and not deleted.
 
 **Verify:** clean-machine install from packed tarballs and image artifacts,
 supported Node/Bun platforms, npm execution without workspace dependencies,
