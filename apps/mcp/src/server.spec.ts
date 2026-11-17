@@ -162,6 +162,7 @@ describe("read-only MCP protocol", () => {
             "list_organizations",
             "list_previews",
             "list_projects",
+            "preview_deletion",
             "whoami",
         ]);
         for (const tool of tools) expect(tool.annotations?.readOnlyHint).toBe(true);

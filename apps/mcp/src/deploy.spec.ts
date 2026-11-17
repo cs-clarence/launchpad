@@ -193,7 +193,7 @@ describe("startup policy", () => {
         expect(() => parse("--allow-deploy", "--include", "dist/**")).toThrow(/--exclude/);
         expect(() => parse("--allow-deploy", "--exclude", "x")).toThrow(/--include/);
         expect(() => parse("--include", "dist/**")).toThrow(/need --allow-deploy/);
-        expect(() => parse("--allow-project", PROJECT)).toThrow(/need --allow-deploy/);
+        expect(() => parse("--allow-project", PROJECT)).toThrow(/needs --allow-deploy/);
     });
 
     it("refuses an unusable pattern at startup, not at the first call", () => {
@@ -301,6 +301,9 @@ describe("the deploy tool", () => {
         expect(off.client.getInstructions()).toContain("read-only tools");
         const on = await connect({ workingDir: dir, deploy: POLICY });
         expect(on.client.getInstructions()).toContain("replaces a preview's live content");
+        // One tool, one policy: it does not say "both".
+        expect(on.client.getInstructions()).toContain("It only works within");
+        expect(on.client.getInstructions()).not.toContain("Both");
         expect(on.client.getInstructions()).toContain("untrusted data");
     });
 

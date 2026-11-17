@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { type ChildProcess, spawn } from "node:child_process";
+import { type ChildProcess, spawn, spawnSync } from "node:child_process";
 import { promises as fs } from "node:fs";
 import net from "node:net";
 import os from "node:os";
@@ -1534,6 +1534,109 @@ describe("previews and deployments over HTTP", () => {
                 status: "queued",
             });
         } finally {
+            await fs.rm(root, { recursive: true, force: true });
+            await fs.rm(config, { recursive: true, force: true });
+        }
+    });
+
+    it("deletes a preview through the real MCP binary only where the operator allowed it", async () => {
+        const config = await fs.mkdtemp(path.join(os.tmpdir(), "launchpad-mcp-del-config-"));
+        const root = await fs.mkdtemp(path.join(os.tmpdir(), "launchpad-mcp-del-root-"));
+        const binary = path.resolve(import.meta.dirname, "../../../mcp/dist/index.js");
+        const clients: Client[] = [];
+        const connect = async (key: string, extra: string[]) => {
+            const client = new Client({ name: "e2e", version: "1" });
+            await client.connect(
+                new StdioClientTransport({
+                    command: process.execPath,
+                    args: [binary, "--shared", ...extra],
+                    env: {
+                        PATH: process.env.PATH ?? "",
+                        LAUNCHPAD_CONFIG_DIR: config,
+                        LAUNCHPAD_CONTROLLER: proxied.base,
+                        LAUNCHPAD_API_KEY: key,
+                    },
+                    stderr: "pipe",
+                }),
+            );
+            clients.push(client);
+            return client;
+        };
+        try {
+            const key = await mintKey("mcp-remover", ["preview:read", "preview:delete"]);
+            const make = async (project: string, slug: string) =>
+                previewSchema.parse(
+                    await (
+                        await call(
+                            deployKey,
+                            `/organizations/${orgId}/projects/${project}/previews`,
+                            {
+                                method: "POST",
+                                body: { slug },
+                            },
+                        )
+                    ).json(),
+                );
+            const allowed = await make(p1, "mcp-del-allowed");
+            const elsewhere = await make(p2, "mcp-del-elsewhere");
+            const args = (id: string, extra: Record<string, unknown> = {}) => ({
+                name: "delete_preview",
+                arguments: { working_dir: root, preview_id: id, confirm: true, ...extra },
+            });
+            // Without the flag there is no such tool.
+            const reader = await connect(key, []);
+            expect((await reader.listTools()).tools.map((t) => t.name)).not.toContain(
+                "delete_preview",
+            );
+            // Deletion needs a project to be named.
+            const refusing = spawnSync(process.execPath, [binary, "--shared", "--allow-delete"], {
+                env: { PATH: process.env.PATH ?? "", LAUNCHPAD_CONFIG_DIR: config },
+                encoding: "utf8",
+            });
+            expect(refusing.status).toBe(2);
+            expect(refusing.stderr).toContain("--allow-delete-project");
+            const remover = await connect(key, ["--allow-delete", "--allow-delete-project", p1]);
+            expect((await remover.listTools()).tools.map((t) => t.name)).toContain(
+                "delete_preview",
+            );
+            // A preview of another project is refused by the server's policy, and nothing is queued.
+            const refused = await remover.callTool(args(elsewhere.id));
+            expect(refused.isError).toBe(true);
+            expect(JSON.stringify(refused)).toContain("not allowed");
+            expect(
+                await testDb.db
+                    .selectFrom("deletion_operation")
+                    .select("id")
+                    .where("preview_id", "=", elsewhere.id)
+                    .execute(),
+            ).toEqual([]);
+            // Without confirm it is a validation error.
+            expect((await remover.callTool(args(allowed.id, { confirm: false }))).isError).toBe(
+                true,
+            );
+            expect(
+                await testDb.db
+                    .selectFrom("deletion_operation")
+                    .select("id")
+                    .where("preview_id", "=", allowed.id)
+                    .execute(),
+            ).toEqual([]);
+            const done = await remover.callTool(args(allowed.id));
+            expect(done.isError, JSON.stringify(done)).toBe(false);
+            expect(done.structuredContent).toMatchObject({
+                data: {
+                    outcome: "queued",
+                    preview: { id: allowed.id },
+                    deletion: { state: "deleting" },
+                },
+            });
+            const followed = await remover.callTool({
+                name: "preview_deletion",
+                arguments: { working_dir: root, preview_id: allowed.id },
+            });
+            expect(followed.structuredContent).toMatchObject({ data: { status: "queued" } });
+        } finally {
+            for (const client of clients) await client.close().catch(() => {});
             await fs.rm(root, { recursive: true, force: true });
             await fs.rm(config, { recursive: true, force: true });
         }

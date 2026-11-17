@@ -285,3 +285,18 @@ content could be re-published by hand from storage, and after it nothing can.
   a beat in flight finishes before shutdown and the first does not hold up start or stop; the worker
   id is limited to what a heartbeat can store; the version comes from `LAUNCHPAD_VERSION` when set.
   Not changed: the list holds 50 workers (ordered, no total).
+- Slice 7 (MCP): `delete_preview` behind `--allow-delete`, which (stricter than deploy) requires at
+  least one `--allow-project <id>`; the tool takes a preview id and `confirm: true`, reads the preview
+  first and refuses unless its project id is allowed, using one resolved profile for the check and the
+  deletion; it queues and returns what it deleted. `preview_deletion` is an always-offered read tool.
+  Nothing resolves a held deletion from MCP. Tests: parsing, the allow-list (including the same
+  preview id under another profile, and a profile switched between the check and the deletion), the
+  confirm schema, and the built binary against the real controller. Opus review follows.
+- Slice 7 review (Opus 5.5): a model cannot delete outside the allowed projects. Changed before it
+  ships: deletion has its **own** list, `--allow-delete-project <id>` (required with `--allow-delete`),
+  so adding deletion never widens or narrows `--allow-project`, which stays deployment-only; the
+  instructions say "both" only when both tools are on; README and tests corrected (a refused
+  deletion, an unseen organization, id case, the built binary's startup refusal). Not changed: the
+  policy refusal uses `bad-input` like deploy; MCP drops unknown arguments for every tool (the
+  decision uses only `preview_id` and `confirm`); a profile re-saved under the same name between the
+  read and the delete needs write access to the credential store.

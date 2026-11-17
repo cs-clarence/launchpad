@@ -2,7 +2,8 @@
 
 For MCP-client users who want read-only access to Launchpad. This is a separate
 stdio app, not a CLI subcommand or HTTP daemon. It is read-only unless you enable
-deployment, see [Deploying](#deploying).
+deployment or deletion, see [Deploying](#deploying) and
+[Deleting previews](#deleting-previews).
 
 ## Start
 
@@ -38,7 +39,7 @@ This internal Bun build is not a published npm package.
 
 ## Tools
 
-The tools above are read-only; `deploy` is described below. Authorization and project restrictions are enforced by the
+The tools above are read-only, as is `preview_deletion` (a preview's latest deletion); `deploy` and `delete_preview` are described below. Authorization and project restrictions are enforced by the
 controller, not tool annotations.
 
 | Tool                 | Extra arguments                               |
@@ -98,15 +99,45 @@ Use a narrower project query when that happens.
 
 Controller names, failure messages and event messages are untrusted **data**, not
 instructions. Redaction does not make their text trustworthy.
-No resources, prompts, file-content tools or shell tools are exposed, and the only mutation is `deploy`, when enabled.
+No resources, prompts, file-content tools or shell tools are exposed, and the only mutations are `deploy` and `delete_preview`, each only when enabled at startup.
 Incoming stdio message buffering is limited to 1 MiB.
+
+## Deleting previews
+
+Deleting is off by default and the `delete_preview` tool does not exist until you start the
+server with `--allow-delete` **and** at least one `--allow-delete-project <project-id>`
+(without a project the server refuses to start: a deletion cannot be undone, so it is allowed
+only where you say). The list is fixed at startup, as for deployment, and is **its own list**,
+separate from `--allow-project`, which only limits deployment: allowing deployment to two
+projects and deletion in one needs no compromise, and adding `--allow-delete` never widens
+or narrows what can be deployed.
+
+```sh
+launchpad-mcp --shared --allow-delete \
+  --allow-delete-project 11111111-1111-4111-8111-111111111111
+```
+
+- The tool takes `preview_id` (a preview id, never a name) and `confirm: true`. It reads the
+  preview first and refuses unless the preview's own project id is in the allowed list, as the
+  controller names it for the credentials of that call; nothing is sent to delete otherwise.
+  The check and the deletion use the same saved profile, even if the current profile changes
+  in between.
+- It queues the deletion and returns at once with what it is deleting (id, slug, hostname,
+  project id) and the operation. The worker carries it out, which needs the lifecycle on in the
+  controller and the worker; follow it with `preview_deletion`. A repeat while it is under way
+  returns the same operation.
+- `preview_deletion` is a read tool, always offered: the latest deletion of a preview
+  (also one that expiry started), with its status and note. A held one (`reconciliation-needed`)
+  needs an administrator in the dashboard; no tool resolves it.
+- The key needs `preview:read` and `preview:delete`, and reaches only its own projects; the
+  controller checks again.
 
 ## Deploying
 
 Deployment is off by default and the tool does not exist until you start the server with
 `--allow-deploy` **and** at least one `--include` and one `--exclude` glob (without
 them the server refuses to start, and so does `--include`, `--exclude` or
-`--allow-project` without `--allow-deploy`). The lists are fixed at startup; neither a
+`--allow-project` without `--allow-deploy`, nor `--allow-delete-project` without `--allow-delete`). The lists are fixed at startup; neither a
 tool call nor `launchpad.json` can widen them.
 
 ```sh
