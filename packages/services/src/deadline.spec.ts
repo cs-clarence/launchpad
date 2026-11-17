@@ -37,4 +37,44 @@ describe("a lease deadline", () => {
         mono = 1200;
         expect(deadline.passed()).toBe(false);
     });
+
+    it("gives a signal that aborts when the wall clock says so after a suspend, and when the timer runs out", async () => {
+        vi.useFakeTimers();
+        try {
+            let mono = 1000;
+            vi.spyOn(performance, "now").mockImplementation(() => mono);
+            let wall = 50_000;
+            vi.spyOn(Date, "now").mockImplementation(() => wall);
+            const deadline = startDeadline(5000);
+            const signal = deadline.signal();
+            expect(signal.aborted).toBe(false);
+            // The machine slept for an hour: the monotonic timer stood still, the wall clock did not.
+            wall += 3_600_000;
+            await vi.advanceTimersByTimeAsync(1000);
+            expect(signal.aborted).toBe(true);
+            expect((signal.reason as DOMException).name).toBe("TimeoutError");
+            // And an ordinary timeout aborts it too.
+            wall = 50_000;
+            const plain = startDeadline(2000).signal();
+            await vi.advanceTimersByTimeAsync(2100);
+            expect(plain.aborted).toBe(true);
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
+    it("does not abort early, and stops watching once it has", async () => {
+        vi.useFakeTimers();
+        try {
+            const signal = startDeadline(3000).signal();
+            await vi.advanceTimersByTimeAsync(2000);
+            expect(signal.aborted).toBe(false);
+            await vi.advanceTimersByTimeAsync(1500);
+            expect(signal.aborted).toBe(true);
+            // Nothing is left running.
+            expect(vi.getTimerCount()).toBe(0);
+        } finally {
+            vi.useRealTimers();
+        }
+    });
 });

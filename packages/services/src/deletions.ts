@@ -519,7 +519,7 @@ async function execute(
         // Intent first, fenced: a worker that stops after the destroy leaves this behind, and
         // its successor then asks whether the app is still there before doing anything.
         await fenced(db, claim, { status: "running", step_pending: "destroy" });
-        const signal = AbortSignal.timeout(deadline.remainingMs());
+        const signal = deadline.signal();
         let destroying = false;
         try {
             guard();
@@ -581,10 +581,7 @@ async function execute(
         const imageTags = tags.map((t) => t.image_tag as string);
         try {
             if (deadline.passed()) throw new StaleAttemptError();
-            await ports.removeImages(
-                { ...context, imageTags },
-                AbortSignal.timeout(deadline.remainingMs()),
-            );
+            await ports.removeImages({ ...context, imageTags }, deadline.signal());
         } catch (error) {
             if (error instanceof StaleAttemptError) throw error;
             if (claim.attempt < MAX_DELETION_ATTEMPTS) {

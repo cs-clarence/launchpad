@@ -5,6 +5,7 @@ import {
     checkDeployForm,
     fieldsLocked,
     newResume,
+    pageIsStale,
     runDeploy,
     withNewFile,
     withNewSpa,
@@ -337,5 +338,13 @@ describe("keys that cannot be reused wrongly", () => {
                 maxBytes: 512 * 1024,
             })[0],
         ).toContain("512 KiB");
+    });
+
+    it("knows when the page it is on is out of date, and leaves an archive that is gone to the retry", () => {
+        expect(pageIsStale(409, "A deployment is already running.")).toBe(true);
+        expect(pageIsStale(404, "Preview not found.")).toBe(true);
+        expect(pageIsStale(404, "Artifact not found.")).toBe(false);
+        expect(pageIsStale(500, "Preview not found.")).toBe(false);
+        expect(pageIsStale(null, "x")).toBe(false);
     });
 });

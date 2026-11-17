@@ -6,6 +6,7 @@ import {
     checkDeployForm,
     fieldsLocked,
     newResume,
+    pageIsStale,
     runDeploy,
     withNewFile,
     withNewSpa,
@@ -95,7 +96,9 @@ export function DeployPanel(props: {
                     : result.message,
             );
             // Another deployment started elsewhere: show it, rather than keep asking.
-            if (props.existing && result.status === 409) await router.invalidate({ sync: true });
+            if (props.existing && pageIsStale(result.status, result.message)) {
+                await router.invalidate({ sync: true });
+            }
             return;
         }
         resumeRef.current = null;

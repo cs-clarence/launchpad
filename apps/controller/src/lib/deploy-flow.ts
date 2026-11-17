@@ -84,6 +84,14 @@ export function withNewSpa(resume: Resume): void {
 export const fieldsLocked = (resume: Resume): boolean =>
     resume.previewId !== undefined || resume.createUncertain === true;
 
+// Whether a refusal to deploy to the preview this page is about means the page is out of date:
+// another deployment is running (409), or the preview is gone (a 404 that names the preview;
+// one that names the archive is not about the page). The page then looks again, which shows
+// what is true now, instead of asking again.
+export function pageIsStale(status: number | null, message: string): boolean {
+    return status === 409 || (status === 404 && /preview/i.test(message));
+}
+
 // What to forget after a failure, so the next try neither repeats what is done nor sticks to
 // something that no longer exists.
 export function afterFailure(

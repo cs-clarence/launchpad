@@ -597,7 +597,7 @@ async function execute(
                     spa: previous.spa,
                     storageKey: previous.storage_key,
                 },
-                AbortSignal.timeout(deadline.remainingMs()),
+                deadline.signal(),
             );
         } catch (error) {
             if (error instanceof StaleAttemptError) throw error;
@@ -679,7 +679,7 @@ async function execute(
         // A shutdown request does not interrupt a load that is already under way.
         const signal = AbortSignal.any([
             ...(options.signal && step !== "load" ? [options.signal] : []),
-            AbortSignal.timeout(deadline.remainingMs()),
+            deadline.signal(),
         ]);
         try {
             if (step === "app") {
