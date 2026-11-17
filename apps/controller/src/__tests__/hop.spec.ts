@@ -2110,6 +2110,68 @@ describe("previews and deployments over HTTP", () => {
         expect(foreign).not.toContain("was deleted");
     });
 
+    it("offers the deploy panel to those who may deploy, and the calls it makes work with a session", async () => {
+        const get = async (cookie: string, path: string) =>
+            (await fetch(`${proxied.base}${path}`, { headers: { cookie } })).text();
+        const list = await get(owner, `/orgs/${orgId}/previews`);
+        expect(list).toContain("Deploy a site");
+        expect(list).toContain("Built site (.tar.gz)");
+        expect(list).toContain("Preview name");
+        expect(await get(viewer, `/orgs/${orgId}/previews`)).not.toContain("Deploy a site");
+        // On a preview's own page, a new version.
+        expect(await get(owner, `/orgs/${orgId}/previews/${previewId}`)).toContain(
+            "Deploy a new version",
+        );
+        expect(await get(viewer, `/orgs/${orgId}/previews/${previewId}`)).not.toContain(
+            "Deploy a new version",
+        );
+        // What the panel sends, in the order it sends it, with the browser's session and origin.
+        const headers = (extra: Record<string, string>) => ({
+            cookie: owner,
+            origin: proxied.base,
+            ...extra,
+        });
+        const created = previewSchema.parse(
+            await (
+                await fetch(
+                    `${proxied.base}/api/v1/organizations/${orgId}/projects/${p1}/previews`,
+                    {
+                        method: "POST",
+                        headers: headers({
+                            "content-type": "application/json",
+                            "idempotency-key": "dashboard-preview-test",
+                        }),
+                        body: JSON.stringify({ slug: "from-dashboard", ttl: "24h" }),
+                    },
+                )
+            ).json(),
+        );
+        const stored = artifactSchema.parse(
+            await (
+                await fetch(`${proxied.base}/api/v1/organizations/${orgId}/artifacts`, {
+                    method: "POST",
+                    headers: headers({ "content-type": "application/gzip" }),
+                    body: new Blob([tarGz(SITE) as BlobPart]),
+                })
+            ).json(),
+        );
+        const queued = await fetch(
+            `${proxied.base}/api/v1/organizations/${orgId}/previews/${created.id}/deployments`,
+            {
+                method: "POST",
+                headers: headers({
+                    "content-type": "application/json",
+                    "idempotency-key": "dashboard-deploy-test",
+                }),
+                body: JSON.stringify({ artifactId: stored.id, spa: true }),
+            },
+        );
+        expect(queued.status).toBe(202);
+        expect(createdDeploymentSchema.parse(await queued.json()).status).toBe("queued");
+        // The page it opens shows the deployment.
+        expect(await get(owner, `/orgs/${orgId}/previews/${created.id}`)).toContain("Queued");
+    });
+
     it("is off unless deployments are on: reads work, creating and deploying are refused", async () => {
         const cookieOwner = await (async () => {
             const response = await signIn(direct, "user@example.com", USER_PASSWORD);
@@ -2137,6 +2199,14 @@ describe("previews and deployments over HTTP", () => {
             })
         ).text();
         expect(offPage).toContain("Deleting is not turned on");
+        expect(offPage).not.toContain("Deploy a new version");
+        const offList = await (
+            await fetch(`${direct.base}/orgs/${orgId}/previews`, {
+                headers: { cookie: cookieOwner },
+            })
+        ).text();
+        expect(offList).toContain("Deploying is not turned on");
+        expect(offList).not.toContain("Deploy a site");
         expect(offPage).not.toContain("Delete this preview");
         expect(
             (await request(`/organizations/${orgId}/previews/${previewId}`, "DELETE")).status,

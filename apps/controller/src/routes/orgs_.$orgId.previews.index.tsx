@@ -1,4 +1,5 @@
 import { createFileRoute, Link, redirect } from "@tanstack/react-router";
+import { DeployPanel } from "../components/deploy-panel";
 import { describeExpiry, statusLabel } from "../lib/previews";
 import { useNow } from "../lib/use-now";
 import { getPreviewsViewFn } from "../server/data";
@@ -31,8 +32,22 @@ function Previews() {
                 {view.organization.name}
             </Link>
             <h1 className="h2">Previews</h1>
+            {view.canDeploy && view.deploymentsEnabled ? (
+                view.projects.length > 0 ? (
+                    <DeployPanel
+                        organizationId={view.organization.id}
+                        projects={view.projects}
+                        maxUploadBytes={view.maxUploadBytes}
+                        maxTtlSeconds={view.maxTtlSeconds}
+                    />
+                ) : (
+                    <p>Create a project first; previews belong to a project.</p>
+                )
+            ) : !view.deploymentsEnabled ? (
+                <p>Deploying is not turned on for this server.</p>
+            ) : null}
             <p>
-                Previews are deployed with the CLI: <code>launchpad deploy</code>.
+                You can also deploy from a terminal: <code>launchpad deploy</code>.
             </p>
             {view.previews.length === 0 ? (
                 <p>No previews yet.</p>

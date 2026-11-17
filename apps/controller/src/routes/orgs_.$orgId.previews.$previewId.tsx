@@ -2,6 +2,7 @@ import { createFileRoute, Link, redirect, useRouter } from "@tanstack/react-rout
 import type { z } from "zod";
 import type { deploymentSchema } from "@launchpad/contracts";
 import { useEffect, useState } from "react";
+import { DeployPanel } from "../components/deploy-panel";
 import { apiRequest } from "../lib/api";
 import { useNow } from "../lib/use-now";
 import {
@@ -436,6 +437,15 @@ function PreviewDetail() {
             </Link>
             <h1 className="h2">{view.preview.hostname}</h1>
             <Lifecycle view={view} />
+            {view.preview.state === "active" && view.canDeploy && view.deploymentsEnabled ? (
+                <DeployPanel
+                    organizationId={view.organization.id}
+                    projects={[]}
+                    maxUploadBytes={view.maxUploadBytes}
+                    maxTtlSeconds={view.maxTtlSeconds}
+                    existing={{ id: view.preview.id }}
+                />
+            ) : null}
             {latest ? (
                 <section className="space-y-3">
                     <h2 className="h4">Latest deployment</h2>

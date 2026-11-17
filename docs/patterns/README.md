@@ -41,7 +41,9 @@ read through `getPreviewDetailFn`, which returns role flags (`canExtend`, `canDe
 `now` from the runtime's settings, and `preview: null` (with its deletion) for a deleted
 preview. The list is the `previews.index` route so the two are siblings (a list route without an
 `<Outlet/>` hides its children); its loader returns `lifecycleEnabled` and `now`. Pure wording
-helpers are in `src/lib/previews.ts`; `src/lib/use-now.ts` keeps the displayed time moving from
+helpers are in `src/lib/previews.ts`; the deploy panel is `src/components/deploy-panel.tsx`,
+with its three-step flow (create, upload, deploy, resumable) in `src/lib/deploy-flow.ts` over
+`apiCall` in `src/lib/api.ts`; `src/lib/use-now.ts` keeps the displayed time moving from
 the server's `now`.
 
 The health endpoint reports static metadata, not PostgreSQL/Dokku readiness.
