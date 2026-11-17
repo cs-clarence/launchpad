@@ -30,11 +30,13 @@ export interface LifecycleState {
 
 export const FIRST_ENABLE_GRACE_SECONDS = 24 * 3600;
 
-// The first time the lifecycle is ever switched on for this database, previews that are
-// already overdue (new previews have had a lifetime since it was recorded, while nothing
-// acted on it) are given a fresh grace period instead of being deleted within minutes. Done
-// once: a marker is recorded in the same transaction, so a second worker or a restart does
-// nothing. Returns how many previews were given the grace.
+// The first time the lifecycle is ever switched on for this database, every preview that
+// would expire within the grace period (already overdue, or about to be: while it was off,
+// previews carried an expiry that nothing acted on and users were told nothing) is given at
+// least that long from now, instead of being deleted within minutes or hours. Done once: a
+// marker is recorded in the same transaction, so a second worker or a restart does nothing.
+// Switching it off and on again later gives no grace: what expired meanwhile is then deleted,
+// as it is after any downtime. Returns how many previews were given the grace.
 export async function beginLifecycle(
     db: Kysely<Database>,
     graceSeconds = FIRST_ENABLE_GRACE_SECONDS,
@@ -55,7 +57,7 @@ export async function beginLifecycle(
             .set({ expires_at: sql<Date>`now() + ${graceSeconds} * interval '1 second'` })
             .where("desired_state", "=", "active")
             .where("expires_at", "is not", null)
-            .where("expires_at", "<=", sql<Date>`now()`)
+            .where("expires_at", "<", sql<Date>`now() + ${graceSeconds} * interval '1 second'`)
             .returning("id")
             .execute();
         await trx
@@ -77,6 +79,10 @@ export interface LifecycleResult {
     deletion: DeletionOutcome | "none";
     collected: number;
     swept: number;
+    // Collecting archives failed (the data directory is not readable and writable by this
+    // worker, say). Reported, not thrown: a deletion that succeeded in the same round must
+    // still be reported, and the next round tries again.
+    collectionFailed?: true;
 }
 
 // One round of the lifecycle work, for a worker to call between deployments: claim what has
@@ -105,14 +111,18 @@ export async function runLifecycleOnce(
     if (Date.now() - state.lastCollect >= every && !options.signal?.aborted) {
         state.lastCollect = Date.now();
         const retentionSeconds = options.config.artifactRetentionSeconds;
-        result.collected = (
-            await collectArtifacts(db, { dataDir: options.dataDir, retentionSeconds })
-        ).collected.length;
-        const swept = await sweepOrphanArtifactFiles(db, {
-            dataDir: options.dataDir,
-            retentionSeconds,
-        });
-        result.swept = swept.removed + swept.restored;
+        try {
+            result.collected = (
+                await collectArtifacts(db, { dataDir: options.dataDir, retentionSeconds })
+            ).collected.length;
+            const swept = await sweepOrphanArtifactFiles(db, {
+                dataDir: options.dataDir,
+                retentionSeconds,
+            });
+            result.swept = swept.removed + swept.restored;
+        } catch {
+            result.collectionFailed = true;
+        }
     }
     return result;
 }

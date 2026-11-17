@@ -119,7 +119,12 @@ export async function runWorker(
                         },
                         state,
                     );
-                    if (round.expired > 0 || round.deletion !== "none" || round.collected > 0) {
+                    if (
+                        round.expired > 0 ||
+                        round.deletion !== "none" ||
+                        round.collected > 0 ||
+                        round.collectionFailed
+                    ) {
                         options.log?.({ event: "lifecycle", ...round });
                         busy = round.deletion !== "none" && round.deletion !== "retry";
                     }

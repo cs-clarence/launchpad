@@ -300,3 +300,12 @@ content could be re-published by hand from storage, and after it nothing can.
   policy refusal uses `bad-input` like deploy; MCP drops unknown arguments for every tool (the
   decision uses only `preview_id` and `confirm`); a profile re-saved under the same name between the
   read and the delete needs write access to the credential store.
+- Milestone review fixes, part 1 (behaviour): the first-enable grace covers every preview expiring
+  within it (not only overdue ones); the dashboard always shows the expiry and Extend, saying nothing is
+  deleted from here while the controller has the lifecycle off; a deployment held for an administrator is
+  closed (`preview-deleted`) when its preview's deletion finishes, by either route; a deleted preview
+  is 404 for deploying, and the dashboard flow does not upload for a created preview that is going away;
+  a collection that cannot run is reported (`collectionFailed`) without hiding a deletion that
+  succeeded in the same round; lease deadlines are also measured by the wall clock, so a worker that
+  wakes from a suspend starts nothing more; an API key on a resolution route is told it cannot, not
+  to sign in again; wording of the delete route, the key scope label and the "being deleted" message.

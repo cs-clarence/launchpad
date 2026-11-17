@@ -354,7 +354,7 @@ export const docs = {
         tags: ["Previews"],
         summary: "Queue a preview's deletion",
         description:
-            "Needs deployer or higher, preview:delete for keys, and deployments and lifecycle enabled in the controller and worker (409 otherwise, for a new deletion). Returns at once; poll the deletion operation. Repeating DELETE while deleting returns the same operation; once deleted it returns 404. No idempotency key is needed. Cannot be undone.",
+            "Needs deployer or higher, preview:delete for keys, and deployments and the lifecycle enabled in the controller (409 otherwise, for a new deletion). The worker must have the lifecycle on too: the controller cannot tell, and the operator's status warns when they disagree. Returns at once; poll the deletion operation. Repeating DELETE while deleting returns the same operation; once deleted it returns 404. No idempotency key is needed. Cannot be undone.",
         path: ["orgId", "previewId"],
         ok: { status: 202, description: "Deletion queued.", schema: requestedDeletionSchema },
         errors: [401, 403, 404, 409],

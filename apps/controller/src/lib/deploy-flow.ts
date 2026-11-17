@@ -145,7 +145,7 @@ export async function runDeploy(input: {
             return { ok: false, step: "create", status: null, message: "No preview to deploy to." };
         }
         input.onStep?.("create");
-        const created = await call<{ id: string }>(
+        const created = await call<{ id: string; state?: string }>(
             "POST",
             `/organizations/${org}/projects/${input.create.projectId}/previews`,
             {
@@ -158,6 +158,16 @@ export async function runDeploy(input: {
         );
         if (!created.ok) {
             return { ok: false, step: "create", status: created.status, message: created.message };
+        }
+        // A repeat of an earlier creation returns that preview as it is now, which may be going
+        // away: do not upload for it.
+        if (created.data.state !== undefined && created.data.state !== "active") {
+            return {
+                ok: false,
+                step: "create",
+                status: 409,
+                message: "That preview is being deleted. Try again once its name is free.",
+            };
         }
         resume.previewId = created.data.id;
     }

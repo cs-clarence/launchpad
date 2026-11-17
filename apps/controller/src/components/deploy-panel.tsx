@@ -26,8 +26,6 @@ export function DeployPanel(props: {
     projects: { id: string; name: string }[];
     maxUploadBytes: number;
     maxTtlSeconds: number;
-    // Where nothing is deleted automatically a lifetime means nothing, so it is not offered.
-    lifecycleEnabled: boolean;
     // Present: deploy a new version to this preview instead of making one.
     existing?: { id: string };
 }) {
@@ -149,24 +147,22 @@ export function DeployPanel(props: {
                             maxLength={40}
                         />
                     </label>
-                    {props.lifecycleEnabled ? (
-                        <label className="block">
-                            Lives for{" "}
-                            <select
-                                className="select inline-block w-auto"
-                                value={ttl}
-                                disabled={frozen}
-                                onChange={(event) => setTtl(event.target.value)}
-                            >
-                                <option value="">the server's default</option>
-                                {choices.map((choice) => (
-                                    <option key={choice} value={choice}>
-                                        {choice}
-                                    </option>
-                                ))}
-                            </select>
-                        </label>
-                    ) : null}
+                    <label className="block">
+                        Lives for{" "}
+                        <select
+                            className="select inline-block w-auto"
+                            value={ttl}
+                            disabled={frozen}
+                            onChange={(event) => setTtl(event.target.value)}
+                        >
+                            <option value="">the server's default</option>
+                            {choices.map((choice) => (
+                                <option key={choice} value={choice}>
+                                    {choice}
+                                </option>
+                            ))}
+                        </select>
+                    </label>
                 </>
             ) : null}
             <label className="block">

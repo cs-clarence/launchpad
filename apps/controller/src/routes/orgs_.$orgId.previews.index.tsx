@@ -39,13 +39,18 @@ function Previews() {
                         projects={view.projects}
                         maxUploadBytes={view.maxUploadBytes}
                         maxTtlSeconds={view.maxTtlSeconds}
-                        lifecycleEnabled={view.lifecycleEnabled}
                     />
                 ) : (
                     <p>Create a project first; previews belong to a project.</p>
                 )
             ) : !view.deploymentsEnabled ? (
                 <p>Deploying is not turned on for this server.</p>
+            ) : null}
+            {!view.lifecycleEnabled ? (
+                <p className="text-sm">
+                    Nothing deletes previews on this server right now (the lifecycle is off on the
+                    controller), but each has an expiry that applies when it is turned on.
+                </p>
             ) : null}
             <p>
                 You can also deploy from a terminal: <code>launchpad deploy</code>.
@@ -71,12 +76,10 @@ function Previews() {
                             <div className="text-sm">
                                 {preview.projectName ?? "Unknown project"} ·{" "}
                                 <code>{preview.slug}</code>
-                                {view.lifecycleEnabled || preview.state !== "active" ? (
-                                    <span suppressHydrationWarning>
-                                        {" · "}
-                                        {describeExpiry(preview, now)}
-                                    </span>
-                                ) : null}
+                                <span suppressHydrationWarning>
+                                    {" · "}
+                                    {describeExpiry(preview, now)}
+                                </span>
                             </div>
                         </li>
                     ))}

@@ -189,6 +189,26 @@ describe("deploying from the dashboard", () => {
         expect(new Set(deploys.map((d) => d.key))).toEqual(new Set([keyBefore]));
     });
 
+    it("does not upload for a created preview that turns out to be going away", async () => {
+        const { sent, call } = fake({
+            "POST /organizations/org/projects/:id/previews": [
+                yes({ id: ID(2), state: "deleting" }),
+            ],
+        });
+        const resume = newResume();
+        const result = await runDeploy({
+            call,
+            organizationId: "org",
+            file,
+            spa: false,
+            resume,
+            create: { projectId: ID(1), slug: "site" },
+        });
+        expect(result).toMatchObject({ ok: false, step: "create", status: 409 });
+        expect(sent).toHaveLength(1);
+        expect(resume.previewId).toBeUndefined();
+    });
+
     it("reports a failed creation as such, and never uploads", async () => {
         const { sent, call } = fake({
             "POST /organizations/org/projects/:id/previews": [no("That preview name is taken.")],

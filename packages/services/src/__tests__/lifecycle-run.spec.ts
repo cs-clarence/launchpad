@@ -956,6 +956,88 @@ describe("collection edge cases", () => {
     });
 });
 
+describe("a collection that cannot run", () => {
+    it("is reported, and a deletion that succeeded in the same round is still reported", async () => {
+        await testDb.db
+            .updateTable("deletion_operation")
+            .set({ status: "succeeded", finished_at: new Date() })
+            .where("status", "in", ["queued", "running", "reconciliation-needed"])
+            .execute();
+        await testDb.db
+            .updateTable("preview")
+            .set({ expires_at: null })
+            .where("desired_state", "=", "active")
+            .execute();
+        const p = await makePreview();
+        await testDb.db
+            .updateTable("preview")
+            .set({ expires_at: new Date(Date.now() - 1000) })
+            .where("id", "=", p)
+            .execute();
+        const stuck = await artifact(5 * HOUR);
+        // A worker that is not the owner of the data directory cannot move the archive aside.
+        const owner = path.dirname(stuck.file);
+        await fs.chmod(owner, 0o500);
+        try {
+            const unreadable = process.getuid?.() === 0;
+            const ports = {
+                dokku: { apps: { exists: async () => true, destroy: async () => {} } },
+                removeImages: async () => {},
+            } as unknown as LifecyclePorts;
+            const state = { lastCollect: 0, started: true };
+            const round = await runLifecycleOnce(
+                testDb.db,
+                ports,
+                {
+                    owner: "w",
+                    config: on,
+                    dataDir,
+                    deletion: { retryBackoffMs: () => 0 },
+                    collectEveryMs: 60_000,
+                },
+                state,
+            );
+            expect(round.deletion).toBe("succeeded");
+            // Root can write anywhere, so there is nothing to fail for it.
+            if (!unreadable) {
+                expect(round.collectionFailed).toBe(true);
+                expect(round.collected).toBe(0);
+            }
+        } finally {
+            await fs.chmod(owner, 0o700);
+        }
+    });
+});
+
+describe("the first switch-on, for previews about to expire", () => {
+    it("also covers a preview that would have expired within the grace, and leaves later ones alone", async () => {
+        await testDb.db.deleteFrom("instance_state").execute();
+        const soon = await makePreview();
+        const later = await makePreview();
+        const never = await makePreview();
+        const set = (id: string, at: Date | null) =>
+            testDb.db.updateTable("preview").set({ expires_at: at }).where("id", "=", id).execute();
+        const soonAt = new Date(Date.now() + 20 * 60_000);
+        const laterAt = new Date(Date.now() + 3 * 3_600_000);
+        await set(soon, soonAt);
+        await set(later, laterAt);
+        await set(never, null);
+        await beginLifecycle(testDb.db, 3600);
+        const at = async (id: string) =>
+            (
+                await testDb.db
+                    .selectFrom("preview")
+                    .select("expires_at")
+                    .where("id", "=", id)
+                    .executeTakeFirstOrThrow()
+            ).expires_at;
+        // Twenty minutes left became an hour; three hours stays three hours; none stays none.
+        expect((await at(soon))!.getTime()).toBeGreaterThan(Date.now() + 3_000_000);
+        expect((await at(later))!.getTime()).toBe(laterAt.getTime());
+        expect(await at(never)).toBeNull();
+    });
+});
+
 describe("the first switch-on", () => {
     it("gives overdue previews a grace once, and does nothing the second time", async () => {
         await testDb.db.deleteFrom("instance_state").execute();
