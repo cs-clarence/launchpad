@@ -2169,7 +2169,11 @@ describe("previews and deployments over HTTP", () => {
         expect(queued.status).toBe(202);
         expect(createdDeploymentSchema.parse(await queued.json()).status).toBe("queued");
         // The page it opens shows the deployment.
-        expect(await get(owner, `/orgs/${orgId}/previews/${created.id}`)).toContain("Queued");
+        const opened = await get(owner, `/orgs/${orgId}/previews/${created.id}`);
+        expect(opened).toContain("Queued");
+        // One deployment at a time: no upload is invited while one is running.
+        expect(opened).toContain("A deployment is still");
+        expect(opened).not.toContain("Deploy a new version");
     });
 
     it("is off unless deployments are on: reads work, creating and deploying are refused", async () => {

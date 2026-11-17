@@ -1,7 +1,16 @@
 import { useNavigate, useRouter } from "@tanstack/react-router";
 import { useRef, useState } from "react";
 import { apiCall } from "../lib/api";
-import { checkDeployForm, newResume, runDeploy, type Resume } from "../lib/deploy-flow";
+import {
+    afterFailure,
+    checkDeployForm,
+    fieldsLocked,
+    newResume,
+    runDeploy,
+    withNewFile,
+    withNewSpa,
+    type Resume,
+} from "../lib/deploy-flow";
 import { extendChoices } from "../lib/previews";
 
 const STEP_TEXT = {
@@ -17,6 +26,8 @@ export function DeployPanel(props: {
     projects: { id: string; name: string }[];
     maxUploadBytes: number;
     maxTtlSeconds: number;
+    // Where nothing is deleted automatically a lifetime means nothing, so it is not offered.
+    lifecycleEnabled: boolean;
     // Present: deploy a new version to this preview instead of making one.
     existing?: { id: string };
 }) {
@@ -30,23 +41,36 @@ export function DeployPanel(props: {
     const [step, setStep] = useState<keyof typeof STEP_TEXT | null>(null);
     const [problems, setProblems] = useState<string[]>([]);
     const [failure, setFailure] = useState<string | null>(null);
-    // What a failed run did, so trying again resumes instead of repeating it.
-    const resume = useRef<Resume>(newResume());
+    const [locked, setLocked] = useState(false);
+    // What a failed run did, so trying again resumes instead of repeating it. Made on the
+    // first use, in the browser (keys come from getRandomValues, which plain HTTP pages have).
+    const resumeRef = useRef<Resume | null>(null);
+    const resume = () => (resumeRef.current ??= newResume());
     const choices = extendChoices(props.maxTtlSeconds).choices;
     const busy = step !== null;
+    const frozen = busy || locked;
 
-    async function submit(event: React.FormEvent) {
+    function startOver() {
+        resumeRef.current = null;
+        setLocked(false);
+        setFailure(null);
+        setProblems([]);
+        setFile(null);
+    }
+
+    async function submit(event: React.FormEvent<HTMLFormElement>) {
         event.preventDefault();
         if (busy) return;
+        const form = event.currentTarget;
+        const current = resume();
         const found = checkDeployForm({
-            needsName: !props.existing && !resume.current.previewId,
+            needsName: !props.existing && !fieldsLocked(current),
             name,
             file: file && { name: file.name, size: file.size },
             maxBytes: props.maxUploadBytes,
         });
-        if (!props.existing && !resume.current.previewId && !projectId) {
+        if (!props.existing && !fieldsLocked(current) && !projectId)
             found.push("Choose a project.");
-        }
         setProblems(found);
         setFailure(null);
         if (found.length > 0 || !file) return;
@@ -55,20 +79,23 @@ export function DeployPanel(props: {
             organizationId: props.organizationId,
             file,
             spa,
-            resume: resume.current,
+            resume: current,
             previewId: props.existing?.id,
             create: props.existing ? undefined : { projectId, slug: name, ttl: ttl || undefined },
             onStep: setStep,
         });
         setStep(null);
         if (!result.ok) {
+            afterFailure(current, result);
+            setLocked(fieldsLocked(current));
             setFailure(result.message);
             return;
         }
-        resume.current = newResume();
+        resumeRef.current = null;
+        setLocked(false);
         if (props.existing) {
             // Already on the preview's page: look again, and it follows the new deployment.
-            (event.target as HTMLFormElement).reset();
+            form.reset();
             setFile(null);
             await router.invalidate({ sync: true });
             return;
@@ -89,7 +116,7 @@ export function DeployPanel(props: {
                         <select
                             className="select inline-block w-auto"
                             value={projectId}
-                            disabled={busy || resume.current.previewId !== undefined}
+                            disabled={frozen}
                             onChange={(event) => setProjectId(event.target.value)}
                         >
                             {props.projects.map((project) => (
@@ -104,29 +131,31 @@ export function DeployPanel(props: {
                         <input
                             className="input inline-block w-auto"
                             value={name}
-                            disabled={busy || resume.current.previewId !== undefined}
+                            disabled={frozen}
                             onChange={(event) => setName(event.target.value)}
                             autoComplete="off"
                             spellCheck={false}
                             maxLength={40}
                         />
                     </label>
-                    <label className="block">
-                        Lives for{" "}
-                        <select
-                            className="select inline-block w-auto"
-                            value={ttl}
-                            disabled={busy || resume.current.previewId !== undefined}
-                            onChange={(event) => setTtl(event.target.value)}
-                        >
-                            <option value="">the server's default</option>
-                            {choices.map((choice) => (
-                                <option key={choice} value={choice}>
-                                    {choice}
-                                </option>
-                            ))}
-                        </select>
-                    </label>
+                    {props.lifecycleEnabled ? (
+                        <label className="block">
+                            Lives for{" "}
+                            <select
+                                className="select inline-block w-auto"
+                                value={ttl}
+                                disabled={frozen}
+                                onChange={(event) => setTtl(event.target.value)}
+                            >
+                                <option value="">the server's default</option>
+                                {choices.map((choice) => (
+                                    <option key={choice} value={choice}>
+                                        {choice}
+                                    </option>
+                                ))}
+                            </select>
+                        </label>
+                    ) : null}
                 </>
             ) : null}
             <label className="block">
@@ -137,9 +166,7 @@ export function DeployPanel(props: {
                     disabled={busy}
                     onChange={(event) => {
                         setFile(event.target.files?.[0] ?? null);
-                        // A different file is a different upload and a different deployment.
-                        resume.current.artifactId = undefined;
-                        resume.current.deployKey = newResume().deployKey;
+                        withNewFile(resume());
                     }}
                 />
             </label>
@@ -148,13 +175,27 @@ export function DeployPanel(props: {
                     type="checkbox"
                     checked={spa}
                     disabled={busy}
-                    onChange={(event) => setSpa(event.target.checked)}
+                    onChange={(event) => {
+                        setSpa(event.target.checked);
+                        withNewSpa(resume());
+                    }}
                 />{" "}
                 Single-page app (serve index.html for unknown paths)
             </label>
             <button type="submit" className="btn preset-filled" disabled={busy}>
-                {busy ? STEP_TEXT[step] : "Deploy"}
-            </button>
+                Deploy
+            </button>{" "}
+            {failure ? (
+                <button
+                    type="button"
+                    className="btn preset-tonal"
+                    disabled={busy}
+                    onClick={startOver}
+                >
+                    Start over
+                </button>
+            ) : null}
+            <p role="status">{step ? STEP_TEXT[step] : ""}</p>
             {problems.length > 0 ? (
                 <ul role="alert" className="list-disc pl-6">
                     {problems.map((problem) => (
@@ -165,15 +206,17 @@ export function DeployPanel(props: {
             {failure ? (
                 <p role="alert">
                     {failure}
-                    {resume.current.previewId && !props.existing
+                    {resumeRef.current?.previewId && !props.existing
                         ? " The preview was created; deploying again will use it."
                         : ""}
                 </p>
             ) : null}
             <p className="text-sm">
                 Make the archive from your built directory, for example{" "}
-                <code>tar -czf site.tar.gz -C dist .</code>. Links and files that look like secrets
-                are refused by the server.
+                <code>tar -czf site.tar.gz -C dist .</code> (on macOS, set{" "}
+                <code>COPYFILE_DISABLE=1</code> first). An archive that contains links or
+                secret-looking files (<code>.env</code>, <code>.git</code>, private keys) is refused
+                as a whole.
             </p>
         </form>
     );

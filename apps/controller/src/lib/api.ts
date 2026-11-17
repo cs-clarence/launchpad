@@ -60,7 +60,8 @@ export async function apiCall<T>(
         return {
             ok: false,
             status: null,
-            message: "Could not reach the server. Check your connection and retry.",
+            message:
+                "The request could not be completed. Check your connection (and that the chosen file has not changed on disk), then retry.",
         };
     }
     if (response.ok) {

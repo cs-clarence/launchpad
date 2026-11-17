@@ -1,6 +1,15 @@
 import { describe, expect, it } from "vitest";
 import type { ApiResult } from "./api";
-import { checkDeployForm, newResume, runDeploy, type Call } from "./deploy-flow";
+import {
+    afterFailure,
+    checkDeployForm,
+    fieldsLocked,
+    newResume,
+    runDeploy,
+    withNewFile,
+    withNewSpa,
+    type Call,
+} from "./deploy-flow";
 
 const MIB = 1024 * 1024;
 
@@ -160,6 +169,7 @@ describe("deploying from the dashboard", () => {
         expect(await runDeploy(input)).toEqual({
             ok: false,
             step: "upload",
+            status: 413,
             message: "The upload is larger than the allowed size.",
         });
         expect(resume.previewId).toBe(ID(2));
@@ -194,6 +204,7 @@ describe("deploying from the dashboard", () => {
         expect(result).toEqual({
             ok: false,
             step: "create",
+            status: 409,
             message: "That preview name is taken.",
         });
         expect(sent).toHaveLength(1);
@@ -205,5 +216,87 @@ describe("deploying from the dashboard", () => {
             resume: newResume(),
         });
         expect(none).toMatchObject({ ok: false, step: "create" });
+    });
+});
+
+describe("keys that cannot be reused wrongly", () => {
+    it("makes its keys without randomUUID, which plain-HTTP pages do not have", () => {
+        const real = globalThis.crypto;
+        Object.defineProperty(globalThis, "crypto", {
+            value: { getRandomValues: real.getRandomValues.bind(real) },
+            configurable: true,
+        });
+        try {
+            const a = newResume();
+            const b = newResume();
+            expect(a.createKey).toMatch(/^dashboard-preview-[0-9a-f]{32}$/);
+            expect(a.deployKey).toMatch(/^dashboard-deploy-[0-9a-f]{32}$/);
+            expect(a.createKey).not.toBe(b.createKey);
+        } finally {
+            Object.defineProperty(globalThis, "crypto", { value: real, configurable: true });
+        }
+    });
+
+    it("a new file or a changed setting makes a new deployment key, and a new file a new upload", () => {
+        const resume = newResume();
+        resume.artifactId = ID(3);
+        const before = resume.deployKey;
+        withNewSpa(resume);
+        expect(resume.deployKey).not.toBe(before);
+        expect(resume.artifactId).toBe(ID(3));
+        const second = resume.deployKey;
+        withNewFile(resume);
+        expect(resume.deployKey).not.toBe(second);
+        expect(resume.artifactId).toBeUndefined();
+    });
+
+    it("keeps the creation key and the fields when a creation may have gone through", () => {
+        for (const status of [null, 502, 504]) {
+            const resume = newResume();
+            const key = resume.createKey;
+            afterFailure(resume, { step: "create", status, message: "x" });
+            expect(resume.createKey).toBe(key);
+            expect(fieldsLocked(resume)).toBe(true);
+        }
+    });
+
+    it("starts a new creation after a definite refusal, which recorded nothing", () => {
+        for (const status of [409, 422, 403]) {
+            const resume = newResume();
+            const key = resume.createKey;
+            afterFailure(resume, { step: "create", status, message: "That name is taken." });
+            expect(resume.createKey).not.toBe(key);
+            expect(fieldsLocked(resume)).toBe(false);
+        }
+    });
+
+    it("forgets what no longer exists after a 404 on deploying", () => {
+        const resume = newResume();
+        resume.previewId = ID(2);
+        resume.artifactId = ID(3);
+        const key = resume.createKey;
+        afterFailure(resume, { step: "deploy", status: 404, message: "Artifact not found." });
+        expect(resume.artifactId).toBeUndefined();
+        expect(resume.previewId).toBe(ID(2));
+        resume.artifactId = ID(3);
+        afterFailure(resume, { step: "deploy", status: 404, message: "Preview not found." });
+        expect(resume.previewId).toBeUndefined();
+        expect(resume.createKey).not.toBe(key);
+        // Other failures change nothing.
+        resume.previewId = ID(2);
+        const keep = { ...resume };
+        afterFailure(resume, { step: "deploy", status: 409, message: "A deployment is running." });
+        expect(resume).toEqual(keep);
+    });
+
+    it("states a limit below a mebibyte in kibibytes", () => {
+        expect(
+            checkDeployForm({
+                needsName: false,
+                name: "",
+                file: { name: "a.tgz", size: 600_000 },
+                maxBytes: 512 * 1024,
+            })[0],
+        ).toContain("512 KiB");
     });
 });

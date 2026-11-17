@@ -39,6 +39,7 @@ function Previews() {
                         projects={view.projects}
                         maxUploadBytes={view.maxUploadBytes}
                         maxTtlSeconds={view.maxTtlSeconds}
+                        lifecycleEnabled={view.lifecycleEnabled}
                     />
                 ) : (
                     <p>Create a project first; previews belong to a project.</p>

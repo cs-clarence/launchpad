@@ -1,7 +1,7 @@
 import { createFileRoute, Link, redirect, useRouter } from "@tanstack/react-router";
 import type { z } from "zod";
 import type { deploymentSchema } from "@launchpad/contracts";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { DeployPanel } from "../components/deploy-panel";
 import { apiRequest } from "../lib/api";
 import { useNow } from "../lib/use-now";
@@ -111,7 +111,11 @@ function Progress(props: {
     deployment: Deployment;
     latest?: boolean;
     canResolve?: boolean;
+    // Called once when a deployment that was running when the page loaded has finished, so
+    // what depends on it (the deploy panel) looks again.
+    onFinished?: () => void;
 }) {
+    const wasMoving = useRef(isInProgress(props.deployment.status));
     const [deployment, setDeployment] = useState(props.deployment);
     const [events, setEvents] = useState<ProgressEvent[]>([]);
     const [lost, setLost] = useState(false);
@@ -137,6 +141,10 @@ function Progress(props: {
                 after = merged.after;
                 setEvents(known);
                 setDeployment((old) => ({ ...old, ...result.deployment }));
+                if (wasMoving.current && !isInProgress(result.deployment.status)) {
+                    wasMoving.current = false;
+                    props.onFinished?.();
+                }
                 // More events waiting: ask again at once; otherwise stop once finished.
                 if (result.events.nextAfter !== null) return void (timer = setTimeout(poll, 0));
                 if (!isInProgress(result.deployment.status)) return;
@@ -399,6 +407,7 @@ function Lifecycle(props: { view: Present }) {
 
 function PreviewDetail() {
     const loaded = Route.useLoaderData();
+    const router = useRouter();
     const [latest, ...older] = loaded.deployments;
     if (!loaded.preview) {
         // Deleted while the page was open (or before it was): its deletion is all that is left.
@@ -438,13 +447,26 @@ function PreviewDetail() {
             <h1 className="h2">{view.preview.hostname}</h1>
             <Lifecycle view={view} />
             {view.preview.state === "active" && view.canDeploy && view.deploymentsEnabled ? (
-                <DeployPanel
-                    organizationId={view.organization.id}
-                    projects={[]}
-                    maxUploadBytes={view.maxUploadBytes}
-                    maxTtlSeconds={view.maxTtlSeconds}
-                    existing={{ id: view.preview.id }}
-                />
+                // One deployment at a time: do not take an upload the server would refuse.
+                latest &&
+                (isInProgress(latest.status) || latest.status === "reconciliation-needed") ? (
+                    <p>
+                        A deployment is still{" "}
+                        {latest.status === "reconciliation-needed"
+                            ? "waiting for an administrator"
+                            : "running"}
+                        ; a new version can be deployed when it has finished.
+                    </p>
+                ) : (
+                    <DeployPanel
+                        organizationId={view.organization.id}
+                        projects={[]}
+                        maxUploadBytes={view.maxUploadBytes}
+                        maxTtlSeconds={view.maxTtlSeconds}
+                        lifecycleEnabled={view.lifecycleEnabled}
+                        existing={{ id: view.preview.id }}
+                    />
+                )
             ) : null}
             {latest ? (
                 <section className="space-y-3">
@@ -455,6 +477,7 @@ function PreviewDetail() {
                         deployment={latest}
                         latest
                         canResolve={view.canResolve}
+                        onFinished={() => void router.invalidate({ sync: true })}
                     />
                 </section>
             ) : (

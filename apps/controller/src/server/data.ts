@@ -127,7 +127,9 @@ async function deployFacts(
         canDeploy: services.can(role, "preview:deploy") && services.can(role, "preview:create"),
         deploymentsEnabled: runtime.previews.enabled,
         maxUploadBytes: services.resolveLimits(runtime.artifacts.limits).maxUploadBytes,
-        projects: (projects ?? []).map((p) => ({ id: p.id, name: p.name })),
+        projects: services.can(role, "preview:create")
+            ? (projects ?? []).map((p) => ({ id: p.id, name: p.name }))
+            : [],
     };
 }
 
