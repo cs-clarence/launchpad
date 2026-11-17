@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { DEFAULT_LIFECYCLE, lifecycleConfigFromEnv } from "./lifecycle";
+import { DEFAULT_LIFECYCLE, deletionsEnabled, lifecycleConfigFromEnv } from "./lifecycle";
 
 const DAY = 86_400;
 
@@ -62,5 +62,15 @@ describe("lifecycle configuration", () => {
             /must not be longer/,
         );
         expect(lifecycleConfigFromEnv({ LAUNCHPAD_MAX_TTL: "7d" }).maxTtlSeconds).toBe(7 * DAY);
+    });
+});
+
+describe("deletionsEnabled", () => {
+    it("needs deployments and the lifecycle both", () => {
+        const on = { enabled: true };
+        expect(deletionsEnabled({ enabled: true, lifecycle: on })).toBe(true);
+        expect(deletionsEnabled({ enabled: false, lifecycle: on })).toBe(false);
+        expect(deletionsEnabled({ enabled: true, lifecycle: { enabled: false } })).toBe(false);
+        expect(deletionsEnabled({ enabled: true })).toBe(false);
     });
 });

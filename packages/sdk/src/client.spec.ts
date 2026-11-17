@@ -318,7 +318,8 @@ describe("previews and deployments", () => {
         expect(calls[0]!.init.method).toBe("DELETE");
         expect(calls[0]!.init.body).toBeUndefined();
         expect(await client.deletions.get("org/1", ID)).toMatchObject({ status: "queued" });
-        await client.deletions.forPreview("org/1", ID);
+        expect(await client.deletions.forPreview("org/1", ID)).toMatchObject({ previewId: ID });
+        expect(calls[2]!.init.method).toBe("GET");
         expect(calls[2]!.url).toBe(
             `https://control.example.com/api/v1/organizations/org%2F1/previews/${ID}/deletion`,
         );

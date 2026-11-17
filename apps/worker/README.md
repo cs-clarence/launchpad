@@ -113,7 +113,7 @@ all rows and jobs are kept.
 - The first time the lifecycle is switched on, previews that are already overdue get a one-time
   24 h grace (recorded in the database) instead of being deleted within minutes.
 - The controller and the worker read `LAUNCHPAD_LIFECYCLE` separately; set both. The controller
-  refuses deletion requests while it is off.
+  refuses a new deletion unless both it and deployments are on.
 - Images loaded onto the Dokku host with `git:load-image` are not removed by the worker; only
   the worker's own Docker daemon is cleaned. Resolving a held deletion as "deleted" trusts the
   administrator and removes no images.

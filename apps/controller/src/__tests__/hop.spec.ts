@@ -1870,6 +1870,19 @@ describe("previews and deployments over HTTP", () => {
         expect(deletionSchema.parse(await byPreview.json()).id).toBe(deletion.operationId);
         expect(await status(call(limitedRead, `${otherPath}/deletion`))).toBe(404);
         expect(await status(call(deleteKey, `${ownPath}/deletion`))).toBe(403);
+        expect(
+            await status(call(readKey, `/organizations/${otherOrgId}/previews/${own.id}/deletion`)),
+        ).toBe(404);
+        expect(
+            await status(call(readKey, `/organizations/${orgId}/previews/not-a-uuid/deletion`)),
+        ).toBe(404);
+        expect((await api(viewer, `${ownPath}/deletion`)).status).toBe(200);
+        const never = await create(p1, "never-deleted");
+        expect(
+            await status(
+                call(limitedRead, `/organizations/${orgId}/previews/${never.id}/deletion`),
+            ),
+        ).toBe(404);
         expect(await status(call(deleteKey, opPath))).toBe(403);
         const operationResponse = await call(limitedRead, opPath);
         expect(operationResponse.status).toBe(200);

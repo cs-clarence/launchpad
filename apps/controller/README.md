@@ -209,9 +209,10 @@ Extension accepts `Idempotency-Key`: repeating it does not extend again and retu
 the current preview, not a snapshot of the original response; a different request
 with that key is 409. Extension never shortens an expiry and is capped at the
 instance maximum from now. Extending a never-expiring preview with a duration **gives it
-an expiry**. Once deleting, extension is 409.
+an expiry**. Once deleting, extension is 409 (a replay of an earlier key returns the current
+preview).
 
-A deleted preview is 404 for extension, like every other route. A deletion's `failure` is a
+A deleted preview is 404 for extension, like the other preview routes. A deletion's `failure` is a
 note from the last attempt, not necessarily a failure: read it with `status` (the codes are
 listed in the OpenAPI schema); only `reconciliation-needed` needs a person.
 

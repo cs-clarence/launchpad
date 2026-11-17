@@ -8,6 +8,7 @@ import {
     extendPreview,
     requestPreviewDeletion,
     getDeletion,
+    deletionsEnabled,
     getPreviewDeletion,
     deletionProjectId,
     resolveDeletion,
@@ -694,7 +695,7 @@ export function createApi(deps: {
                             return requestPreviewDeletion(db, p, params.orgId, params.previewId, {
                                 // The worker does nothing without deployments, so a deletion
                                 // accepted without them would never run.
-                                enabled: previews.enabled && (previews.lifecycle?.enabled ?? false),
+                                enabled: deletionsEnabled(previews),
                             });
                         },
                         202,
