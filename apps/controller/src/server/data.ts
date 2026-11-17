@@ -163,11 +163,23 @@ export const getPreviewDetailFn = createServerFn({ method: "GET" })
             data.orgId,
             data.previewId,
         );
+        // A preview that is going away (or gone) shows its deletion, whoever started it.
+        const deletion =
+            preview.state === "active"
+                ? null
+                : await services
+                      .getPreviewDeletion(runtime.db, who, data.orgId, data.previewId)
+                      .catch(() => null);
         return {
             organization: { id: organization.id, name: organization.name },
             preview,
             deployments: deployments.items,
             canResolve: services.can(organization.role, "preview:resolve"),
+            // Buttons are hidden for roles that could not use them; the API checks again.
+            canExtend: services.can(organization.role, "preview:deploy"),
+            canDelete: services.can(organization.role, "preview:delete"),
+            deletionsAvailable: services.deletionsEnabled(runtime.previews),
+            deletion,
         };
     });
 

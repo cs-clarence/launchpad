@@ -1,5 +1,13 @@
 import { describe, expect, it } from "vitest";
-import { isInProgress, mergeEvents, statusLabel } from "./previews";
+import {
+    deletionLabel,
+    deletionNeedsPerson,
+    describeExpiry,
+    isDeletionInProgress,
+    isInProgress,
+    mergeEvents,
+    statusLabel,
+} from "./previews";
 
 const event = (seq: number) => ({
     seq,
@@ -33,5 +41,39 @@ describe("preview progress", () => {
         expect(next.events.map((e) => e.seq)).toEqual([1, 2, 3]);
         expect(next.after).toBe(3);
         expect(mergeEvents([], []).after).toBe(0);
+    });
+});
+
+describe("preview lifetimes", () => {
+    const NOW = Date.parse("2026-11-17T00:00:00.000Z");
+    const at = (ms: number) => new Date(NOW + ms).toISOString();
+    it("describes when a preview goes, for people", () => {
+        const active = (expiresAt: string | null) => ({ state: "active", expiresAt });
+        expect(describeExpiry(active(null), NOW)).toBe("Never expires");
+        expect(describeExpiry(active(at(30 * 60_000)), NOW)).toBe("Expires in 30 minutes");
+        expect(describeExpiry(active(at(60_000)), NOW)).toBe("Expires in 1 minute");
+        expect(describeExpiry(active(at(5 * 3_600_000)), NOW)).toBe("Expires in 5 hours");
+        expect(describeExpiry(active(at(3 * 86_400_000)), NOW)).toBe("Expires in 3 days");
+        expect(describeExpiry(active(at(-1)), NOW)).toBe("Expired, will be deleted shortly");
+        expect(describeExpiry(active("nonsense"), NOW)).toBe("Unknown");
+        expect(describeExpiry({ state: "deleting", expiresAt: at(1000) }, NOW)).toBe(
+            "Being deleted",
+        );
+        expect(describeExpiry({ state: "deleted", expiresAt: null }, NOW)).toBe("Deleted");
+        expect(
+            describeExpiry(active(new Date(NOW + 2 * 3_600_000) as unknown as string), NOW),
+        ).toBe("Expires in 2 hours");
+    });
+
+    it("tells a deletion in progress from one that needs a person", () => {
+        expect(deletionLabel("reconciliation-needed")).toBe("Needs an administrator");
+        expect(deletionLabel("future")).toBe("future");
+        expect(deletionNeedsPerson("reconciliation-needed")).toBe(true);
+        for (const s of ["queued", "running", "succeeded"])
+            expect(deletionNeedsPerson(s)).toBe(false);
+        expect(isDeletionInProgress("queued")).toBe(true);
+        expect(isDeletionInProgress("running")).toBe(true);
+        expect(isDeletionInProgress("succeeded")).toBe(false);
+        expect(isDeletionInProgress("reconciliation-needed")).toBe(false);
     });
 });

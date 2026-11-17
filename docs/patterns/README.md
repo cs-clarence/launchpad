@@ -35,6 +35,11 @@ The CLI's deploy command uses the same resolver. File selection for deploys (ope
 include/exclude globs, exclude wins) lives in `packages/client-core/src/pack.ts`. MCP output is bounded and uses
 the same `safeOutput` redaction/control stripping as the CLI (client-core).
 
+The preview page's lifetime controls live in `routes/orgs_.$orgId.previews.$previewId.tsx` and
+read through `getPreviewDetailFn`, which returns role flags (`canExtend`, `canDelete`,
+`canResolve`) and `deletionsEnabled` from the runtime's settings; the list is the
+`previews.index` route so the two are siblings (a list route without an `<Outlet/>` hides its
+children). Pure wording helpers are in `src/lib/previews.ts`.
 The health endpoint reports static metadata, not PostgreSQL/Dokku readiness.
 Lifecycle requests are now exposed by `src/server/api.ts`: delete and extend enforce key
 scope plus project limits through `previewProjectId`; deletion reads use

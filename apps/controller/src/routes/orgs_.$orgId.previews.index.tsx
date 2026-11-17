@@ -1,9 +1,9 @@
 import { createFileRoute, Link, redirect } from "@tanstack/react-router";
-import { statusLabel } from "../lib/previews";
+import { describeExpiry, statusLabel } from "../lib/previews";
 import { getPreviewsViewFn } from "../server/data";
 import { getCurrentUser } from "../server/session";
 
-export const Route = createFileRoute("/orgs_/$orgId/previews")({
+export const Route = createFileRoute("/orgs_/$orgId/previews/")({
     beforeLoad: async () => {
         if (!(await getCurrentUser())) {
             throw redirect({ to: "/login" });
@@ -52,7 +52,7 @@ function Previews() {
                             </span>
                             <div className="text-sm">
                                 {preview.projectName ?? "Unknown project"} ·{" "}
-                                <code>{preview.slug}</code>
+                                <code>{preview.slug}</code> · {describeExpiry(preview, Date.now())}
                             </div>
                         </li>
                     ))}

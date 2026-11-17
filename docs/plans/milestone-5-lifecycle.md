@@ -248,3 +248,8 @@ content could be re-published by hand from storage, and after it nothing can.
   and says so for an existing one), an EXPIRES column; client-core `extendPreview` (one idempotency key
   per call), `deletePreview`, `previewDeletion`. `delete` needs `--yes` and sends nothing without it.
   Dashboard controls and the approved upload/deploy panel are 5b-2.
+- Slice 5b-2 (dashboard lifecycle): expiry on the list and preview pages, role-aware Extend and
+  Delete, a deletion's status (also one started by expiry) with resolve for administrators,
+  refreshing while it runs. Found by its HTTP test: the preview page had never been reachable (the
+  list route was its parent and had no outlet); the list is now an index route. The approved site
+  upload/deploy panel is 5b-3.
