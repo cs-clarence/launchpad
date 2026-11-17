@@ -305,7 +305,11 @@ export function createClient(options: ClientOptions) {
                     input,
                     opts,
                 ),
-            delete: (organizationId: string, previewId: string, opts: RequestOptions = {}) =>
+            delete: (
+                organizationId: string,
+                previewId: string,
+                opts: { signal?: AbortSignal } = {},
+            ) =>
                 request(
                     "DELETE",
                     `/organizations/${seg(organizationId)}/previews/${seg(previewId)}`,
@@ -340,7 +344,24 @@ export function createClient(options: ClientOptions) {
                 ),
         },
         deletions: {
-            get: (organizationId: string, operationId: string, opts: RequestOptions = {}) =>
+            // The latest deletion of a preview, whoever started it.
+            forPreview: (
+                organizationId: string,
+                previewId: string,
+                opts: { signal?: AbortSignal } = {},
+            ) =>
+                request(
+                    "GET",
+                    `/organizations/${seg(organizationId)}/previews/${seg(previewId)}/deletion`,
+                    loose(deletionSchema),
+                    undefined,
+                    { signal: opts.signal },
+                ),
+            get: (
+                organizationId: string,
+                operationId: string,
+                opts: { signal?: AbortSignal } = {},
+            ) =>
                 request(
                     "GET",
                     `/organizations/${seg(organizationId)}/deletions/${seg(operationId)}`,

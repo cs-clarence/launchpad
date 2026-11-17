@@ -29,7 +29,8 @@ Depends on `zod` and `@launchpad/contracts` only; no filesystem or credential st
 - `client.previews.delete(orgId, previewId)` queues deletion and returns
   `{ operationId, state: "deleting" }`. Requires `preview:delete` and enabled lifecycle.
   Repeating while deleting returns the same operation; after deletion it is 404.
-- `client.deletions.get(orgId, operationId)` polls the operation with `preview:read`.
+- `client.deletions.forPreview(orgId, previewId)` finds a preview's latest deletion, whoever
+  started it. `client.deletions.get(orgId, operationId)` polls the operation with `preview:read`.
   `reconciliation-needed` requires an administrator's session; resolution is intentionally
   not exposed by this bearer-only SDK.
 

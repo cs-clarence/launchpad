@@ -197,12 +197,13 @@ All paths below are under `/api/v1/organizations/:orgId`. Mutations require depl
 or higher unless noted; API keys also need the named scope and access to the owning
 project. Cookie mutations keep the same-origin requirement.
 
-| Method and path                                                                                       | Result                                                                 | Key scope                                              |
-| ----------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------- | ------------------------------------------------------ |
-| `POST /previews/:previewId/extend` with `{ "ttl": "24h" }`                                            | 200 preview with resulting `expiresAt`                                 | `preview:deploy`                                       |
-| `DELETE /previews/:previewId`                                                                         | 202 `{ operationId, state: "deleting" }`                               | `preview:delete`                                       |
-| `GET /deletions/:operationId`                                                                         | 200 deletion status, reason, fixed failure text, creation/finish times | `preview:read`                                         |
-| `POST /deletions/:operationId/resolution` with `{ "outcome": "retry" }` or `{ "outcome": "deleted" }` | 200 `{ ok: true }`                                                     | Session only: admin/owner, signed in within 15 minutes |
+| Method and path                                                                                       | Result                                                                                  | Key scope                                              |
+| ----------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------- | ------------------------------------------------------ |
+| `POST /previews/:previewId/extend` with `{ "ttl": "24h" }`                                            | 200 preview with resulting `expiresAt`                                                  | `preview:deploy`                                       |
+| `DELETE /previews/:previewId`                                                                         | 202 `{ operationId, state: "deleting" }`                                                | `preview:delete`                                       |
+| `GET /previews/:previewId/deletion`                                                                   | 200 the preview's latest deletion, whoever started it (a person or expiry); 404 if none | `preview:read`                                         |
+| `GET /deletions/:operationId`                                                                         | 200 deletion status, reason, fixed failure text, creation/finish times                  | `preview:read`                                         |
+| `POST /deletions/:operationId/resolution` with `{ "outcome": "retry" }` or `{ "outcome": "deleted" }` | 200 `{ ok: true }`                                                                      | Session only: admin/owner, signed in within 15 minutes |
 
 Extension accepts `Idempotency-Key`: repeating it does not extend again and returns
 the current preview, not a snapshot of the original response; a different request
@@ -210,9 +211,14 @@ with that key is 409. Extension never shortens an expiry and is capped at the
 instance maximum from now. Extending a never-expiring preview with a duration **gives it
 an expiry**. Once deleting, extension is 409.
 
+A deleted preview is 404 for extension, like every other route. A deletion's `failure` is a
+note from the last attempt, not necessarily a failure: read it with `status` (the codes are
+listed in the OpenAPI schema); only `reconciliation-needed` needs a person.
+
 Deletion cannot be undone. It only queues work; it does not wait for Dokku. Set
-`LAUNCHPAD_LIFECYCLE=on` in both controller and worker (and enable worker deployments);
-the controller refuses deletion with 409 while lifecycle is off. Repeated DELETE
+`LAUNCHPAD_LIFECYCLE=on` and `LAUNCHPAD_DEPLOYMENTS=on` in both controller and worker (the
+worker does nothing without deployments);
+the controller refuses a new deletion with 409 unless both are on. Repeated DELETE
 returns the same operation while deleting, without needing an idempotency key; after
 deletion it is 404. Poll the operation: `queued`, `running`, `succeeded`, or
 `reconciliation-needed`. For reconciliation, check the host first: `retry` queues

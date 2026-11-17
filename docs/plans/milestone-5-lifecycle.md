@@ -235,3 +235,12 @@ content could be re-published by hand from storage, and after it nothing can.
   Removing the delete project's allow-list check makes the HTTP test fail (202 vs 404).
   Local gate, integration and Node-container gate pass. CLI/dashboard work is slice 5b;
   the approved upload/deploy panel may follow as its own PR.
+- Slice 5a review (Opus 5.5, after merge; from now on every slice is reviewed before it is pushed):
+  no blockers. Fixed: `GET previews/:id/deletion` (an operation could not be found from its
+  preview, so expiry-started deletions could not be resolved), the controller refuses a new
+  deletion unless deployments are also on, `failure` documented as a note per status, extension
+  of a deleted preview is 404 and a replayed key is answered whatever has changed since, a repeat
+  of an already queued deletion is answered while lifecycle is off, SDK option types narrowed.
+  Not changed: the project-limited "Project not found" vs "Preview not found" message (same as
+  existing routes; both 404). The CLI's deploy retry must expect a replayed create to return a
+  deleted preview.

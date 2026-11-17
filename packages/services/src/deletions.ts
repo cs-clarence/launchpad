@@ -33,6 +33,30 @@ export async function deletionProjectId(
     return row.project_id;
 }
 
+// The latest deletion of a preview, so a client that did not start it (an expiry did, or the
+// response was lost) can follow it and, if it is held, have it resolved.
+export async function getPreviewDeletion(
+    db: Db,
+    principal: Principal,
+    organizationId: string,
+    previewId: string,
+) {
+    await requireMembership(db, principal, organizationId, "preview:read");
+    if (!z.uuid().safeParse(previewId).success) {
+        throw new ServiceError("not-found", "Preview not found.");
+    }
+    const row = await db
+        .selectFrom("deletion_operation")
+        .select("id")
+        .where("organization_id", "=", organizationId)
+        .where("preview_id", "=", previewId)
+        .orderBy("created_at", "desc")
+        .limit(1)
+        .executeTakeFirst();
+    if (!row) throw new ServiceError("not-found", "That preview has no deletion.");
+    return getDeletion(db, principal, organizationId, row.id);
+}
+
 export async function getDeletion(
     db: Db,
     principal: Principal,
@@ -137,10 +161,6 @@ export async function requestPreviewDeletion(
     deps: { enabled: boolean },
 ) {
     await requireMembership(db, principal, organizationId, "preview:delete");
-    // Nothing would ever process it: a preview left `deleting` can neither be deployed nor
-    // revived, and its app would keep serving. The controller and the worker read
-    // LAUNCHPAD_LIFECYCLE separately, so both must agree.
-    if (!deps.enabled) throw new ServiceError("conflict", "Deletion is not enabled.");
     if (!z.uuid().safeParse(previewId).success) {
         throw new ServiceError("not-found", "Preview not found.");
     }
@@ -167,6 +187,10 @@ export async function requestPreviewDeletion(
                 .executeTakeFirstOrThrow();
             return { operationId: existing.id, state: "deleting" as const };
         }
+        // Nothing would ever process a new operation: a preview left `deleting` can neither
+        // be deployed nor revived, and its app would keep serving. Repeating a request for
+        // one already queued (by expiry, say) is still answered above.
+        if (!deps.enabled) throw new ServiceError("conflict", "Deletion is not enabled.");
         const { operationId } = await queueDeletion(trx, {
             organizationId,
             previewId,

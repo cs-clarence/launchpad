@@ -194,7 +194,8 @@ beforeAll(async () => {
             })
             .execute();
     }
-    direct = await start(false, { LAUNCHPAD_API_DOCS: "false" });
+    // Lifecycle is on here while deployments are off: a deletion would never be run.
+    direct = await start(false, { LAUNCHPAD_API_DOCS: "false", LAUNCHPAD_LIFECYCLE: "on" });
     // Deployments are on here (no worker runs in these tests); `direct` leaves them off.
     proxied = await start(true, {
         LAUNCHPAD_DEPLOYMENTS: "on",
@@ -1864,6 +1865,11 @@ describe("previews and deployments over HTTP", () => {
             ),
         ).toBe(409);
         const opPath = `/organizations/${orgId}/deletions/${deletion.operationId}`;
+        // The operation is also found from the preview, by whoever may read it.
+        const byPreview = await call(limitedRead, `${ownPath}/deletion`);
+        expect(deletionSchema.parse(await byPreview.json()).id).toBe(deletion.operationId);
+        expect(await status(call(limitedRead, `${otherPath}/deletion`))).toBe(404);
+        expect(await status(call(deleteKey, `${ownPath}/deletion`))).toBe(403);
         expect(await status(call(deleteKey, opPath))).toBe(403);
         const operationResponse = await call(limitedRead, opPath);
         expect(operationResponse.status).toBe(200);
@@ -2091,6 +2097,7 @@ describe("OpenAPI reference", () => {
         "get /api/v1/organizations/{orgId}/previews/{previewId}",
         "delete /api/v1/organizations/{orgId}/previews/{previewId}",
         "post /api/v1/organizations/{orgId}/previews/{previewId}/extend",
+        "get /api/v1/organizations/{orgId}/previews/{previewId}/deletion",
         "get /api/v1/organizations/{orgId}/deletions/{operationId}",
         "post /api/v1/organizations/{orgId}/deletions/{operationId}/resolution",
         "post /api/v1/organizations/{orgId}/previews/{previewId}/deployments",

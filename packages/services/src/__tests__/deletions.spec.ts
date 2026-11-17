@@ -12,6 +12,7 @@ import {
     DEFAULT_LIFECYCLE,
     enqueueDeployment,
     expirePreviews,
+    getPreviewDeletion,
     MAX_DELETION_ATTEMPTS,
     OWNED_APP_PATTERN,
     removeMember,
@@ -355,6 +356,46 @@ describe("asking for a deletion while the lifecycle is off", () => {
                 requestPreviewDeletion(testDb.db, people.zoe!, org, p.id, { enabled: false }),
             ),
         ).toBe("not-found");
+    });
+});
+
+describe("repeating a deletion request while the lifecycle is off", () => {
+    it("still answers one already queued, and finds not-found before the setting", async () => {
+        const p = await make();
+        const queued = await request(p.id);
+        const off = await requestPreviewDeletion(testDb.db, people.dee!, org, p.id, {
+            enabled: false,
+        });
+        expect(off.operationId).toBe(queued.operationId);
+        expect(
+            await code(
+                requestPreviewDeletion(testDb.db, people.dee!, org, randomUUID(), {
+                    enabled: false,
+                }),
+            ),
+        ).toBe("not-found");
+    });
+});
+
+describe("finding a preview's deletion", () => {
+    it("returns the latest one, with its note, to a reader, and not-found to others", async () => {
+        const p = await make();
+        expect(await code(getPreviewDeletion(testDb.db, people.dee!, org, p.id))).toBe("not-found");
+        const queued = await request(p.id);
+        const found = await getPreviewDeletion(testDb.db, people.dee!, org, p.id);
+        expect(found).toMatchObject({ id: queued.operationId, status: "queued", failure: null });
+        await testDb.db
+            .updateTable("deletion_operation")
+            .set({ status: "succeeded", failure_code: "images-left-behind", failure_message: null })
+            .where("id", "=", queued.operationId)
+            .execute();
+        // A success can carry a note, and the message falls back to a fixed text.
+        expect(await getPreviewDeletion(testDb.db, people.dee!, org, p.id)).toMatchObject({
+            status: "succeeded",
+            failure: { code: "images-left-behind", message: expect.any(String) },
+        });
+        expect(await code(getPreviewDeletion(testDb.db, people.zoe!, org, p.id))).toBe("not-found");
+        expect(await code(getPreviewDeletion(testDb.db, people.dee!, org, "x"))).toBe("not-found");
     });
 });
 

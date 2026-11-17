@@ -100,7 +100,10 @@ export const deletionSchema = z.strictObject({
     previewId: z.uuid(),
     status: z.enum(["queued", "running", "succeeded", "reconciliation-needed"]),
     reason: z.enum(["manual", "expired"]),
-    failure: z.strictObject({ code: z.string(), message: z.string() }).nullable(),
+    failure: z.strictObject({ code: z.string(), message: z.string() }).nullable().meta({
+        description:
+            "A note from the last attempt, not necessarily a failure: read it together with `status`. Codes: `destroy-waiting` and `destroy-retry` (queued or running: a retry is scheduled), `images-retry`, `images-left-behind` and `resolved-deleted` (succeeded), `too-many-attempts`, `destroy-uncertain`, `destroy-rejected` and `unexpected-state` (reconciliation-needed). Only `reconciliation-needed` needs a person. Codes may be added.",
+    }),
     createdAt: z.string().meta({ format: "date-time" }),
     finishedAt: z.string().meta({ format: "date-time" }).nullable(),
 });

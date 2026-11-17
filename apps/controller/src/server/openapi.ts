@@ -340,7 +340,7 @@ export const docs = {
         tags: ["Previews"],
         summary: "Extend a preview's lifetime",
         description:
-            "Needs deployer or higher and preview:deploy for keys. Never shortens an expiry; capped at the instance maximum from now. Extending a never-expiring preview with a duration gives it an expiry. Replaying an idempotency key does not extend again and returns the current preview, which may differ from the original response. A deleting preview cannot be extended.",
+            "Needs deployer or higher and preview:deploy for keys. Never shortens an expiry; capped at the instance maximum from now. Extending a never-expiring preview with a duration gives it an expiry; `none` removes the expiry where the instance allows it. A deleted preview is 404. Replaying an idempotency key does not extend again and returns the current preview, which may differ from the original response. A deleting preview cannot be extended.",
         path: ["orgId", "previewId"],
         idempotent: true,
         body: extendPreviewSchema,
@@ -352,10 +352,20 @@ export const docs = {
         tags: ["Previews"],
         summary: "Queue a preview's deletion",
         description:
-            "Needs deployer or higher, preview:delete for keys, and lifecycle enabled in the controller and worker. Returns at once; poll the deletion operation. Repeating DELETE while deleting returns the same operation; once deleted it returns 404. No idempotency key is needed. Cannot be undone.",
+            "Needs deployer or higher, preview:delete for keys, and deployments and lifecycle enabled in the controller and worker (409 otherwise, for a new deletion). Returns at once; poll the deletion operation. Repeating DELETE while deleting returns the same operation; once deleted it returns 404. No idempotency key is needed. Cannot be undone.",
         path: ["orgId", "previewId"],
         ok: { status: 202, description: "Deletion queued.", schema: requestedDeletionSchema },
         errors: [401, 403, 404, 409],
+    }),
+    getPreviewDeletion: operation({
+        keys: true,
+        tags: ["Previews"],
+        summary: "Get a preview's deletion",
+        description:
+            "The latest deletion of the preview, whoever started it (a person or expiry). Needs preview:read for keys and access to the project. 404 if the preview has none. Use it to follow a deletion or find the operation an administrator must resolve.",
+        path: ["orgId", "previewId"],
+        ok: { description: "Deletion status.", schema: deletionSchema },
+        errors: [401, 403, 404],
     }),
     getDeletion: operation({
         keys: true,
