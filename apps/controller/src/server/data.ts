@@ -115,6 +115,24 @@ export const getInvitationPreviewFn = createServerFn({ method: "POST" })
 
 const orgInput = (input: unknown) => z.object({ orgId: z.string().min(1).max(64) }).parse(input);
 
+// What the deploy panel needs. The buttons are only for roles that could use them; the API
+// checks again.
+async function deployFacts(
+    services: typeof import("@launchpad/services"),
+    runtime: ReturnType<typeof import("./runtime").getRuntime>,
+    role: Parameters<typeof import("@launchpad/services").can>[0],
+    projects: { id: string; name: string }[] | null,
+) {
+    return {
+        canDeploy: services.can(role, "preview:deploy") && services.can(role, "preview:create"),
+        deploymentsEnabled: runtime.previews.enabled,
+        maxUploadBytes: services.resolveLimits(runtime.artifacts.limits).maxUploadBytes,
+        projects: services.can(role, "preview:create")
+            ? (projects ?? []).map((p) => ({ id: p.id, name: p.name }))
+            : [],
+    };
+}
+
 export const getPreviewsViewFn = createServerFn({ method: "GET" })
     .validator(orgInput)
     .handler(async ({ data }) => {
@@ -147,6 +165,8 @@ export const getPreviewsViewFn = createServerFn({ method: "GET" })
             more: previews.nextCursor !== null,
             now: Date.now(),
             lifecycleEnabled: runtime.previews.lifecycle?.enabled ?? false,
+            maxTtlSeconds: runtime.previews.lifecycle?.maxTtlSeconds ?? 30 * 86_400,
+            ...(await deployFacts(services, runtime, organization.role, projects)),
         };
     });
 
@@ -191,6 +211,7 @@ export const getPreviewDetailFn = createServerFn({ method: "GET" })
             now: Date.now(),
             lifecycleEnabled: runtime.previews.lifecycle?.enabled ?? false,
             maxTtlSeconds: runtime.previews.lifecycle?.maxTtlSeconds ?? 30 * 86_400,
+            ...(await deployFacts(services, runtime, organization.role, null)),
             deployments: deployments.items,
             canResolve: services.can(organization.role, "preview:resolve"),
             // Buttons are hidden for roles that could not use them; the API checks again.

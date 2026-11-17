@@ -253,3 +253,15 @@ content could be re-published by hand from storage, and after it nothing can.
   refreshing while it runs. Found by its HTTP test: the preview page had never been reachable (the
   list route was its parent and had no outlet); the list is now an index route. The approved site
   upload/deploy panel is 5b-3.
+- Slice 5b-3 (dashboard deploy, approved 2026-11-17; Medium risk, no server change): a panel on
+  the previews list (new preview) and on a preview's page (new version) takes a built site as a
+  `.tar.gz` (not a directory: a browser cannot pack one the way the CLI does, with its secret and
+  link refusals), and drives the same three calls the CLI does over the cookie API: create the
+  preview (when new), upload the archive raw, queue the deployment, each with an idempotency key
+  that stays the same on a retry, and then opens the preview page, which already follows the
+  deployment. A retry after a failure resumes from the step that failed (a created preview or a
+  stored archive is not made twice). The browser checks name, file type and size first only as a
+  convenience; the server's limits, role checks and origin check are the rule. Hidden for roles that
+  cannot deploy, and replaced by a note when deployments are off. Verify: unit tests of the flow
+  with a fake API (steps, keys, resuming, failures), HTTP tests of what each role sees, and the
+  existing API tests of the calls it makes. Not covered: a browser test of the file picker.

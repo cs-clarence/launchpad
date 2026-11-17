@@ -191,6 +191,19 @@ default off): then expired previews are deleted, and stored archives are collect
 Retention must be at least `1h`. The first time the worker enables lifecycle for this
 database, already-overdue previews get a one-time 24 h grace.
 
+### Deploying from the dashboard
+
+The previews page has a **Deploy a site** form (a preview's own page has **Deploy a new
+version**) for deployers and above, when deployments are on. It takes the built site as a
+`.tar.gz` (`tar -czf site.tar.gz -C dist .`), not a directory: unlike the CLI, a browser does
+not pack a directory, so link and secret-looking-file refusals are the server's (the upload is
+validated while it streams). It makes the CLI's three calls with your session: create the
+preview (name, project, optional lifetime), upload the archive, queue the deployment, then opens
+the preview page, which follows it. Each call carries an idempotency key that stays the same on a
+retry, and a retry after a failure resumes from the step that failed (a created preview or a
+stored archive is not made twice). The browser's checks of name, file type and size only save a
+round trip; the server's limits (`LAUNCHPAD_MAX_UPLOAD_BYTES`, the artifact ceiling) decide.
+
 ### Dashboard preview page
 
 `/orgs/:orgId/previews` lists previews with when each expires; a preview's page
