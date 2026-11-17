@@ -201,11 +201,15 @@ deleted, as after any downtime.
   tag; images loaded onto a **separate** Dokku host with `git:load-image` are not removed (disk
   there grows with each deployment until you clear them). If an image cannot be removed the deletion
   still finishes and records `images-left-behind`.
-- Stored archives are kept for `LAUNCHPAD_ARTIFACT_RETENTION` (default 7 days) after the preview is
-  deleted (or after an upload nobody deployed), then collected by the worker's next collection
-  (every ten minutes). Until then they count toward `LAUNCHPAD_MAX_ARTIFACTS`: **deleting previews
-  does not free the artifact ceiling at once**, and within the window a deleted preview's content
-  could be re-published by hand from storage.
+- A stored archive is collected by the worker (a collection runs every ten minutes) only when
+  **nothing live needs it**: no preview that still exists, and no unfinished deployment, refers
+  to it, and `LAUNCHPAD_ARTIFACT_RETENTION` (default 7 days, at least 1 hour) has passed since the
+  last preview that used it was deleted (or since an upload nobody deployed was stored). Until
+  then it counts toward `LAUNCHPAD_MAX_ARTIFACTS`: **deleting a preview does not free the
+  artifact ceiling at once**, and if another live preview shares the same archive (identical
+  uploads are deduplicated within an organization) deleting one preview does not start any
+  collection deadline for it. Within the window a deleted preview's content could be
+  re-published by hand from storage.
 - Not built: runtime logs (a static site writes none worth keeping, and deployment progress is in
   the events), restoring a deleted preview, backup and restore, quotas set per organization (the limits that exist
   are instance-wide), and a
