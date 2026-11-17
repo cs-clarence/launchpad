@@ -619,6 +619,8 @@ async function execute(
                 },
             );
             return "reconciliation-needed";
+        } finally {
+            deadline.stop();
         }
         await fenced(
             db,
@@ -789,6 +791,8 @@ async function execute(
                 { phase: step, level: "error", message: `The ${step} step failed.` },
             );
             return "failed";
+        } finally {
+            deadline.stop();
         }
         await fenced(
             db,

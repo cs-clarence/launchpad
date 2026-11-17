@@ -561,6 +561,8 @@ async function execute(
                 failure_message: "Destroying the app did not finish; it will be tried again.",
             });
             return "retry";
+        } finally {
+            deadline.stop();
         }
         await fenced(db, claim, { step_done: "destroy", step_pending: null });
     }
@@ -595,6 +597,8 @@ async function execute(
             // The app is gone; leftover images cost disk, not correctness, so the deletion
             // is finished and the leftover is recorded rather than held for a person.
             imagesLeft = true;
+        } finally {
+            deadline.stop();
         }
         await fenced(db, claim, { step_done: "images", step_pending: null });
     }

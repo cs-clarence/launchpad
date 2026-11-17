@@ -333,6 +333,34 @@ describe("idempotency across previews", () => {
 });
 
 describe("running a deployment", () => {
+    it("leaves no clock watcher running once the work under the lease is done", async () => {
+        const made: unknown[] = [];
+        const cleared = new Set<unknown>();
+        const realSet = globalThis.setInterval;
+        const realClear = globalThis.clearInterval;
+        globalThis.setInterval = ((...args: Parameters<typeof setInterval>) => {
+            const handle = realSet(...args);
+            made.push(handle);
+            return handle;
+        }) as typeof setInterval;
+        globalThis.clearInterval = ((handle: Parameters<typeof clearInterval>[0]) => {
+            cleared.add(handle);
+            return realClear(handle);
+        }) as typeof clearInterval;
+        try {
+            const preview = await freshPreview();
+            await queue(preview);
+            const f = fake();
+            expect(await runDeployment(testDb.db, await claimed(), f.ports)).toBe("succeeded");
+        } finally {
+            globalThis.setInterval = realSet;
+            globalThis.clearInterval = realClear;
+        }
+        // Every step watched the clock, and every watcher was stopped when its step ended.
+        expect(made.length).toBeGreaterThanOrEqual(5);
+        expect(made.filter((handle) => !cleared.has(handle))).toEqual([]);
+    });
+
     it("goes through every step in order and activates only at the end", async () => {
         const preview = await freshPreview();
         const d = await queue(preview);

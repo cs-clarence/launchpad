@@ -12,6 +12,9 @@ export interface Deadline {
     // the machine wakes), so steps that follow one another under one signal, as a rollback's
     // do, stop after a suspend instead of carrying on with a lease that has run out.
     signal(): AbortSignal;
+    // Stops watching, for every signal given out. Called when the work under the lease is done,
+    // so nothing keeps looking at the clock until the lease would have run out.
+    stop(): void;
 }
 
 const WALL_POLL_MS = 1000;
@@ -20,6 +23,7 @@ export function startDeadline(ms: number): Deadline {
     const monotonic = performance.now() + ms;
     const wall = Date.now() + ms;
     const passedNow = () => performance.now() >= monotonic || Date.now() >= wall;
+    const watchers = new Set<() => void>();
     return {
         passed: passedNow,
         remainingMs: () => Math.max(1, Math.floor(monotonic - performance.now())),
@@ -28,7 +32,9 @@ export function startDeadline(ms: number): Deadline {
             const stop = () => {
                 clearTimeout(timer);
                 clearInterval(poll);
+                watchers.delete(stop);
             };
+            watchers.add(stop);
             const expire = () => {
                 stop();
                 controller.abort(new DOMException("The lease deadline passed.", "TimeoutError"));
@@ -44,6 +50,9 @@ export function startDeadline(ms: number): Deadline {
             timer.unref?.();
             poll.unref?.();
             return controller.signal;
+        },
+        stop: () => {
+            for (const stop of [...watchers]) stop();
         },
     };
 }

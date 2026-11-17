@@ -77,4 +77,22 @@ describe("a lease deadline", () => {
             vi.useRealTimers();
         }
     });
+
+    it("stops watching on request, for every signal it gave out, and nothing is left running", async () => {
+        vi.useFakeTimers();
+        try {
+            const deadline = startDeadline(600_000);
+            const a = deadline.signal();
+            const b = deadline.signal();
+            expect(vi.getTimerCount()).toBe(4);
+            deadline.stop();
+            // The work is done well before the lease: no timer or poll remains.
+            expect(vi.getTimerCount()).toBe(0);
+            await vi.advanceTimersByTimeAsync(700_000);
+            expect(a.aborted).toBe(false);
+            expect(b.aborted).toBe(false);
+        } finally {
+            vi.useRealTimers();
+        }
+    });
 });
