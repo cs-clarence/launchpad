@@ -341,6 +341,27 @@ describe("the status", () => {
         }
     });
 
+    it("does not call a directory ready that cannot be searched, even if it can be written", async () => {
+        const noSearch = await fs.mkdtemp(path.join(os.tmpdir(), "launchpad-nosearch-"));
+        await fs.chmod(noSearch, 0o600);
+        try {
+            const usable = await fs.access(noSearch, fs.constants.W_OK | fs.constants.X_OK).then(
+                () => true,
+                () => false,
+            );
+            const result = await status({ dataDir: noSearch });
+            expect(result.dependencies.dataDirectory).toBe(usable ? "ok" : "not-writable");
+            // Anyone but root (who passes every check) is told.
+            if (process.getuid?.() !== 0) {
+                expect(result.dependencies.dataDirectory).toBe("not-writable");
+                expect(result.warnings).toContain("The data directory is not writable.");
+            }
+        } finally {
+            await fs.chmod(noSearch, 0o700);
+            await fs.rm(noSearch, { recursive: true, force: true });
+        }
+    });
+
     it("checks the data directory only where deployments use it, and only a directory counts", async () => {
         const off = await status({
             deploymentsEnabled: false,

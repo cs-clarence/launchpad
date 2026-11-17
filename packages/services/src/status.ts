@@ -130,7 +130,8 @@ export async function getStatus(db: Db, principal: Principal, deps: StatusDeps) 
               .stat(deps.dataDir)
               .then(async (entry) => {
                   if (!entry.isDirectory()) return "not-a-directory" as const;
-                  return fs.access(deps.dataDir, fs.constants.W_OK).then(
+                  // Writing files in it needs search permission as well as write.
+                  return fs.access(deps.dataDir, fs.constants.W_OK | fs.constants.X_OK).then(
                       () => "ok" as const,
                       () => "not-writable" as const,
                   );
