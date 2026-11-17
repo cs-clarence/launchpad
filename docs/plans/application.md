@@ -270,28 +270,33 @@ document which metadata/URLs can be restored.
 - **Restore order and the lifecycle.** The worker's orphan sweep removes an archive file once it is
   older than the retention and no live row refers to it, start-up recovery trusts the database, and
   a deletion destroys the Dokku app of a row it was given. So a restore runbook must say:
-    1. switch the lifecycle **and deployments off** (worker and controller), **stop every worker and
-       wait until each process has exited** (turning a setting off takes effect only when the worker
-       restarts, and a Dokku destroy in flight can take about a minute and writes to the database
-       as it finishes: a destroy that completed after the restore could remove an app the restored
-       database still lists as live);
+    1. switch the lifecycle **and deployments off** (worker and controller), then **stop every
+       worker and wait until each process has exited** (turning a setting off takes effect only when
+       the worker restarts). A worker's exit does not prove that a Dokku destroy it had under way
+       has finished: on a stop it only ends its local SSH client, and the command may still be
+       running on the host. So also let remote destroys **settle** before touching anything: in the
+       live database, list every deletion operation with `step_pending = 'destroy'` and confirm
+       with `apps:exists` that each of those apps is gone, or wait longer than the longest Dokku
+       command and the deletion lease (five minutes by default) after the last worker stopped;
     2. restore the database and the data directory from the same moment;
     3. check that every live artifact has its file (uploading the same archive again repairs a row
        whose file is missing);
-    4. **reconcile Dokku with the restored rows**: for every live preview, check that its app exists
-       (`apps:exists` by the recorded name). The restored row of a preview whose app was destroyed
-       after the backup stays live and unserved. For each such preview an administrator either
-       redeploys it (a deployment's first step recreates a missing app, so deploying its active
-       artifact again restores it) or deletes it; the reverse (an app Dokku has that no restored row
-       names) is left alone, as Launchpad never destroys what it has no row for. A tool for this
-       check is not built and is tracked as a follow-up;
-    5. only then switch deployments and the lifecycle on.
+    4. **detect, do not yet fix, what Dokku no longer matches**: for every live preview, check that
+       its app exists (`apps:exists` by the recorded name) and **list** each one whose app is gone
+       (destroyed after the backup, or by a settled in-flight deletion). An app Dokku has that no
+       restored row names is left alone, as Launchpad never destroys what it has no row for. A tool
+       for this check is not built and is tracked as a follow-up;
+    5. switch deployments and the lifecycle on, and start the workers;
+    6. now, for each listed preview, an administrator either redeploys it (a deployment's first step
+       recreates a missing app, so deploying its active artifact again restores it) or deletes it.
        Restoring an older database with the lifecycle on deletes the archives uploaded since (once they
        are older than the retention); restoring an older data directory leaves live rows whose files
        are missing, which makes a new deployment of that artifact fail at its build, and a rollback to
        it end in `rollback-failed` and hold the deployment for an administrator. One database per Dokku
        host and per data directory still holds. The restore drill must exercise each step, including
-       a preview whose app was destroyed after the backup being found and redeployed or ended.
+       a destroy that was in flight when the workers were stopped being allowed to settle, and a
+       preview whose app was destroyed after the backup being found in step 4 and redeployed or
+       ended in step 6.
 
 **Verify:** clean-machine install from packed tarballs and image artifacts,
 supported Node/Bun platforms, npm execution without workspace dependencies,
