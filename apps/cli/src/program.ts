@@ -280,6 +280,10 @@ export function buildProgram(rawIo: Io) {
                     "Set --project and --name, or configure them in launchpad.json.",
                 );
             }
+            // The saved profile is settled once, before the work: the operation and its
+            // follow-up command must name the same one, whatever happens to the current
+            // profile while it runs.
+            const usedProfile = await effectiveProfile(workspace.context, workspace.profile);
             const result = await deploy(workspace.context, {
                 source,
                 project,
@@ -288,7 +292,7 @@ export function buildProgram(rawIo: Io) {
                 ttl: options.ttl,
                 wait: options.wait,
                 waitTimeoutMs: seconds * 1000,
-                profile: workspace.profile,
+                profile: usedProfile,
                 // Progress goes to stderr so stdout stays the result; none with --json.
                 onProgress: json
                     ? undefined
@@ -304,11 +308,10 @@ export function buildProgram(rawIo: Io) {
                           ),
             });
             const organization = workspace.organization;
-            const followProfile = await effectiveProfile(workspace.context, workspace.profile);
             const follow = (id: string) =>
                 [
                     "launchpad",
-                    ...(followProfile ? ["--profile", shellArg(followProfile)] : []),
+                    ...(usedProfile ? ["--profile", shellArg(usedProfile)] : []),
                     "deployments",
                     "status",
                     id,
@@ -439,8 +442,8 @@ export function buildProgram(rawIo: Io) {
                 workingDir: io.workingDir ?? process.cwd(),
                 profile: wants(command).profile,
             });
-            const result = await deletePreview(workspace.context, previewId, workspace.profile);
             const profile = await effectiveProfile(workspace.context, workspace.profile);
+            const result = await deletePreview(workspace.context, previewId, profile);
             print(
                 command,
                 result,

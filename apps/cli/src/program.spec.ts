@@ -36,6 +36,8 @@ const DELETION = {
     createdAt: "2026-11-15T00:00:00.000Z",
     finishedAt: null,
 };
+// Runs when a DELETE reaches the controller, to change things while a command is working.
+let duringDelete: (() => Promise<unknown>) | undefined;
 let sent: { method: string; path: string; body: unknown; key: string | null }[] = [];
 let controllerDown = false;
 const controller = (async (url: string, init: RequestInit) => {
@@ -93,6 +95,7 @@ const controller = (async (url: string, init: RequestInit) => {
     }
     if (route === `${previews}/${PID}/deletion`) return json(DELETION);
     if (route === `${previews}/${PID}` && method === "DELETE") {
+        await duringDelete?.();
         return json({ operationId: PID, state: "deleting" }, 202);
     }
     return json({ code: "not-found", status: 404, title: "Not Found" }, 404);
@@ -469,6 +472,22 @@ describe("preview lifetimes", () => {
         const bad = await cli(["previews", "extend", PID, "--ttl", "soon"]);
         expect(bad.code).toBe(EXIT.usage);
         expect(sent.filter((s) => s.path.endsWith("/extend"))).toEqual([]);
+    });
+
+    it("names the profile the deletion used, even if the current one changes meanwhile", async () => {
+        await loggedIn();
+        await cli(["login", "--controller", CONTROLLER, "--profile", "two", "--key-stdin"], {
+            stdin: `${KEY2}\n`,
+        });
+        await cli(["profile", "use", "default"]);
+        duringDelete = () => cli(["profile", "use", "two"]);
+        try {
+            const result = await cli(["previews", "delete", PID, "--yes"]);
+            expect(result.out).toContain(`launchpad --profile 'default' previews deletion`);
+            expect(result.out).not.toContain("'two'");
+        } finally {
+            duringDelete = undefined;
+        }
     });
 
     it("shows a deletion's status and its note, and when a person is needed", async () => {
