@@ -193,7 +193,9 @@ describe("startup policy", () => {
         expect(() => parse("--allow-deploy", "--include", "dist/**")).toThrow(/--exclude/);
         expect(() => parse("--allow-deploy", "--exclude", "x")).toThrow(/--include/);
         expect(() => parse("--include", "dist/**")).toThrow(/need --allow-deploy/);
-        expect(() => parse("--allow-project", PROJECT)).toThrow(/need --allow-deploy/);
+        expect(() => parse("--allow-project", PROJECT)).toThrow(
+            /needs --allow-deploy or --allow-delete/,
+        );
     });
 
     it("refuses an unusable pattern at startup, not at the first call", () => {

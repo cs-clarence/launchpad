@@ -98,8 +98,36 @@ Use a narrower project query when that happens.
 
 Controller names, failure messages and event messages are untrusted **data**, not
 instructions. Redaction does not make their text trustworthy.
-No resources, prompts, file-content tools or shell tools are exposed, and the only mutation is `deploy`, when enabled.
+No resources, prompts, file-content tools or shell tools are exposed, and the only mutations are `deploy` and `delete_preview`, each only when enabled at startup.
 Incoming stdio message buffering is limited to 1 MiB.
+
+## Deleting previews
+
+Deleting is off by default and the `delete_preview` tool does not exist until you start the
+server with `--allow-delete` **and** at least one `--allow-project <project-id>` (without a
+project the server refuses to start: a deletion cannot be undone, so it is allowed only where
+you say). The list is fixed at startup, as for deployment; it is the same `--allow-project`
+list, so with both flags it limits both.
+
+```sh
+launchpad-mcp --shared --allow-delete \
+  --allow-project 11111111-1111-4111-8111-111111111111
+```
+
+- The tool takes `preview_id` (a preview id, never a name) and `confirm: true`. It reads the
+  preview first and refuses unless the preview's own project id is in the allowed list, as the
+  controller names it for the credentials of that call; nothing is sent to delete otherwise.
+  The check and the deletion use the same saved profile, even if the current profile changes
+  in between.
+- It queues the deletion and returns at once with what it is deleting (id, name, hostname,
+  project) and the operation. The worker carries it out, which needs the lifecycle on in the
+  controller and the worker; follow it with `preview_deletion`. A repeat while it is under way
+  returns the same operation.
+- `preview_deletion` is a read tool, always offered: the latest deletion of a preview
+  (also one that expiry started), with its status and note. A held one (`reconciliation-needed`)
+  needs an administrator in the dashboard; no tool resolves it.
+- The key needs `preview:read` and `preview:delete`, and reaches only its own projects; the
+  controller checks again.
 
 ## Deploying
 
