@@ -1,6 +1,7 @@
 import { Command, CommanderError } from "@commander-js/extra-typings";
 import {
     deletePreview,
+    effectiveProfile,
     deploy,
     deploymentEvents,
     extendPreview,
@@ -303,10 +304,11 @@ export function buildProgram(rawIo: Io) {
                           ),
             });
             const organization = workspace.organization;
+            const followProfile = await effectiveProfile(workspace.context, workspace.profile);
             const follow = (id: string) =>
                 [
                     "launchpad",
-                    ...(workspace.profile ? ["--profile", shellArg(workspace.profile)] : []),
+                    ...(followProfile ? ["--profile", shellArg(followProfile)] : []),
                     "deployments",
                     "status",
                     id,
@@ -438,12 +440,13 @@ export function buildProgram(rawIo: Io) {
                 profile: wants(command).profile,
             });
             const result = await deletePreview(workspace.context, previewId, workspace.profile);
+            const profile = await effectiveProfile(workspace.context, workspace.profile);
             print(
                 command,
                 result,
                 () =>
                     `Deletion queued (operation ${result.operationId}). Follow it with: launchpad ${
-                        workspace.profile ? `--profile ${shellArg(workspace.profile)} ` : ""
+                        profile ? `--profile ${shellArg(profile)} ` : ""
                     }previews deletion ${shellArg(previewId)}`,
             );
         });

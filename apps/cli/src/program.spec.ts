@@ -438,8 +438,9 @@ describe("preview lifetimes", () => {
         const result = await cli(["previews", "delete", PID, "--yes"]);
         expect(result.code).toBe(EXIT.ok);
         expect(result.out).toContain("Deletion queued");
-        expect(result.out).toContain(`launchpad previews deletion '${PID}'`);
         expect(sent.filter((s) => s.method === "DELETE")).toHaveLength(1);
+        // Without --profile, the current saved profile is named all the same.
+        expect(result.out).toContain(`launchpad --profile 'default' previews deletion '${PID}'`);
         // The follow-up names the profile, or it could ask another controller.
         const profiled = await cli(["--profile", "default", "previews", "delete", PID, "--yes"]);
         expect(profiled.out).toContain(`launchpad --profile 'default' previews deletion '${PID}'`);

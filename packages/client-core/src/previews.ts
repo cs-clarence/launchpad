@@ -96,3 +96,10 @@ export async function previewDeletion(ctx: Context, previewId: string, profile?:
     const { client, organizationId } = await scoped(ctx, profile);
     return client.deletions.forPreview(organizationId, previewId);
 }
+
+// The saved profile a command will use (the one named, else the environment's, else the
+// current one), or undefined when credentials come from the environment. For printing a
+// follow-up command that must reach the same controller later.
+export async function effectiveProfile(ctx: Context, profile?: string) {
+    return (await resolve(ctx, profile)).profile ?? undefined;
+}
