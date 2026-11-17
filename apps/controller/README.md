@@ -189,7 +189,9 @@ deleted unless the worker runs the lifecycle** (`LAUNCHPAD_LIFECYCLE=on` on the 
 default off): then expired previews are deleted, and stored archives are collected after
 `LAUNCHPAD_ARTIFACT_RETENTION` (default `7d`); see `apps/worker/README.md`.
 Retention must be at least `1h`. The first time the worker enables lifecycle for this
-database, already-overdue previews get a one-time 24 h grace.
+database, every preview that would expire within 24 h (overdue or about to be) is given 24 h from
+then, once; switching it off and on again later gives no grace, and what expired in between is
+deleted, as after any downtime.
 
 ### Instance status
 
@@ -242,8 +244,10 @@ confirmation; hidden, with a note, when deleting is not turned on), and for a de
 that needs a person, **Try the deletion again** / **The app is already gone** (administrators
 and owners, with a confirmation; the API also needs a sign-in from the last 15 minutes). A
 deletion in progress refreshes itself, and a preview deleted while its page is open
-shows the finished deletion (a page watching a deletion in progress looks again by itself; one that was not must be reloaded). Where the lifecycle is off nothing expires, so the page says so
-instead of showing a countdown, and the lifetime choices are limited to the server's maximum. Buttons are hidden for roles that could not use them,
+shows the finished deletion (a page watching a deletion in progress looks again by itself; one that was not must be reloaded). The expiry is always shown and can always be extended: where the lifecycle is off on
+the controller nothing is deleted from here, and the page says so, but every preview carries an
+expiry that applies as soon as the lifecycle is turned on (and already applies if a worker has it
+on while the controller does not). The lifetime choices are limited to the server's maximum. Buttons are hidden for roles that could not use them,
 but only the API enforces permissions. A preview that is being deleted shows its deletion, even
 when expiry started it.
 

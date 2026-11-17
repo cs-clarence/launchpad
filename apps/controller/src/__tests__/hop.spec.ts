@@ -1871,6 +1871,13 @@ describe("previews and deployments over HTTP", () => {
         expect(
             await status(call(deployKey, path, { method: "POST", body: { outcome: "failed" } })),
         ).toBe(403);
+        // And it is told so, not told to sign in again, which a key cannot do.
+        const keyAttempt = errorSchema.parse(
+            await (
+                await call(deployKey, path, { method: "POST", body: { outcome: "failed" } })
+            ).json(),
+        );
+        expect(keyAttempt.title).toContain("API keys cannot use this endpoint");
         const viewerAttempt = await fetch(`${proxied.base}/api/v1${path}`, {
             method: "POST",
             headers: { cookie: viewer, origin: proxied.base, "content-type": "application/json" },

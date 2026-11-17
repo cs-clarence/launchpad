@@ -279,7 +279,7 @@ async function findOrCreatePreview(
         if (found.state !== "active") {
             throw new ClientCoreError(
                 "bad-input",
-                `The preview "${slug}" is being deleted. Try again in a few minutes, when its name is free.`,
+                `The preview "${slug}" is being deleted. Try again once its name is free; if it stays this way, an administrator may need to resolve its deletion.`,
             );
         }
         return found;

@@ -295,25 +295,27 @@ function Lifecycle(props: { view: Present }) {
     return (
         <section className="space-y-3">
             <h2 className="h4">Lifetime</h2>
-            {view.lifecycleEnabled || view.preview.state !== "active" ? (
-                <p
-                    suppressHydrationWarning
-                    // A fixed format with the zone, so the server's and the browser's agree.
-                    title={
-                        view.preview.expiresAt
-                            ? new Date(view.preview.expiresAt).toISOString()
-                            : undefined
-                    }
-                >
-                    {describeExpiry(view.preview, now)}
+            <p
+                suppressHydrationWarning
+                // A fixed format with the zone, so the server's and the browser's agree.
+                title={
+                    view.preview.expiresAt
+                        ? new Date(view.preview.expiresAt).toISOString()
+                        : undefined
+                }
+            >
+                {describeExpiry(view.preview, now, view.lifecycleEnabled)}
+            </p>
+            {!view.lifecycleEnabled && view.preview.state === "active" ? (
+                // Shown, not hidden: the expiry is real and applies the moment it is turned on.
+                <p className="text-sm">
+                    The controller has the lifecycle off, so previews cannot be deleted from here. A
+                    worker with the lifecycle on still deletes them when they expire, and each
+                    expiry applies in full as soon as the controller turns it on: extend this
+                    preview if you want to keep it.
                 </p>
-            ) : (
-                <p>
-                    This server does not delete previews automatically (the lifecycle is off), so
-                    there is no countdown.
-                </p>
-            )}
-            {view.preview.state === "active" && view.canExtend && view.lifecycleEnabled ? (
+            ) : null}
+            {view.preview.state === "active" && view.canExtend ? (
                 <p className="space-x-2">
                     <label>
                         Extend by{" "}
@@ -466,7 +468,6 @@ function PreviewDetail() {
                         projects={[]}
                         maxUploadBytes={view.maxUploadBytes}
                         maxTtlSeconds={view.maxTtlSeconds}
-                        lifecycleEnabled={view.lifecycleEnabled}
                         existing={{ id: view.preview.id }}
                     />
                 )

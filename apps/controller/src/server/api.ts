@@ -249,12 +249,6 @@ export function createApi(deps: {
         return execute(
             set,
             async () => {
-                if (
-                    options.fresh &&
-                    Date.now() - (caller.sessionCreatedAt?.getTime() ?? 0) > FRESH_SESSION_MS
-                ) {
-                    throw new ServiceError("forbidden", "Sign in again to do this.");
-                }
                 if (key) {
                     if (!access) {
                         throw new ServiceError("forbidden", "API keys cannot use this endpoint.");
@@ -264,6 +258,13 @@ export function createApi(deps: {
                         access.organizationId ?? key.organizationId,
                         access.scope,
                     );
+                }
+                // After the key check: a key is told what it cannot do, not to sign in again.
+                if (
+                    options.fresh &&
+                    Date.now() - (caller.sessionCreatedAt?.getTime() ?? 0) > FRESH_SESSION_MS
+                ) {
+                    throw new ServiceError("forbidden", "Sign in again to do this.");
                 }
                 return run(principal, key, caller.sessionId);
             },

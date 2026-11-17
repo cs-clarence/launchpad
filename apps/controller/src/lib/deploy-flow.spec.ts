@@ -5,6 +5,7 @@ import {
     checkDeployForm,
     fieldsLocked,
     newResume,
+    pageIsStale,
     runDeploy,
     withNewFile,
     withNewSpa,
@@ -189,6 +190,30 @@ describe("deploying from the dashboard", () => {
         expect(new Set(deploys.map((d) => d.key))).toEqual(new Set([keyBefore]));
     });
 
+    it("does not upload for a created preview that turns out to be going away", async () => {
+        const { sent, call } = fake({
+            "POST /organizations/org/projects/:id/previews": [
+                yes({ id: ID(2), state: "deleting" }),
+            ],
+        });
+        const resume = newResume();
+        const result = await runDeploy({
+            call,
+            organizationId: "org",
+            file,
+            spa: false,
+            resume,
+            create: { projectId: ID(1), slug: "site" },
+        });
+        expect(result).toMatchObject({ ok: false, step: "create", status: 409 });
+        expect(sent).toHaveLength(1);
+        expect(resume.previewId).toBeUndefined();
+        // Not stuck replaying it: the doubt is over and the next attempt has a new key.
+        const used = sent[0]!.key;
+        expect(resume.createKey).not.toBe(used);
+        expect(fieldsLocked(resume)).toBe(false);
+    });
+
     it("reports a failed creation as such, and never uploads", async () => {
         const { sent, call } = fake({
             "POST /organizations/org/projects/:id/previews": [no("That preview name is taken.")],
@@ -313,5 +338,13 @@ describe("keys that cannot be reused wrongly", () => {
                 maxBytes: 512 * 1024,
             })[0],
         ).toContain("512 KiB");
+    });
+
+    it("knows when the page it is on is out of date, and leaves an archive that is gone to the retry", () => {
+        expect(pageIsStale(409, "A deployment is already running.")).toBe(true);
+        expect(pageIsStale(404, "Preview not found.")).toBe(true);
+        expect(pageIsStale(404, "Artifact not found.")).toBe(false);
+        expect(pageIsStale(500, "Preview not found.")).toBe(false);
+        expect(pageIsStale(null, "x")).toBe(false);
     });
 });

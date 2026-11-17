@@ -39,13 +39,20 @@ function Previews() {
                         projects={view.projects}
                         maxUploadBytes={view.maxUploadBytes}
                         maxTtlSeconds={view.maxTtlSeconds}
-                        lifecycleEnabled={view.lifecycleEnabled}
                     />
                 ) : (
                     <p>Create a project first; previews belong to a project.</p>
                 )
             ) : !view.deploymentsEnabled ? (
                 <p>Deploying is not turned on for this server.</p>
+            ) : null}
+            {!view.lifecycleEnabled ? (
+                <p className="text-sm">
+                    The controller has the lifecycle off, so previews cannot be deleted from here. A
+                    worker with the lifecycle on still deletes them when they expire, and each
+                    expiry applies in full as soon as the controller turns it on: extend any preview
+                    you want to keep.
+                </p>
             ) : null}
             <p>
                 You can also deploy from a terminal: <code>launchpad deploy</code>.
@@ -71,12 +78,10 @@ function Previews() {
                             <div className="text-sm">
                                 {preview.projectName ?? "Unknown project"} ·{" "}
                                 <code>{preview.slug}</code>
-                                {view.lifecycleEnabled || preview.state !== "active" ? (
-                                    <span suppressHydrationWarning>
-                                        {" · "}
-                                        {describeExpiry(preview, now)}
-                                    </span>
-                                ) : null}
+                                <span suppressHydrationWarning>
+                                    {" · "}
+                                    {describeExpiry(preview, now, view.lifecycleEnabled)}
+                                </span>
                             </div>
                         </li>
                     ))}

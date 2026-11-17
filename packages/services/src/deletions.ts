@@ -1,3 +1,4 @@
+import { startDeadline } from "./deadline";
 import type { Database } from "@launchpad/database";
 import { type Kysely, sql, type Transaction } from "kysely";
 import { z } from "zod";
@@ -503,7 +504,7 @@ async function execute(
 
     // A deadline on this machine's monotonic clock, taken before the lease is written, so
     // it can only be earlier than the lease the database grants.
-    const deadlineFor = () => performance.now() + Math.floor(claim.leaseMs * SIGNAL_FRACTION);
+    const deadlineFor = () => startDeadline(Math.floor(claim.leaseMs * SIGNAL_FRACTION));
     const stopped = async (): Promise<DeletionOutcome> => {
         await fenced(db, claim, { retryAfterMs: 0 });
         return "stopped";
@@ -513,12 +514,12 @@ async function execute(
         if (options.signal?.aborted) return stopped();
         const deadline = deadlineFor();
         const guard = () => {
-            if (performance.now() >= deadline) throw new StaleAttemptError();
+            if (deadline.passed()) throw new StaleAttemptError();
         };
         // Intent first, fenced: a worker that stops after the destroy leaves this behind, and
         // its successor then asks whether the app is still there before doing anything.
         await fenced(db, claim, { status: "running", step_pending: "destroy" });
-        const signal = AbortSignal.timeout(Math.max(1, Math.floor(deadline - performance.now())));
+        const signal = deadline.signal();
         let destroying = false;
         try {
             guard();
@@ -560,6 +561,8 @@ async function execute(
                 failure_message: "Destroying the app did not finish; it will be tried again.",
             });
             return "retry";
+        } finally {
+            deadline.stop();
         }
         await fenced(db, claim, { step_done: "destroy", step_pending: null });
     }
@@ -579,11 +582,8 @@ async function execute(
             .execute();
         const imageTags = tags.map((t) => t.image_tag as string);
         try {
-            if (performance.now() >= deadline) throw new StaleAttemptError();
-            await ports.removeImages(
-                { ...context, imageTags },
-                AbortSignal.timeout(Math.max(1, Math.floor(deadline - performance.now()))),
-            );
+            if (deadline.passed()) throw new StaleAttemptError();
+            await ports.removeImages({ ...context, imageTags }, deadline.signal());
         } catch (error) {
             if (error instanceof StaleAttemptError) throw error;
             if (claim.attempt < MAX_DELETION_ATTEMPTS) {
@@ -597,6 +597,8 @@ async function execute(
             // The app is gone; leftover images cost disk, not correctness, so the deletion
             // is finished and the leftover is recorded rather than held for a person.
             imagesLeft = true;
+        } finally {
+            deadline.stop();
         }
         await fenced(db, claim, { step_done: "images", step_pending: null });
     }
@@ -642,6 +644,24 @@ async function markDeleted(
         .where("id", "=", previewId)
         .where("desired_state", "=", "deleting")
         .execute();
+    // A deployment held for an administrator was asking what the host is serving: destroying
+    // the app answers it, and nothing could resolve it once the preview is gone from the
+    // dashboard. Closing it also lets its archive be collected.
+    const closed = await trx
+        .updateTable("deployment")
+        .set({
+            status: "failed",
+            failure_code: "preview-deleted",
+            failure_message:
+                "The preview was deleted while this deployment waited for an administrator.",
+            step_pending: null,
+            finished_at: sql<Date>`now()`,
+            updated_at: sql<Date>`now()`,
+        })
+        .where("preview_id", "=", previewId)
+        .where("status", "=", "reconciliation-needed")
+        .returning("id")
+        .execute();
     await trx
         .insertInto("audit_event")
         .values({
@@ -650,7 +670,10 @@ async function markDeleted(
             target_type: "preview",
             target_id: previewId,
             organization_id: organizationId,
-            detail: JSON.stringify({ operation: operationId }),
+            detail: JSON.stringify({
+                operation: operationId,
+                closedDeployments: closed.map((d) => d.id),
+            }),
         })
         .execute();
 }

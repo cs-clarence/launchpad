@@ -84,6 +84,14 @@ export function withNewSpa(resume: Resume): void {
 export const fieldsLocked = (resume: Resume): boolean =>
     resume.previewId !== undefined || resume.createUncertain === true;
 
+// Whether a refusal to deploy to the preview this page is about means the page is out of date:
+// another deployment is running (409), or the preview is gone (a 404 that names the preview;
+// one that names the archive is not about the page). The page then looks again, which shows
+// what is true now, instead of asking again.
+export function pageIsStale(status: number | null, message: string): boolean {
+    return status === 409 || (status === 404 && /preview/i.test(message));
+}
+
 // What to forget after a failure, so the next try neither repeats what is done nor sticks to
 // something that no longer exists.
 export function afterFailure(
@@ -145,7 +153,7 @@ export async function runDeploy(input: {
             return { ok: false, step: "create", status: null, message: "No preview to deploy to." };
         }
         input.onStep?.("create");
-        const created = await call<{ id: string }>(
+        const created = await call<{ id: string; state?: string }>(
             "POST",
             `/organizations/${org}/projects/${input.create.projectId}/previews`,
             {
@@ -158,6 +166,20 @@ export async function runDeploy(input: {
         );
         if (!created.ok) {
             return { ok: false, step: "create", status: created.status, message: created.message };
+        }
+        // A repeat of an earlier creation returns that preview as it is now, which may be going
+        // away: do not upload for it.
+        if (created.data.state !== undefined && created.data.state !== "active") {
+            // The doubt about the creation is over: it happened. Another attempt must not replay
+            // it (it would only be refused again), so it starts a new one.
+            resume.createUncertain = false;
+            resume.createKey = `dashboard-preview-${randomId()}`;
+            return {
+                ok: false,
+                step: "create",
+                status: 409,
+                message: "That preview is being deleted. Try again once its name is free.",
+            };
         }
         resume.previewId = created.data.id;
     }

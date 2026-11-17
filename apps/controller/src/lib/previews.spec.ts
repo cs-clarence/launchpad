@@ -55,6 +55,8 @@ describe("preview lifetimes", () => {
         expect(describeExpiry(active(at(30 * 60_000)), NOW)).toBe("Expires in 30 minutes");
         expect(describeExpiry(active(at(60_000)), NOW)).toBe("Expires in 1 minute");
         expect(describeExpiry(active(at(59_999)), NOW)).toBe("Expires in less than a minute");
+        // Where this controller does not run the lifecycle, how soon it goes is not known.
+        expect(describeExpiry(active(at(-1)), NOW, false)).toBe("Past its expiry");
         expect(describeExpiry(active(at(47 * 3_600_000 + 59 * 60_000)), NOW)).toBe(
             "Expires in 47 hours",
         );

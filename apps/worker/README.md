@@ -118,8 +118,11 @@ README), which also warns when the controller and the workers disagree about the
 - Use one database per Dokku host and per data directory. "Owned" means "has a row in this
   database", so a second installation (or a database copied from production) pointed at the same
   Dokku or data directory would destroy or sweep the first one's apps and archives.
-- The first time the lifecycle is switched on, previews that are already overdue get a one-time
-  24 h grace (recorded in the database) instead of being deleted within minutes.
+- The first time the lifecycle is switched on, every preview that would expire within 24 h
+  (overdue or about to be) gets 24 h from then, once (recorded in the database), instead of being
+  deleted within minutes or hours. Switching it off and on again later gives no grace: what expired
+  meanwhile is deleted, as after any downtime. Previews carry an expiry from creation even while the
+  lifecycle is off, so check them (the dashboard shows each expiry) before the first switch-on.
 - The controller and the worker read `LAUNCHPAD_LIFECYCLE` separately; set both. The controller
   refuses a new deletion unless both it and deployments are on.
 - Images loaded onto the Dokku host with `git:load-image` are not removed by the worker; only

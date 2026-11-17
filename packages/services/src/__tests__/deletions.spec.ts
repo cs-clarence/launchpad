@@ -495,6 +495,92 @@ describe("claiming a deletion", () => {
         expect(await claim()).toMatchObject({ previewId: p.id });
     });
 
+    it("closes a deployment that was held for an administrator when the deletion finishes, by either way", async () => {
+        for (const resolution of ["run", "resolved"] as const) {
+            await drain();
+            const p = await make();
+            const artifact = await testDb.db
+                .insertInto("artifact")
+                .values({
+                    organization_id: org,
+                    digest: randomUUID().replaceAll("-", "").padEnd(64, "0"),
+                    size_bytes: 1,
+                    expanded_bytes: 1,
+                    entry_count: 1,
+                    storage_key: "x",
+                    created_by: people.dee!.userId,
+                })
+                .returning("id")
+                .executeTakeFirstOrThrow();
+            const d = await enqueueDeployment(
+                testDb.db,
+                people.dee!,
+                org,
+                p.id,
+                { artifactId: artifact.id },
+                { enabled: true },
+            );
+            await testDb.db
+                .updateTable("deployment")
+                .set({
+                    status: "reconciliation-needed",
+                    attempt: 1,
+                    updated_at: new Date(Date.now() - 2 * 3_600_000),
+                })
+                .where("id", "=", d.id)
+                .execute();
+            const requested = await request(p.id);
+            if (resolution === "run") {
+                const fake = host([p.app]);
+                expect(await runAll(p.id, fake.ports)).toEqual(["succeeded"]);
+            } else {
+                await testDb.db
+                    .updateTable("deletion_operation")
+                    .set({ status: "reconciliation-needed" })
+                    .where("id", "=", requested.operationId)
+                    .execute();
+                await resolveDeletion(
+                    testDb.db,
+                    people.ann!,
+                    org,
+                    requested.operationId,
+                    "deleted",
+                );
+            }
+            expect((await preview(p.id)).desired_state).toBe("deleted");
+            const after = await testDb.db
+                .selectFrom("deployment")
+                .select(["status", "failure_code"])
+                .where("id", "=", d.id)
+                .executeTakeFirstOrThrow();
+            expect(after, resolution).toEqual({
+                status: "failed",
+                failure_code: "preview-deleted",
+            });
+            // The audit record names what was closed.
+            const audit = await testDb.db
+                .selectFrom("audit_event")
+                .select("detail")
+                .where("action", "=", "preview.deleted")
+                .where("target_id", "=", p.id)
+                .executeTakeFirstOrThrow();
+            expect(JSON.parse(audit.detail!).closedDeployments).toEqual([d.id]);
+            // A deleted preview takes no deployment, and is not found: it is gone, not going.
+            expect(
+                await code(
+                    enqueueDeployment(
+                        testDb.db,
+                        people.dee!,
+                        org,
+                        p.id,
+                        { artifactId: artifact.id },
+                        { enabled: true },
+                    ),
+                ),
+            ).toBe("not-found");
+        }
+    });
+
     it("takes over an operation whose worker died, counting the attempt", async () => {
         await drain();
         const p = await make();

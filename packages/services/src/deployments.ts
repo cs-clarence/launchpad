@@ -1,3 +1,4 @@
+import { startDeadline } from "./deadline";
 import type { Database, DeploymentStatus, DeploymentStep } from "@launchpad/database";
 import { type Kysely, sql, type Transaction } from "kysely";
 import { z } from "zod";
@@ -125,6 +126,10 @@ export async function enqueueDeployment(
                 .forUpdate()
                 .executeTakeFirst();
             if (!preview) throw new ServiceError("not-found", "Preview not found.");
+            // A deleted preview is gone, as for every other route.
+            if (preview.desired_state === "deleted") {
+                throw new ServiceError("not-found", "Preview not found.");
+            }
             if (preview.desired_state !== "active") {
                 throw new ServiceError("conflict", "That preview is being deleted.");
             }
@@ -574,7 +579,7 @@ async function execute(
         // A rollback rebuilds, loads and probes in one go, which takes longer than any
         // single step, so it is given twice the usual lease and deadline.
         const rollbackLeaseMs = claim.leaseMs * 2;
-        const deadline = performance.now() + Math.floor(rollbackLeaseMs * SIGNAL_FRACTION);
+        const deadline = startDeadline(Math.floor(rollbackLeaseMs * SIGNAL_FRACTION));
         await fenced(
             db,
             claim,
@@ -582,7 +587,7 @@ async function execute(
             { phase: "rollback", level: "warn", message: "Restoring the previous release." },
         );
         try {
-            if (performance.now() >= deadline) throw new StaleAttemptError();
+            if (deadline.passed()) throw new StaleAttemptError();
             await ports.rollback(
                 context,
                 {
@@ -592,7 +597,7 @@ async function execute(
                     spa: previous.spa,
                     storageKey: previous.storage_key,
                 },
-                AbortSignal.timeout(Math.max(1, Math.floor(deadline - performance.now()))),
+                deadline.signal(),
             );
         } catch (error) {
             if (error instanceof StaleAttemptError) throw error;
@@ -614,6 +619,8 @@ async function execute(
                 },
             );
             return "reconciliation-needed";
+        } finally {
+            deadline.stop();
         }
         await fenced(
             db,
@@ -640,7 +647,7 @@ async function execute(
     for (const step of STEPS.slice(done + 1)) {
         // The deadline is taken on this machine's monotonic clock before the lease is
         // written, so it can only be earlier than the lease the database grants.
-        const deadline = performance.now() + Math.floor(claim.leaseMs * SIGNAL_FRACTION);
+        const deadline = startDeadline(Math.floor(claim.leaseMs * SIGNAL_FRACTION));
         // Asked to stop before this step (and so before any load) begins: hand the
         // deployment on without recording an intent that would later look like a load.
         if (options.signal?.aborted && !loadBegun) {
@@ -669,12 +676,12 @@ async function execute(
         // Checked immediately before every call: a worker that was paused past its
         // deadline (a frozen process, a stalled commit) starts nothing more.
         const guard = () => {
-            if (performance.now() >= deadline) throw new StaleAttemptError();
+            if (deadline.passed()) throw new StaleAttemptError();
         };
         // A shutdown request does not interrupt a load that is already under way.
         const signal = AbortSignal.any([
             ...(options.signal && step !== "load" ? [options.signal] : []),
-            AbortSignal.timeout(Math.max(1, Math.floor(deadline - performance.now()))),
+            deadline.signal(),
         ]);
         try {
             if (step === "app") {
@@ -784,6 +791,8 @@ async function execute(
                 { phase: step, level: "error", message: `The ${step} step failed.` },
             );
             return "failed";
+        } finally {
+            deadline.stop();
         }
         await fenced(
             db,
