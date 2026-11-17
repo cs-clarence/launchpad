@@ -54,7 +54,8 @@ export function describeExpiry(
     const ms = new Date(preview.expiresAt).getTime() - now;
     if (Number.isNaN(ms)) return "Unknown";
     if (ms <= 0) return "Expired, will be deleted shortly";
-    const minutes = Math.max(1, Math.floor(ms / 60_000));
+    if (ms < 60_000) return "Expires in less than a minute";
+    const minutes = Math.floor(ms / 60_000);
     if (minutes < 60) return `Expires in ${minutes} minute${minutes === 1 ? "" : "s"}`;
     const hours = Math.floor(minutes / 60);
     if (hours < 48) return `Expires in ${hours} hour${hours === 1 ? "" : "s"}`;

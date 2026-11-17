@@ -2077,7 +2077,12 @@ describe("previews and deployments over HTTP", () => {
         // Once the deletion has finished, the page says so instead of "not found".
         await testDb.db
             .updateTable("deletion_operation")
-            .set({ status: "succeeded", finished_at: new Date() })
+            .set({
+                status: "succeeded",
+                finished_at: new Date(),
+                failure_code: "resolved-deleted",
+                failure_message: "Resolved by an administrator.",
+            })
             .where("id", "=", queued.operationId)
             .execute();
         await testDb.db
@@ -2088,6 +2093,21 @@ describe("previews and deployments over HTTP", () => {
         const gone = await page(owner, fresh.id);
         expect(gone).toContain("This preview was deleted");
         expect(gone).toContain("Removed");
+        for (const control of ["Extend by", "Delete this preview", "Try the deletion again"]) {
+            expect(gone).not.toContain(control);
+        }
+        // A missing preview, or one asked for through an organization it is not in, is "not
+        // available" and never "deleted": nothing says whether it exists.
+        const nowhere = await page(owner, randomUUID());
+        expect(nowhere).toContain("not available");
+        expect(nowhere).not.toContain("was deleted");
+        const foreign = await (
+            await fetch(`${proxied.base}/orgs/${otherOrgId}/previews/${fresh.id}`, {
+                headers: { cookie: owner },
+            })
+        ).text();
+        expect(foreign).toContain("not available");
+        expect(foreign).not.toContain("was deleted");
     });
 
     it("is off unless deployments are on: reads work, creating and deploying are refused", async () => {

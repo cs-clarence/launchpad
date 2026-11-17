@@ -200,7 +200,7 @@ confirmation; hidden, with a note, when deleting is not turned on), and for a de
 that needs a person, **Try the deletion again** / **The app is already gone** (administrators
 and owners, with a confirmation; the API also needs a sign-in from the last 15 minutes). A
 deletion in progress refreshes itself, and a preview deleted while its page is open
-shows the finished deletion. Where the lifecycle is off nothing expires, so the page says so
+shows the finished deletion (a page watching a deletion in progress looks again by itself; one that was not must be reloaded). Where the lifecycle is off nothing expires, so the page says so
 instead of showing a countdown, and the lifetime choices are limited to the server's maximum. Buttons are hidden for roles that could not use them,
 but only the API enforces permissions. A preview that is being deleted shows its deletion, even
 when expiry started it.

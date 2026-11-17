@@ -25,16 +25,33 @@ export const Route = createFileRoute("/orgs_/$orgId/previews/$previewId")({
     },
     loader: ({ params }) =>
         getPreviewDetailFn({ data: { orgId: params.orgId, previewId: params.previewId } }),
-    errorComponent: () => (
-        <main className="mx-auto max-w-4xl px-6 py-12">
-            <p role="alert">This preview is not available. It may have been deleted.</p>
+    errorComponent: PreviewUnavailable,
+    component: PreviewDetail,
+});
+
+// Shown when the page cannot be loaded: the preview may be gone, or the server may just be
+// out of reach for a moment, so it does not claim to know which and lets the reader try again.
+function PreviewUnavailable() {
+    const router = useRouter();
+    return (
+        <main className="mx-auto max-w-4xl space-y-4 px-6 py-12">
+            <p role="alert">
+                This preview is not available right now. It may have been deleted, or the server
+                could not be reached.
+            </p>
+            <button
+                type="button"
+                className="btn preset-tonal"
+                onClick={() => void router.invalidate()}
+            >
+                Try again
+            </button>{" "}
             <Link className="anchor" to="/">
                 Back to organizations
             </Link>
         </main>
-    ),
-    component: PreviewDetail,
-});
+    );
+}
 
 type Deployment = z.infer<typeof deploymentSchema>;
 
@@ -215,6 +232,9 @@ function Lifecycle(props: { view: Present }) {
             if (looking || document.hidden) return;
             looking = true;
             try {
+                // Ask first and refresh only on an answer: a refresh that fails would replace
+                // the page with its error, and the next look would never happen.
+                await getPreviewDetailFn({ data: { orgId, previewId } });
                 await router.invalidate({ sync: true });
             } catch {
                 // The next look tries again; the page keeps what it has.
@@ -267,9 +287,10 @@ function Lifecycle(props: { view: Present }) {
             {view.lifecycleEnabled || view.preview.state !== "active" ? (
                 <p
                     suppressHydrationWarning
+                    // A fixed format with the zone, so the server's and the browser's agree.
                     title={
                         view.preview.expiresAt
-                            ? new Date(view.preview.expiresAt).toLocaleString()
+                            ? new Date(view.preview.expiresAt).toISOString()
                             : undefined
                     }
                 >
