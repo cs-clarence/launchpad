@@ -459,6 +459,9 @@ function PreviewDetail() {
                     </p>
                 ) : (
                     <DeployPanel
+                        // Another preview's page is another panel: what a failed run had
+                        // done (a preview, an archive) must not follow it there.
+                        key={view.preview.id}
                         organizationId={view.organization.id}
                         projects={[]}
                         maxUploadBytes={view.maxUploadBytes}

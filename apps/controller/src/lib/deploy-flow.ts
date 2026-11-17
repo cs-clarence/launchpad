@@ -95,8 +95,11 @@ export function afterFailure(
         // the key and the fields. A definite refusal recorded nothing: the next try is new.
         // A 2xx whose answer could not be read is a creation that happened.
         const unknown = failure.status === null || failure.status >= 500 || failure.status < 300;
-        resume.createUncertain = unknown;
-        if (!unknown) resume.createKey = `dashboard-preview-${randomId()}`;
+        // An earlier attempt that may have gone through stays in doubt (and keeps its key)
+        // until a creation succeeds or the user starts over: a later refusal, a sign-in
+        // that has lapsed for one, says nothing about it.
+        if (unknown) resume.createUncertain = true;
+        else if (!resume.createUncertain) resume.createKey = `dashboard-preview-${randomId()}`;
     }
     if (failure.step === "deploy" && failure.status === 404) {
         // The archive was collected, or the preview deleted, since the last try.

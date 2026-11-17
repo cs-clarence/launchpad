@@ -270,6 +270,18 @@ describe("keys that cannot be reused wrongly", () => {
         }
     });
 
+    it("keeps an earlier uncertain creation in doubt through a later refusal, such as a lapsed sign-in", () => {
+        const resume = newResume();
+        const key = resume.createKey;
+        afterFailure(resume, { step: "create", status: null, message: "x" });
+        afterFailure(resume, { step: "create", status: 401, message: "Unauthorized" });
+        expect(resume.createKey).toBe(key);
+        expect(fieldsLocked(resume)).toBe(true);
+        afterFailure(resume, { step: "create", status: 409, message: "Taken" });
+        expect(resume.createKey).toBe(key);
+        expect(resume.createUncertain).toBe(true);
+    });
+
     it("forgets what no longer exists after a 404 on deploying", () => {
         const resume = newResume();
         resume.previewId = ID(2);
