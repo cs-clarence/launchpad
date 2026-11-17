@@ -1,5 +1,6 @@
 import { createFileRoute, Link, redirect } from "@tanstack/react-router";
 import { describeExpiry, statusLabel } from "../lib/previews";
+import { useNow } from "../lib/use-now";
 import { getPreviewsViewFn } from "../server/data";
 import { getCurrentUser } from "../server/session";
 
@@ -23,6 +24,7 @@ export const Route = createFileRoute("/orgs_/$orgId/previews/")({
 
 function Previews() {
     const view = Route.useLoaderData();
+    const now = useNow(view.now);
     return (
         <main className="mx-auto max-w-4xl space-y-6 px-6 py-12">
             <Link className="anchor" to="/orgs/$orgId" params={{ orgId: view.organization.id }}>
@@ -56,7 +58,7 @@ function Previews() {
                                 {view.lifecycleEnabled || preview.state !== "active" ? (
                                     <span suppressHydrationWarning>
                                         {" · "}
-                                        {describeExpiry(preview, view.now)}
+                                        {describeExpiry(preview, now)}
                                     </span>
                                 ) : null}
                             </div>

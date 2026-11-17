@@ -9,6 +9,7 @@ import {
     mergeEvents,
     statusLabel,
 } from "./previews";
+import { serverTime } from "./use-now";
 
 const event = (seq: number) => ({
     seq,
@@ -97,5 +98,14 @@ describe("extend choices", () => {
         expect(extendChoices(5 * 86_400)).toEqual({ choices: ["24h", "3d"], initial: "3d" });
         expect(extendChoices(86_400).initial).toBe("24h");
         expect(extendChoices(7_200)).toEqual({ choices: ["7200s"], initial: "7200s" });
+    });
+});
+
+describe("the page clock", () => {
+    it("moves on from the server's time by what the browser clock has advanced", () => {
+        expect(serverTime(1_000, 50_000, 50_000)).toBe(1_000);
+        expect(serverTime(1_000, 50_000, 80_000)).toBe(31_000);
+        // A browser clock that is wrong does not show: only its advance counts.
+        expect(serverTime(1_000, 9_999_999, 10_029_999)).toBe(31_000);
     });
 });

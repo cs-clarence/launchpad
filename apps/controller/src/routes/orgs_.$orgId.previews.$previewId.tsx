@@ -3,6 +3,7 @@ import type { z } from "zod";
 import type { deploymentSchema } from "@launchpad/contracts";
 import { useEffect, useState } from "react";
 import { apiRequest } from "../lib/api";
+import { useNow } from "../lib/use-now";
 import {
     deletionLabel,
     deletionNeedsPerson,
@@ -216,6 +217,7 @@ function Lifecycle(props: { view: Present }) {
     const router = useRouter();
     const [busy, setBusy] = useState(false);
     const [error, setError] = useState<string | null>(null);
+    const now = useNow(view.now);
     const offered = extendChoices(view.maxTtlSeconds);
     const [ttl, setTtl] = useState<string>(offered.initial);
     const orgId = view.organization.id;
@@ -294,7 +296,7 @@ function Lifecycle(props: { view: Present }) {
                             : undefined
                     }
                 >
-                    {describeExpiry(view.preview, view.now)}
+                    {describeExpiry(view.preview, now)}
                 </p>
             ) : (
                 <p>
