@@ -207,6 +207,10 @@ describe("deploying from the dashboard", () => {
         expect(result).toMatchObject({ ok: false, step: "create", status: 409 });
         expect(sent).toHaveLength(1);
         expect(resume.previewId).toBeUndefined();
+        // Not stuck replaying it: the doubt is over and the next attempt has a new key.
+        const used = sent[0]!.key;
+        expect(resume.createKey).not.toBe(used);
+        expect(fieldsLocked(resume)).toBe(false);
     });
 
     it("reports a failed creation as such, and never uploads", async () => {

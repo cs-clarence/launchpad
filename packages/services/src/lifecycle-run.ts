@@ -83,6 +83,9 @@ export interface LifecycleResult {
     // worker, say). Reported, not thrown: a deletion that succeeded in the same round must
     // still be reported, and the next round tries again.
     collectionFailed?: true;
+    // Why, as a system error code (EACCES, ENOSPC...) or the error's name: never its message,
+    // which may carry a path.
+    collectionError?: string;
 }
 
 // One round of the lifecycle work, for a worker to call between deployments: claim what has
@@ -120,8 +123,11 @@ export async function runLifecycleOnce(
                 retentionSeconds,
             });
             result.swept = swept.removed + swept.restored;
-        } catch {
+        } catch (error) {
             result.collectionFailed = true;
+            result.collectionError =
+                (error as NodeJS.ErrnoException | undefined)?.code ??
+                (error instanceof Error ? error.name : "error");
         }
     }
     return result;

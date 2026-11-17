@@ -557,6 +557,14 @@ describe("claiming a deletion", () => {
                 status: "failed",
                 failure_code: "preview-deleted",
             });
+            // The audit record names what was closed.
+            const audit = await testDb.db
+                .selectFrom("audit_event")
+                .select("detail")
+                .where("action", "=", "preview.deleted")
+                .where("target_id", "=", p.id)
+                .executeTakeFirstOrThrow();
+            expect(JSON.parse(audit.detail!).closedDeployments).toEqual([d.id]);
             // A deleted preview takes no deployment, and is not found: it is gone, not going.
             expect(
                 await code(

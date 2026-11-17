@@ -162,6 +162,10 @@ export async function runDeploy(input: {
         // A repeat of an earlier creation returns that preview as it is now, which may be going
         // away: do not upload for it.
         if (created.data.state !== undefined && created.data.state !== "active") {
+            // The doubt about the creation is over: it happened. Another attempt must not replay
+            // it (it would only be refused again), so it starts a new one.
+            resume.createUncertain = false;
+            resume.createKey = `dashboard-preview-${randomId()}`;
             return {
                 ok: false,
                 step: "create",

@@ -646,18 +646,20 @@ async function markDeleted(
     // A deployment held for an administrator was asking what the host is serving: destroying
     // the app answers it, and nothing could resolve it once the preview is gone from the
     // dashboard. Closing it also lets its archive be collected.
-    await trx
+    const closed = await trx
         .updateTable("deployment")
         .set({
             status: "failed",
             failure_code: "preview-deleted",
             failure_message:
                 "The preview was deleted while this deployment waited for an administrator.",
+            step_pending: null,
             finished_at: sql<Date>`now()`,
             updated_at: sql<Date>`now()`,
         })
         .where("preview_id", "=", previewId)
         .where("status", "=", "reconciliation-needed")
+        .returning("id")
         .execute();
     await trx
         .insertInto("audit_event")
@@ -667,7 +669,10 @@ async function markDeleted(
             target_type: "preview",
             target_id: previewId,
             organization_id: organizationId,
-            detail: JSON.stringify({ operation: operationId }),
+            detail: JSON.stringify({
+                operation: operationId,
+                closedDeployments: closed.map((d) => d.id),
+            }),
         })
         .execute();
 }

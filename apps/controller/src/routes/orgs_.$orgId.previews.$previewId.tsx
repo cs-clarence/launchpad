@@ -304,14 +304,15 @@ function Lifecycle(props: { view: Present }) {
                         : undefined
                 }
             >
-                {describeExpiry(view.preview, now)}
+                {describeExpiry(view.preview, now, view.lifecycleEnabled)}
             </p>
             {!view.lifecycleEnabled && view.preview.state === "active" ? (
                 // Shown, not hidden: the expiry is real and applies the moment it is turned on.
                 <p className="text-sm">
-                    Nothing deletes previews on this server right now (the lifecycle is off on the
-                    controller). The expiry above applies when it is turned on, and may already be
-                    in force if a worker has it on: extend this preview if you want to keep it.
+                    The controller has the lifecycle off, so previews cannot be deleted from here. A
+                    worker with the lifecycle on still deletes them when they expire, and each
+                    expiry applies in full as soon as the controller turns it on: extend this
+                    preview if you want to keep it.
                 </p>
             ) : null}
             {view.preview.state === "active" && view.canExtend ? (

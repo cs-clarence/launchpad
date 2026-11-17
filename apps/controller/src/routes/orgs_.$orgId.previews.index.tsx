@@ -48,8 +48,10 @@ function Previews() {
             ) : null}
             {!view.lifecycleEnabled ? (
                 <p className="text-sm">
-                    Nothing deletes previews on this server right now (the lifecycle is off on the
-                    controller), but each has an expiry that applies when it is turned on.
+                    The controller has the lifecycle off, so previews cannot be deleted from here. A
+                    worker with the lifecycle on still deletes them when they expire, and each
+                    expiry applies in full as soon as the controller turns it on: extend any preview
+                    you want to keep.
                 </p>
             ) : null}
             <p>
@@ -78,7 +80,7 @@ function Previews() {
                                 <code>{preview.slug}</code>
                                 <span suppressHydrationWarning>
                                     {" · "}
-                                    {describeExpiry(preview, now)}
+                                    {describeExpiry(preview, now, view.lifecycleEnabled)}
                                 </span>
                             </div>
                         </li>

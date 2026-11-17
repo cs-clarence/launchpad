@@ -977,6 +977,7 @@ describe("a collection that cannot run", () => {
         const stuck = await artifact(5 * HOUR);
         // A worker that is not the owner of the data directory cannot move the archive aside.
         const owner = path.dirname(stuck.file);
+        const originalMode = (await fs.stat(owner)).mode & 0o777;
         await fs.chmod(owner, 0o500);
         try {
             const unreadable = process.getuid?.() === 0;
@@ -1001,10 +1002,11 @@ describe("a collection that cannot run", () => {
             // Root can write anywhere, so there is nothing to fail for it.
             if (!unreadable) {
                 expect(round.collectionFailed).toBe(true);
+                expect(round.collectionError).toBe("EACCES");
                 expect(round.collected).toBe(0);
             }
         } finally {
-            await fs.chmod(owner, 0o700);
+            await fs.chmod(owner, originalMode);
         }
     });
 });

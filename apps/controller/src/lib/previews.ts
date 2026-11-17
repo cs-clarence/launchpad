@@ -47,13 +47,15 @@ export function mergeEvents(
 export function describeExpiry(
     preview: { state: string; expiresAt: string | Date | null },
     now: number,
+    // Whether this controller runs the lifecycle; where it does not, "shortly" is not known.
+    lifecycleEnabled = true,
 ): string {
     if (preview.state === "deleting") return "Being deleted";
     if (preview.state === "deleted") return "Deleted";
     if (preview.expiresAt === null) return "Never expires";
     const ms = new Date(preview.expiresAt).getTime() - now;
     if (Number.isNaN(ms)) return "Unknown";
-    if (ms <= 0) return "Expired, will be deleted shortly";
+    if (ms <= 0) return lifecycleEnabled ? "Expired, will be deleted shortly" : "Past its expiry";
     if (ms < 60_000) return "Expires in less than a minute";
     const minutes = Math.floor(ms / 60_000);
     if (minutes < 60) return `Expires in ${minutes} minute${minutes === 1 ? "" : "s"}`;
