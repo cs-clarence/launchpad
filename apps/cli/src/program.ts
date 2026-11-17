@@ -1,7 +1,9 @@
 import { Command, CommanderError } from "@commander-js/extra-typings";
 import {
+    deletePreview,
     deploy,
     deploymentEvents,
+    extendPreview,
     getDeployment,
     getPreview,
     listDeployments,
@@ -10,6 +12,7 @@ import {
     listProfiles,
     listProjects,
     login,
+    previewDeletion,
     logout,
     useOrganization,
     useProfile,
@@ -34,6 +37,10 @@ const text = (rows: string[][]) => {
         )
         .join("\n");
 };
+
+// "never" is a preview with no expiry; a preview that is going away says so instead.
+const expiry = (p: { state: string; expiresAt: string | null }) =>
+    p.state !== "active" ? p.state : (p.expiresAt ?? "never");
 
 const shellArg = (value: string) => `'${value.replace(/'/g, "'\\''")}'`;
 
@@ -243,6 +250,10 @@ export function buildProgram(rawIo: Io) {
         .option("--project <project>", "the project's slug or id (or launchpad.json)")
         .option("--name <name>", "the preview's name (or launchpad.json)")
         .option("--spa", "serve index.html for unknown paths, for single-page apps")
+        .option(
+            "--ttl <duration>",
+            "lifetime of a new preview, such as 24h or 7d (the server's default if omitted; an existing preview keeps its own)",
+        )
         .option("--no-wait", "return as soon as the deployment is queued")
         .option("--timeout <seconds>", "stop waiting after this long (default 900)", "900")
         .action(async (source, options, command) => {
@@ -273,6 +284,7 @@ export function buildProgram(rawIo: Io) {
                 project,
                 name,
                 spa: options.spa,
+                ttl: options.ttl,
                 wait: options.wait,
                 waitTimeoutMs: seconds * 1000,
                 profile: workspace.profile,
@@ -346,12 +358,13 @@ export function buildProgram(rawIo: Io) {
                 result.items.length === 0
                     ? "No previews."
                     : text([
-                          ["ID", "NAME", "HOSTNAME", "ACTIVE"],
+                          ["ID", "NAME", "HOSTNAME", "ACTIVE", "EXPIRES"],
                           ...result.items.map((p) => [
                               p.id,
                               p.slug,
                               p.hostname,
                               p.activeDeploymentId ?? "-",
+                              expiry(p),
                           ]),
                       ]) +
                       (result.truncated ? "\n(more previews exist; narrow with --project)" : ""),
@@ -375,6 +388,7 @@ export function buildProgram(rawIo: Io) {
                     `Preview:  ${preview.slug} (${preview.id})`,
                     `Hostname: ${preview.hostname}`,
                     `Active:   ${preview.activeDeploymentId ?? "none"}`,
+                    `Expires:  ${expiry(preview)}`,
                     "",
                     recent.items.length === 0
                         ? "No deployments."
@@ -382,6 +396,75 @@ export function buildProgram(rawIo: Io) {
                               ["DEPLOYMENT", "STATUS", "CREATED"],
                               ...recent.items.map((d) => [d.id, d.status, d.createdAt]),
                           ]),
+                ].join("\n"),
+            );
+        });
+
+    previews
+        .command("extend")
+        .argument("<previewId>", "the preview's id")
+        .requiredOption("--ttl <duration>", "how much longer, such as 24h or 7d")
+        .description(
+            "Give a preview more time. It never shortens a lifetime and is capped at the server's maximum from now; a preview that never expired gets an expiry.",
+        )
+        .action(async (previewId, options, command) => {
+            const workspace = await workspaceContext(io.context, {
+                workingDir: io.workingDir ?? process.cwd(),
+                profile: wants(command).profile,
+            });
+            const preview = await extendPreview(workspace.context, previewId, {
+                ttl: options.ttl,
+                profile: workspace.profile,
+            });
+            print(command, preview, () => `${preview.slug} now expires ${expiry(preview)}.`);
+        });
+    previews
+        .command("delete")
+        .argument("<previewId>", "the preview's id")
+        .option("--yes", "confirm: the preview and its site are removed for good")
+        .description(
+            "Delete a preview. This cannot be undone. It is queued and carried out by the worker; follow it with `previews deletion`.",
+        )
+        .action(async (previewId, options, command) => {
+            if (!options.yes) {
+                throw new CommanderError(
+                    EXIT.usage,
+                    "commander.missingConfirmation",
+                    "error: deleting cannot be undone; pass --yes to confirm",
+                );
+            }
+            const workspace = await workspaceContext(io.context, {
+                workingDir: io.workingDir ?? process.cwd(),
+                profile: wants(command).profile,
+            });
+            const result = await deletePreview(workspace.context, previewId, workspace.profile);
+            print(
+                command,
+                result,
+                () =>
+                    `Deletion queued (operation ${result.operationId}). Follow it with: launchpad previews deletion ${shellArg(previewId)}`,
+            );
+        });
+    previews
+        .command("deletion")
+        .argument("<previewId>", "the preview's id")
+        .description("Show a preview's latest deletion (by you or by expiry).")
+        .action(async (previewId, _options, command) => {
+            const workspace = await workspaceContext(io.context, {
+                workingDir: io.workingDir ?? process.cwd(),
+                profile: wants(command).profile,
+            });
+            const deletion = await previewDeletion(workspace.context, previewId, workspace.profile);
+            print(command, deletion, () =>
+                [
+                    `Deletion: ${deletion.id} (${deletion.reason})`,
+                    `Status:   ${deletion.status}`,
+                    ...(deletion.failure
+                        ? [`Note:     ${deletion.failure.message} [${deletion.failure.code}]`]
+                        : []),
+                    ...(deletion.status === "reconciliation-needed"
+                        ? ["An administrator must check the host and resolve it in the dashboard."]
+                        : []),
                 ].join("\n"),
             );
         });

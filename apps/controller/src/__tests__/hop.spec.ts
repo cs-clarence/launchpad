@@ -8,8 +8,11 @@ import { randomBytes } from "node:crypto";
 import { createAuth, loadAuthConfig, setupFirstOperator } from "@launchpad/auth";
 import {
     createContext,
+    deletePreview,
     deploy as deployWithClient,
     deploymentEvents,
+    extendPreview,
+    previewDeletion,
     getDeployment,
     listPreviews,
 } from "@launchpad/client-core";
@@ -1502,6 +1505,30 @@ describe("previews and deployments over HTTP", () => {
             expect((await deploymentEvents(ctx, deployment.id, { after: 0 })).items).toEqual([]);
             const previews = await listPreviews(ctx, { project: "site" });
             expect(previews.items.map((p) => p.slug)).toContain("from-the-cli");
+            // Lifetimes and deletion through the same library the CLI uses.
+            const timed = await deployWithClient(ctx, {
+                source: root,
+                project: "site",
+                name: "from-the-cli-ttl",
+                ttl: "2h",
+                wait: false,
+            });
+            const before = (await listPreviews(ctx, { project: "site" })).items.find(
+                (p) => p.id === timed.preview.id,
+            )!;
+            expect(Date.parse(before.expiresAt!) - Date.now()).toBeLessThan(2 * 3_600_000 + 60_000);
+            const extended = await extendPreview(ctx, timed.preview.id, { ttl: "24h" });
+            expect(Date.parse(extended.expiresAt!)).toBeGreaterThan(Date.parse(before.expiresAt!));
+            const remover = createContext({
+                LAUNCHPAD_CONFIG_DIR: config,
+                LAUNCHPAD_CONTROLLER: proxied.base,
+                LAUNCHPAD_API_KEY: await mintKey("cli-remover", ["preview:read", "preview:delete"]),
+            });
+            const queued = await deletePreview(remover, timed.preview.id);
+            expect(await previewDeletion(remover, timed.preview.id)).toMatchObject({
+                id: queued.operationId,
+                status: "queued",
+            });
         } finally {
             await fs.rm(root, { recursive: true, force: true });
             await fs.rm(config, { recursive: true, force: true });

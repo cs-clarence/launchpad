@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { clientFor, type Context, resolve } from "./operations";
 import { resolveProjectId } from "./project";
 
@@ -51,4 +52,33 @@ export async function deploymentEvents(
 ) {
     const { client, organizationId } = await scoped(ctx, options.profile);
     return client.deployments.events(organizationId, deploymentId, options.after);
+}
+
+// Gives a preview more time (never less) and returns it with the resulting expiry. Every
+// retry carries one key, so a lost answer cannot extend it twice.
+export async function extendPreview(
+    ctx: Context,
+    previewId: string,
+    options: { ttl: string; profile?: string; idempotencyKey?: string },
+) {
+    const { client, organizationId } = await scoped(ctx, options.profile);
+    return client.previews.extend(
+        organizationId,
+        previewId,
+        { ttl: options.ttl },
+        { idempotencyKey: options.idempotencyKey ?? `extend-${randomUUID()}` },
+    );
+}
+
+// Queues the deletion and returns at once; follow it with `previewDeletion`. Deleting
+// cannot be undone.
+export async function deletePreview(ctx: Context, previewId: string, profile?: string) {
+    const { client, organizationId } = await scoped(ctx, profile);
+    return client.previews.delete(organizationId, previewId);
+}
+
+// The latest deletion of a preview, whoever started it.
+export async function previewDeletion(ctx: Context, previewId: string, profile?: string) {
+    const { client, organizationId } = await scoped(ctx, profile);
+    return client.deletions.forPreview(organizationId, previewId);
 }

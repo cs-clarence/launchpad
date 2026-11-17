@@ -38,6 +38,9 @@ export interface DeployInput {
     project: string;
     name: string;
     spa?: boolean;
+    // A lifetime such as "24h" for a preview created by this deploy (an existing preview
+    // keeps its own; extend it separately).
+    ttl?: string;
     // Limits which files of a directory are published (never applies to an archive).
     selection?: FileSelection;
     wait?: boolean;
@@ -123,6 +126,13 @@ export async function deploy(ctx: Context, input: DeployInput): Promise<DeployRe
         input.name,
         sleep,
         input.signal,
+        input.ttl,
+        () =>
+            progress({
+                kind: "step",
+                message:
+                    "The preview already exists, so --ttl was not applied; extend it with `previews extend`.",
+            }),
     );
     progress({ kind: "step", message: `Uploading ${packed.archive.length} bytes` });
     const artifact = await client.artifacts.upload(organizationId, packed.archive, {
@@ -228,6 +238,8 @@ async function findOrCreatePreview(
     slug: string,
     sleep: (ms: number) => Promise<void>,
     signal?: AbortSignal,
+    ttl?: string,
+    onExisting?: () => void,
 ): Promise<Preview> {
     const find = async (): Promise<Preview | undefined> => {
         let cursor: string | undefined;
@@ -253,7 +265,11 @@ async function findOrCreatePreview(
         return found;
     };
     const existing = await find();
-    if (existing) return usable(existing);
+    if (existing) {
+        const found = usable(existing);
+        if (ttl !== undefined) onExisting?.();
+        return found;
+    }
     signal?.throwIfAborted();
     // One key for every attempt: if a create committed but its answer was lost, the
     // retry gets that same preview back instead of a conflict.
@@ -264,7 +280,7 @@ async function findOrCreatePreview(
                 client.previews.create(
                     organizationId,
                     projectId,
-                    { slug },
+                    { slug, ...(ttl === undefined ? {} : { ttl }) },
                     { idempotencyKey, signal },
                 ),
             sleep,
@@ -274,7 +290,11 @@ async function findOrCreatePreview(
         // Created by someone else between the list and the create: use theirs.
         if (error instanceof LaunchpadApiError && error.status === 409) {
             const raced = await find();
-            if (raced) return usable(raced);
+            if (raced) {
+                const found = usable(raced);
+                if (ttl !== undefined) onExisting?.();
+                return found;
+            }
         }
         throw error;
     }

@@ -10,8 +10,11 @@ launchpad whoami
 launchpad profile list | use <name>
 launchpad org list | use <slug-or-id>
 launchpad projects list
-launchpad deploy <directory|archive.tar.gz> [--project <slug|id>] [--name <name>] [--spa] [--no-wait] [--timeout <seconds>]
+launchpad deploy <directory|archive.tar.gz> [--project <slug|id>] [--name <name>] [--spa] [--ttl <duration>] [--no-wait] [--timeout <seconds>]
 launchpad previews list [--project <slug|id>] | get <previewId>
+launchpad previews extend <previewId> --ttl <duration>
+launchpad previews delete <previewId> --yes
+launchpad previews deletion <previewId>
 launchpad deployments status <deploymentId> [--organization <slug|id>]
 launchpad deployments events <deploymentId> [--after <seq>] [--organization <slug|id>]
 ```
@@ -70,7 +73,17 @@ returns once it is queued). Progress goes to stderr; stdout is the result, a sin
   the controller has deployments turned on.
 - **Failures** carry fixed, safe text (for example, the new release did not become ready and the previous one
   was restored). `reconciliation-needed` means an administrator must check the host, then record the outcome in the dashboard (the preview page) or with `POST …/deployments/{id}/resolution`; until then the preview takes no new deployment.
-- **Stored archives** are not deleted yet and each organization may hold `LAUNCHPAD_MAX_ARTIFACTS` (20 by default); `deploy` settles the preview before it uploads so a deploy that cannot start does not spend one. Uploads are refused while deployments are off, and at most 2 per organization run at once.
+- **Lifetimes.** A new preview expires after the server's default (7 days unless set), or after
+  `deploy --ttl 24h` (at most the server's maximum); `--ttl` is not applied to a preview that already
+  exists. `previews list` and `get` show when each expires (`never`, or its state if it is going away).
+  `previews extend <id> --ttl 7d` gives more time, never less, and a preview that never expired gets an
+  expiry; it needs `preview:deploy`. A deployment to a preview that is being deleted stops before
+  uploading, because its name is free again only once it is gone.
+- **Deleting** needs `preview:delete` and the controller and worker to have the lifecycle on. `previews delete
+  <id> --yes` cannot be undone; it only queues the deletion (the worker carries it out), so follow it with
+  `previews deletion <id>`, which also shows a deletion expiry started. A deletion in
+  `reconciliation-needed` needs an administrator (a session, never a key).
+- **Stored archives** are removed by the worker's lifecycle after the retention (off by default), and each organization may hold `LAUNCHPAD_MAX_ARTIFACTS` (20 by default); `deploy` settles the preview before it uploads so a deploy that cannot start does not spend one. Uploads are refused while deployments are off, and at most 2 per organization run at once.
 - Output and errors hide anything shaped like a key and strip terminal escape
   sequences/control bytes. Serialized JSON stays valid.
 - If the credential store reports `store-busy` (exit 6), wait for other commands

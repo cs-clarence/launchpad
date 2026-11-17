@@ -232,6 +232,43 @@ describe("deploying a directory", () => {
         expect(calls.some((c) => c.path.includes("/projects/") && c.method === "POST")).toBe(false);
     });
 
+    it("gives a new preview the chosen lifetime, and leaves an existing one alone, saying so", async () => {
+        const fresh = controller({ previews: [], statuses: ["succeeded"] });
+        await deploy(fresh.ctx, args(await site(), { ttl: "24h" }));
+        const create = fresh.calls.find(
+            (c) => c.path.includes("/projects/") && c.method === "POST",
+        )!;
+        expect(JSON.parse(create.body as string)).toEqual({ slug: "review", ttl: "24h" });
+        const noTtl = controller({ previews: [], statuses: ["succeeded"] });
+        await deploy(noTtl.ctx, args(await site()));
+        const plain = noTtl.calls.find(
+            (c) => c.path.includes("/projects/") && c.method === "POST",
+        )!;
+        expect(JSON.parse(plain.body as string)).toEqual({ slug: "review" });
+        const existing = controller({ previews: [previewBody()], statuses: ["succeeded"] });
+        const steps: string[] = [];
+        await deploy(
+            existing.ctx,
+            args(await site(), {
+                ttl: "24h",
+                onProgress: (p: Progress) => p.kind === "step" && steps.push(p.message),
+            }),
+        );
+        expect(steps.some((m) => m.includes("--ttl was not applied"))).toBe(true);
+        expect(
+            existing.calls.some((c) => c.path.includes("/projects/") && c.method === "POST"),
+        ).toBe(false);
+    });
+
+    it("stops before uploading when the preview of that name is being deleted", async () => {
+        const { ctx, calls } = controller({
+            previews: [{ ...previewBody(), state: "deleting" }],
+            statuses: ["succeeded"],
+        });
+        await expect(deploy(ctx, args(await site()))).rejects.toThrow(/being deleted/);
+        expect(calls.some((c) => c.path.endsWith("/artifacts"))).toBe(false);
+    });
+
     it("returns at once with --no-wait", async () => {
         const { ctx, calls } = controller({ previews: [], statuses: ["queued"] });
         const result = await deploy(ctx, args(await site(), { wait: false }));
