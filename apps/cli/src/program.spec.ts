@@ -16,6 +16,29 @@ let dir = "";
 const json = (body: unknown, status = 200) =>
     new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
 
+const PID = "0f8fad5b-d9cb-469f-a165-70867728950e";
+const PREVIEW = {
+    id: PID,
+    projectId: PID,
+    slug: "review",
+    hostname: "review-a1b2c3.previews.example.com",
+    state: "active",
+    activeDeploymentId: null,
+    expiresAt: "2026-11-20T00:00:00.000Z",
+    createdAt: "2026-11-15T00:00:00.000Z",
+};
+const DELETION = {
+    id: PID,
+    previewId: PID,
+    status: "reconciliation-needed",
+    reason: "expired",
+    failure: { code: "destroy-uncertain", message: "Destroying the app did not finish clearly." },
+    createdAt: "2026-11-15T00:00:00.000Z",
+    finishedAt: null,
+};
+// Runs when a DELETE reaches the controller, to change things while a command is working.
+let duringDelete: (() => Promise<unknown>) | undefined;
+let sent: { method: string; path: string; body: unknown; key: string | null }[] = [];
 let controllerDown = false;
 const controller = (async (url: string, init: RequestInit) => {
     if (controllerDown) throw new TypeError("fetch failed");
@@ -45,6 +68,35 @@ const controller = (async (url: string, init: RequestInit) => {
                 createdAt: "2026-01-01T00:00:00.000Z",
             },
         ]);
+    }
+    const previews = `/api/v1/organizations/${ORG}/previews`;
+    const method = init.method ?? "GET";
+    const headers = init.headers as Record<string, string>;
+    if (route.startsWith(previews)) {
+        sent.push({
+            method,
+            path: route,
+            body: init.body ? JSON.parse(init.body as string) : undefined,
+            key: headers["idempotency-key"] ?? null,
+        });
+    }
+    if (route === previews && method === "GET") {
+        return json({
+            items: [
+                PREVIEW,
+                { ...PREVIEW, id: crypto.randomUUID(), slug: "old", expiresAt: null },
+                { ...PREVIEW, id: crypto.randomUUID(), slug: "going", state: "deleting" },
+            ],
+            nextCursor: null,
+        });
+    }
+    if (route === `${previews}/${PID}/extend`) {
+        return json({ ...PREVIEW, expiresAt: "2026-11-27T00:00:00.000Z" });
+    }
+    if (route === `${previews}/${PID}/deletion`) return json(DELETION);
+    if (route === `${previews}/${PID}` && method === "DELETE") {
+        await duringDelete?.();
+        return json({ operationId: PID, state: "deleting" }, 202);
     }
     return json({ code: "not-found", status: 404, title: "Not Found" }, 404);
 }) as unknown as typeof fetch;
@@ -347,5 +399,122 @@ describe("failures", () => {
         expect(help.code).toBe(EXIT.ok);
         expect(help.out).toContain("login");
         expect((await cli(["--version"])).code).toBe(EXIT.ok);
+    });
+});
+
+describe("preview lifetimes", () => {
+    beforeEach(() => {
+        sent = [];
+    });
+
+    it("shows when previews expire, and that one is going away", async () => {
+        await loggedIn();
+        const result = await cli(["previews", "list"]);
+        expect(result.code).toBe(EXIT.ok);
+        expect(result.out).toContain("EXPIRES");
+        expect(result.out).toContain("2026-11-20T00:00:00.000Z");
+        expect(result.out).toMatch(/old .* never/);
+        expect(result.out).toMatch(/going .* deleting/);
+    });
+
+    it("extends with one idempotency key and reports the new expiry", async () => {
+        await loggedIn();
+        const result = await cli(["previews", "extend", PID, "--ttl", "7d"]);
+        expect(result.code).toBe(EXIT.ok);
+        expect(result.out).toContain("now expires 2026-11-27T00:00:00.000Z");
+        const call = sent.find((s) => s.path.endsWith("/extend"))!;
+        expect(call).toMatchObject({ method: "POST", body: { ttl: "7d" } });
+        expect(call.key).toMatch(/^extend-/);
+        expect((await cli(["previews", "extend", PID])).code).toBe(EXIT.usage);
+    });
+
+    it("refuses to delete without --yes, sending nothing", async () => {
+        await loggedIn();
+        const result = await cli(["previews", "delete", PID]);
+        expect(result.code).toBe(EXIT.usage);
+        expect(result.all).toContain("--yes");
+        expect(sent.filter((s) => s.method === "DELETE")).toEqual([]);
+    });
+
+    it("queues a deletion with --yes and says how to follow it", async () => {
+        await loggedIn();
+        const result = await cli(["previews", "delete", PID, "--yes"]);
+        expect(result.code).toBe(EXIT.ok);
+        expect(result.out).toContain("Deletion queued");
+        expect(sent.filter((s) => s.method === "DELETE")).toHaveLength(1);
+        // Without --profile, the current saved profile is named all the same.
+        expect(result.out).toContain(`launchpad --profile 'default' previews deletion '${PID}'`);
+        // The follow-up names the profile, or it could ask another controller.
+        const profiled = await cli(["--profile", "default", "previews", "delete", PID, "--yes"]);
+        expect(profiled.out).toContain(`launchpad --profile 'default' previews deletion '${PID}'`);
+    });
+
+    it("reports a missing confirmation as JSON, and rejects a bad lifetime with a usage code", async () => {
+        await loggedIn();
+        const missing = await cli(["previews", "delete", PID, "--json"]);
+        expect(missing.code).toBe(EXIT.usage);
+        expect(sent.filter((s) => s.method === "DELETE")).toEqual([]);
+        // --ttl on deploy reaches the library, which refuses it before sending anything.
+        const site = await fs.mkdtemp(path.join(dir, "site-"));
+        await fs.writeFile(path.join(site, "index.html"), "<p>hi</p>");
+        const badDeploy = await cli([
+            "deploy",
+            site,
+            "--project",
+            "site",
+            "--name",
+            "review",
+            "--ttl",
+            "soon",
+        ]);
+        expect(badDeploy.code).toBe(EXIT.usage);
+        expect(sent).toEqual([]);
+        const bad = await cli(["previews", "extend", PID, "--ttl", "soon"]);
+        expect(bad.code).toBe(EXIT.usage);
+        expect(sent.filter((s) => s.path.endsWith("/extend"))).toEqual([]);
+    });
+
+    it("names the profile the deletion used, even if the current one changes meanwhile", async () => {
+        await loggedIn();
+        await cli(["login", "--controller", CONTROLLER, "--profile", "two", "--key-stdin"], {
+            stdin: `${KEY2}\n`,
+        });
+        await cli(["profile", "use", "default"]);
+        duringDelete = () => cli(["profile", "use", "two"]);
+        try {
+            const result = await cli(["previews", "delete", PID, "--yes"]);
+            expect(result.out).toContain(`launchpad --profile 'default' previews deletion`);
+            expect(result.out).not.toContain("'two'");
+        } finally {
+            duringDelete = undefined;
+        }
+    });
+
+    it("reports a bad lifetime as a usage error even when not logged in", async () => {
+        const deploying = await cli([
+            "deploy",
+            dir,
+            "--project",
+            "site",
+            "--name",
+            "review",
+            "--ttl",
+            "tomorrow",
+        ]);
+        expect(deploying.code).toBe(EXIT.usage);
+        expect(deploying.all).toContain("--ttl");
+        const extending = await cli(["previews", "extend", PID, "--ttl", "tomorrow"]);
+        expect(extending.code).toBe(EXIT.usage);
+    });
+
+    it("shows a deletion's status and its note, and when a person is needed", async () => {
+        await loggedIn();
+        const result = await cli(["previews", "deletion", PID]);
+        expect(result.code).toBe(EXIT.ok);
+        expect(result.out).toContain("reconciliation-needed");
+        expect(result.out).toContain("[destroy-uncertain]");
+        expect(result.out).toContain("An administrator must check the host");
+        const asJson = JSON.parse((await cli(["previews", "deletion", PID, "--json"])).out);
+        expect(asJson.status).toBe("reconciliation-needed");
     });
 });

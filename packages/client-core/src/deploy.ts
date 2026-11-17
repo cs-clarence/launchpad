@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { promises as fs } from "node:fs";
 import {
     LaunchpadApiError,
+    parseDuration,
     LaunchpadTransportError,
     type Deployment,
     type Preview,
@@ -38,6 +39,9 @@ export interface DeployInput {
     project: string;
     name: string;
     spa?: boolean;
+    // A lifetime such as "24h" for a preview created by this deploy (an existing preview
+    // keeps its own; extend it separately).
+    ttl?: string;
     // Limits which files of a directory are published (never applies to an archive).
     selection?: FileSelection;
     wait?: boolean;
@@ -54,14 +58,27 @@ export interface DeployResult {
     outcome: DeployOutcome;
     preview: Pick<Preview, "id" | "slug" | "hostname">;
     artifact: { id: string; reused: boolean; sizeBytes: number };
+    // Present when `ttl` was given: false if the preview already existed and kept its own.
+    ttlApplied?: boolean;
     deployment: Deployment | { id: string; status: string };
+}
+
+// A lifetime is a duration such as "24h", or "none" where the server allows it; the server
+// decides what is allowed, this only refuses what could never be one.
+export function checkLifetime(ttl: string): void {
+    if (ttl !== "none" && parseDuration(ttl) === null) {
+        throw new ClientCoreError(
+            "bad-input",
+            "--ttl is a whole number and s, m, h or d, such as 24h (or none, where the server allows it).",
+        );
+    }
 }
 
 const defaultSleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
 // Only a failure to get an answer is worth repeating, and only because every repeated
 // request carries the same idempotency key: the controller then returns the first result.
-async function retrying<T>(
+export async function retrying<T>(
     run: () => Promise<T>,
     sleep: (ms: number) => Promise<void>,
     signal?: AbortSignal,
@@ -90,6 +107,7 @@ export async function deploy(ctx: Context, input: DeployInput): Promise<DeployRe
             "A preview name is lowercase letters, digits and hyphens (40 characters at most).",
         );
     }
+    if (input.ttl !== undefined) checkLifetime(input.ttl);
     const sleep = input.sleep ?? defaultSleep;
     const progress = input.onProgress ?? (() => {});
     const resolved = await resolve(ctx, input.profile);
@@ -116,6 +134,7 @@ export async function deploy(ctx: Context, input: DeployInput): Promise<DeployRe
     // The preview is settled before the upload: a stored archive is kept for good, so
     // one is not spent on a deploy that cannot start.
     input.signal?.throwIfAborted();
+    let ttlSkipped = false;
     const preview = await findOrCreatePreview(
         client,
         organizationId,
@@ -123,6 +142,15 @@ export async function deploy(ctx: Context, input: DeployInput): Promise<DeployRe
         input.name,
         sleep,
         input.signal,
+        input.ttl,
+        () => {
+            ttlSkipped = true;
+            progress({
+                kind: "step",
+                message:
+                    "The preview already exists, so --ttl was not applied; extend it with `previews extend`.",
+            });
+        },
     );
     progress({ kind: "step", message: `Uploading ${packed.archive.length} bytes` });
     const artifact = await client.artifacts.upload(organizationId, packed.archive, {
@@ -152,6 +180,8 @@ export async function deploy(ctx: Context, input: DeployInput): Promise<DeployRe
     const base = {
         preview: { id: preview.id, slug: preview.slug, hostname: preview.hostname },
         artifact: { id: artifact.id, reused: artifact.reused, sizeBytes: artifact.sizeBytes },
+        // Only when a lifetime was asked for: whether the preview took it.
+        ...(input.ttl === undefined ? {} : { ttlApplied: !ttlSkipped }),
     };
     if (input.wait === false) {
         return { ...base, outcome: "queued", deployment: { id: queued.id, status: queued.status } };
@@ -228,6 +258,8 @@ async function findOrCreatePreview(
     slug: string,
     sleep: (ms: number) => Promise<void>,
     signal?: AbortSignal,
+    ttl?: string,
+    onExisting?: () => void,
 ): Promise<Preview> {
     const find = async (): Promise<Preview | undefined> => {
         let cursor: string | undefined;
@@ -253,28 +285,40 @@ async function findOrCreatePreview(
         return found;
     };
     const existing = await find();
-    if (existing) return usable(existing);
+    if (existing) {
+        const found = usable(existing);
+        if (ttl !== undefined) onExisting?.();
+        return found;
+    }
     signal?.throwIfAborted();
     // One key for every attempt: if a create committed but its answer was lost, the
     // retry gets that same preview back instead of a conflict.
     const idempotencyKey = `preview-${randomUUID()}`;
     try {
-        return await retrying(
-            () =>
-                client.previews.create(
-                    organizationId,
-                    projectId,
-                    { slug },
-                    { idempotencyKey, signal },
-                ),
-            sleep,
-            signal,
+        // A repeat of a create that went through returns that preview as it is now, which may
+        // already be going away.
+        return usable(
+            await retrying(
+                () =>
+                    client.previews.create(
+                        organizationId,
+                        projectId,
+                        { slug, ...(ttl === undefined ? {} : { ttl }) },
+                        { idempotencyKey, signal },
+                    ),
+                sleep,
+                signal,
+            ),
         );
     } catch (error) {
         // Created by someone else between the list and the create: use theirs.
         if (error instanceof LaunchpadApiError && error.status === 409) {
             const raced = await find();
-            if (raced) return usable(raced);
+            if (raced) {
+                const found = usable(raced);
+                if (ttl !== undefined) onExisting?.();
+                return found;
+            }
         }
         throw error;
     }

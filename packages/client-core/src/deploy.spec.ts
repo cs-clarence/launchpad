@@ -7,6 +7,7 @@ import {
     ClientCoreError,
     createContext,
     deploy,
+    extendPreview,
     listPreviews,
     type Progress,
     packDirectory,
@@ -61,6 +62,7 @@ interface Script {
     createDeployment?: () => Response;
     uploadReused?: boolean;
     createPreview?: () => Response;
+    extend?: () => Response;
     hangEvents?: boolean;
     pagedEvents?: boolean;
 }
@@ -113,6 +115,10 @@ function controller(script: Script) {
             if (script.createPreview) return script.createPreview();
             script.previews.push(previewBody());
             return json(previewBody(), 201);
+        }
+        if (p === `/organizations/${ORG}/previews/${PREVIEW}/extend`) {
+            if (script.extend) return script.extend();
+            return json({ ...previewBody(), expiresAt: NOW });
         }
         if (p === `/organizations/${ORG}/previews/${PREVIEW}/deployments`) {
             return script.createDeployment
@@ -230,6 +236,91 @@ describe("deploying a directory", () => {
         const { ctx, calls } = controller({ previews: [previewBody()], statuses: ["succeeded"] });
         await deploy(ctx, args(await site()));
         expect(calls.some((c) => c.path.includes("/projects/") && c.method === "POST")).toBe(false);
+    });
+
+    it("gives a new preview the chosen lifetime, and leaves an existing one alone, saying so", async () => {
+        const fresh = controller({ previews: [], statuses: ["succeeded"] });
+        await deploy(fresh.ctx, args(await site(), { ttl: "24h" }));
+        const create = fresh.calls.find(
+            (c) => c.path.includes("/projects/") && c.method === "POST",
+        )!;
+        expect(JSON.parse(create.body as string)).toEqual({ slug: "review", ttl: "24h" });
+        const noTtl = controller({ previews: [], statuses: ["succeeded"] });
+        await deploy(noTtl.ctx, args(await site()));
+        const plain = noTtl.calls.find(
+            (c) => c.path.includes("/projects/") && c.method === "POST",
+        )!;
+        expect(JSON.parse(plain.body as string)).toEqual({ slug: "review" });
+        const existing = controller({ previews: [previewBody()], statuses: ["succeeded"] });
+        const steps: string[] = [];
+        await deploy(
+            existing.ctx,
+            args(await site(), {
+                ttl: "24h",
+                onProgress: (p: Progress) => p.kind === "step" && steps.push(p.message),
+            }),
+        );
+        expect(steps.some((m) => m.includes("--ttl was not applied"))).toBe(true);
+        expect(
+            existing.calls.some((c) => c.path.includes("/projects/") && c.method === "POST"),
+        ).toBe(false);
+    });
+
+    it("stops before uploading when the preview of that name is being deleted", async () => {
+        const { ctx, calls } = controller({
+            previews: [{ ...previewBody(), state: "deleting" }],
+            statuses: ["succeeded"],
+        });
+        await expect(deploy(ctx, args(await site()))).rejects.toThrow(/being deleted/);
+        expect(calls.some((c) => c.path.endsWith("/artifacts"))).toBe(false);
+    });
+
+    it("refuses a lifetime that is not a duration before packing or sending anything", async () => {
+        const { ctx, calls } = controller({ previews: [], statuses: ["succeeded"] });
+        await expect(deploy(ctx, args(await site(), { ttl: "7days" }))).rejects.toMatchObject({
+            code: "bad-input",
+        });
+        expect(calls).toEqual([]);
+        // none is for the server to allow or refuse.
+        const ok = controller({ previews: [], statuses: ["succeeded"] });
+        await deploy(ok.ctx, args(await site(), { ttl: "none" }));
+    });
+
+    it("reports whether the lifetime was applied", async () => {
+        const fresh = controller({ previews: [], statuses: ["succeeded"] });
+        expect(await deploy(fresh.ctx, args(await site(), { ttl: "1d" }))).toMatchObject({
+            ttlApplied: true,
+        });
+        const existing = controller({ previews: [previewBody()], statuses: ["succeeded"] });
+        expect(await deploy(existing.ctx, args(await site(), { ttl: "1d" }))).toMatchObject({
+            ttlApplied: false,
+        });
+        const none = controller({ previews: [], statuses: ["succeeded"] });
+        expect(await deploy(none.ctx, args(await site()))).not.toHaveProperty("ttlApplied");
+    });
+
+    it("stops before uploading when a repeated create returns a preview that is being deleted", async () => {
+        const { ctx, calls } = controller({
+            previews: [],
+            statuses: ["succeeded"],
+            createPreview: () => json({ ...previewBody(), state: "deleting" }, 201),
+        });
+        await expect(deploy(ctx, args(await site()))).rejects.toThrow(/being deleted/);
+        expect(calls.some((c) => c.path.endsWith("/artifacts"))).toBe(false);
+    });
+
+    it("stops before uploading when the preview raced into existence and is being deleted", async () => {
+        const script: Script = {
+            previews: [],
+            statuses: ["succeeded"],
+            createPreview: () => {
+                script.previews.push({ ...previewBody(), state: "deleting" });
+                return json({ code: "conflict", status: 409, title: "Conflict" }, 409);
+            },
+        };
+        const { ctx, calls } = controller(script);
+        await expect(deploy(ctx, args(await site()))).rejects.toThrow(/being deleted/);
+        expect(calls.some((c) => c.path.endsWith("/artifacts"))).toBe(false);
     });
 
     it("returns at once with --no-wait", async () => {
@@ -775,5 +866,45 @@ describe("packing", () => {
             onReadEntry: (e) => names.push(`${e.path}:${e.uid ?? 0}:${e.uname ?? ""}`),
         });
         expect(names.toSorted()).toEqual(["assets/app.js:0:", "index.html:0:"]);
+    });
+});
+
+describe("extending a preview", () => {
+    it("repeats an unanswered request with the one key, and refuses a bad lifetime locally", async () => {
+        let attempts = 0;
+        const { ctx, calls } = controller({
+            previews: [],
+            statuses: [],
+            extend: () => {
+                if (++attempts < 3) throw new TypeError("fetch failed");
+                return json({ ...previewBody(), expiresAt: NOW });
+            },
+        });
+        const result = await extendPreview(ctx, PREVIEW, { ttl: "24h", sleep: noSleep });
+        expect(result.expiresAt).toBe(NOW);
+        const keys = calls
+            .filter((c) => c.path.endsWith("/extend"))
+            .map((c) => c.headers["idempotency-key"]);
+        expect(keys).toHaveLength(3);
+        expect(new Set(keys).size).toBe(1);
+        const before = calls.length;
+        await expect(extendPreview(ctx, PREVIEW, { ttl: "soon" })).rejects.toMatchObject({
+            code: "bad-input",
+        });
+        expect(calls).toHaveLength(before);
+    });
+
+    it("does not repeat a request the controller answered", async () => {
+        const { ctx, calls } = controller({
+            previews: [],
+            statuses: [],
+            extend: () => json({ code: "conflict", status: 409, title: "Conflict" }, 409),
+        });
+        await expect(
+            extendPreview(ctx, PREVIEW, { ttl: "24h", sleep: noSleep }),
+        ).rejects.toMatchObject({
+            status: 409,
+        });
+        expect(calls.filter((c) => c.path.endsWith("/extend"))).toHaveLength(1);
     });
 });

@@ -244,3 +244,7 @@ content could be re-published by hand from storage, and after it nothing can.
   Not changed: the project-limited "Project not found" vs "Preview not found" message (same as
   existing routes; both 404). The CLI's deploy retry must expect a replayed create to return a
   deleted preview.
+- Slice 5b-1 (CLI): `previews extend|delete|deletion`, `deploy --ttl` (applies to a new preview only,
+  and says so for an existing one), an EXPIRES column; client-core `extendPreview` (one idempotency key
+  per call), `deletePreview`, `previewDeletion`. `delete` needs `--yes` and sends nothing without it.
+  Dashboard controls and the approved upload/deploy panel are 5b-2.
