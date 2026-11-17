@@ -191,6 +191,29 @@ default off): then expired previews are deleted, and stored archives are collect
 Retention must be at least `1h`. The first time the worker enables lifecycle for this
 database, already-overdue previews get a one-time 24 h grace.
 
+### Instance status
+
+`GET /api/v1/status` is for the instance operator and needs a session (an API key cannot read
+it, whatever its scopes; an organization owner who is not the operator gets 403). It returns
+what an operator needs to know whether the instance is healthy, as counts and ages only (no
+ids of previews, names, or text that came from a remote system):
+
+- `dependencies`: the database (`ok` if the request got an answer) and whether the data directory
+  is writable (`ok`, `missing` or `not-writable`).
+- `controller`: whether deployments and the lifecycle are on here.
+- `workers`: each worker that has reported, with its version, whether it runs the lifecycle, when it
+  started, how many seconds ago it reported and whether that is `live` (within the last minute).
+  A worker reports when it starts and at least every 10 s, on a timer of its own, so one that is
+  busy building still shows as live; rows of workers silent for a day are forgotten.
+- `deployments` (queued, running, held for an administrator, age of the oldest queued), `expiry`
+  (previews past their expiry and not yet claimed), `deletions` (waiting, held) and `artifacts`
+  (stored count and bytes).
+- `warnings`, in plain words: work waiting with no live worker; the controller has the lifecycle on
+  but no live worker does (a deletion would be accepted and never run), or the other way round;
+  deployments or deletions that need an administrator; a data directory that is missing or read-only.
+
+There is no dashboard panel for it yet.
+
 ### Deploying from the dashboard
 
 The previews page has a **Deploy a site** form (a preview's own page has **Deploy a new

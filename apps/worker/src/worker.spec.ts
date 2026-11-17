@@ -1,6 +1,13 @@
 import type { Database } from "@launchpad/database";
 import type { DeployPorts } from "@launchpad/services";
-import type { Kysely } from "kysely";
+import {
+    Kysely,
+    PostgresAdapter,
+    PostgresIntrospector,
+    PostgresQueryCompiler,
+    type DatabaseConnection,
+    type Driver,
+} from "kysely";
 import { describe, expect, it } from "vitest";
 import { getEventListeners } from "node:events";
 import { runOnce, runWorker, sleep } from "./worker";
@@ -76,5 +83,105 @@ describe("the worker loop", () => {
         const started = Date.now();
         await done;
         expect(Date.now() - started).toBeLessThan(3000);
+    });
+});
+
+// A database that records what it is asked, and can be made to fail.
+function recordingDb() {
+    const state = { statements: [] as string[], fail: false, slowOthers: false };
+    const connection: DatabaseConnection = {
+        executeQuery: async (query) => {
+            state.statements.push(query.sql);
+            if (state.slowOthers && !query.sql.includes("worker_heartbeat")) {
+                await new Promise((resolve) => setTimeout(resolve, 250));
+                throw new Error("gave up");
+            }
+            if (state.fail) throw new Error("db down: password=hunter2");
+            return { rows: [] };
+        },
+        streamQuery: () => {
+            throw new Error("not used");
+        },
+    };
+    const driver: Driver = {
+        init: async () => {},
+        acquireConnection: async () => connection,
+        beginTransaction: async () => {},
+        commitTransaction: async () => {},
+        rollbackTransaction: async () => {},
+        releaseConnection: async () => {},
+        destroy: async () => {},
+    };
+    const db = new Kysely<Database>({
+        dialect: {
+            createAdapter: () => new PostgresAdapter(),
+            createDriver: () => driver,
+            createIntrospector: (k) => new PostgresIntrospector(k),
+            createQueryCompiler: () => new PostgresQueryCompiler(),
+        },
+    });
+    return { db, state };
+}
+
+describe("the worker's heartbeat", () => {
+    const run = async (
+        db: Kysely<Database>,
+        over: Partial<Parameters<typeof runWorker>[2]>,
+        forMs: number,
+    ) => {
+        const controller = new AbortController();
+        const lines: Record<string, unknown>[] = [];
+        const done = runWorker(db, ports, {
+            owner: "w-test",
+            deps: { enabled: false },
+            leaseMs: 60_000,
+            pollMs: 5,
+            signal: controller.signal,
+            log: (line) => lines.push(line),
+            ...over,
+        });
+        setTimeout(() => controller.abort(), forMs);
+        await done;
+        return lines;
+    };
+    const beats = (statements: string[]) =>
+        statements.filter((sql) => sql.startsWith("insert") && sql.includes("worker_heartbeat"))
+            .length;
+
+    it("writes at the start and then on its own timer, not on every poll", async () => {
+        const { db, state } = recordingDb();
+        await run(db, { heartbeat: { version: "9.9.9", everyMs: 60 } }, 400);
+        // The loop polled dozens of times; the beats follow the timer.
+        expect(beats(state.statements)).toBeGreaterThanOrEqual(3);
+        expect(beats(state.statements)).toBeLessThanOrEqual(9);
+        expect(
+            state.statements.some(
+                (sql) => sql.startsWith("delete") && sql.includes("worker_heartbeat"),
+            ),
+        ).toBe(true);
+    });
+
+    it("writes nothing when it is not asked to", async () => {
+        const { db, state } = recordingDb();
+        await run(db, {}, 100);
+        expect(state.statements).toEqual([]);
+    });
+
+    it("beats while a long deployment runs, because the timer is not the loop", async () => {
+        const { db, state } = recordingDb();
+        // Everything but a heartbeat is held for most of the run, as a long deployment is.
+        state.slowOthers = true;
+        await run(db, { deps: { enabled: true }, heartbeat: { version: "1", everyMs: 40 } }, 300);
+        expect(beats(state.statements)).toBeGreaterThanOrEqual(3);
+    });
+
+    it("reports a failed beat without detail, and the work goes on", async () => {
+        const { db, state } = recordingDb();
+        state.fail = true;
+        const lines = await run(db, { heartbeat: { version: "1", everyMs: 40 } }, 250);
+        expect(lines.filter((l) => l.event === "heartbeat-error").length).toBeGreaterThanOrEqual(2);
+        expect(JSON.stringify(lines)).not.toContain("hunter2");
+        // And it was still running (the loop did not die with the first failure).
+        expect(lines.every((l) => l.event === "heartbeat-error")).toBe(true);
     });
 });

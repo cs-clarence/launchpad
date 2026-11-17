@@ -16,6 +16,7 @@ export {
     extendPreviewSchema,
     requestedDeletionSchema,
     deletionSchema,
+    statusSchema,
     resolveDeletionSchema,
     lifetimeSchema,
     resolveDeploymentSchema,

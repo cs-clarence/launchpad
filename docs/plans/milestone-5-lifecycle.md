@@ -265,3 +265,14 @@ content could be re-published by hand from storage, and after it nothing can.
   cannot deploy, and replaced by a note when deployments are off. Verify: unit tests of the flow
   with a fake API (steps, keys, resuming, failures), HTTP tests of what each role sees, and the
   existing API tests of the calls it makes. Not covered: a browser test of the file picker.
+- Slice 6 (status; Medium risk: one additive column, one new operator-only read route, a write from the
+  worker's loop): `worker_heartbeat` gains `lifecycle_enabled` (migration 017, forward-only); the worker
+  writes its row on start and at most every 10 s (a failed write is logged and never stops the work; rows
+  idle for a day are pruned); `GET /api/v1/status` is session-only and operator-only and returns database
+  and data-directory readiness, the controller's settings, each worker's age and settings, the deployment
+  backlog (queued, running, held, oldest queued age), overdue expiries, deletions by status, artifact
+  count/bytes, and plain-language warnings (no live worker while there is work; the controller has the
+  lifecycle on but no live worker does, which is how a deletion gets stuck). It returns only counts and
+  ages, no ids, names or text from remote output. Verify: service tests over crafted data, an HTTP test
+  of who may read it, a worker test that heartbeats are throttled and failures harmless. A dashboard
+  panel is not part of this slice.

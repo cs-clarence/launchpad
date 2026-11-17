@@ -19,6 +19,7 @@ import {
     extendPreviewSchema,
     requestedDeletionSchema,
     deletionSchema,
+    statusSchema,
     resolveDeletionSchema,
     createProjectSchema,
     errorSchema,
@@ -184,6 +185,7 @@ export function openApiPlugin(enabled: boolean) {
                 { name: "Artifacts", description: "Uploaded static-site archives." },
                 { name: "Previews", description: "Previews and their deployments." },
                 { name: "API keys", description: "Organization-owned automation keys." },
+                { name: "Operations", description: "Instance health, for the operator." },
                 {
                     name: "Invitations",
                     description: "Email invitations (invitation enrollment only).",
@@ -356,6 +358,14 @@ export const docs = {
         path: ["orgId", "previewId"],
         ok: { status: 202, description: "Deletion queued.", schema: requestedDeletionSchema },
         errors: [401, 403, 404, 409],
+    }),
+    getStatus: operation({
+        tags: ["Operations"],
+        summary: "How the instance is doing",
+        description:
+            "Needs the instance operator and a session (an API key cannot do this). Database and data-directory readiness, the controller's settings, each worker's age and lifecycle setting, the work waiting (deployments, overdue expiries, deletions), stored artifacts, and warnings in plain words. Counts and ages only.",
+        ok: { description: "The status.", schema: statusSchema },
+        errors: [401, 403],
     }),
     getPreviewDeletion: operation({
         keys: true,

@@ -8,6 +8,9 @@ import { createLifecyclePorts } from "./lifecycle-ports";
 import { createDeployPorts } from "./ports";
 import { runWorker } from "./worker";
 
+// Shown to the operator next to each worker; the package version is the release.
+const WORKER_VERSION = process.env.npm_package_version ?? "unknown";
+
 const log = (line: Record<string, unknown>) => console.log(JSON.stringify(line));
 
 async function main() {
@@ -51,6 +54,7 @@ async function main() {
             pollMs: config.pollMs,
             signal: shutdown.signal,
             log,
+            heartbeat: { version: WORKER_VERSION },
             lifecycle: {
                 ports: createLifecyclePorts({ dokku, docker }),
                 config: config.lifecycle,

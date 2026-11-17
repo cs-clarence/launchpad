@@ -8,6 +8,7 @@ import {
     extendPreview,
     requestPreviewDeletion,
     getDeletion,
+    getStatus,
     deletionsEnabled,
     getPreviewDeletion,
     deletionProjectId,
@@ -700,6 +701,16 @@ export function createApi(deps: {
                         },
                         202,
                     ),
+            )
+            // Operators only, and only with a session: no key, whatever its scopes.
+            .get("/v1/status", { detail: docs.getStatus }, ({ request, set }) =>
+                respond(request, set, null, (p) =>
+                    getStatus(db, p, {
+                        dataDir: artifacts.dataDir,
+                        deploymentsEnabled: previews.enabled,
+                        lifecycleEnabled: previews.lifecycle?.enabled ?? false,
+                    }),
+                ),
             )
             .get(
                 "/v1/organizations/:orgId/previews/:previewId/deletion",

@@ -105,6 +105,14 @@ stays (marked collected) and the file goes after it; uploading the same bytes ag
 archive again. Switch the lifecycle off to stop all of this at once: nothing is deleted, and
 all rows and jobs are kept.
 
+### Heartbeat
+
+The worker writes a row (`worker_heartbeat`: id, version, whether it runs the lifecycle, when it
+started, when it last reported) when it starts and every 10 s after, from a timer of its own, so
+a long build does not make it look dead. A failed write is logged (`heartbeat-error`, no detail)
+and the work goes on. The operator reads these through `GET /api/v1/status` (see the controller
+README), which also warns when the controller and the workers disagree about the lifecycle.
+
 ### Things to know before switching the lifecycle on
 
 - Use one database per Dokku host and per data directory. "Owned" means "has a row in this
