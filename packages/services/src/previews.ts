@@ -369,8 +369,6 @@ export async function extendPreview(
     const config = deps.lifecycle ?? DEFAULT_LIFECYCLE;
     const data = parseInput(extendPreviewSchema, input);
     const key = idempotencyKey === undefined ? undefined : parseInput(keySchema, idempotencyKey);
-    // "none" removes the lifetime, which only an instance that allows it may do.
-    const seconds = resolveLifetime(data.ttl, config);
     const requestHash = hashRequest({ previewId, ttl: data.ttl });
     const endpoint = "preview.extend";
     const bound = principal.credentialId ?? principal.userId;
@@ -386,9 +384,9 @@ export async function extendPreview(
             .executeTakeFirst();
         // Authority is re-read now that the lock is held: it can change while waiting for it.
         await requireMembership(trx, principal, organizationId, "preview:deploy");
-        if (!row) throw new ServiceError("not-found", "Preview not found.");
-        if (row.desired_state !== "active") {
-            throw new ServiceError("conflict", "That preview is expired or being deleted.");
+        // A deleted preview is gone, as it is for every other route.
+        if (!row || row.desired_state === "deleted") {
+            throw new ServiceError("not-found", "Preview not found.");
         }
         if (key !== undefined) {
             // One request at a time per complete scoped key, even across previews.
@@ -415,10 +413,16 @@ export async function extendPreview(
                         "That idempotency key was used with a different request.",
                     );
                 }
-                // A repeat is not extended again.
+                // A repeat is not extended again, whatever the preview has become since.
                 return shape(row);
             }
         }
+        if (row.desired_state !== "active") {
+            throw new ServiceError("conflict", "That preview is expired or being deleted.");
+        }
+        // "none" removes the lifetime, which only an instance that allows it may do. Checked
+        // after a replay, so a limit lowered since the first request does not undo it.
+        const seconds = resolveLifetime(data.ttl, config);
         const clock = (await sql<{ c: Date }>`select clock_timestamp() as c`.execute(trx)).rows[0]!
             .c;
         let next: Date | null;

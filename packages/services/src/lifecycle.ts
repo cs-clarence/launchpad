@@ -52,6 +52,15 @@ function duration(name: string, value: string | undefined): number | undefined {
 
 // Lifecycle settings from the environment. Unset means the documented default; a set but
 // invalid value is an error at startup, never a silent fallback.
+// Whether the controller may accept a new deletion: the worker does nothing without
+// deployments, and nothing without the lifecycle, so both must be on.
+export function deletionsEnabled(previews: {
+    enabled: boolean;
+    lifecycle?: { enabled: boolean };
+}): boolean {
+    return previews.enabled && (previews.lifecycle?.enabled ?? false);
+}
+
 export function lifecycleConfigFromEnv(env: Record<string, string | undefined>): LifecycleConfig {
     const config: LifecycleConfig = {
         enabled: flag("LAUNCHPAD_LIFECYCLE", env.LAUNCHPAD_LIFECYCLE) ?? DEFAULT_LIFECYCLE.enabled,

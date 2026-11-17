@@ -8,6 +8,8 @@ import {
     extendPreview,
     requestPreviewDeletion,
     getDeletion,
+    deletionsEnabled,
+    getPreviewDeletion,
     deletionProjectId,
     resolveDeletion,
     resolveDeletionSchema,
@@ -691,10 +693,33 @@ export function createApi(deps: {
                                 );
                             }
                             return requestPreviewDeletion(db, p, params.orgId, params.previewId, {
-                                enabled: previews.lifecycle?.enabled ?? false,
+                                // The worker does nothing without deployments, so a deletion
+                                // accepted without them would never run.
+                                enabled: deletionsEnabled(previews),
                             });
                         },
                         202,
+                    ),
+            )
+            .get(
+                "/v1/organizations/:orgId/previews/:previewId/deletion",
+                { detail: docs.getPreviewDeletion },
+                ({ request, set, params }) =>
+                    respond(
+                        request,
+                        set,
+                        { organizationId: params.orgId, scope: "preview:read" },
+                        async (p, key) => {
+                            if (key?.projectIds) {
+                                requireKeyAccess(
+                                    key,
+                                    params.orgId,
+                                    "preview:read",
+                                    await previewProjectId(db, p, params.orgId, params.previewId),
+                                );
+                            }
+                            return getPreviewDeletion(db, p, params.orgId, params.previewId);
+                        },
                     ),
             )
             .get(

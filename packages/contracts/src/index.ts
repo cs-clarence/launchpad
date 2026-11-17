@@ -95,12 +95,42 @@ export const requestedDeletionSchema = z.strictObject({
 export const resolveDeletionSchema = z.strictObject({
     outcome: z.enum(["deleted", "retry"]),
 });
+// Every `failure.code` a deletion can carry, by the status it appears with. A test checks
+// this against the codes the deletion service writes.
+export const DELETION_NOTE_CODES = {
+    "queued or running (a retry is scheduled)": [
+        "destroy-waiting",
+        "destroy-retry",
+        "images-retry",
+    ],
+    succeeded: ["images-left-behind", "resolved-deleted"],
+    "reconciliation-needed": [
+        "too-many-attempts",
+        "destroy-uncertain",
+        "destroy-rejected",
+        "not-owned",
+        "unexpected-state",
+    ],
+} as const;
 export const deletionSchema = z.strictObject({
     id: z.uuid(),
     previewId: z.uuid(),
     status: z.enum(["queued", "running", "succeeded", "reconciliation-needed"]),
     reason: z.enum(["manual", "expired"]),
-    failure: z.strictObject({ code: z.string(), message: z.string() }).nullable(),
+    failure: z
+        .strictObject({ code: z.string(), message: z.string() })
+        .nullable()
+        .meta({
+            description:
+                "A note from the last attempt, not necessarily a failure: read it together with `status`. Codes: " +
+                Object.entries(DELETION_NOTE_CODES)
+                    .map(
+                        ([status, codes]) =>
+                            `${codes.map((c) => `\`${c}\``).join(", ")} (${status})`,
+                    )
+                    .join("; ") +
+                ". Only `reconciliation-needed` needs a person. Codes may be added.",
+        }),
     createdAt: z.string().meta({ format: "date-time" }),
     finishedAt: z.string().meta({ format: "date-time" }).nullable(),
 });

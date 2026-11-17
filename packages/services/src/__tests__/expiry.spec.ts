@@ -273,6 +273,40 @@ describe("extending a preview", () => {
             .execute();
         expect(await code(extend(p.id, "1d"))).toBe("conflict");
     });
+
+    it("answers a deleted preview as not found, and a replayed key whatever has happened since", async () => {
+        const p = await make({ ttl: "24h" });
+        const key = `extend-${randomUUID()}`;
+        const first = await extend(p.id, "24h", "dee", {}, key);
+        // A lowered maximum, or the preview leaving `active`, does not undo a replay.
+        const lowered = { lifecycle: { ...lifecycle, maxTtlSeconds: 3600 } };
+        expect(ms((await extend(p.id, "24h", "dee", lowered, key)).expiresAt)).toBe(
+            ms(first.expiresAt),
+        );
+        expect(await code(extend(p.id, "24h", "dee", lowered))).toBe("invalid");
+        await testDb.db
+            .updateTable("preview")
+            .set({ desired_state: "deleting" })
+            .where("id", "=", p.id)
+            .execute();
+        expect((await extend(p.id, "24h", "dee", {}, key)).state).toBe("deleting");
+        expect(await code(extend(p.id, "24h", "dee", {}, `other-${randomUUID()}`))).toBe(
+            "conflict",
+        );
+        await testDb.db
+            .updateTable("preview")
+            .set({ desired_state: "deleted", deleted_at: new Date() })
+            .where("id", "=", p.id)
+            .execute();
+        expect(await code(extend(p.id, "24h", "dee", {}, key))).toBe("not-found");
+    });
+
+    it("removes the expiry with none only where the instance allows it", async () => {
+        const p = await make({ ttl: "24h" });
+        expect(await code(extend(p.id, "none"))).toBe("invalid");
+        const allowed = { lifecycle: { ...lifecycle, allowNoExpiry: true } };
+        expect((await extend(p.id, "none", "dee", allowed)).expiresAt).toBeNull();
+    });
 });
 
 describe("expiring previews", () => {
