@@ -92,7 +92,12 @@ function compose() {
     // Where deployments are on the directory must exist and be the controller's own: made
     // here (not on the first upload) so the operator's status can tell "not yet" from "gone".
     if (deploymentsEnabled(process.env.LAUNCHPAD_DEPLOYMENTS)) {
-        mkdirSync(artifacts.dataDir, { recursive: true, mode: 0o700 });
+        try {
+            mkdirSync(artifacts.dataDir, { recursive: true, mode: 0o700 });
+        } catch (error) {
+            // Not fatal: the operator's status reports the directory, and uploads fail clearly.
+            console.error("Could not create the data directory", error);
+        }
     }
     // A crash mid-upload leaves a staged file behind; clear the old ones at startup.
     void sweepStaleUploads(artifacts.dataDir).catch((error) =>

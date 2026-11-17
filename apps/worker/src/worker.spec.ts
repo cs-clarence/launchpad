@@ -202,26 +202,35 @@ describe("the worker's heartbeat", () => {
         expect(lines.every((l) => l.event === "heartbeat-error")).toBe(true);
     });
 
-    it("says it has started only on its first beat, and sends the lifecycle setting it runs with", async () => {
+    const beatsOf = async (lifecycleOn: boolean) => {
         const { db, state } = recordingDb();
         const lifecycle = {
             ports: {} as never,
-            config: { ...DEFAULT_LIFECYCLE, enabled: false },
+            config: { ...DEFAULT_LIFECYCLE, enabled: lifecycleOn },
             dataDir: "/nowhere",
         };
         await run(db, { lifecycle, heartbeat: { version: "7.7.7", everyMs: 40 } }, 250);
-        const inserts = state.statements
+        return state.statements
             .map((sql, i) => ({ sql, params: state.parameters[i]! }))
             .filter((q) => q.sql.startsWith("insert") && q.sql.includes("worker_heartbeat"));
+    };
+
+    it("says it has started only on its first beat", async () => {
+        const inserts = await beatsOf(false);
         expect(inserts.length).toBeGreaterThanOrEqual(3);
-        // Every beat carries the id, the version and the lifecycle setting (off here) ...
-        for (const insert of inserts) {
-            expect(insert.params).toEqual(expect.arrayContaining(["w-test", "7.7.7", false]));
-        }
-        // ... and only the first asks for the start time to be reset.
         const resets = inserts.map((q) => q.sql.includes("started_at"));
         expect(resets[0]).toBe(true);
         expect(resets.slice(1)).not.toContain(true);
+    });
+
+    it("sends the id, the version and the lifecycle setting it runs with, whichever it is", async () => {
+        for (const on of [false, true]) {
+            const inserts = await beatsOf(on);
+            expect(inserts.length).toBeGreaterThanOrEqual(2);
+            for (const insert of inserts) {
+                expect(insert.params).toEqual(expect.arrayContaining(["w-test", "7.7.7", on]));
+            }
+        }
     });
 
     it("never beats twice at once, and sends nothing once the worker has stopped", async () => {

@@ -10,8 +10,8 @@ import { runWorker } from "./worker";
 
 // Shown to the operator next to each worker; the package version is the release.
 const WORKER_VERSION = (
-    process.env.LAUNCHPAD_VERSION ??
-    process.env.npm_package_version ??
+    process.env.LAUNCHPAD_VERSION ||
+    process.env.npm_package_version ||
     "unknown"
 ).slice(0, 64);
 

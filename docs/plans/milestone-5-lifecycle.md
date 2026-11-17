@@ -276,12 +276,12 @@ content could be re-published by hand from storage, and after it nothing can.
   ages and the workers' ids (hostname-pid), no preview ids, names or text from remote output. Verify: service tests over crafted data, an HTTP test
   of who may read it, a worker test that heartbeats are throttled and failures harmless. A dashboard
   panel is not part of this slice.
-- Slice 6 review (Opus 5.5, before the push; no blockers) fixed: the data directory is created at
-  controller start when deployments are on and not checked when they are off, and only a directory
+- Slice 6 review (Opus 5.5, before the push; no blockers) fixed: the data directory is created when the
+  controller starts (on its first request) when deployments are on and not checked when they are off, and only a directory
   counts; `deletionsAccepted` (lifecycle and deployments) is what workers are compared with, with a
   warning when the lifecycle is on without deployments; work is counted only where it will be done
-  and a running deployment with no worker is work; a running deployment that has not moved for 30
-  minutes is a warning (`oldestRunningSeconds`): a stuck worker still beats, so this is how it shows;
+  and a running deployment with no worker is work; a running deployment that has not moved for an
+  hour (longer than a rollback at the longest lease) is a warning (`oldestRunningSeconds`): a stuck worker still beats, so this is how it shows;
   a beat in flight finishes before shutdown and the first does not hold up start or stop; the worker
   id is limited to what a heartbeat can store; the version comes from `LAUNCHPAD_VERSION` when set.
   Not changed: the list holds 50 workers (ordered, no total).

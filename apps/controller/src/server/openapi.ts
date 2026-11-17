@@ -363,7 +363,7 @@ export const docs = {
         tags: ["Operations"],
         summary: "How the instance is doing",
         description:
-            "Needs the instance operator and a session (an API key cannot do this). Database and data-directory readiness, the controller's settings, each worker's age and lifecycle setting, the work waiting (deployments, overdue expiries, deletions), stored artifacts, and warnings in plain words. Counts and ages only.",
+            "Needs the instance operator and a session (an API key cannot do this). Database and data-directory readiness, the controller's settings, each worker's age and lifecycle setting, the work waiting (deployments, overdue expiries, deletions), stored artifacts, and warnings in plain words. Counts and ages, and the workers' ids and versions; no preview ids or names.",
         ok: { description: "The status.", schema: statusSchema },
         errors: [401, 403],
     }),

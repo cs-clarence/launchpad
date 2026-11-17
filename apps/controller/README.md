@@ -200,7 +200,7 @@ ids of previews, names, or text that came from a remote system):
 
 - `dependencies`: the database (`ok` if the request got an answer) and the data directory (`ok`,
   `missing`, `not-writable`, `not-a-directory`, or `not-checked` while deployments are off). The
-  controller creates the directory when it starts with deployments on.
+  controller creates the directory (on its first request after starting) with deployments on.
 - `controller`: whether deployments and the lifecycle are on here, and `deletionsAccepted` (both
   are: the controller takes new deletions).
 - `workers`: each worker that has reported, with its version, whether it runs the lifecycle, when it
@@ -214,7 +214,7 @@ ids of previews, names, or text that came from a remote system):
 - `warnings`, in plain words: work waiting with no live worker (expiry and deletion only count where
   the lifecycle is on); the controller accepts deletions but no live worker has the lifecycle on (a
   deletion would be accepted and never run), or the other way round; the lifecycle on without
-  deployments; a deployment that has not moved for 30 minutes (a stuck worker still beats, so this is
+  deployments; a deployment that has not moved for an hour (a stuck worker still beats, so this is
   how it shows); deployments or deletions that need an administrator; a data directory that is
   missing, read-only or not a directory.
 

@@ -12,8 +12,8 @@ export const WORKER_LIVE_SECONDS = 60;
 // Rows of workers that stopped long ago are not kept.
 const FORGET_AFTER = "1 day";
 
-// A worker says it is alive: once when it starts (`started`, which also restarts its clock
-// for an id that is reused) and then on every round, throttled by the caller.
+// A worker says it is alive: when it starts (`started`, which also restarts its clock for an
+// id that is reused) and then from a timer of its own.
 export async function recordHeartbeat(
     db: Db,
     input: { workerId: string; version: string; lifecycleEnabled: boolean; started?: boolean },
@@ -50,8 +50,9 @@ export interface StatusDeps {
 }
 
 // A running deployment that has not moved for this long is stuck, whatever the worker's
-// heartbeat says: its builds and probes time out well before.
-export const STUCK_RUNNING_SECONDS = 30 * 60;
+// heartbeat says. A step can run for 0.8 of the lease and a rollback for 1.6 of it with no
+// write in between, and the longest lease is 30 minutes: longer than all of that.
+export const STUCK_RUNNING_SECONDS = 60 * 60;
 
 const HELD_DEPLOYMENT = "reconciliation-needed" as const;
 const RUNNING_DEPLOYMENT = ["preparing", "building", "deploying", "verifying"] as const;
