@@ -5,8 +5,8 @@ Custom Dokku image with the `http-auth` plugin for local preview deployments.
 The controller has operator login, organizations, members, projects, optional
 email invitations and recovery, and an OpenAPI reference. With deployments on, a worker
 deploys built static sites (uploaded as archives from the CLI, the dashboard or the MCP
-server) to previews on Dokku; with the lifecycle on, previews expire, can be extended or
-deleted, and are cleaned up. Both are **off by default**, and nothing is published or
+server) to previews on Dokku; with the lifecycle on, previews expire, are deleted and
+cleaned up (they can be extended and deleted by hand either way, deletion needing the lifecycle). Both are **off by default**, and nothing is published or
 deployed from this repository's CI. Backup and restore, quotas and a production Compose
 setup are still to come (see [the plan](docs/plans/application.md)). See
 [Controller](#controller) below, [the controller README](apps/controller/README.md) and
@@ -115,7 +115,9 @@ that talks to the controller. The workspace follows Pureform's Bun/Omni layout:
 ```text
 apps/
   controller/      TanStack Start + React, mounted Elysia 2 RC API, Skeleton 5
-  cli/             Bun CLI: login, whoami, profiles, orgs, projects (API-key client)
+  worker/          Deployment worker: builds and loads previews, expiry, deletion and cleanup
+  cli/             Bun CLI: login, deploy, previews (extend, delete), deployments, profiles, orgs, projects
+  mcp/             Local stdio MCP server (read tools; deploy and delete only when enabled at startup)
 packages/
   auth/            Better Auth configuration, operator setup and recovery, mailer
   contracts/       Versioned API shapes (zod only, browser-safe)
@@ -123,7 +125,7 @@ packages/
   client-core/     Profiles and the credential file shared by the CLI and MCP
   services/        Framework-independent services and authorization
   database/        Kysely on Bun SQL, forward-only migrations
-  dokku/           Dokku connection boundary; no SSH execution yet
+  dokku/           Allowlisted Dokku operations over SSH with a pinned host key
   tsconfig/        Shared TypeScript configuration
   vite-config/     Shared package build configuration
   vitest-config/   Shared test configuration

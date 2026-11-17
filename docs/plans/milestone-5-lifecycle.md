@@ -313,7 +313,7 @@ content could be re-published by hand from storage, and after it nothing can.
 ## Status and follow-ups
 
 All eight slices are merged, with an independent Opus review before each push and of the whole
-milestone, and the opt-in live suite passed against a disposable Dokku 0.38.34 on the final code.
+milestone, and the opt-in live suite passed against a disposable Dokku 0.38.34 (first before the API slices, then again on `main` at `8288166` before the milestone review; the destroy and Dokku code it exercises is unchanged between and after).
 What is deferred or still open, and where it is tracked:
 
 | Item                                                                                                                                                                                                       | Where                                                                                                                |

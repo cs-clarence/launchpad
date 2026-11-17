@@ -59,8 +59,9 @@ is given twice the usual lease, since it builds, loads and probes in one go.
 Dokku and Docker: the fixture site, a real 404, SPA deep links, replacing a release and
 rolling back, and destroying one app with the worker's real destroy port while a neighbour
 app is left alone (the ports are called directly; `runDeletion` itself is tested against fakes).
-It is opt-in, never part of `test` or CI, and needs a **disposable** Dokku (the throwaway
-container the test setup describes). It only creates apps named `lp-test-<6 characters>`, records them,
+It is opt-in, never part of `test` or CI, and needs a **disposable** Dokku (a throwaway
+container; how it was set up and run is in
+[the live verification record](../../docs/plans/live-dokku-verification.md)). It only creates apps named `lp-test-<6 characters>`, records them,
 and destroys only those at the end; it never touches any other app. Without its settings
 it fails at once with a message. The settings are listed at the top of
 `src/__tests__/live.spec.ts`.

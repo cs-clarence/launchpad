@@ -43,3 +43,12 @@ the root `.env.local` from overriding the disposable SSH port. Host key pinning 
 directly from the disposable container. Logs: `/tmp/opencode/live-dokku-20261117/results.log`.
 The regression test failed before the fix; the full `check test build check:compose`
 gate passed afterward. Database integration was not rerun for this transport-only fix.
+
+## Second run (2026-11-17)
+
+Run again against the same disposable Dokku 0.38.34 on `main` at `8288166`, after milestone 5's
+last slice and before the milestone review: all five tests passed (static serving, SPA routing,
+replacement and rollback, destroy-with-neighbour), the suite left no apps behind, and the container
+was stopped. The destroy and Dokku code it exercises (`packages/dokku`, `apps/worker/src/lifecycle-ports.ts`,
+`apps/worker/src/docker.ts`) has not changed since the first run. Still worth adding: a neighbour that
+is deployed and probed over HTTP after the destroy.

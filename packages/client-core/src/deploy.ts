@@ -131,8 +131,9 @@ export async function deploy(ctx: Context, input: DeployInput): Promise<DeployRe
         ? await packDirectory(input.source, undefined, input.selection, input.signal)
         : await readArchive(input.source);
 
-    // The preview is settled before the upload: a stored archive is kept until the worker's collection removes it, so
-    // one is not spent on a deploy that cannot start.
+    // The preview is settled before the upload: a stored archive counts toward the
+    // organization's ceiling until the worker's collection removes it, so one is not spent
+    // on a deploy that cannot start.
     input.signal?.throwIfAborted();
     let ttlSkipped = false;
     const preview = await findOrCreatePreview(

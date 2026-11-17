@@ -22,9 +22,9 @@ implemented. Design and boundaries are in [application design](../design/applica
 - **Collaboration/time:** first resolve contracts and run risk spikes with one
   owner; then bounded milestones. Estimate after the spikes, not a promised
   calendar duration. No agents launched for this plan.
-- **Chosen next step:** milestone 0 is partly done (see the readiness gate).
-  Finish the deferred gates before the milestone that needs each, then start
-  milestone 1 only with the user's go-ahead.
+- **Chosen next step (when this was written):** milestone 0 was partly done; the deferred gates
+  were to pass before the milestone that needs each. Milestones 0 to 5 are now built (see the
+  progress notes and `docs/plans/milestone-5-lifecycle.md`); milestone 6 is next.
 - **Reassessment triggers:** hostile tenants/builds, multi-host orchestration,
   public signup, OAuth-provider expansion, hosted MCP, automatic Git-provider PR
   builds, or a different deployment engine.
@@ -267,13 +267,16 @@ document which metadata/URLs can be restored.
   least-privilege CI identity, package-content checks and image provenance.
 - Docs for local/private management, Cloudflare/Tailscale preview routing,
   onboarding, API keys, MCP roots/permissions, restore and upgrade.
-- **Restore order and the lifecycle.** The worker's orphan sweep removes any archive file with no
-  live row once it is older than the retention, and recovery trusts the database. So a restore
-  runbook must say: bring the lifecycle **off** (worker and controller) before restoring, restore
-  the database and the data directory from the same moment, check that every live artifact has its
-  file, and only then switch it on. Restoring an older database with the lifecycle on deletes
-  archives uploaded since; restoring an older data directory leaves rows whose files are missing
-  (a rollback then ends in `rollback-unavailable`). One database per Dokku host and per data
+- **Restore order and the lifecycle.** The worker's orphan sweep removes an archive file once it is
+  older than the retention and no live row refers to it, and start-up recovery trusts the
+  database. So a restore runbook must say: switch the lifecycle **and deployments off** (worker
+  and controller) before restoring, restore the database and the data directory from the same
+  moment, check that every live artifact has its file, and only then switch them on. Restoring an
+  older database with the lifecycle on deletes the archives uploaded since (once they are older
+  than the retention); restoring an older data directory leaves live rows whose files are missing,
+  which makes a new deployment of that artifact fail at its build, and a rollback to it end in
+  `rollback-failed` and hold the deployment for an administrator. Uploading the same archive
+  again repairs a live row whose file is missing. One database per Dokku host and per data
   directory still holds. Test it in the restore drill.
 
 **Verify:** clean-machine install from packed tarballs and image artifacts,
@@ -413,6 +416,7 @@ at integrated release milestones. Record skipped checks and remaining risks.
 - [x] Independent review of the milestone 0 results; findings applied.
 - [ ] Product license and authenticated registry ownership verified before release.
 
-No feature code was changed. The design is not approval to implement the whole
-roadmap. Preserve accepted decisions in `docs/decisions/` and start only the
-approved next slice once the deferred gates for it have passed.
+Milestones 0 to 5 are implemented (milestone 6 is next); the notes above record their state
+when they were written. The design is not approval to implement the whole roadmap. Preserve
+accepted decisions in `docs/decisions/` and start only the approved next slice once the
+deferred gates for it have passed.

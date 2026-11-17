@@ -138,7 +138,7 @@ Authenticated organization pages and server-function responses are `no-store`.
 An owner or admin issues organization API keys from the API (`POST
 /api/v1/organizations/{orgId}/api-keys`, signed in). The secret is shown once. Automation
 sends `Authorization: Bearer lp_…`. A key is limited to its organization, to the scopes it
-was given (read, project, upload, deploy, extend and delete actions; see the scope list in the dashboard), optionally to named projects, and never exceeds
+was given (`project:read`, `project:create`, `preview:read`, `preview:create`, `preview:deploy` (upload, deploy and extend) and `preview:delete`), optionally to named projects, and never exceeds
 its creator's current role; it stops working when it expires, is revoked, or its creator
 leaves the organization. Keys cannot manage keys, members, invitations or organizations.
 
@@ -207,7 +207,8 @@ deleted, as after any downtime.
   does not free the artifact ceiling at once**, and within the window a deleted preview's content
   could be re-published by hand from storage.
 - Not built: runtime logs (a static site writes none worth keeping, and deployment progress is in
-  the events), restoring a deleted preview, backup and restore, per-organization quotas, and a
+  the events), restoring a deleted preview, backup and restore, quotas set per organization (the limits that exist
+  are instance-wide), and a
   report of Dokku apps that Launchpad did not create. The follow-ups are tracked in
   `docs/plans/milestone-5-lifecycle.md`.
 
