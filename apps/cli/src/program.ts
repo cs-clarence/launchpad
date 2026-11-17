@@ -20,6 +20,7 @@ import {
     whoami,
     workspaceContext,
     ClientCoreError,
+    checkLifetime,
 } from "@launchpad/client-core";
 import { describe, EXIT, ExitWith } from "./errors";
 import type { Io } from "./io";
@@ -267,6 +268,8 @@ export function buildProgram(rawIo: Io) {
                     "error: --timeout is a whole number of seconds, from 1 to 86400",
                 );
             }
+            // A mistake in the command itself is reported as one, before credentials are looked at.
+            if (options.ttl !== undefined) checkLifetime(options.ttl);
             const workspace = await workspaceContext(io.context, {
                 workingDir: io.workingDir ?? process.cwd(),
                 profile,
@@ -413,6 +416,7 @@ export function buildProgram(rawIo: Io) {
             "Give a preview more time. It never shortens a lifetime and is capped at the server's maximum from now; a preview that never expired gets an expiry.",
         )
         .action(async (previewId, options, command) => {
+            checkLifetime(options.ttl);
             const workspace = await workspaceContext(io.context, {
                 workingDir: io.workingDir ?? process.cwd(),
                 profile: wants(command).profile,

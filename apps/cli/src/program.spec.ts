@@ -490,6 +490,23 @@ describe("preview lifetimes", () => {
         }
     });
 
+    it("reports a bad lifetime as a usage error even when not logged in", async () => {
+        const deploying = await cli([
+            "deploy",
+            dir,
+            "--project",
+            "site",
+            "--name",
+            "review",
+            "--ttl",
+            "tomorrow",
+        ]);
+        expect(deploying.code).toBe(EXIT.usage);
+        expect(deploying.all).toContain("--ttl");
+        const extending = await cli(["previews", "extend", PID, "--ttl", "tomorrow"]);
+        expect(extending.code).toBe(EXIT.usage);
+    });
+
     it("shows a deletion's status and its note, and when a person is needed", async () => {
         await loggedIn();
         const result = await cli(["previews", "deletion", PID]);
