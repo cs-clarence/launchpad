@@ -43,6 +43,7 @@ export function mergeEvents(
 
 // How long until a preview goes, for people: "never", "in 3 days", "in 2 hours", "any
 // minute now" (overdue, waiting for the worker), or the state of one that is going away.
+// Whole units are rounded down so the time left is never overstated.
 export function describeExpiry(
     preview: { state: string; expiresAt: string | Date | null },
     now: number,
@@ -53,15 +54,32 @@ export function describeExpiry(
     const ms = new Date(preview.expiresAt).getTime() - now;
     if (Number.isNaN(ms)) return "Unknown";
     if (ms <= 0) return "Expired, will be deleted shortly";
-    const minutes = Math.ceil(ms / 60_000);
+    const minutes = Math.max(1, Math.floor(ms / 60_000));
     if (minutes < 60) return `Expires in ${minutes} minute${minutes === 1 ? "" : "s"}`;
-    const hours = Math.ceil(minutes / 60);
+    const hours = Math.floor(minutes / 60);
     if (hours < 48) return `Expires in ${hours} hour${hours === 1 ? "" : "s"}`;
-    const days = Math.ceil(hours / 24);
-    return `Expires in ${days} days`;
+    return `Expires in ${Math.floor(hours / 24)} days`;
 }
 
-export const EXTEND_CHOICES = ["24h", "3d", "7d", "14d"] as const;
+const EXTEND_OPTIONS = [
+    ["24h", 86_400],
+    ["3d", 3 * 86_400],
+    ["7d", 7 * 86_400],
+    ["14d", 14 * 86_400],
+] as const;
+
+// The lifetimes offered for extending: those the server would accept, and the default is the
+// longest of them that is at most a week.
+export function extendChoices(maxTtlSeconds: number): { choices: string[]; initial: string } {
+    const choices: string[] = EXTEND_OPTIONS.filter(([, seconds]) => seconds <= maxTtlSeconds).map(
+        ([name]) => name,
+    );
+    if (choices.length === 0) choices.push(`${Math.max(1, Math.floor(maxTtlSeconds))}s`);
+    const week = EXTEND_OPTIONS.filter(([, seconds]) => seconds <= 7 * 86_400)
+        .map(([name]) => name)
+        .filter((name) => choices.includes(name));
+    return { choices, initial: week.at(-1) ?? choices[0]! };
+}
 
 const DELETION_LABELS: Record<string, string> = {
     queued: "Waiting to be removed",

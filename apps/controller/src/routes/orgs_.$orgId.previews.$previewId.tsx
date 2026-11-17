@@ -7,7 +7,7 @@ import {
     deletionLabel,
     deletionNeedsPerson,
     describeExpiry,
-    EXTEND_CHOICES,
+    extendChoices,
     isDeletionInProgress,
     isInProgress,
     mergeEvents,
@@ -27,7 +27,7 @@ export const Route = createFileRoute("/orgs_/$orgId/previews/$previewId")({
         getPreviewDetailFn({ data: { orgId: params.orgId, previewId: params.previewId } }),
     errorComponent: () => (
         <main className="mx-auto max-w-4xl px-6 py-12">
-            <p role="alert">Preview not found.</p>
+            <p role="alert">This preview is not available. It may have been deleted.</p>
             <Link className="anchor" to="/">
                 Back to organizations
             </Link>
@@ -192,31 +192,49 @@ function Progress(props: {
 
 type View = ReturnType<typeof Route.useLoaderData>;
 
-function Lifecycle(props: { view: View }) {
+type Present = Omit<View, "preview"> & { preview: NonNullable<View["preview"]> };
+
+function Lifecycle(props: { view: Present }) {
     const { view } = props;
     const router = useRouter();
     const [busy, setBusy] = useState(false);
     const [error, setError] = useState<string | null>(null);
-    const [ttl, setTtl] = useState<string>(EXTEND_CHOICES[2]);
+    const offered = extendChoices(view.maxTtlSeconds);
+    const [ttl, setTtl] = useState<string>(offered.initial);
     const orgId = view.organization.id;
     const previewId = view.preview.id;
     const deletion = view.deletion;
 
-    // A deletion moves on its own: look again until it is done or needs a person.
+    // A deletion moves on its own: look again until it is done or needs a person, one look
+    // at a time and not while the tab is hidden.
     const waiting = deletion !== null && isDeletionInProgress(deletion.status);
     useEffect(() => {
         if (!waiting) return;
-        const timer = setInterval(() => void router.invalidate({ sync: true }), 4000);
+        let looking = false;
+        const timer = setInterval(async () => {
+            if (looking || document.hidden) return;
+            looking = true;
+            try {
+                await router.invalidate({ sync: true });
+            } catch {
+                // The next look tries again; the page keeps what it has.
+            } finally {
+                looking = false;
+            }
+        }, 4000);
         return () => clearInterval(timer);
     }, [waiting, router]);
 
     async function act(run: () => Promise<{ ok: true } | { ok: false; message: string }>) {
         setBusy(true);
         setError(null);
-        const result = await run();
-        if (!result.ok) setError(result.message);
-        else await router.invalidate({ sync: true });
-        setBusy(false);
+        try {
+            const result = await run();
+            if (!result.ok) setError(result.message);
+            else await router.invalidate({ sync: true });
+        } finally {
+            setBusy(false);
+        }
     }
     const extend = () =>
         act(() =>
@@ -224,7 +242,7 @@ function Lifecycle(props: { view: View }) {
         );
     const remove = () => {
         const sure = window.confirm(
-            `Delete ${view.preview.hostname}? The site is taken down and this cannot be undone.`,
+            `Delete ${view.preview.hostname}? The site will be taken down shortly and this cannot be undone.`,
         );
         if (!sure) return;
         void act(() => apiRequest("DELETE", `/organizations/${orgId}/previews/${previewId}`));
@@ -246,8 +264,24 @@ function Lifecycle(props: { view: View }) {
     return (
         <section className="space-y-3">
             <h2 className="h4">Lifetime</h2>
-            <p>{describeExpiry(view.preview, Date.now())}</p>
-            {view.preview.state === "active" && view.canExtend ? (
+            {view.lifecycleEnabled || view.preview.state !== "active" ? (
+                <p
+                    suppressHydrationWarning
+                    title={
+                        view.preview.expiresAt
+                            ? new Date(view.preview.expiresAt).toLocaleString()
+                            : undefined
+                    }
+                >
+                    {describeExpiry(view.preview, view.now)}
+                </p>
+            ) : (
+                <p>
+                    This server does not delete previews automatically (the lifecycle is off), so
+                    there is no countdown.
+                </p>
+            )}
+            {view.preview.state === "active" && view.canExtend && view.lifecycleEnabled ? (
                 <p className="space-x-2">
                     <label>
                         Extend by{" "}
@@ -257,7 +291,7 @@ function Lifecycle(props: { view: View }) {
                             disabled={busy}
                             onChange={(event) => setTtl(event.target.value)}
                         >
-                            {EXTEND_CHOICES.map((choice) => (
+                            {offered.choices.map((choice) => (
                                 <option key={choice} value={choice}>
                                     {choice}
                                 </option>
@@ -273,7 +307,8 @@ function Lifecycle(props: { view: View }) {
                         Extend
                     </button>
                     <span className="text-sm">
-                        Never shortens it; a preview that never expired gets an expiry.
+                        Never shortens it, and never goes past the server's maximum from now. A
+                        preview with no expiry gets one.
                     </span>
                 </p>
             ) : null}
@@ -296,7 +331,7 @@ function Lifecycle(props: { view: View }) {
             ) : null}
             {deletion ? (
                 <div className="space-y-2">
-                    <p>
+                    <p role="status">
                         Deletion:{" "}
                         <span className="badge preset-tonal">{deletionLabel(deletion.status)}</span>
                         {deletion.reason === "expired" ? " (it expired)" : ""}
@@ -339,8 +374,34 @@ function Lifecycle(props: { view: View }) {
 }
 
 function PreviewDetail() {
-    const view = Route.useLoaderData();
-    const [latest, ...older] = view.deployments;
+    const loaded = Route.useLoaderData();
+    const [latest, ...older] = loaded.deployments;
+    if (!loaded.preview) {
+        // Deleted while the page was open (or before it was): its deletion is all that is left.
+        const deletion = loaded.deletion!;
+        return (
+            <main className="mx-auto max-w-4xl space-y-6 px-6 py-12">
+                <Link
+                    className="anchor"
+                    to="/orgs/$orgId/previews"
+                    params={{ orgId: loaded.organization.id }}
+                >
+                    Previews
+                </Link>
+                <h1 className="h2">This preview was deleted</h1>
+                <p role="status">
+                    Deletion:{" "}
+                    <span className="badge preset-tonal">{deletionLabel(deletion.status)}</span>
+                </p>
+                {deletion.failure ? (
+                    <p>
+                        {deletion.failure.message} <code>{deletion.failure.code}</code>
+                    </p>
+                ) : null}
+            </main>
+        );
+    }
+    const view: Present = { ...loaded, preview: loaded.preview };
     return (
         <main className="mx-auto max-w-4xl space-y-6 px-6 py-12">
             <Link

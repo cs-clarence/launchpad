@@ -2034,6 +2034,12 @@ describe("previews and deployments over HTTP", () => {
                 })
             ).json(),
         );
+        // The list shows the lifetime too, and the page is reachable at its own address.
+        const list = await (
+            await fetch(`${proxied.base}/orgs/${orgId}/previews`, { headers: { cookie: owner } })
+        ).text();
+        expect(list).toContain(fresh.hostname);
+        expect(list).toContain("Expires in");
         const owned = await page(owner, fresh.id);
         expect(owned).toContain("Expires in");
         expect(owned).toContain("Extend by");
@@ -2068,6 +2074,20 @@ describe("previews and deployments over HTTP", () => {
         const heldViewer = await page(viewer, fresh.id);
         expect(heldViewer).toContain("Ask an organization administrator to resolve this");
         expect(heldViewer).not.toContain("Try the deletion again");
+        // Once the deletion has finished, the page says so instead of "not found".
+        await testDb.db
+            .updateTable("deletion_operation")
+            .set({ status: "succeeded", finished_at: new Date() })
+            .where("id", "=", queued.operationId)
+            .execute();
+        await testDb.db
+            .updateTable("preview")
+            .set({ desired_state: "deleted", deleted_at: new Date() })
+            .where("id", "=", fresh.id)
+            .execute();
+        const gone = await page(owner, fresh.id);
+        expect(gone).toContain("This preview was deleted");
+        expect(gone).toContain("Removed");
     });
 
     it("is off unless deployments are on: reads work, creating and deploying are refused", async () => {
@@ -2090,6 +2110,14 @@ describe("previews and deployments over HTTP", () => {
                 body: body === undefined ? undefined : JSON.stringify(body),
             });
         expect((await request(`/organizations/${orgId}/previews`)).status).toBe(200);
+        // Its page explains why there is no delete button, instead of offering one that fails.
+        const offPage = await (
+            await fetch(`${direct.base}/orgs/${orgId}/previews/${previewId}`, {
+                headers: { cookie: cookieOwner },
+            })
+        ).text();
+        expect(offPage).toContain("Deleting is not turned on");
+        expect(offPage).not.toContain("Delete this preview");
         expect(
             (await request(`/organizations/${orgId}/previews/${previewId}`, "DELETE")).status,
         ).toBe(409);

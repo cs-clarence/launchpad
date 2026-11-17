@@ -145,6 +145,8 @@ export const getPreviewsViewFn = createServerFn({ method: "GET" })
             organization: { id: organization.id, name: organization.name },
             previews: items,
             more: previews.nextCursor !== null,
+            now: Date.now(),
+            lifecycleEnabled: runtime.previews.lifecycle?.enabled ?? false,
         };
     });
 
@@ -156,23 +158,39 @@ export const getPreviewDetailFn = createServerFn({ method: "GET" })
         const services = await import("@launchpad/services");
         const { runtime, who } = await principal();
         const organization = await services.getOrganization(runtime.db, who, data.orgId);
-        const preview = await services.getPreview(runtime.db, who, data.orgId, data.previewId);
-        const deployments = await services.listDeployments(
-            runtime.db,
-            who,
-            data.orgId,
-            data.previewId,
-        );
-        // A preview that is going away (or gone) shows its deletion, whoever started it.
+        const notFound = (error: unknown) =>
+            error instanceof services.ServiceError && error.code === "not-found";
+        // A deleted preview is not found, but its deletion is still there to show: a page
+        // that was open while it finished says so, instead of an error.
+        const preview = await services
+            .getPreview(runtime.db, who, data.orgId, data.previewId)
+            .catch((error) => {
+                if (notFound(error)) return null;
+                throw error;
+            });
+        const deployments = preview
+            ? await services.listDeployments(runtime.db, who, data.orgId, data.previewId)
+            : { items: [] };
+        // A preview that is going away shows its deletion, whoever started it. Only "there is
+        // none" is expected; anything else is a real failure and is not hidden.
         const deletion =
-            preview.state === "active"
+            preview?.state === "active"
                 ? null
                 : await services
                       .getPreviewDeletion(runtime.db, who, data.orgId, data.previewId)
-                      .catch(() => null);
+                      .catch((error) => {
+                          if (notFound(error)) return null;
+                          throw error;
+                      });
+        if (!preview && !deletion)
+            throw new services.ServiceError("not-found", "Preview not found.");
         return {
             organization: { id: organization.id, name: organization.name },
             preview,
+            // When the server looked, so the server and browser renders agree.
+            now: Date.now(),
+            lifecycleEnabled: runtime.previews.lifecycle?.enabled ?? false,
+            maxTtlSeconds: runtime.previews.lifecycle?.maxTtlSeconds ?? 30 * 86_400,
             deployments: deployments.items,
             canResolve: services.can(organization.role, "preview:resolve"),
             // Buttons are hidden for roles that could not use them; the API checks again.

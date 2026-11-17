@@ -52,7 +52,13 @@ function Previews() {
                             </span>
                             <div className="text-sm">
                                 {preview.projectName ?? "Unknown project"} ·{" "}
-                                <code>{preview.slug}</code> · {describeExpiry(preview, Date.now())}
+                                <code>{preview.slug}</code>
+                                {view.lifecycleEnabled || preview.state !== "active" ? (
+                                    <span suppressHydrationWarning>
+                                        {" · "}
+                                        {describeExpiry(preview, view.now)}
+                                    </span>
+                                ) : null}
                             </div>
                         </li>
                     ))}

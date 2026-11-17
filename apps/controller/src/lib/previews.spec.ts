@@ -3,6 +3,7 @@ import {
     deletionLabel,
     deletionNeedsPerson,
     describeExpiry,
+    extendChoices,
     isDeletionInProgress,
     isInProgress,
     mergeEvents,
@@ -52,8 +53,12 @@ describe("preview lifetimes", () => {
         expect(describeExpiry(active(null), NOW)).toBe("Never expires");
         expect(describeExpiry(active(at(30 * 60_000)), NOW)).toBe("Expires in 30 minutes");
         expect(describeExpiry(active(at(60_000)), NOW)).toBe("Expires in 1 minute");
-        expect(describeExpiry(active(at(5 * 3_600_000)), NOW)).toBe("Expires in 5 hours");
-        expect(describeExpiry(active(at(3 * 86_400_000)), NOW)).toBe("Expires in 3 days");
+        expect(describeExpiry(active(at(5 * 3_600_000 + 59 * 60_000)), NOW)).toBe(
+            "Expires in 5 hours",
+        );
+        expect(describeExpiry(active(at(3 * 86_400_000 + 3_600_000)), NOW)).toBe(
+            "Expires in 3 days",
+        );
         expect(describeExpiry(active(at(-1)), NOW)).toBe("Expired, will be deleted shortly");
         expect(describeExpiry(active("nonsense"), NOW)).toBe("Unknown");
         expect(describeExpiry({ state: "deleting", expiresAt: at(1000) }, NOW)).toBe(
@@ -75,5 +80,17 @@ describe("preview lifetimes", () => {
         expect(isDeletionInProgress("running")).toBe(true);
         expect(isDeletionInProgress("succeeded")).toBe(false);
         expect(isDeletionInProgress("reconciliation-needed")).toBe(false);
+    });
+});
+
+describe("extend choices", () => {
+    it("offers only what the server accepts, defaulting to at most a week", () => {
+        expect(extendChoices(30 * 86_400)).toEqual({
+            choices: ["24h", "3d", "7d", "14d"],
+            initial: "7d",
+        });
+        expect(extendChoices(5 * 86_400)).toEqual({ choices: ["24h", "3d"], initial: "3d" });
+        expect(extendChoices(86_400).initial).toBe("24h");
+        expect(extendChoices(7_200)).toEqual({ choices: ["7200s"], initial: "7200s" });
     });
 });
