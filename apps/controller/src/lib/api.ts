@@ -55,13 +55,17 @@ export async function apiCall<T>(
     }
     let response: Response;
     try {
-        response = await fetch(`/api/v1${path}`, { method, headers, body, signal: options.signal });
+        response = await fetch(`/api/v1${path}`, {
+            method,
+            headers,
+            ...(body === undefined ? {} : { body }),
+            signal: options.signal,
+        });
     } catch {
         return {
             ok: false,
             status: null,
-            message:
-                "The request could not be completed. Check your connection (and that the chosen file has not changed on disk), then retry.",
+            message: "The request could not be completed. Check your connection and retry.",
         };
     }
     if (response.ok) {

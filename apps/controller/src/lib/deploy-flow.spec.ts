@@ -251,7 +251,7 @@ describe("keys that cannot be reused wrongly", () => {
     });
 
     it("keeps the creation key and the fields when a creation may have gone through", () => {
-        for (const status of [null, 502, 504]) {
+        for (const status of [null, 502, 504, 200]) {
             const resume = newResume();
             const key = resume.createKey;
             afterFailure(resume, { step: "create", status, message: "x" });
@@ -275,13 +275,16 @@ describe("keys that cannot be reused wrongly", () => {
         resume.previewId = ID(2);
         resume.artifactId = ID(3);
         const key = resume.createKey;
+        const before = resume.deployKey;
         afterFailure(resume, { step: "deploy", status: 404, message: "Artifact not found." });
+        expect(resume.deployKey).toBe(before);
         expect(resume.artifactId).toBeUndefined();
         expect(resume.previewId).toBe(ID(2));
         resume.artifactId = ID(3);
         afterFailure(resume, { step: "deploy", status: 404, message: "Preview not found." });
         expect(resume.previewId).toBeUndefined();
         expect(resume.createKey).not.toBe(key);
+        expect(resume.deployKey).not.toBe(before);
         // Other failures change nothing.
         resume.previewId = ID(2);
         const keep = { ...resume };

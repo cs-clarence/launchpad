@@ -42,6 +42,8 @@ export function DeployPanel(props: {
     const [problems, setProblems] = useState<string[]>([]);
     const [failure, setFailure] = useState<string | null>(null);
     const [locked, setLocked] = useState(false);
+    // A new key makes the (uncontrolled) file input forget the file it shows.
+    const [fileKey, setFileKey] = useState(0);
     // What a failed run did, so trying again resumes instead of repeating it. Made on the
     // first use, in the browser (keys come from getRandomValues, which plain HTTP pages have).
     const resumeRef = useRef<Resume | null>(null);
@@ -56,6 +58,7 @@ export function DeployPanel(props: {
         setFailure(null);
         setProblems([]);
         setFile(null);
+        setFileKey((n) => n + 1);
     }
 
     async function submit(event: React.FormEvent<HTMLFormElement>) {
@@ -88,7 +91,13 @@ export function DeployPanel(props: {
         if (!result.ok) {
             afterFailure(current, result);
             setLocked(fieldsLocked(current));
-            setFailure(result.message);
+            setFailure(
+                result.step === "upload" && result.status === null
+                    ? `${result.message} Also check that the chosen file has not changed on disk.`
+                    : result.message,
+            );
+            // Another deployment started elsewhere: show it, rather than keep asking.
+            if (props.existing && result.status === 409) await router.invalidate({ sync: true });
             return;
         }
         resumeRef.current = null;
@@ -97,6 +106,8 @@ export function DeployPanel(props: {
             // Already on the preview's page: look again, and it follows the new deployment.
             form.reset();
             setFile(null);
+            setSpa(false);
+            setFileKey((n) => n + 1);
             await router.invalidate({ sync: true });
             return;
         }
@@ -161,6 +172,7 @@ export function DeployPanel(props: {
             <label className="block">
                 Built site (.tar.gz){" "}
                 <input
+                    key={fileKey}
                     type="file"
                     accept=".tar.gz,.tgz,application/gzip"
                     disabled={busy}
@@ -185,7 +197,7 @@ export function DeployPanel(props: {
             <button type="submit" className="btn preset-filled" disabled={busy}>
                 Deploy
             </button>{" "}
-            {failure ? (
+            {failure || locked ? (
                 <button
                     type="button"
                     className="btn preset-tonal"
@@ -202,6 +214,12 @@ export function DeployPanel(props: {
                         <li key={problem}>{problem}</li>
                     ))}
                 </ul>
+            ) : null}
+            {locked && !resumeRef.current?.previewId ? (
+                <p role="status">
+                    The preview may already have been created, so its details are locked to match
+                    the retry. Use Start over to change them.
+                </p>
             ) : null}
             {failure ? (
                 <p role="alert">

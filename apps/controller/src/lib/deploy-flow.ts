@@ -93,7 +93,8 @@ export function afterFailure(
     if (failure.step === "create") {
         // An answer that never came (or a server error) may hide a creation that happened: keep
         // the key and the fields. A definite refusal recorded nothing: the next try is new.
-        const unknown = failure.status === null || failure.status >= 500;
+        // A 2xx whose answer could not be read is a creation that happened.
+        const unknown = failure.status === null || failure.status >= 500 || failure.status < 300;
         resume.createUncertain = unknown;
         if (!unknown) resume.createKey = `dashboard-preview-${randomId()}`;
     }
@@ -102,6 +103,8 @@ export function afterFailure(
         resume.artifactId = undefined;
         if (/preview/i.test(failure.message)) {
             resume.previewId = undefined;
+            // The earlier deployment request, if it went through unseen, was for that preview.
+            resume.deployKey = `dashboard-deploy-${randomId()}`;
             resume.createKey = `dashboard-preview-${randomId()}`;
             resume.createUncertain = false;
         }
