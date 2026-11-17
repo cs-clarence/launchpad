@@ -29,7 +29,13 @@ export function startupOptions(argv: string[], write: (text: string) => void) {
         .option("--allow-deploy", "offer the deploy tool (needs --include and --exclude)")
         .option(
             "--allow-delete",
-            "offer the delete_preview tool, for the projects given with --allow-project (at least one is required)",
+            "offer the delete_preview tool, for the projects given with --allow-delete-project (at least one is required)",
+        )
+        .option(
+            "--allow-delete-project <project>",
+            "allow deleting previews of this project id (repeatable); separate from --allow-project, which limits deployment",
+            collect,
+            [] as string[],
         )
         .option(
             "--include <glob>",
@@ -45,7 +51,7 @@ export function startupOptions(argv: string[], write: (text: string) => void) {
         )
         .option(
             "--allow-project <project>",
-            "restrict deployment, and allow deletion, to this project id (repeatable); a slug is not accepted, as it can name another project under another profile or organization",
+            "restrict deployment to this project id (repeatable); a slug is not accepted, as it can name another project under another profile or organization",
             collect,
             [] as string[],
         )
@@ -60,18 +66,25 @@ export function startupOptions(argv: string[], write: (text: string) => void) {
             "error: --include and --exclude need --allow-deploy",
         );
     }
-    if (!options.allowDeploy && !options.allowDelete && options.allowProject.length > 0) {
+    if (!options.allowDeploy && options.allowProject.length > 0) {
         throw new CommanderError(
             2,
             "launchpad.deployPolicy",
-            "error: --allow-project needs --allow-deploy or --allow-delete",
+            "error: --allow-project needs --allow-deploy",
         );
     }
-    if (options.allowDelete && options.allowProject.length === 0) {
+    if (options.allowDelete && options.allowDeleteProject.length === 0) {
         throw new CommanderError(
             2,
             "launchpad.deletePolicy",
-            "error: --allow-delete needs at least one --allow-project <project-id>: deleting cannot be undone, so it is allowed only where you say",
+            "error: --allow-delete needs at least one --allow-delete-project <project-id>: deleting cannot be undone, so it is allowed only where you say",
+        );
+    }
+    if (!options.allowDelete && options.allowDeleteProject.length > 0) {
+        throw new CommanderError(
+            2,
+            "launchpad.deletePolicy",
+            "error: --allow-delete-project needs --allow-delete",
         );
     }
     if (options.allowDeploy && (options.include.length === 0 || options.exclude.length === 0)) {
@@ -81,14 +94,14 @@ export function startupOptions(argv: string[], write: (text: string) => void) {
             "error: --allow-deploy needs at least one --include and one --exclude (excludes always win)",
         );
     }
-    const notIds = options.allowProject.filter(
+    const notIds = [...options.allowProject, ...options.allowDeleteProject].filter(
         (p) => !/^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(p),
     );
     if (notIds.length > 0) {
         throw new CommanderError(
             2,
             "launchpad.deployPolicy",
-            "error: --allow-project takes a project id (see: launchpad projects list)",
+            "error: --allow-project and --allow-delete-project take a project id (see: launchpad projects list)",
         );
     }
     const deploy: DeployPolicy | undefined = options.allowDeploy
@@ -99,7 +112,7 @@ export function startupOptions(argv: string[], write: (text: string) => void) {
           }
         : undefined;
     const deletion: DeletePolicy | undefined = options.allowDelete
-        ? { allowProjects: options.allowProject.map((p) => p.toLowerCase()) }
+        ? { allowProjects: options.allowDeleteProject.map((p) => p.toLowerCase()) }
         : undefined;
     return {
         shared: options.shared,

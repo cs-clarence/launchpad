@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { type ChildProcess, spawn } from "node:child_process";
+import { type ChildProcess, spawn, spawnSync } from "node:child_process";
 import { promises as fs } from "node:fs";
 import net from "node:net";
 import os from "node:os";
@@ -1589,8 +1589,13 @@ describe("previews and deployments over HTTP", () => {
                 "delete_preview",
             );
             // Deletion needs a project to be named.
-            await expect(connect(key, ["--allow-delete"])).rejects.toBeDefined();
-            const remover = await connect(key, ["--allow-delete", "--allow-project", p1]);
+            const refusing = spawnSync(process.execPath, [binary, "--shared", "--allow-delete"], {
+                env: { PATH: process.env.PATH ?? "", LAUNCHPAD_CONFIG_DIR: config },
+                encoding: "utf8",
+            });
+            expect(refusing.status).toBe(2);
+            expect(refusing.stderr).toContain("--allow-delete-project");
+            const remover = await connect(key, ["--allow-delete", "--allow-delete-project", p1]);
             expect((await remover.listTools()).tools.map((t) => t.name)).toContain(
                 "delete_preview",
             );
@@ -1609,6 +1614,13 @@ describe("previews and deployments over HTTP", () => {
             expect((await remover.callTool(args(allowed.id, { confirm: false }))).isError).toBe(
                 true,
             );
+            expect(
+                await testDb.db
+                    .selectFrom("deletion_operation")
+                    .select("id")
+                    .where("preview_id", "=", allowed.id)
+                    .execute(),
+            ).toEqual([]);
             const done = await remover.callTool(args(allowed.id));
             expect(done.isError, JSON.stringify(done)).toBe(false);
             expect(done.structuredContent).toMatchObject({

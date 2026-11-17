@@ -30,7 +30,14 @@ afterEach(async () => {
 const json = (body: unknown, status = 200) =>
     new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
 
-function controller(options: { env?: boolean; afterPreviewRead?: () => Promise<void> } = {}) {
+function controller(
+    options: {
+        env?: boolean;
+        afterPreviewRead?: () => Promise<void>;
+        deleteStatus?: number;
+        upperCaseProject?: boolean;
+    } = {},
+) {
     const calls: { method: string; path: string; host: string }[] = [];
     const preview = (id: string, projectId: string) => ({
         id,
@@ -62,7 +69,10 @@ function controller(options: { env?: boolean; afterPreviewRead?: () => Promise<v
         if (p === `/organizations/${ORG}/previews/${PREVIEW}` && method === "GET") {
             await options.afterPreviewRead?.();
             // The same preview id names a preview of another project under another profile.
-            return json(preview(PREVIEW, u.host.startsWith("prod") ? OTHER_PROJECT : PROJECT));
+            const project = u.host.startsWith("prod") ? OTHER_PROJECT : PROJECT;
+            return json(
+                preview(PREVIEW, options.upperCaseProject ? project.toUpperCase() : project),
+            );
         }
         if (p === `/organizations/${ORG}/previews/${ELSEWHERE}` && method === "GET") {
             return json(preview(ELSEWHERE, OTHER_PROJECT));
@@ -80,6 +90,12 @@ function controller(options: { env?: boolean; afterPreviewRead?: () => Promise<v
                 createdAt: NOW,
                 finishedAt: null,
             });
+        }
+        if (method === "DELETE" && options.deleteStatus) {
+            return json(
+                { code: "forbidden", status: options.deleteStatus, title: "Refused" },
+                options.deleteStatus,
+            );
         }
         if (method === "DELETE" && p.startsWith(`/organizations/${ORG}/previews/`)) {
             return json({ operationId: OPERATION, state: "deleting" }, 202);
@@ -127,33 +143,56 @@ const POLICY = { allowProjects: [PROJECT] };
 
 describe("startup policy for deletion", () => {
     const parse = (...argv: string[]) => startupOptions(argv, () => {});
-    it("offers deletion only with --allow-delete and at least one project id", () => {
+    it("offers deletion only with --allow-delete and at least one --allow-delete-project", () => {
         expect(parse("--shared").deletion).toBeUndefined();
-        expect(parse("--allow-delete", "--allow-project", PROJECT.toUpperCase()).deletion).toEqual({
-            allowProjects: [PROJECT],
-        });
-        expect(parse("--allow-delete", "--allow-project", PROJECT).deploy).toBeUndefined();
-        expect(() => parse("--allow-delete")).toThrow(/at least one --allow-project/);
-        expect(() => parse("--allow-delete", "--allow-project", "site")).toThrow(/project id/);
-        expect(() => parse("--allow-project", PROJECT)).toThrow(
-            /needs --allow-deploy or --allow-delete/,
+        expect(
+            parse("--allow-delete", "--allow-delete-project", PROJECT.toUpperCase()).deletion,
+        ).toEqual({ allowProjects: [PROJECT] });
+        expect(parse("--allow-delete", "--allow-delete-project", PROJECT).deploy).toBeUndefined();
+        expect(() => parse("--allow-delete")).toThrow(/at least one --allow-delete-project/);
+        expect(() => parse("--allow-delete", "--allow-delete-project", "site")).toThrow(
+            /project id/,
         );
-        // Deleting does not switch deployment on, and the include/exclude lists stay deploy's.
-        expect(() => parse("--allow-delete", "--allow-project", PROJECT, "--include", "a")).toThrow(
-            /need --allow-deploy/,
-        );
+        expect(() => parse("--allow-delete-project", PROJECT)).toThrow(/needs --allow-delete/);
+        // Deleting does not switch deployment on, and the deployment lists stay deployment's.
+        expect(() =>
+            parse("--allow-delete", "--allow-delete-project", PROJECT, "--include", "a"),
+        ).toThrow(/need --allow-deploy/);
+        expect(() =>
+            parse("--allow-delete", "--allow-delete-project", PROJECT, "--allow-project", PROJECT),
+        ).toThrow(/needs --allow-deploy/);
+    });
+
+    it("keeps the deployment list and the deletion list apart", () => {
         const both = parse(
             "--allow-deploy",
             "--include",
             "a",
             "--exclude",
             "b",
-            "--allow-delete",
             "--allow-project",
             PROJECT,
+            "--allow-project",
+            OTHER_PROJECT,
+            "--allow-delete",
+            "--allow-delete-project",
+            PROJECT,
         );
-        expect(both.deploy?.allowProjects).toEqual([PROJECT]);
+        expect(both.deploy?.allowProjects).toEqual([PROJECT, OTHER_PROJECT]);
+        // Adding deletion for one project does not extend it to the other.
         expect(both.deletion?.allowProjects).toEqual([PROJECT]);
+        // Deploying with no project list stays unrestricted, whatever deletion allows.
+        const open = parse(
+            "--allow-deploy",
+            "--include",
+            "a",
+            "--exclude",
+            "b",
+            "--allow-delete",
+            "--allow-delete-project",
+            PROJECT,
+        );
+        expect(open.deploy?.allowProjects).toEqual([]);
     });
 });
 
@@ -269,19 +308,38 @@ describe("the delete_preview tool", () => {
         expect(calls).toEqual([]);
     });
 
-    it("returns a controller refusal as an error, not as success", async () => {
-        const { client } = await connect(
-            { workingDir: dir, deletion: POLICY },
-            (() => {
-                const fake = controller();
-                return fake;
-            })(),
-        );
-        // An unknown preview: the controller says not found.
+    it("returns a controller refusal as an error, whether it comes on reading or on deleting", async () => {
+        const { client } = await connect({ workingDir: dir, deletion: POLICY });
         const missing = await remove(client, {
             preview_id: "88888888-8888-4888-8888-888888888888",
         });
         expect(missing.isError).toBe(true);
+        // The deletion itself is refused (no scope, or deletion not turned on).
+        for (const status of [403, 409]) {
+            const refusing = await connect(
+                { workingDir: dir, deletion: POLICY },
+                controller({ deleteStatus: status }),
+            );
+            const result = await remove(refusing.client);
+            expect(result.isError, String(status)).toBe(true);
+            expect(JSON.stringify(result)).not.toContain('"outcome":"queued"');
+            expect(deletes(refusing.calls)).toHaveLength(1);
+        }
+    });
+
+    it("refuses an organization the key cannot see, sending nothing to delete", async () => {
+        const { client, calls } = await connect({ workingDir: dir, deletion: POLICY });
+        const result = await remove(client, { organization: "not-mine" });
+        expect(result.isError).toBe(true);
+        expect(deletes(calls)).toEqual([]);
+    });
+
+    it("compares project ids without regard to case", async () => {
+        const { client } = await connect(
+            { workingDir: dir, deletion: POLICY },
+            controller({ upperCaseProject: true }),
+        );
+        expect((await remove(client)).isError).toBe(false);
     });
 });
 

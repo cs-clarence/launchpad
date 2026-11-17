@@ -77,7 +77,9 @@ export function createMcpServer(context: Context, options: ServerOptions = {}) {
                               : "",
                       ]
                           .filter(Boolean)
-                          .join("; ")}. Both only work within the operator's startup policy.`
+                          .join("; ")}. ${
+                          options.deploy && options.deletion ? "Both only work" : "It only works"
+                      } within the operator's startup policy.`
                     : "This server exposes read-only tools."
             }`,
         },
