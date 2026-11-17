@@ -10,7 +10,7 @@ import { createMcpServer, type ServerOptions } from "./server";
 
 const KEY = "lp_" + "a".repeat(43);
 const ORG = "org-one";
-const PROJECT = "11111111-1111-4111-8111-111111111111";
+const PROJECT = "1a1a1a1a-1111-4111-8111-111111111111";
 const OTHER_PROJECT = "55555555-5555-4555-8555-555555555555";
 const PREVIEW = "22222222-2222-4222-8222-222222222222";
 const ELSEWHERE = "66666666-6666-4666-8666-666666666666";
