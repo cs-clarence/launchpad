@@ -2189,7 +2189,11 @@ describe("previews and deployments over HTTP", () => {
         expect(read.status).toBe(200);
         const report = statusSchema.parse(await read.json());
         expect(report.dependencies).toEqual({ database: "ok", dataDirectory: "ok" });
-        expect(report.controller).toEqual({ deploymentsEnabled: true, lifecycleEnabled: true });
+        expect(report.controller).toEqual({
+            deploymentsEnabled: true,
+            lifecycleEnabled: true,
+            deletionsAccepted: true,
+        });
         expect(report.workers.find((w) => w.id === "hop-worker")).toMatchObject({
             live: true,
             lifecycleEnabled: true,

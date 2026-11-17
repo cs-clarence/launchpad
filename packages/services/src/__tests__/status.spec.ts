@@ -14,6 +14,7 @@ import {
     getStatus,
     recordHeartbeat,
     requestPreviewDeletion,
+    STUCK_RUNNING_SECONDS,
     WORKER_LIVE_SECONDS,
     type Principal,
 } from "../index";
@@ -57,6 +58,7 @@ const status = (deps: Partial<Parameters<typeof getStatus>[2]> = {}) =>
         dataDir,
         deploymentsEnabled: true,
         lifecycleEnabled: true,
+        deletionsAccepted: true,
         ...deps,
     });
 const beat = (workerId: string, over: { lifecycleEnabled?: boolean; started?: boolean } = {}) =>
@@ -162,10 +164,21 @@ describe("the status", () => {
                     dataDir,
                     deploymentsEnabled: true,
                     lifecycleEnabled: true,
+                    deletionsAccepted: true,
                 }),
             ).rejects.toMatchObject({ code: "forbidden" });
         }
-        expect(await status()).toMatchObject({ dependencies: { database: "ok" } });
+        expect(await status()).toMatchObject({
+            dependencies: { database: "ok" },
+            controller: {
+                deploymentsEnabled: true,
+                lifecycleEnabled: true,
+                deletionsAccepted: true,
+            },
+        });
+        expect((await status({ deletionsAccepted: false })).controller.deletionsAccepted).toBe(
+            false,
+        );
     });
 
     it("counts the work waiting and says how old the oldest is", async () => {
@@ -284,24 +297,24 @@ describe("the status", () => {
         await testDb.db.deleteFrom("worker_heartbeat").execute();
         await beat("w-off", { lifecycleEnabled: false });
         expect(
-            (await status({ lifecycleEnabled: true })).warnings.some((w) =>
-                w.includes("no live worker does"),
+            (await status({ deletionsAccepted: true })).warnings.some((w) =>
+                w.includes("no live worker has the lifecycle on"),
             ),
         ).toBe(true);
         expect(
-            (await status({ lifecycleEnabled: false })).warnings.some((w) =>
-                w.includes("lifecycle on but the controller does not"),
+            (await status({ deletionsAccepted: false })).warnings.some((w) =>
+                w.includes("does not accept deletions"),
             ),
         ).toBe(false);
         await beat("w-on", { lifecycleEnabled: true });
         expect(
-            (await status({ lifecycleEnabled: true })).warnings.some((w) =>
-                w.includes("no live worker does"),
+            (await status({ deletionsAccepted: true })).warnings.some((w) =>
+                w.includes("no live worker has the lifecycle on"),
             ),
         ).toBe(false);
         expect(
-            (await status({ lifecycleEnabled: false })).warnings.some((w) =>
-                w.includes("lifecycle on but the controller does not"),
+            (await status({ deletionsAccepted: false })).warnings.some((w) =>
+                w.includes("does not accept deletions"),
             ),
         ).toBe(true);
     });
@@ -326,5 +339,86 @@ describe("the status", () => {
             await fs.chmod(readonly, 0o700);
             await fs.rm(readonly, { recursive: true, force: true });
         }
+    });
+
+    it("checks the data directory only where deployments use it, and only a directory counts", async () => {
+        const off = await status({
+            deploymentsEnabled: false,
+            dataDir: path.join(dataDir, "nope"),
+        });
+        expect(off.dependencies.dataDirectory).toBe("not-checked");
+        expect(off.warnings.some((w) => w.includes("data directory"))).toBe(false);
+        const file = path.join(dataDir, "a-file");
+        await fs.writeFile(file, "x");
+        const notDir = await status({ dataDir: file });
+        expect(notDir.dependencies.dataDirectory).toBe("not-a-directory");
+        expect(notDir.warnings).toContain("The data directory is not a directory.");
+    });
+
+    it("counts work only where it will be done, and a running deployment with no worker is work", async () => {
+        await testDb.db.deleteFrom("worker_heartbeat").execute();
+        // Overdue previews and waiting deletions exist (earlier tests), but with the lifecycle
+        // off nothing will do them: no warning for that.
+        await testDb.db.deleteFrom("deployment").execute();
+        const off = await status({ lifecycleEnabled: false, deletionsAccepted: false });
+        expect(off.warnings.some((w) => w.startsWith("No worker has reported"))).toBe(false);
+        const on = await status();
+        expect(on.warnings.some((w) => w.startsWith("No worker has reported"))).toBe(true);
+        // A running deployment with nobody reporting is work too, whatever the lifecycle says.
+        const artifact = await testDb.db
+            .insertInto("artifact")
+            .values({
+                organization_id: org,
+                digest: randomUUID().replaceAll("-", "").padEnd(64, "0"),
+                size_bytes: 1,
+                expanded_bytes: 1,
+                entry_count: 1,
+                storage_key: "y",
+                created_by: people.ann!.userId,
+            })
+            .returning("id")
+            .executeTakeFirstOrThrow();
+        const preview = await makePreview();
+        const d = await enqueueDeployment(
+            testDb.db,
+            people.ann!,
+            org,
+            preview,
+            { artifactId: artifact.id },
+            { enabled: true },
+        );
+        await testDb.db
+            .updateTable("deployment")
+            .set({ status: "building" })
+            .where("id", "=", d.id)
+            .execute();
+        await testDb.db.deleteFrom("deletion_operation").execute();
+        await testDb.db.updateTable("preview").set({ expires_at: null }).execute();
+        const running = await status({ lifecycleEnabled: false, deletionsAccepted: false });
+        expect(running.warnings.some((w) => w.startsWith("No worker has reported"))).toBe(true);
+    });
+
+    it("warns about a deployment that has not moved for too long, and a lifecycle without deployments", async () => {
+        await beat("w-live");
+        const stuck = await testDb.db
+            .selectFrom("deployment")
+            .select("id")
+            .where("status", "=", "building")
+            .executeTakeFirstOrThrow();
+        const fresh = await status();
+        expect(fresh.warnings.some((w) => w.includes("may be stuck"))).toBe(false);
+        expect(fresh.deployments.oldestRunningSeconds).toBeLessThan(60);
+        await testDb.db
+            .updateTable("deployment")
+            .set({ updated_at: new Date(Date.now() - (STUCK_RUNNING_SECONDS + 60) * 1000) })
+            .where("id", "=", stuck.id)
+            .execute();
+        const old = await status();
+        expect(old.warnings.some((w) => w.includes("may be stuck"))).toBe(true);
+        expect(old.deployments.oldestRunningSeconds).toBeGreaterThan(STUCK_RUNNING_SECONDS);
+        const noDeployments = await status({ deploymentsEnabled: false, deletionsAccepted: false });
+        expect(noDeployments.warnings).toContain(
+            "The lifecycle is on but deployments are off, so deletions are refused.",
+        );
     });
 });

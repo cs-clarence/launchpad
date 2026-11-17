@@ -70,10 +70,13 @@ export async function runWorker(
     // work it describes, and beats do not pile up behind a slow database.
     let beaten = false;
     let beating = false;
+    let inFlight: Promise<void> = Promise.resolve();
     const beat = async () => {
         const settings = options.heartbeat;
         if (!settings || beating) return;
         beating = true;
+        const done = Promise.withResolvers<void>();
+        inFlight = done.promise;
         try {
             await recordHeartbeat(db, {
                 workerId: options.owner,
@@ -86,12 +89,14 @@ export async function runWorker(
             options.log?.({ event: "heartbeat-error" });
         } finally {
             beating = false;
+            done.resolve();
         }
     };
     const timer = options.heartbeat
         ? setInterval(() => void beat(), options.heartbeat.everyMs ?? DEFAULT_HEARTBEAT_MS)
         : undefined;
-    await beat();
+    // The first one does not hold up starting, or stopping, if the database is slow.
+    void beat();
     // Lifecycle work fills the time between deployments, but a worker that always has a
     // deployment to run must still expire and delete now and then.
     const LIFECYCLE_AT_LEAST_EVERY_MS = 30_000;
@@ -127,5 +132,7 @@ export async function runWorker(
         }
     } finally {
         if (timer) clearInterval(timer);
+        // A beat already under way finishes before the caller closes the database.
+        await inFlight;
     }
 }

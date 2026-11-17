@@ -10,6 +10,7 @@ import {
 } from "kysely";
 import { describe, expect, it } from "vitest";
 import { getEventListeners } from "node:events";
+import { DEFAULT_LIFECYCLE } from "@launchpad/services";
 import { runOnce, runWorker, sleep } from "./worker";
 
 const ports = {} as DeployPorts;
@@ -88,10 +89,26 @@ describe("the worker loop", () => {
 
 // A database that records what it is asked, and can be made to fail.
 function recordingDb() {
-    const state = { statements: [] as string[], fail: false, slowOthers: false };
+    const state = {
+        statements: [] as string[],
+        parameters: [] as unknown[][],
+        fail: false,
+        slowOthers: false,
+        delayMs: 0,
+        open: 0,
+        maxOpen: 0,
+    };
     const connection: DatabaseConnection = {
         executeQuery: async (query) => {
             state.statements.push(query.sql);
+            state.parameters.push([...query.parameters]);
+            state.open++;
+            state.maxOpen = Math.max(state.maxOpen, state.open);
+            try {
+                if (state.delayMs > 0) await new Promise((r) => setTimeout(r, state.delayMs));
+            } finally {
+                state.open--;
+            }
             if (state.slowOthers && !query.sql.includes("worker_heartbeat")) {
                 await new Promise((resolve) => setTimeout(resolve, 250));
                 throw new Error("gave up");
@@ -183,5 +200,39 @@ describe("the worker's heartbeat", () => {
         expect(JSON.stringify(lines)).not.toContain("hunter2");
         // And it was still running (the loop did not die with the first failure).
         expect(lines.every((l) => l.event === "heartbeat-error")).toBe(true);
+    });
+
+    it("says it has started only on its first beat, and sends the lifecycle setting it runs with", async () => {
+        const { db, state } = recordingDb();
+        const lifecycle = {
+            ports: {} as never,
+            config: { ...DEFAULT_LIFECYCLE, enabled: false },
+            dataDir: "/nowhere",
+        };
+        await run(db, { lifecycle, heartbeat: { version: "7.7.7", everyMs: 40 } }, 250);
+        const inserts = state.statements
+            .map((sql, i) => ({ sql, params: state.parameters[i]! }))
+            .filter((q) => q.sql.startsWith("insert") && q.sql.includes("worker_heartbeat"));
+        expect(inserts.length).toBeGreaterThanOrEqual(3);
+        // Every beat carries the id, the version and the lifecycle setting (off here) ...
+        for (const insert of inserts) {
+            expect(insert.params).toEqual(expect.arrayContaining(["w-test", "7.7.7", false]));
+        }
+        // ... and only the first asks for the start time to be reset.
+        const resets = inserts.map((q) => q.sql.includes("started_at"));
+        expect(resets[0]).toBe(true);
+        expect(resets.slice(1)).not.toContain(true);
+    });
+
+    it("never beats twice at once, and sends nothing once the worker has stopped", async () => {
+        const { db, state } = recordingDb();
+        // Each statement takes longer than the interval, so beats would pile up if allowed.
+        state.delayMs = 30;
+        await run(db, { heartbeat: { version: "1", everyMs: 5 } }, 200);
+        // One beat is a few statements in a row, never two beats side by side.
+        expect(state.maxOpen).toBe(1);
+        const after = state.statements.length;
+        await new Promise((resolve) => setTimeout(resolve, 120));
+        expect(state.statements.length).toBe(after);
     });
 });

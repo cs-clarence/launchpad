@@ -99,3 +99,13 @@ describe("worker configuration", () => {
         }
     });
 });
+
+describe("the worker id", () => {
+    it("is 128 characters at most, or no heartbeat could ever be stored for it", () => {
+        const ok = loadConfig({ ...full, LAUNCHPAD_WORKER_ID: "w".repeat(128) });
+        expect(ok.enabled && ok.config.workerId).toBe("w".repeat(128));
+        expect(() => loadConfig({ ...full, LAUNCHPAD_WORKER_ID: "w".repeat(129) })).toThrow(
+            /128 characters/,
+        );
+    });
+});

@@ -76,7 +76,7 @@ export function loadConfig(
         config: {
             databaseUrl: required(env, "DATABASE_URL"),
             dataDir: plainDataDir(required(env, "LAUNCHPAD_DATA_DIR")),
-            workerId: env.LAUNCHPAD_WORKER_ID || `${os.hostname()}-${process.pid}`,
+            workerId: workerIdFrom(env.LAUNCHPAD_WORKER_ID),
             dokku: {
                 host: required(env, "DOKKU_SSH_HOST"),
                 port: integer(env.DOKKU_SSH_PORT, "DOKKU_SSH_PORT", 22, 1, 65535),
@@ -99,6 +99,16 @@ export function loadConfig(
             lifecycle: lifecycleConfigFromEnv(env),
         },
     };
+}
+
+// Shown to the operator and stored with the heartbeat, which holds 128 characters at most:
+// a longer one would make every heartbeat fail.
+function workerIdFrom(value: string | undefined): string {
+    const id = value || `${os.hostname()}-${process.pid}`;
+    if (id.length < 1 || id.length > 128) {
+        throw new Error("LAUNCHPAD_WORKER_ID must be 1 to 128 characters.");
+    }
+    return id;
 }
 
 function plainDataDir(value: string): string {

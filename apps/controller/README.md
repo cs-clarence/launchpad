@@ -198,19 +198,25 @@ it, whatever its scopes; an organization owner who is not the operator gets 403)
 what an operator needs to know whether the instance is healthy, as counts and ages only (no
 ids of previews, names, or text that came from a remote system):
 
-- `dependencies`: the database (`ok` if the request got an answer) and whether the data directory
-  is writable (`ok`, `missing` or `not-writable`).
-- `controller`: whether deployments and the lifecycle are on here.
+- `dependencies`: the database (`ok` if the request got an answer) and the data directory (`ok`,
+  `missing`, `not-writable`, `not-a-directory`, or `not-checked` while deployments are off). The
+  controller creates the directory when it starts with deployments on.
+- `controller`: whether deployments and the lifecycle are on here, and `deletionsAccepted` (both
+  are: the controller takes new deletions).
 - `workers`: each worker that has reported, with its version, whether it runs the lifecycle, when it
   started, how many seconds ago it reported and whether that is `live` (within the last minute).
   A worker reports when it starts and at least every 10 s, on a timer of its own, so one that is
   busy building still shows as live; rows of workers silent for a day are forgotten.
-- `deployments` (queued, running, held for an administrator, age of the oldest queued), `expiry`
+- `deployments` (queued, running, held for an administrator, age of the oldest queued and of the
+  longest-unmoved running one), `expiry`
   (previews past their expiry and not yet claimed), `deletions` (waiting, held) and `artifacts`
   (stored count and bytes).
-- `warnings`, in plain words: work waiting with no live worker; the controller has the lifecycle on
-  but no live worker does (a deletion would be accepted and never run), or the other way round;
-  deployments or deletions that need an administrator; a data directory that is missing or read-only.
+- `warnings`, in plain words: work waiting with no live worker (expiry and deletion only count where
+  the lifecycle is on); the controller accepts deletions but no live worker has the lifecycle on (a
+  deletion would be accepted and never run), or the other way round; the lifecycle on without
+  deployments; a deployment that has not moved for 30 minutes (a stuck worker still beats, so this is
+  how it shows); deployments or deletions that need an administrator; a data directory that is
+  missing, read-only or not a directory.
 
 There is no dashboard panel for it yet.
 

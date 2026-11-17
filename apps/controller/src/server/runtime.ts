@@ -1,6 +1,7 @@
 import { createAuth, createMailer, loadAuthConfig } from "@launchpad/auth";
 import { createDatabase } from "@launchpad/database";
 import type { InvitationDeps } from "@launchpad/services";
+import { mkdirSync } from "node:fs";
 import path from "node:path";
 import {
     deploymentsEnabled,
@@ -88,6 +89,11 @@ function compose() {
         dataDir: path.resolve(process.env.LAUNCHPAD_DATA_DIR ?? ".data/controller"),
         limits: artifactLimitsFromEnv(process.env),
     };
+    // Where deployments are on the directory must exist and be the controller's own: made
+    // here (not on the first upload) so the operator's status can tell "not yet" from "gone".
+    if (deploymentsEnabled(process.env.LAUNCHPAD_DEPLOYMENTS)) {
+        mkdirSync(artifacts.dataDir, { recursive: true, mode: 0o700 });
+    }
     // A crash mid-upload leaves a staged file behind; clear the old ones at startup.
     void sweepStaleUploads(artifacts.dataDir).catch((error) =>
         console.error("Could not sweep stale uploads", error),

@@ -116,11 +116,18 @@ export const statusSchema = z.strictObject({
     generatedAt: z.string().meta({ format: "date-time" }),
     dependencies: z.strictObject({
         database: z.literal("ok"),
-        dataDirectory: z.enum(["ok", "missing", "not-writable"]),
+        dataDirectory: z
+            .enum(["ok", "missing", "not-writable", "not-a-directory", "not-checked"])
+            .meta({
+                description: "`not-checked` while deployments are off: nothing uses it then.",
+            }),
     }),
     controller: z.strictObject({
         deploymentsEnabled: z.boolean(),
         lifecycleEnabled: z.boolean(),
+        deletionsAccepted: z.boolean().meta({
+            description: "Both are on: the controller takes new deletions.",
+        }),
     }),
     workers: z.array(
         z.strictObject({
@@ -137,6 +144,9 @@ export const statusSchema = z.strictObject({
         running: z.number().int(),
         held: z.number().int().meta({ description: "Waiting for an administrator." }),
         oldestQueuedSeconds: z.number().int().nullable(),
+        oldestRunningSeconds: z.number().int().nullable().meta({
+            description: "Since the least recently moved running deployment last moved.",
+        }),
     }),
     expiry: z.strictObject({
         overdue: z.number().int().meta({ description: "Past their expiry and not yet claimed." }),

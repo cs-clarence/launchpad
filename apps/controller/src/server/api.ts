@@ -709,6 +709,7 @@ export function createApi(deps: {
                         dataDir: artifacts.dataDir,
                         deploymentsEnabled: previews.enabled,
                         lifecycleEnabled: previews.lifecycle?.enabled ?? false,
+                        deletionsAccepted: deletionsEnabled(previews),
                     }),
                 ),
             )
