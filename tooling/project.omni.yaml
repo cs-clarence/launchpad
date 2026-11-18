@@ -53,6 +53,13 @@ tasks:
     dependencies:
       - test:unit
 
+  # Builds, packs and installs the CLI, MCP server and SDK outside the workspace and runs them
+  # under Bun and Node (when present). Needs the network for the registry dependencies.
+  # Publishes nothing.
+  test:packages:
+    description: Pack the client packages, install them in a clean project and run them
+    exec: sh -c 'cd "$(git rev-parse --show-toplevel)" && bun tooling/check-packages.ts'
+
   test:db:up:
     description: Start a disposable PostgreSQL for integration tests (needs Docker)
     exec: sh -c 'cd "$(git rev-parse --show-toplevel)" && bun tooling/test-db.ts up'

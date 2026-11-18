@@ -127,6 +127,33 @@ jobs:
       - name: Prune stale caches
         run: omni -i cache prune -sy -o="7d"
 
+  # The client packages, packed and installed in a clean project outside the workspace and run
+  # under Bun and Node. Needs the network; publishes nothing.
+  packages:
+    name: Packages
+    needs: [build]
+    runs-on: ubuntu-latest
+    # A hung install or run must not hold the runner for GitHub's six-hour default.
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Setup Workspace
+        uses: ./.github/actions/setup-workspace
+        with:
+          cache-key-prefix: packages
+          cache-restore-key-prefixes: |
+            build
+            check
+
+      - name: Packages
+        run: omni -i run test:packages -p '@launchpad/tooling'
+
+      - name: Prune stale caches
+        run: omni -i cache prune -sy -o="7d"
+
   # The ONLY status check to require in the `main` branch protection / ruleset.
   # GitHub cannot match job names that change, and a required job that is skipped
   # never reports, so every job collapses into this one stable check.
@@ -137,7 +164,7 @@ jobs:
   # on pull requests, must be `success` there and `skipped` everywhere else.
   ci-gatekeeper:
     name: CI Passed
-    needs: [commits, check, build, test, integration]
+    needs: [commits, check, build, test, integration, packages]
     # Always run, so the check reports even when upstream jobs fail or are skipped.
     if: ${{ always() }}
     runs-on: ubuntu-latest
@@ -154,7 +181,8 @@ jobs:
               "check": "${{ needs.check.result }}",
               "build": "${{ needs.build.result }}",
               "test": "${{ needs.test.result }}",
-              "integration": "${{ needs.integration.result }}"
+              "integration": "${{ needs.integration.result }}",
+              "packages": "${{ needs.packages.result }}"
             }
         with:
           script: |
@@ -165,6 +193,7 @@ jobs:
               build: 'success',
               test: 'success',
               integration: 'success',
+              packages: 'success',
             };
             const problems = [];
             for (const [name, want] of Object.entries(expected)) {
