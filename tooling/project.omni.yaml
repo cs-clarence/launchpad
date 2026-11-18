@@ -34,14 +34,19 @@ tasks:
     # the example file; unset exactly the variables the example defines.
     exec: sh -c 'cd "$(git rev-parse --show-toplevel)" && export PWD && unset $(sed -n "s/^\([A-Z_]*\)=.*/\1/p" .env.local.example) && docker compose --env-file .env.local.example config --quiet'
 
+  check:versions:
+    description: Every shipped package has the same version and is watched by cog.toml
+    exec: sh -c 'cd "$(git rev-parse --show-toplevel)" && bun tooling/versions.ts check'
+
   check:
-    description: Types, lint, format and dependency consistency
+    description: Types, lint, format, dependency and version consistency
     exec: ""
     dependencies:
       - check:types
       - check:lint
       - check:format
       - check:deps
+      - check:versions
 
   test:unit:
     description: Tests of the repository tooling
@@ -65,6 +70,12 @@ tasks:
   test:images:
     description: Build the controller and worker images and check them (needs Docker and a test database)
     exec: sh -c 'cd "$(git rev-parse --show-toplevel)" && export TEST_DATABASE_URL="${TEST_DATABASE_URL:-postgres://postgres:dev@127.0.0.1:55432/postgres}" && bun tooling/check-images.ts'
+
+  # A rehearsal of a release that publishes nothing: packs the clients, writes checksums and
+  # builds (never pushes) the images into .release-dry-run/. Needs the network and Docker.
+  release:dry-run:
+    description: Rehearse a release into .release-dry-run/ without publishing anything
+    exec: sh -c 'cd "$(git rev-parse --show-toplevel)" && bun tooling/release-dry-run.ts'
 
   test:db:up:
     description: Start a disposable PostgreSQL for integration tests (needs Docker)

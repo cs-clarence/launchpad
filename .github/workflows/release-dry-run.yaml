@@ -1,0 +1,44 @@
+# A rehearsal of a release. It is started by hand, holds no secret and no write permission, and
+# publishes nothing: it packs the client packages, writes checksums and builds the images without
+# pushing them, then keeps the result as a short-lived workflow artifact for inspection.
+# Real publishing needs a separate, explicitly authorized workflow (docs/releasing.md).
+name: Release dry run
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  dry-run:
+    name: Dry run
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Setup Workspace
+        uses: ./.github/actions/setup-workspace
+        with:
+          cache-key-prefix: release-dry-run
+          cache-restore-key-prefixes: |
+            build
+            integration
+
+      - name: Rehearse the release
+        run: omni -i run release:dry-run -p '@launchpad/tooling'
+
+      - name: Keep the result for inspection
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-dry-run
+          # The folder is hidden, which upload-artifact skips unless told otherwise.
+          include-hidden-files: true
+          path: |
+            .release-dry-run/RELEASE-DRY-RUN.txt
+            .release-dry-run/packages/SHA256SUMS
+            .release-dry-run/packages/*.tgz
+          retention-days: 7
+          if-no-files-found: error

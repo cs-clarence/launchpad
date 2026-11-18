@@ -19,3 +19,5 @@ publishing yet); jobs run this repository's Omni tasks, including an
 `integration` job that starts a disposable PostgreSQL with `omni run test:db:up`;
 and the gatekeeper is stricter, requiring every job in the static set to be
 exactly `success` (see the comment in `workflows/ci.yaml`).
+
+`workflows/release-dry-run.yaml` is written for this repository (manual, read-only, no publishing).

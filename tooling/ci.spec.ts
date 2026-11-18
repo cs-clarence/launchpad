@@ -26,11 +26,31 @@ const load = (file: string) =>
 const ci = load("ci.yaml");
 const gate = ci.jobs["ci-gatekeeper"]!;
 
-// True when an `omni ... run` command lists exactly this task (not a qualified one).
+// True when an `omni -i run` command at the start of a line names exactly this task as a
+// positional argument: not an option's value, not text after a `#`, not a quoted `echo`.
+const VALUE_OPTIONS = new Set(["-p", "--project", "-e", "--env-file", "-a", "--args"]);
 const runs = (commands: string, task: string) =>
-    commands
-        .split("\n")
-        .some((line) => new RegExp(`omni -i run\\b.*(^|\\s)${task}(\\s|$)`).test(line));
+    commands.split("\n").some((line) => {
+        // Only what Omni itself is given: stop at a comment or a command separator, and set
+        // redirections (`>log`, `2>&1`) aside, since they do not change which task Omni gets.
+        const command = line
+            .split("#")[0]!
+            .split(/&&|\|\||[;|]/)[0]!
+            .replace(/\d*(?:>>?|<)(?:&\d+|\s*\S+)/g, " ");
+        const match = command.match(/^\s*omni -i run\b(.*)$/);
+        if (!match) return false;
+        const tokens = match[1]!.trim().split(/\s+/).filter(Boolean);
+        const positional: string[] = [];
+        for (let i = 0; i < tokens.length; i++) {
+            const token = tokens[i]!;
+            if (token.startsWith("-")) {
+                if (VALUE_OPTIONS.has(token)) i++;
+            } else {
+                positional.push(token);
+            }
+        }
+        return positional.includes(task);
+    });
 
 describe("CI workflow", () => {
     // Adding a job without adding it to the gate would let it fail unnoticed.
@@ -77,6 +97,12 @@ describe("CI workflow", () => {
         expect(runs("omni -i run test:integration", "test")).toBe(false);
         expect(runs("omni -i run check:compose", "check")).toBe(false);
         expect(runs("omni -i run -f=failed check check:compose", "check")).toBe(true);
+        expect(
+            runs('echo "omni -i run release:dry-run -p @launchpad/tooling"', "release:dry-run"),
+        ).toBe(false);
+        expect(
+            runs("  omni -i run release:dry-run -p '@launchpad/tooling'", "release:dry-run"),
+        ).toBe(true);
     });
 
     it("pins the Omni version used by the setup action", () => {
@@ -148,5 +174,39 @@ describe("CI gatekeeper script", () => {
 
     it("fails a push where the commit check unexpectedly ran and failed", () => {
         expect(evaluate("push", { ...allGreen, commits: "failure" })).toContain("commits");
+    });
+});
+
+// The release rehearsal must stay a rehearsal: manual, read-only, with no credential and no
+// command that publishes, pushes, tags or logs in.
+describe("release dry-run workflow", () => {
+    const file = readFileSync(path.join(workflows, "release-dry-run.yaml"), "utf8");
+    const parsed = Bun.YAML.parse(file) as {
+        on: Record<string, unknown>;
+        permissions: Record<string, string>;
+        jobs: Record<string, Job & { permissions?: unknown; environment?: unknown }>;
+    };
+
+    it("starts only by hand, with read-only permissions", () => {
+        expect(Object.keys(parsed.on)).toEqual(["workflow_dispatch"]);
+        expect(parsed.permissions).toEqual({ contents: "read" });
+        for (const job of Object.values(parsed.jobs)) {
+            expect(job.permissions).toBeUndefined();
+            expect(job.environment).toBeUndefined();
+        }
+    });
+
+    it("uses no secret and no publishing, pushing, tagging or login command", () => {
+        expect(file).not.toMatch(/secrets\.|id-token|NODE_AUTH_TOKEN|NPM_TOKEN/);
+        const commands = Object.values(parsed.jobs)
+            .flatMap((job) => job.steps ?? [])
+            .map((step) => step.run ?? "")
+            .join("\n")
+            // A shell comment is not a command.
+            .replace(/^\s*#.*$/gm, "");
+        expect(commands).not.toMatch(
+            /\b(publish|push|login|release create|git tag)\b|docker (push|login)/,
+        );
+        expect(runs(commands, "release:dry-run")).toBe(true);
     });
 });

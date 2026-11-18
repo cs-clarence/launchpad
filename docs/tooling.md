@@ -171,9 +171,14 @@ checkout with `cog install-hook --all`. It validates every commit message and
 runs `cog check` when `HEAD` exists, so the first commit on an unborn branch
 is supported. Installation does not change Git configuration.
 
-Do not use `cog bump` for releases yet: Pureform's version-update helper was not
-copied, and manifest/lockfile version synchronization is not implemented. No
-automatic push hooks are configured.
+`cog bump` is wired to version synchronization: the `core` group in `cog.toml` lists everything
+that ships together (libraries, apps, images and the root manifest), and its
+`pre_package_bump_hooks` run `bun tooling/versions.ts sync <package> <version>`, which rewrites the
+manifests and refreshes `bun.lock` so the bump commit holds both. `omni -i run check:versions`
+(part of `check`) fails when versions disagree or a workspace package is missing from the list.
+No hook pushes, and nothing tags or publishes unless you run `cog bump` yourself. See
+[releasing](releasing.md) for the rules, the checklist and `omni -i run release:dry-run`, which
+rehearses a release into `.release-dry-run/` (also a manual, read-only GitHub workflow).
 
 ## Configuration and containers
 
