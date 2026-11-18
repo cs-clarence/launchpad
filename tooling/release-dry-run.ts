@@ -7,7 +7,7 @@
 // images it builds are removed by exact name before it exits.
 //
 //   bun tooling/release-dry-run.ts [outDir] [--skip-images]
-import { createHash } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import {
     existsSync,
     mkdirSync,
@@ -40,9 +40,13 @@ export function checksumLines(files: { name: string; digest: string }[]): string
 // The folder is emptied first, so it is only ever one named for this purpose that really lies
 // inside the repository: its nearest existing ancestor is resolved through symlinks, so a link
 // out of the checkout cannot redirect the delete.
+const LOCK = ".release-dry-run.lock";
+
 export function checkOutput(out: string, repository = root): string | null {
     if (!path.basename(out).includes("release-dry-run"))
         return "its name must contain release-dry-run";
+    const lock = path.join(repository, LOCK);
+    if (out === lock || out.startsWith(`${lock}${path.sep}`)) return "it is the lock folder";
     const inside = (candidate: string, base: string) => candidate.startsWith(`${base}${path.sep}`);
     if (!inside(out, repository)) return "it must be inside the repository";
     let ancestor = out;
@@ -88,7 +92,7 @@ async function main() {
     if (refused) throw new Error(`Refusing to empty ${out}: ${refused}.`);
     // One run at a time, whatever folders they use: a second would empty the first's folder, or
     // one holding it. The lock sits at the checkout root, outside every selectable folder.
-    const lock = path.join(root, ".release-dry-run.lock");
+    const lock = path.join(root, LOCK);
     try {
         mkdirSync(lock);
     } catch (error) {
@@ -140,7 +144,8 @@ async function rehearse(out: string, version: string, skipImages: boolean) {
 
     const images: string[] = [];
     if (!skipImages) {
-        const run = process.pid.toString(36);
+        // Random per invocation: a PID repeats across containers sharing one Docker daemon.
+        const run = randomBytes(4).toString("hex");
         const built: string[] = [];
         let failure: unknown;
         try {

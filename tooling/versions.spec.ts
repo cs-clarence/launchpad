@@ -154,6 +154,19 @@ describe("lockfile and strictness", () => {
         expect(checkVersions(root)).toEqual([]);
     });
 
+    it("normalizes a registered package path the same way", () => {
+        const root = repository();
+        writeFileSync(
+            path.join(root, "cog.toml"),
+            readFileSync(path.join(root, "cog.toml"), "utf8").replace(
+                'path = "packages/tool"',
+                'path = "packages/./tool"',
+            ),
+        );
+        expect(independentPackages(root).get("@t/tool")).toBe("packages/tool");
+        expect(sharedWorkspaces(root).map((w) => w.dir)).not.toContain("packages/tool");
+    });
+
     it("refuses a workspace entry it cannot read", () => {
         const root = repository();
         writeFileSync(

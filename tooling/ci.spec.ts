@@ -26,12 +26,26 @@ const load = (file: string) =>
 const ci = load("ci.yaml");
 const gate = ci.jobs["ci-gatekeeper"]!;
 
-// True when an `omni ... run` command lists exactly this task (not a qualified one).
-// The command itself must start the line (a quoted `echo "omni ..."` is not a run).
+// True when an `omni -i run` command at the start of a line names exactly this task as a
+// positional argument: not an option's value, not text after a `#`, not a quoted `echo`.
+const VALUE_OPTIONS = new Set(["-p", "--project", "-e", "--env-file", "-a", "--args"]);
 const runs = (commands: string, task: string) =>
-    commands
-        .split("\n")
-        .some((line) => new RegExp(`^\\s*omni -i run\\b[^#]*(^|\\s)${task}(\\s|$)`).test(line));
+    commands.split("\n").some((line) => {
+        const command = line.split("#")[0]!;
+        const match = command.match(/^\s*omni -i run\b(.*)$/);
+        if (!match) return false;
+        const tokens = match[1]!.trim().split(/\s+/).filter(Boolean);
+        const positional: string[] = [];
+        for (let i = 0; i < tokens.length; i++) {
+            const token = tokens[i]!;
+            if (token.startsWith("-")) {
+                if (VALUE_OPTIONS.has(token)) i++;
+            } else {
+                positional.push(token);
+            }
+        }
+        return positional.includes(task);
+    });
 
 describe("CI workflow", () => {
     // Adding a job without adding it to the gate would let it fail unnoticed.

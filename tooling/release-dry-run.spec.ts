@@ -40,6 +40,13 @@ describe("checkOutput", () => {
         expect(checkOutput(path.join(outside, "release-dry-run"), repo)).not.toBeNull();
     });
 
+    it("refuses the lock folder and anything inside it", () => {
+        expect(checkOutput(path.join(repo, ".release-dry-run.lock"), repo)).toContain("lock");
+        expect(
+            checkOutput(path.join(repo, ".release-dry-run.lock", "x-release-dry-run"), repo),
+        ).toContain("lock");
+    });
+
     it("refuses a path that reaches outside through a symbolic link", () => {
         expect(checkOutput(path.join(repo, "link", "release-dry-run"), repo)).toContain("symbolic");
         rmSync(base, { recursive: true, force: true });

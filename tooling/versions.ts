@@ -49,7 +49,7 @@ function cogConfig(root: string): CogConfig {
 export function independentPackages(root: string): Map<string, string> {
     const found = new Map<string, string>();
     for (const [name, entry] of Object.entries(cogConfig(root).monorepo?.packages ?? {})) {
-        if (name !== CORE) found.set(name, entry.path);
+        if (name !== CORE) found.set(name, path.posix.normalize(entry.path));
     }
     return found;
 }
