@@ -397,6 +397,29 @@ describe("restoreBackup", () => {
         }
     });
 
+    it("restores a dump made with every identifier quoted", async () => {
+        const quoted = path.join(work, "pg_dump_quoted.sh");
+        await fs.writeFile(
+            quoted,
+            `#!/bin/sh\n${tool("pg_dump").replace('"$@"', '"$@" --quote-all-identifiers')}\n`,
+            { mode: 0o700 },
+        );
+        const dest = path.join(work, "backup-quoted");
+        await createBackup({
+            db: source.db,
+            databaseUrl: source.url,
+            dataDir: sourceData,
+            dest,
+            workersStopped: true,
+            lifecycleEnabled: false,
+            version: "0.0.0-test",
+            pgDump: quoted,
+        });
+        const target = await emptyTarget();
+        const result = await restoreBackup(restoreOptions(target, { backupDir: dest }));
+        expect(result.filesRestored).toBe(3);
+    });
+
     it("restores a backup older than the artifact table", async () => {
         const sourceFolder = path.resolve(
             import.meta.dirname,

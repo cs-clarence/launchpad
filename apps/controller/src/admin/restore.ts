@@ -161,7 +161,7 @@ async function dumpCreatesPublic(options: RestoreOptions, dump: string): Promise
             `${binary} could not read the schema of this dump. Nothing was changed.`,
         );
     }
-    return /^CREATE SCHEMA public;\s*$/m.test(sqlText);
+    return /^CREATE SCHEMA "?public"?;\s*$/m.test(sqlText);
 }
 
 // Views, foreign keys and column defaults in other schemas that depend on an object in `public`: dropping the old

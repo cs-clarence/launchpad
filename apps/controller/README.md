@@ -214,7 +214,10 @@ restored or missing `public` schema, with the old data in a `launchpad_replaced_
 them with `select nspname from pg_namespace where nspname like 'launchpad_replaced_%'`, then either
 restore the pre-restore backup, or put the old data back, whatever state `public` is in, with
 `drop schema if exists public cascade; alter schema launchpad_replaced_<timestamp> rename to public;`
-(what was restored into `public` had not been checked yet). Do this before the controller or any
+(what was restored into `public` had not been checked yet). First confirm no `pg_restore` is
+still running (a killed `restore` does not stop it, and it could commit after your recovery) and
+that nothing else is connected: `select pid, application_name from pg_stat_activity where
+datname = current_database() and pid <> pg_backend_pid();`. Do this before the controller or any
 worker starts.
 
 ## API keys
