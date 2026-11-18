@@ -67,7 +67,7 @@ Rules that keep the graph correct:
   alone with `omni -i run test:integration -p @launchpad/sdk`. No database is needed.
 - **Upgrade drill.** `omni -i run test:upgrade -p @launchpad/controller` builds a
   disposable controller image, runs its `migrate` command and exercises the built
-  admin's backup/restore and server against the frozen
+  admin's backup/restore and starts/restarts the image server against the frozen
   `apps/controller/src/admin/__tests__/fixtures/schema-014.dump` (14 migrations,
   synthetic user), on disposable PostgreSQL only. It backs up, migrates,
   restarts, checks schema status and restores a fresh database. It is also in

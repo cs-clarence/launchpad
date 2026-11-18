@@ -54,9 +54,11 @@ or prove. `restore` never contacts Dokku. Back up the target database first.
 For a contributor or operator rehearsing the database portion without live
 Dokku: `omni -i run test:db:up`, then
 `omni -i run test:upgrade -p @launchpad/controller`, then
-`omni -i run test:db:down`. This builds a temporary controller image and runs
+`omni -i run test:db:down`. Run the image drill on Linux (Docker host networking
+does not reach the test database on Docker Desktop). This builds a temporary controller image and runs
 the frozen previous-schema dump through backup, image migration, controller
-start/restart and schema status, and restoration into another disposable database.
+start/restart from that image, an authenticated operator status read, and
+restoration into another disposable database.
 It creates only temporary test databases/directories and cleans them up.
 
 The **remote** portion cannot be simulated by that test. For a full rehearsal,

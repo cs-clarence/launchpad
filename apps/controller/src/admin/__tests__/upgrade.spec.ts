@@ -1,14 +1,37 @@
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { createTestDatabase, testDatabaseUrl } from "@launchpad/database/testing";
+import { createAuth, loadAuthConfig, setupFirstOperator } from "@launchpad/auth";
 import { sql } from "kysely";
 import { expect, it } from "vitest";
 
 const root = path.resolve(import.meta.dirname, "../../..");
 const fixture = path.join(import.meta.dirname, "fixtures/schema-014.dump");
 const oldUser = "upgrade-fixture@example.invalid";
+const operatorEmail = "upgrade-operator@example.invalid";
+const operatorPassword = "upgrade-drill-only-password";
+const authSecret = "upgrade-drill-secret-".repeat(3);
+const containers = new Set<string>();
+
+function docker(args: string[], env: NodeJS.ProcessEnv = {}) {
+    const result = spawnSync("docker", args, {
+        env: { PATH: process.env.PATH, ...env },
+        encoding: "utf8",
+        timeout: 60_000,
+    });
+    if (result.error) throw result.error;
+    if (result.status !== 0) throw new Error(`docker ${args[0]} failed: ${result.stderr}`);
+    return result.stdout.trim();
+}
+
+function cleanContainer(name: string) {
+    // Also handles a `docker run` that timed out after creating the named container.
+    spawnSync("docker", ["rm", "-fv", name], { timeout: 30_000, stdio: "ignore" });
+    containers.delete(name);
+}
 
 function pgClient(name: "pg_dump" | "pg_restore") {
     const url = new URL(testDatabaseUrl());
@@ -24,29 +47,37 @@ async function admin(url: string, data: string, work: string, command: string, .
     // The standalone drill supplies a freshly built controller image. Use its migrations for
     // status and migrate; the integration suite still runs the built admin artifact on its own.
     if (command === "migrate" && process.env.LAUNCHPAD_UPGRADE_IMAGE) {
-        const result = spawnSync(
-            "docker",
-            [
-                "run",
-                "--rm",
-                "--network",
-                "host",
-                "-e",
-                "DATABASE_URL",
-                process.env.LAUNCHPAD_UPGRADE_IMAGE,
-                "bun",
-                ".output/admin.mjs",
-                command,
-                ...args,
-            ],
-            {
-                env: { PATH: process.env.PATH, DATABASE_URL: url },
-                encoding: "utf8",
-                timeout: 60_000,
-            },
-        );
-        if (result.error) throw result.error;
-        return result;
+        const name = `launchpad-upgrade-${randomUUID().slice(0, 8)}-admin`;
+        containers.add(name);
+        try {
+            const result = spawnSync(
+                "docker",
+                [
+                    "run",
+                    "--rm",
+                    "--name",
+                    name,
+                    "--network",
+                    "host",
+                    "-e",
+                    "DATABASE_URL",
+                    process.env.LAUNCHPAD_UPGRADE_IMAGE,
+                    "bun",
+                    ".output/admin.mjs",
+                    command,
+                    ...args,
+                ],
+                {
+                    env: { PATH: process.env.PATH, DATABASE_URL: url },
+                    encoding: "utf8",
+                    timeout: 60_000,
+                },
+            );
+            if (result.error) throw result.error;
+            return result;
+        } finally {
+            cleanContainer(name);
+        }
     }
     const env = {
         PATH: process.env.PATH,
@@ -76,20 +107,69 @@ async function start(url: string, data: string, work: string) {
     const port = address.port;
     await new Promise<void>((resolve) => socket.close(() => resolve()));
     const base = `http://127.0.0.1:${port}`;
+    const settings = {
+        NODE_ENV: "production",
+        DATABASE_URL: url,
+        LAUNCHPAD_DATA_DIR: process.env.LAUNCHPAD_UPGRADE_IMAGE ? "/data" : data,
+        LAUNCHPAD_AUTH_SECRET: authSecret,
+        LAUNCHPAD_BASE_URL: base,
+        HOST: "127.0.0.1",
+        PORT: String(port),
+        LAUNCHPAD_DEPLOYMENTS: "off",
+        LAUNCHPAD_LIFECYCLE: "off",
+    };
+    if (process.env.LAUNCHPAD_UPGRADE_IMAGE) {
+        const name = `launchpad-upgrade-${randomUUID().slice(0, 8)}-server`;
+        containers.add(name);
+        try {
+            docker(
+                [
+                    "run",
+                    "-d",
+                    "--name",
+                    name,
+                    "--network",
+                    "host",
+                    ...Object.keys(settings).flatMap((key) => ["-e", key]),
+                    process.env.LAUNCHPAD_UPGRADE_IMAGE,
+                ],
+                settings,
+            );
+            return {
+                base,
+                async health() {
+                    for (let attempt = 0; attempt < 100; attempt++) {
+                        const state = docker(["inspect", "--format", "{{.State.Running}}", name]);
+                        if (state !== "true")
+                            throw new Error(`controller exited: ${docker(["logs", name])}`);
+                        const response = await fetch(`${base}/api/health`).catch(() => undefined);
+                        if (response) return response;
+                        await new Promise((resolve) => setTimeout(resolve, 200));
+                    }
+                    throw new Error(`controller never answered: ${docker(["logs", name])}`);
+                },
+                async stop() {
+                    try {
+                        docker(["stop", "--time", "20", name]);
+                        expect(docker(["inspect", "--format", "{{.State.ExitCode}}", name])).toBe(
+                            "0",
+                        );
+                    } finally {
+                        cleanContainer(name);
+                    }
+                },
+            };
+        } catch (error) {
+            cleanContainer(name);
+            throw error;
+        }
+    }
     const child = spawn("bun", [path.join(root, ".output/server/index.mjs")], {
         cwd: work,
         env: {
             PATH: process.env.PATH,
             HOME: work,
-            NODE_ENV: "production",
-            DATABASE_URL: url,
-            LAUNCHPAD_DATA_DIR: data,
-            LAUNCHPAD_AUTH_SECRET: "upgrade-drill-secret-".repeat(3),
-            LAUNCHPAD_BASE_URL: base,
-            HOST: "127.0.0.1",
-            PORT: String(port),
-            LAUNCHPAD_DEPLOYMENTS: "off",
-            LAUNCHPAD_LIFECYCLE: "off",
+            ...settings,
         },
         stdio: ["ignore", "pipe", "pipe"],
     });
@@ -98,6 +178,7 @@ async function start(url: string, data: string, work: string) {
     child.stderr?.on("data", (chunk) => (logs += chunk));
     return {
         child,
+        base,
         async health() {
             for (let attempt = 0; attempt < 100; attempt++) {
                 if (child.exitCode !== null) throw new Error(`controller exited: ${logs}`);
@@ -107,11 +188,14 @@ async function start(url: string, data: string, work: string) {
             }
             throw new Error(`controller never answered: ${logs}`);
         },
+        async stop() {
+            await stop(child);
+        },
     };
 }
 
 async function stop(child: ChildProcess) {
-    if (child.exitCode !== null) return;
+    if (child.exitCode !== null || child.signalCode !== null) return;
     const exited = new Promise<void>((resolve) => {
         child.once("exit", () => {
             clearTimeout(kill);
@@ -134,6 +218,11 @@ it(
         let target: Awaited<ReturnType<typeof createTestDatabase>> | undefined;
         let server: Awaited<ReturnType<typeof start>> | undefined;
         try {
+            if (process.env.LAUNCHPAD_UPGRADE_IMAGE && process.platform !== "linux") {
+                throw new Error(
+                    "The image upgrade drill needs Linux host networking; use a Linux Docker host.",
+                );
+            }
             source = await createTestDatabase();
             for (const name of ["pg_dump", "pg_restore"] as const) {
                 await fs.writeFile(
@@ -170,6 +259,10 @@ it(
                 },
             );
             expect(restored.status, restored.stderr.toString()).toBe(0);
+            const applied = await sql<{ name: string }>`
+                select name from launchpad_migration order by name desc limit 1
+            `.execute(source.db);
+            expect(applied.rows[0]?.name).toBe("20261116_014_deletion_fence");
             const data = path.join(work, "data");
             const backup = path.join(work, "backup");
             const before = await admin(source.url, data, work, "migrate", "--status");
@@ -178,15 +271,41 @@ it(
             expect((await admin(source.url, data, work, "backup", backup)).status).toBe(0);
             expect((await admin(source.url, data, work, "verify-backup", backup)).status).toBe(0);
             expect((await admin(source.url, data, work, "migrate")).status).toBe(0);
+            const auth = createAuth({
+                db: source.db,
+                config: loadAuthConfig({
+                    LAUNCHPAD_AUTH_SECRET: authSecret,
+                    LAUNCHPAD_BASE_URL: "http://127.0.0.1:1",
+                }),
+            });
+            await setupFirstOperator(
+                { db: source.db, auth },
+                { email: operatorEmail, name: "Upgrade operator", password: operatorPassword },
+            );
             expect((await admin(source.url, data, work, "migrate", "--status")).stdout).toContain(
                 "pending: 0",
             );
             server = await start(source.url, data, work);
             expect((await server.health()).status).toBe(200);
-            await stop(server.child);
+            await server.stop();
+            server = undefined;
             server = await start(source.url, data, work);
             expect((await server.health()).status).toBe(200);
-            await stop(server.child);
+            const signedIn = await fetch(`${server.base}/api/auth/sign-in/email`, {
+                method: "POST",
+                headers: { "content-type": "application/json", origin: server.base },
+                body: JSON.stringify({ email: operatorEmail, password: operatorPassword }),
+            });
+            expect(signedIn.status).toBe(200);
+            const cookie = signedIn.headers.get("set-cookie")?.split(";")[0];
+            expect(cookie).toBeTruthy();
+            const status = await fetch(`${server.base}/api/v1/status`, {
+                headers: { cookie: cookie! },
+            });
+            expect(status.status).toBe(200);
+            expect(await status.json()).toMatchObject({ dependencies: { database: "ok" } });
+            await server.stop();
+            server = undefined;
             server = undefined;
             target = await createTestDatabase();
             const after = await admin(
@@ -234,7 +353,8 @@ it(
             const rows = await target.db.selectFrom("user").select("email").execute();
             expect(rows.map((row) => row.email)).toContain(oldUser);
         } finally {
-            if (server) await stop(server.child);
+            if (server) await server.stop();
+            for (const name of containers) cleanContainer(name);
             await target?.destroy();
             await source?.destroy();
             await fs.rm(work, { recursive: true, force: true });

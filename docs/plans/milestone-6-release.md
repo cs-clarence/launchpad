@@ -192,9 +192,12 @@ expired restored preview, and a preview whose app is gone.
   promise does not keep it alive), which a restart policy would have turned into a loop; it now
   idles on a timer, with a test.
 - Slice 6 (upgrade drill and docs): the frozen 14-migration PostgreSQL fixture and
-  `test:upgrade` exercise the built admin command and controller against disposable
-  PostgreSQL (backup, migration, restart/status, fresh restore). The operator
+  `test:upgrade` exercise the built admin command and controller image against disposable
+  PostgreSQL (backup, image migration, image restart, authenticated operator status,
+  fresh restore). The operator
   install, backup, restore, upgrade, private routing and onboarding how-tos are
   under `docs/`; the restore how-to records the isolated Dokku rehearsal separately.
   An actual remote in-flight destroy is **not** run by CI: it needs the explicitly
-  isolated host and is not implied by the database-only test.
+  isolated host and is not implied by the database-only test. The whole-runbook
+  remote rehearsal is still open and must be recorded before the slice is called
+  complete.
