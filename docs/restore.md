@@ -52,9 +52,13 @@ or prove. `restore` never contacts Dokku. Back up the target database first.
    membership) must use their authenticated session for
    `DELETE /api/v1/organizations/{orgId}/members/{userId}`. For each role
    reduction, **first** confirm the user's email is verified or the account
-   was operator-provisioned (otherwise re-adding fails and removal would
-   strand them; re-invite the address instead, or keep the access
-   unchanged until it can be done), then have that authorized member remove the membership and then use
+   was operator-provisioned. If neither holds, re-adding fails: remove the
+   membership first (an existing member cannot be invited), then, only if
+   invitations are enabled (SMTP and invitation enrollment), invite the
+   address with the lower `role`. The user accepts the emailed link through
+   a gateway rule that admits only that user while normal ingress stays
+   closed. Until accepted they have **no** access; never leave the higher
+   restored role in place to avoid this. Otherwise have that authorized member remove the membership and then use
    `POST /api/v1/organizations/{orgId}/members` with the user's email and
    lower `role` (there is no in-place role-change endpoint; re-adding
    deactivates the user's API keys, so reissue any that are still needed). Verify the
