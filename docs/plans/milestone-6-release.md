@@ -162,3 +162,12 @@ expired restored preview, and a preview whose app is gone.
 - Approve or change decisions 1 to 9 (in particular 2: a backup format versus documented `pg_dump` plus `tar`).
 - The npm scope and product name remain undecided; slice 4 uses the current `@launchpad/*`
   placeholders, to be renamed in one change when decided.
+
+## Progress
+
+- Slice 1 (migration status and the schema guard): merged (#45).
+- Slice 2 (backup): merged (#46).
+- Slice 3 (restore, `check-restore`): the commands are built. Two things the slice promised are
+  deferred to slice 6, where the upgrade drill is written: the how-to under `docs/` and the
+  repeatable drill script (the integration tests already exercise each step against a disposable
+  database, but not the whole runbook with Dokku and workers).

@@ -152,7 +152,73 @@ checksums. A database whose migrations are still pending can be backed up (do th
   cookies, so never store the secret beside the backup. Environment files, the secret and
   Dokku's own state are **not** included; back those up separately.
 - `verify-backup` re-checks every file against the manifest and reports anything missing,
-  changed, extra or not a plain file; it needs no database. Restoring is not built yet.
+  changed, extra or not a plain file; it needs no database.
+
+## Restore
+
+Restoring is a procedure, not one command. These are the steps (the reasons are in
+`docs/plans/application.md`, "Restore order and the lifecycle"):
+
+1. Switch the lifecycle **and deployments off** (controller and worker), **stop every worker and
+   the controller** (it keeps its database connections and only checks the schema when it starts,
+   so restart it after the restore), wait until each has exited, and then wait longer than the
+   longest Dokku command and the deletion lease (five minutes by default). A worker's exit does not
+   prove a Dokku destroy it started has finished, and a missing app is not proof either.
+2. `restore <dir> --i-have-stopped-the-workers` into an **empty** database, or
+   `--replace <host:port/database>` to replace one that has data, typing the address exactly as the
+   refusal message prints it (naming only the database would not tell a scratch copy from the live
+   one). Back the database up first.
+    - It checks the backup against its manifest, and that `pg_restore` can read the dump, before it
+      changes anything; it refuses a backup that holds migrations this version does not know, and a
+      database a worker has reported in during the last minute (checked again just before the
+      swap).
+    - It never overwrites a stored archive that has other content, and it never touches Dokku. The
+      archives are copied first (each is checked against its checksum as it is copied) and the
+      database second.
+    - Replacing moves the old `public` schema aside, restores into a new one, checks that the
+      result holds exactly the migrations and live archives the backup records, and only then drops
+      the old schema. If the restore fails or does not check out, the old data is put back.
+      Everything in the `public` schema is replaced; other schemas are not touched. A backup is
+      taken of `public` only, and a dump that would create another schema or an extension is refused;
+      so is a replace while views, foreign keys or column defaults in other schemas depend on
+      objects in `public` (other kinds of cross-schema dependency are not detected: keep
+      Launchpad's database to itself).
+    - Run it as the database role the controller and worker use, and that role must own the
+      database: `--no-owner` makes the restoring role the owner of everything it creates, and the new
+      `public` schema has only the default grants.
+    - A backup made by an older version restores fine: run `migrate` afterwards.
+3. `check-restore` (read-only): lists live archives whose file is missing, deployed previews whose
+   Dokku app is gone (it asks Dokku with `apps:exists` over the worker's `DOKKU_SSH_*` settings, or
+   pass `--no-dokku` to skip that; an unreachable Dokku is an error, not "missing"), and previews
+   whose expiry has already passed. It exits 1 if an archive or an app is missing.
+4. Switch **deployments on** and start the workers (and the controller), with the lifecycle
+   **still off**.
+5. For each preview you want to keep: redeploy it (a deployment recreates a missing app), and
+   **extend** any whose expiry has already passed. Then switch the lifecycle on, and delete the
+   previews you chose to end.
+
+```sh
+omni -i run admin -p @launchpad/controller -a command=restore \
+  -a "options=/var/backups/launchpad/2026-11-18 --i-have-stopped-the-workers"
+omni -i run admin -p @launchpad/controller -a command=check-restore
+```
+
+`restore` runs `pg_restore` (override with `LAUNCHPAD_PG_RESTORE`; its version must be at least
+the `pg_dump`'s that wrote the backup) with the dump on its standard input and the connection
+settings in `PG*` variables. The environment files, the authentication secret and Dokku's own state
+are not in a backup: put them back yourself. Archives the data directory holds that the backup
+does not are left alone; the worker's cleanup removes unreferenced ones after the retention. A
+restore killed halfway can leave `*.restore-*` temporary files beside the archives (delete them).
+If it was killed after the old schema was moved aside, the database may have an empty, partly
+restored or missing `public` schema, with the old data in a `launchpad_replaced_*` schema: list
+them with `select nspname from pg_namespace where nspname like 'launchpad_replaced_%'`, then either
+restore the pre-restore backup, or put the old data back, whatever state `public` is in, with
+`drop schema if exists public cascade; alter schema launchpad_replaced_<timestamp> rename to public;`
+(what was restored into `public` had not been checked yet). First confirm no `pg_restore` is
+still running (a killed `restore` does not stop it, and it could commit after your recovery) and
+that nothing else is connected: `select pid, application_name from pg_stat_activity where
+datname = current_database() and pid <> pg_backend_pid();`. Do this before the controller or any
+worker starts.
 
 ## API keys
 

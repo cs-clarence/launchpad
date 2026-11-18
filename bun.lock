@@ -46,6 +46,7 @@
         "@launchpad/auth": "workspace:^",
         "@launchpad/contracts": "workspace:^",
         "@launchpad/database": "workspace:^",
+        "@launchpad/dokku": "workspace:^",
         "@launchpad/services": "workspace:^",
         "@tanstack/react-router": "catalog:",
         "@tanstack/react-start": "catalog:",

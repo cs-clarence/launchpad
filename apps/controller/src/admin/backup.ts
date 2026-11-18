@@ -46,7 +46,7 @@ export interface BackupOptions {
 // local user could read the password.
 // The backup may run against a schema that is behind this build (the point is to back up before
 // migrating), so a column a later migration added is only used where it exists.
-async function columnExists(db: Kysely<any>, table: string, column: string) {
+export async function columnExists(db: Kysely<any>, table: string, column: string) {
     // The relation the search path resolves (a personal schema may be empty while the tables live
     // in `public`), not whatever schema is current.
     const { rows } = await sql<{ present: boolean }>`
@@ -93,6 +93,8 @@ async function dumpDatabase(options: BackupOptions, snapshot: string, file: stri
             "--no-owner",
             "--no-privileges",
             "--no-password",
+            // Launchpad lives in `public`; a restore only ever replaces that schema.
+            "--schema=public",
             `--snapshot=${snapshot}`,
         ],
         {

@@ -284,8 +284,8 @@ document which metadata/URLs can be restored.
     4. **detect, do not yet fix, what Dokku no longer matches**: for every live preview, check that
        its app exists (`apps:exists` by the recorded name) and **list** each one whose app is gone
        (destroyed after the backup, or by a settled in-flight deletion). An app Dokku has that no
-       restored row names is left alone, as Launchpad never destroys what it has no row for. A tool
-       for this check is not built and is tracked as a follow-up;
+       restored row names is left alone, as Launchpad never destroys what it has no row for. `launchpad-admin
+       check-restore` does this read-only and also lists expired previews;
     5. switch **deployments on and start the workers, with the lifecycle still off**: nothing
        expires or is deleted yet;
     6. for each listed preview an administrator keeps, redeploy it (a deployment's first step
