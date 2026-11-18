@@ -16,7 +16,7 @@ import { SITE, tarGz } from "@launchpad/services/testing";
 import { sql } from "kysely";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createBackup, verifyBackup } from "../backup";
-import { checkRestore, restoreBackup } from "../restore";
+import { checkRestore, replaceTarget, restoreBackup } from "../restore";
 
 // The PostgreSQL client programs run inside the disposable server's container (see backup.spec.ts);
 // another TEST_DATABASE_URL server needs TEST_PG_DUMP and TEST_PG_RESTORE.
@@ -185,11 +185,11 @@ describe("restoreBackup", () => {
         const target = await emptyTarget();
         await target.migrate();
         await sql`create table leftover_from_before (id int)`.execute(target.db);
-        const name = new URL(target.url).pathname.slice(1);
+        const name = replaceTarget(target.url);
         await expect(restoreBackup(restoreOptions(target))).rejects.toThrow(/already has data/);
         await expect(
             restoreBackup(restoreOptions(target, { replaceDatabase: "some_other_db" })),
-        ).rejects.toThrow(/names some_other_db/);
+        ).rejects.toThrow(/names some_other_db, but the target is/);
         expect(await tableCount(target.db)).toBeGreaterThan(1);
         const result = await restoreBackup(restoreOptions(target, { replaceDatabase: name }));
         expect(result.filesRestored).toBe(3);
@@ -208,11 +208,98 @@ describe("restoreBackup", () => {
             lifecycleEnabled: false,
             started: true,
         });
-        const name = new URL(target.url).pathname.slice(1);
+        const name = replaceTarget(target.url);
         await expect(
             restoreBackup(restoreOptions(target, { replaceDatabase: name })),
         ).rejects.toThrow(/still running/);
         expect(await tableCount(target.db)).toBeGreaterThan(1);
+    });
+
+    it("puts the old data back when pg_restore fails after the swap", async () => {
+        const target = await emptyTarget();
+        await target.migrate();
+        await sql`create table leftover_from_before (id int)`.execute(target.db);
+        // Reads the dump (so the preflight passes) but fails the real restore.
+        const failing = path.join(work, "pg_restore_failing.sh");
+        await fs.writeFile(
+            failing,
+            `#!/bin/sh\ncase "$*" in *--list*) exec ${restoreTool} "$@";; esac\ncat >/dev/null\necho 'boom' >&2\nexit 1\n`,
+            { mode: 0o700 },
+        );
+        await expect(
+            restoreBackup(
+                restoreOptions(target, {
+                    replaceDatabase: replaceTarget(target.url),
+                    pgRestore: failing,
+                }),
+            ),
+        ).rejects.toThrow(/boom/);
+        const present = await sql<{ present: boolean }>`
+            select to_regclass('public.leftover_from_before') is not null as present`.execute(
+            target.db,
+        );
+        expect(present.rows[0]?.present).toBe(true);
+        const aside = await sql<{ n: string }>`
+            select count(*) as n from pg_namespace where nspname like 'launchpad_replaced_%'`.execute(
+            target.db,
+        );
+        expect(Number(aside.rows[0]?.n)).toBe(0);
+    });
+
+    it("puts the old data back when the restore exits 0 but loaded nothing", async () => {
+        const target = await emptyTarget();
+        await target.migrate();
+        await sql`create table leftover_from_before (id int)`.execute(target.db);
+        const empty = path.join(work, "pg_restore_noop.sh");
+        await fs.writeFile(
+            empty,
+            `#!/bin/sh\ncase "$*" in *--list*) exec ${restoreTool} "$@";; esac\ncat >/dev/null\nexit 0\n`,
+            { mode: 0o700 },
+        );
+        await expect(
+            restoreBackup(
+                restoreOptions(target, {
+                    replaceDatabase: replaceTarget(target.url),
+                    pgRestore: empty,
+                }),
+            ),
+        ).rejects.toThrow(/does not hold the migrations/);
+        const present = await sql<{ present: boolean }>`
+            select to_regclass('public.leftover_from_before') is not null as present`.execute(
+            target.db,
+        );
+        expect(present.rows[0]?.present).toBe(true);
+    });
+
+    it("finds a restore program that cannot read the dump before anything is moved", async () => {
+        const target = await emptyTarget();
+        await target.migrate();
+        const refusing = path.join(work, "pg_restore_refusing.sh");
+        await fs.writeFile(
+            refusing,
+            `#!/bin/sh\ncat >/dev/null\necho 'unsupported version' >&2\nexit 1\n`,
+            {
+                mode: 0o700,
+            },
+        );
+        await expect(
+            restoreBackup(
+                restoreOptions(target, {
+                    replaceDatabase: replaceTarget(target.url),
+                    pgRestore: refusing,
+                }),
+            ),
+        ).rejects.toThrow(/cannot read this dump.*Nothing was changed/);
+        expect(await tableCount(target.db)).toBeGreaterThan(1);
+    });
+
+    it("refuses a database name that pg_restore would read as a connection string", async () => {
+        const target = await emptyTarget();
+        const url = new URL(target.url);
+        url.pathname = "/dbname%3Dother";
+        await expect(restoreBackup(restoreOptions({ url: url.toString() }))).rejects.toThrow(
+            /plain database/,
+        );
     });
 
     it("refuses a backup that does not verify, before changing anything", async () => {
@@ -360,6 +447,11 @@ describe("checkRestore", () => {
             }
             previews.push({ id, app_name: app });
         }
+        await target.db
+            .updateTable("preview")
+            .set({ expires_at: sql<Date>`now() - interval '1 day'` })
+            .where("id", "=", previews[0]!.id)
+            .execute();
         const gone = (await target.db.selectFrom("artifact").select("storage_key").execute())[0]!;
         await fs.rm(resolveArtifactPath(options.dataDir, gone.storage_key));
         const asked: string[] = [];
@@ -375,6 +467,7 @@ describe("checkRestore", () => {
         expect(report.missingFiles).toEqual([gone.storage_key]);
         expect(report.missingApps.map((a) => a.slug)).toEqual(["lost"]);
         expect(report.appsChecked).toBe(2);
+        expect(report.expired.map((p) => p.slug)).toEqual(["kept"]);
         expect(asked).not.toContain(previews[2]!.app_name);
         // Nothing was changed.
         expect(await target.db.selectFrom("preview").selectAll().orderBy("slug").execute()).toEqual(

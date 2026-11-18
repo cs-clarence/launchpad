@@ -24,6 +24,15 @@ async function readStdin(): Promise<string> {
         .replace(/\r?\n$/, "");
 }
 
+function sshPort(value: string | undefined): number {
+    if (value === undefined) return 22;
+    const port = Number(value);
+    if (!Number.isInteger(port) || port < 1 || port > 65535) {
+        throw new Error("DOKKU_SSH_PORT must be a port number (1-65535).");
+    }
+    return port;
+}
+
 function required(env: NodeJS.ProcessEnv, name: string): string {
     const value = env[name];
     if (!value) throw new Error(`${name} is required (or pass --no-dokku).`);
@@ -147,7 +156,10 @@ program
         "--i-have-stopped-the-workers",
         "confirm the lifecycle and deployments are off and every worker has stopped (required)",
     )
-    .option("--replace <database>", "replace a database that has data: type its name")
+    .option(
+        "--replace <host:port/database>",
+        "replace a database that has data: type its address exactly as the restore prints it",
+    )
     .action(async (dir, options) => {
         const url = process.env.DATABASE_URL;
         if (!url) throw new Error("DATABASE_URL is required.");
@@ -187,7 +199,7 @@ program
                 ? null
                 : createDokkuClient({
                       host: required(env, "DOKKU_SSH_HOST"),
-                      port: Number(env.DOKKU_SSH_PORT ?? 22),
+                      port: sshPort(env.DOKKU_SSH_PORT),
                       username: env.DOKKU_SSH_USER || "dokku",
                       privateKeyPath: required(env, "DOKKU_SSH_KEY_PATH"),
                       knownHostsPath: required(env, "DOKKU_SSH_KNOWN_HOSTS_PATH"),
@@ -199,6 +211,11 @@ program
                 appExists: dokku ? (name) => dokku.apps.exists(name) : undefined,
             }),
         );
+        for (const preview of report.expired) {
+            console.log(
+                `expired: preview ${preview.previewId} (slug ${preview.slug}) expired ${preview.expiresAt.toISOString()}; extend it to keep it`,
+            );
+        }
         for (const key of report.missingFiles) console.log(`missing archive: ${key}`);
         for (const app of report.missingApps) {
             console.log(
@@ -212,6 +229,9 @@ program
                     : "Dokku was not checked"),
         );
         process.exitCode = report.missingFiles.length + report.missingApps.length > 0 ? 1 : 0;
+        if (report.expired.length > 0) {
+            console.log(`${report.expired.length} live preview(s) have already expired.`);
+        }
     });
 
 program

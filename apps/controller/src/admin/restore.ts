@@ -1,12 +1,13 @@
 import { spawn } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
+import { Transform } from "node:stream";
 import { createReadStream, createWriteStream, promises as fs } from "node:fs";
 import path from "node:path";
 import { pipeline } from "node:stream/promises";
 import { createDatabase, type Database, migrationStatus } from "@launchpad/database";
 import { resolveArtifactPath, WORKER_LIVE_SECONDS } from "@launchpad/services";
 import { type Kysely, sql } from "kysely";
-import { type BackupManifest, pgEnvironment, verifyBackup } from "./backup";
+import { type BackupManifest, columnExists, pgEnvironment, verifyBackup } from "./backup";
 
 export class RestoreError extends Error {
     override name = "RestoreError";
@@ -20,7 +21,8 @@ export interface RestoreOptions {
     // The operator's confirmation that docs/plans/application.md's restore step 1 is done: the
     // lifecycle and deployments off, every worker stopped and waited for, destroys settled.
     workersStopped: boolean;
-    // Replace a database that already has data: the name of that database, typed out.
+    // Replace a database that already has data: its address typed out as host:port/database, so
+    // naming a scratch copy with the live one's name is not enough.
     replaceDatabase?: string;
     pgRestore?: string;
 }
@@ -84,6 +86,53 @@ async function runPgRestore(options: RestoreOptions, dump: string) {
     }
 }
 
+// How the operator names the database they mean to replace: host:port/database.
+export function replaceTarget(databaseUrl: string): string {
+    const env = pgEnvironment(databaseUrl);
+    return `${env.PGHOST ?? "localhost"}:${env.PGPORT ?? "5432"}/${env.PGDATABASE ?? ""}`;
+}
+
+// Before anything changes: the program exists and can read this dump (a client older than the
+// one that wrote it refuses the header). A restore that cannot work must be found out here, not
+// after the old data has been moved aside.
+async function preflightPgRestore(options: RestoreOptions, dump: string) {
+    const binary = options.pgRestore ?? "pg_restore";
+    const child = spawn(binary, ["--list"], {
+        env: { PATH: process.env.PATH, ...pgEnvironment(options.databaseUrl) },
+        stdio: ["pipe", "pipe", "pipe"],
+    });
+    let errors = "";
+    child.stderr.on("data", (chunk) => (errors += chunk));
+    child.stdout.resume();
+    const exited = new Promise<number | null>((resolve, reject) => {
+        child.once("error", reject);
+        child.once("close", resolve);
+    });
+    const fed = pipeline(createReadStream(dump), child.stdin).catch(() => {});
+    const [code] = await Promise.all([exited, fed]).catch((error) => {
+        throw new RestoreError(
+            error?.code === "ENOENT"
+                ? `${binary} was not found: install the PostgreSQL client tools or set LAUNCHPAD_PG_RESTORE. Nothing was changed.`
+                : `${binary} failed: ${error instanceof Error ? error.message : String(error)}. Nothing was changed.`,
+        );
+    });
+    if (code !== 0) {
+        throw new RestoreError(
+            `${binary} cannot read this dump (${errors.trim().slice(-300)}); it must be at least the version that wrote it. Nothing was changed.`,
+        );
+    }
+}
+
+async function liveWorkers(db: Kysely<any>) {
+    const present = await sql<{ present: boolean }>`
+        select to_regclass('public.worker_heartbeat') is not null as present`.execute(db);
+    if (!present.rows[0]?.present) return 0;
+    const live = await sql<{ n: string }>`
+        select count(*) as n from public.worker_heartbeat
+        where last_seen_at > now() - ${WORKER_LIVE_SECONDS} * interval '1 second'`.execute(db);
+    return Number(live.rows[0]?.n ?? 0);
+}
+
 async function userTableCount(db: Kysely<any>) {
     const { rows } = await sql<{ n: string }>`
         select count(*) as n from pg_class c join pg_namespace s on s.oid = c.relnamespace
@@ -114,42 +163,38 @@ export async function restoreBackup(options: RestoreOptions): Promise<RestoreRes
         await fs.readFile(path.join(root, "manifest.json"), "utf8"),
     );
     const database = pgEnvironment(options.databaseUrl).PGDATABASE;
+    // pg_restore reads a value with `=` or a URL scheme as a connection string, not a name.
+    if (!database || database.includes("=") || /^postgres(ql)?:/i.test(database)) {
+        throw new RestoreError("DATABASE_URL must name a plain database.");
+    }
+    await preflightPgRestore(options, path.join(root, manifest.database.file));
 
     const db = createDatabase(options.databaseUrl, { max: 1 });
     try {
         const populated = (await userTableCount(db)) > 0;
+        const target = replaceTarget(options.databaseUrl);
         if (populated) {
             // Whoever is running against this database is the first thing to refuse, whatever else is said.
-            const heartbeat = await sql<{ n: string }>`
-                select count(*) as n from (select to_regclass('worker_heartbeat') as t) r
-                where t is not null`.execute(db);
-            if (Number(heartbeat.rows[0]?.n) > 0) {
-                const live = await sql<{ n: string }>`
-                    select count(*) as n from worker_heartbeat
-                    where last_seen_at > now() - ${WORKER_LIVE_SECONDS} * interval '1 second'`.execute(
-                    db,
+            if ((await liveWorkers(db)) > 0) {
+                throw new RestoreError(
+                    "A worker has reported in the last minute: it is still running against this database. " +
+                        "Stop every worker and wait for it to exit first.",
                 );
-                if (Number(live.rows[0]?.n) > 0) {
-                    throw new RestoreError(
-                        "A worker has reported in the last minute: it is still running against this database. " +
-                            "Stop every worker and wait for it to exit first.",
-                    );
-                }
             }
             if (options.replaceDatabase === undefined) {
                 throw new RestoreError(
-                    `The database ${database} already has data. Restore into an empty database, or replace it ` +
-                        "by naming it with --replace (everything in it is deleted).",
+                    `${target} already has data. Restore into an empty database, or replace it by naming ` +
+                        `it with --replace ${target} (back it up first).`,
                 );
             }
-            if (options.replaceDatabase !== database) {
+            if (options.replaceDatabase !== target) {
                 throw new RestoreError(
-                    `--replace names ${options.replaceDatabase}, but the database is ${database}.`,
+                    `--replace names ${options.replaceDatabase}, but the target is ${target}.`,
                 );
             }
-        } else if (options.replaceDatabase !== undefined && options.replaceDatabase !== database) {
+        } else if (options.replaceDatabase !== undefined && options.replaceDatabase !== target) {
             throw new RestoreError(
-                `--replace names ${options.replaceDatabase}, but the database is ${database}.`,
+                `--replace names ${options.replaceDatabase}, but the target is ${target}.`,
             );
         }
 
@@ -187,10 +232,23 @@ export async function restoreBackup(options: RestoreOptions): Promise<RestoreRes
             await fs.mkdir(path.dirname(target), { recursive: true, mode: 0o700 });
             const temp = `${target}.restore-${randomBytes(6).toString("hex")}`;
             try {
+                // Hashed as it is copied: the file is checked against the manifest at the moment it is used.
+                const hash = createHash("sha256");
                 await pipeline(
                     createReadStream(path.join(root, artifact.storageKey)),
-                    createWriteStream(temp, { mode: 0o600 }),
+                    new Transform({
+                        transform(chunk, _encoding, done) {
+                            hash.update(chunk);
+                            done(null, chunk);
+                        },
+                    }),
+                    createWriteStream(temp, { mode: 0o600, flags: "wx" }),
                 );
+                if (hash.digest("hex") !== artifact.sha256) {
+                    throw new RestoreError(
+                        `${artifact.storageKey} changed while it was being copied.`,
+                    );
+                }
                 await fs.rename(temp, target);
             } catch (error) {
                 await fs.rm(temp, { force: true });
@@ -198,13 +256,43 @@ export async function restoreBackup(options: RestoreOptions): Promise<RestoreRes
             }
         }
 
+        // The old data is moved aside, not dropped: a restore that fails (or does not load what
+        // the backup holds) puts it back, and it is dropped only once the new data checks out.
+        const aside = `launchpad_replaced_${Date.now()}`;
         if (populated) {
-            // Replacing is a clean slate: restoring over the top would leave anything this backup
-            // does not have (a newer table, say) beside the old data.
-            await sql`drop schema public cascade`.execute(db);
-            await sql`create schema public`.execute(db);
+            await db.transaction().execute(async (trx) => {
+                // Do not wait behind a session that still holds the schema.
+                await sql`set local lock_timeout = '10s'`.execute(trx);
+                // The check made minutes ago (hashing and copying take time) is made again.
+                if ((await liveWorkers(trx)) > 0) {
+                    throw new RestoreError(
+                        "A worker has reported in: stop it and wait for it to exit first.",
+                    );
+                }
+                await sql.raw(`alter schema public rename to ${aside}`).execute(trx);
+                await sql`create schema public`.execute(trx);
+            });
         }
-        await runPgRestore(options, path.join(root, manifest.database.file));
+        const putBack = async () => {
+            if (!populated) return;
+            await db.transaction().execute(async (trx) => {
+                await sql`drop schema public cascade`.execute(trx);
+                await sql.raw(`alter schema ${aside} rename to public`).execute(trx);
+            });
+        };
+        try {
+            await runPgRestore(options, path.join(root, manifest.database.file));
+            await verifyRestored(db, manifest);
+        } catch (error) {
+            await putBack().catch((undo) => {
+                throw new RestoreError(
+                    `The restore failed (${error instanceof Error ? error.message : String(error)}) and the old ` +
+                        `data could not be put back (${String(undo)}); it is in the schema ${aside}.`,
+                );
+            });
+            throw error;
+        }
+        if (populated) await sql.raw(`drop schema ${aside} cascade`).execute(db);
 
         const after = await migrationStatus(db);
         return {
@@ -215,6 +303,36 @@ export async function restoreBackup(options: RestoreOptions): Promise<RestoreRes
         };
     } finally {
         await db.destroy();
+    }
+}
+
+// The restored database holds exactly the migrations and live archives the manifest names.
+async function verifyRestored(db: Kysely<any>, manifest: BackupManifest) {
+    const hasTable = await sql<{ present: boolean }>`
+        select to_regclass('public.launchpad_migration') is not null as present`.execute(db);
+    const applied = hasTable.rows[0]?.present
+        ? (
+              await sql<{
+                  name: string;
+              }>`select name from launchpad_migration order by name`.execute(db)
+          ).rows.map((r) => r.name)
+        : [];
+    if (JSON.stringify(applied) !== JSON.stringify([...manifest.migrations].sort())) {
+        throw new RestoreError(
+            "The restored database does not hold the migrations the backup recorded.",
+        );
+    }
+    const uncollected = (await columnExists(db, "artifact", "collected_at"))
+        ? sql`where collected_at is null`
+        : sql``;
+    const keys = (
+        await sql<{ storage_key: string }>`
+            select storage_key from artifact ${uncollected} order by storage_key`.execute(db)
+    ).rows.map((r) => r.storage_key);
+    if (
+        JSON.stringify(keys) !== JSON.stringify(manifest.artifacts.map((a) => a.storageKey).sort())
+    ) {
+        throw new RestoreError("The restored artifacts do not match the backup's.");
     }
 }
 
@@ -232,6 +350,8 @@ export interface CheckRestoreReport {
     missingApps: { previewId: string; organizationId: string; slug: string; appName: string }[];
     appsChecked: number;
     dokkuChecked: boolean;
+    // Live previews whose expiry has passed: extend any to keep before the lifecycle is switched on.
+    expired: { previewId: string; slug: string; expiresAt: Date }[];
 }
 
 // Read-only: steps 3 and 4 of the restore runbook. It changes nothing and never destroys or
@@ -279,5 +399,14 @@ export async function checkRestore(options: CheckRestoreOptions): Promise<CheckR
         missingApps,
         appsChecked,
         dokkuChecked: options.appExists !== undefined,
+        expired: (
+            await db
+                .selectFrom("preview")
+                .select(["id", "slug", "expires_at"])
+                .where("desired_state", "=", "active")
+                .where("expires_at", "<", sql<Date>`now()`)
+                .orderBy("expires_at")
+                .execute()
+        ).map((p) => ({ previewId: p.id, slug: p.slug, expiresAt: p.expires_at! })),
     };
 }
