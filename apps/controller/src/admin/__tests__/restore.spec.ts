@@ -157,7 +157,7 @@ describe("restoreBackup", () => {
         deadline.abort();
         await expect(
             restoreBackup(restoreOptions(target, { signal: deadline.signal })),
-        ).rejects.toThrow();
+        ).rejects.toThrow(/abort/i);
         expect(
             await sql<{
                 present: boolean;

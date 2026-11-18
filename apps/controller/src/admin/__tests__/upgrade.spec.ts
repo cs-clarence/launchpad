@@ -57,7 +57,7 @@ function cleanContainer(name: string) {
 
 function pgClient(name: "pg_dump" | "pg_restore") {
     const override = process.env[name === "pg_dump" ? "TEST_PG_DUMP" : "TEST_PG_RESTORE"];
-    if (override) return `${override} "$@"`;
+    if (override) return `'${override.replaceAll("'", "'\\''")}' "$@"`;
     const url = new URL(testDatabaseUrl());
     const disposable =
         ["127.0.0.1", "localhost"].includes(url.hostname) &&
@@ -103,7 +103,7 @@ async function admin(url: string, data: string, work: string, command: string, .
         }
     }
     const env = {
-        PATH: process.env.PATH,
+        ...dockerEnv(),
         HOME: work,
         DATABASE_URL: url,
         LAUNCHPAD_DATA_DIR: data,
@@ -272,7 +272,7 @@ it(
                 {
                     input: dump,
                     env: {
-                        PATH: process.env.PATH,
+                        ...dockerEnv(),
                         PGHOST: pg.hostname,
                         PGPORT: pg.port,
                         PGUSER: decodeURIComponent(pg.username),

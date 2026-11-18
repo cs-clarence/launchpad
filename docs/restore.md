@@ -42,16 +42,36 @@ or prove. `restore` never contacts Dokku. Back up the target database first.
    is an error, not a missing app. The check changes nothing.
 4. With the normal ingress still closed, allow only a trusted operator
    maintenance connection to the restored controller. Before opening
-   management access, compare the restored API keys and
-   memberships with an **external** record of revocations made since the
-   backup. Revoke those keys again. If no complete and trustworthy record is
+   management access, compare restored API keys, organization memberships
+   and roles with a trustworthy **external** record of changes since the
+   backup. Revoke those keys again. For each membership removed since the
+   backup, use authenticated
+   `DELETE /api/v1/organizations/{orgId}/members/{userId}`. For each role
+   reduction, remove that membership and then use authenticated
+   `POST /api/v1/organizations/{orgId}/members` with the user's email and
+   lower `role` (there is no in-place role-change endpoint). Verify the
+   resulting membership and role using
+   `GET /api/v1/organizations/{orgId}/members` for **every** affected
+   organization. The last owner cannot be removed; confirm another authorized
+   owner first. Removing a membership deactivates its API keys, but does **not**
+   block account sign-in. For a user who must lose all management access,
+   use `bun .output/admin.mjs reset-password --email <address> --password-file
+    <mode-600-file>` with a new undisclosed password (revokes sessions and
+   keys), and deny that identity at the private access gateway. If email
+   password recovery remains available to that user, a password reset alone
+   is **not** a sign-in block: keep the gateway deny in force, or keep
+   management ingress closed until a reliable block exists.
+   If no complete and trustworthy key-revocation record is
    available, revoke **all restored API keys** via the authenticated
    `DELETE /api/v1/organizations/{orgId}/api-keys/{keyId}` endpoint (or
    follow the account-recovery procedure where appropriate), notify their owners, and
    reissue only the keys they still need after access is reopened. Review
    restored sessions and account changes made since the backup too; invalidate
    any sessions that should no longer be valid, including credentials for
-   users removed since the backup. Do not assume deployments or
+   users removed since the backup. If membership/role changes cannot be
+   reconstructed, validate **every restored membership and role** with
+   organization owners and remove any unverified access before reopening;
+   otherwise keep ingress closed. Do not assume deployments or
    lifecycle being off prevents authenticated reads. Confirm revocations
    before reopening the private ingress.
    Start the controller and workers with **deployments on but lifecycle still

@@ -501,10 +501,19 @@ it(
                     `Test apps still need exact-name cleanup: ${leftover.join(", ")}`,
                 );
             }
-            const failure = cleaned.find((result) => result.status === "rejected");
-            if (failure?.status === "rejected")
+            const failures = cleaned.flatMap((result, index) =>
+                result.status === "rejected"
+                    ? [
+                          new Error(
+                              `${["target database", "source database", "temporary directory"][index]} cleanup failed`,
+                              { cause: result.reason },
+                          ),
+                      ]
+                    : [],
+            );
+            if (failures.length)
                 cleanupError = new AggregateError(
-                    [cleanupError, failure.reason].filter(Boolean),
+                    [cleanupError, ...failures].filter(Boolean),
                     "Restore drill cleanup failed.",
                 );
             await note("cleanup", cleanupError ? "incomplete" : "completed").catch((error) => {
