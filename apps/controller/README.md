@@ -178,7 +178,9 @@ Restoring is a procedure, not one command. These are the steps (the reasons are 
     - Replacing moves the old `public` schema aside, restores into a new one, checks that the
       result holds exactly the migrations and live archives the backup records, and only then drops
       the old schema. If the restore fails or does not check out, the old data is put back.
-      Everything in the `public` schema is replaced; other schemas are not touched.
+      Everything in the `public` schema is replaced; other schemas are not touched. A backup is
+      taken of `public` only, and a dump that would create another schema or an extension is refused;
+      so is a replace while views or foreign keys in other schemas depend on `public`'s tables.
     - Run it as the database role the controller and worker use, and that role must own the
       database: `--no-owner` makes the restoring role the owner of everything it creates, and the new
       `public` schema has only the default grants.
@@ -204,7 +206,13 @@ the `pg_dump`'s that wrote the backup) with the dump on its standard input and t
 settings in `PG*` variables. The environment files, the authentication secret and Dokku's own state
 are not in a backup: put them back yourself. Archives the data directory holds that the backup
 does not are left alone; the worker's cleanup removes unreferenced ones after the retention. A
-restore killed halfway can leave `*.restore-*` temporary files beside the archives; delete them.
+restore killed halfway can leave `*.restore-*` temporary files beside the archives (delete them).
+If it was killed after the old schema was moved aside, the database has an empty `public` schema
+and the old data in a `launchpad_replaced_*` schema: list them with
+`select nspname from pg_namespace where nspname like 'launchpad_replaced_%'`, confirm `public` is
+empty, then either restore the pre-restore backup, or put the old data back with
+`drop schema public; alter schema launchpad_replaced_<timestamp> rename to public;`. Do this
+before the controller or any worker starts.
 
 ## API keys
 

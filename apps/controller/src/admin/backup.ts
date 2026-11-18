@@ -93,6 +93,8 @@ async function dumpDatabase(options: BackupOptions, snapshot: string, file: stri
             "--no-owner",
             "--no-privileges",
             "--no-password",
+            // Launchpad lives in `public`; a restore only ever replaces that schema.
+            "--schema=public",
             `--snapshot=${snapshot}`,
         ],
         {

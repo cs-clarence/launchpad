@@ -95,15 +95,19 @@ export function replaceTarget(databaseUrl: string): string {
 // Before anything changes: the program exists and can read this dump (a client older than the
 // one that wrote it refuses the header). A restore that cannot work must be found out here, not
 // after the old data has been moved aside.
-async function preflightPgRestore(options: RestoreOptions, dump: string) {
+async function preflightPgRestore(
+    options: RestoreOptions,
+    dump: string,
+): Promise<{ createsPublic: boolean }> {
     const binary = options.pgRestore ?? "pg_restore";
     const child = spawn(binary, ["--list"], {
         env: { PATH: process.env.PATH, ...pgEnvironment(options.databaseUrl) },
         stdio: ["pipe", "pipe", "pipe"],
     });
     let errors = "";
+    let toc = "";
     child.stderr.on("data", (chunk) => (errors += chunk));
-    child.stdout.resume();
+    child.stdout.on("data", (chunk) => (toc += chunk));
     const exited = new Promise<number | null>((resolve, reject) => {
         child.once("error", reject);
         child.once("close", resolve);
@@ -121,6 +125,41 @@ async function preflightPgRestore(options: RestoreOptions, dump: string) {
             `${binary} cannot read this dump (${errors.trim().slice(-300)}); it must be at least the version that wrote it. Nothing was changed.`,
         );
     }
+    // A restore changes the `public` schema and nothing else. A dump that creates another schema
+    // or an extension (an older backup, or a database an operator changed) would reach outside it.
+    const outside = [...toc.matchAll(/^\s*\d+;\s+\d+\s+\d+\s+(SCHEMA|EXTENSION)\s+-\s+(\S+)/gm)]
+        .map((m) => `${m[1]!.toLowerCase()} ${m[2]}`)
+        .filter((name) => name !== "schema public" && name !== "extension plpgsql");
+    if (outside.length > 0) {
+        throw new RestoreError(
+            `The dump also creates ${outside.join(", ")}, outside the public schema that a restore replaces. Nothing was changed.`,
+        );
+    }
+    // A dump taken with --schema=public creates the schema itself (an older one does not).
+    return { createsPublic: /^\s*\d+;\s+\d+\s+\d+\s+SCHEMA\s+-\s+public\b/m.test(toc) };
+}
+
+// Views and foreign keys in other schemas that depend on a table in `public`: dropping the old
+// schema afterwards would cascade into them, outside what a restore may touch.
+async function outsideDependents(db: Kysely<any>): Promise<string[]> {
+    const views = await sql<{ name: string }>`
+        select distinct vs.nspname || '.' || v.relname as name
+        from pg_depend d
+        join pg_rewrite r on r.oid = d.objid and d.classid = 'pg_rewrite'::regclass
+        join pg_class v on v.oid = r.ev_class
+        join pg_namespace vs on vs.oid = v.relnamespace
+        join pg_class t on t.oid = d.refobjid and d.refclassid = 'pg_class'::regclass
+        join pg_namespace ts on ts.oid = t.relnamespace
+        where ts.nspname = 'public' and vs.nspname <> 'public' and v.oid <> t.oid`.execute(db);
+    const keys = await sql<{ name: string }>`
+        select distinct cs.nspname || '.' || c.relname as name
+        from pg_constraint k
+        join pg_class c on c.oid = k.conrelid
+        join pg_namespace cs on cs.oid = c.relnamespace
+        join pg_class t on t.oid = k.confrelid
+        join pg_namespace ts on ts.oid = t.relnamespace
+        where k.contype = 'f' and ts.nspname = 'public' and cs.nspname <> 'public'`.execute(db);
+    return [...views.rows, ...keys.rows].map((r) => r.name).sort();
 }
 
 async function liveWorkers(db: Kysely<any>) {
@@ -167,7 +206,10 @@ export async function restoreBackup(options: RestoreOptions): Promise<RestoreRes
     if (!database || database.includes("=") || /^postgres(ql)?:/i.test(database)) {
         throw new RestoreError("DATABASE_URL must name a plain database.");
     }
-    await preflightPgRestore(options, path.join(root, manifest.database.file));
+    const { createsPublic } = await preflightPgRestore(
+        options,
+        path.join(root, manifest.database.file),
+    );
 
     const db = createDatabase(options.databaseUrl, { max: 1 });
     try {
@@ -179,6 +221,13 @@ export async function restoreBackup(options: RestoreOptions): Promise<RestoreRes
                 throw new RestoreError(
                     "A worker has reported in the last minute: it is still running against this database. " +
                         "Stop every worker and wait for it to exit first.",
+                );
+            }
+            const dependents = await outsideDependents(db);
+            if (dependents.length > 0) {
+                throw new RestoreError(
+                    `${dependents.join(", ")} (outside the public schema) depend on tables that --replace would drop. ` +
+                        "Remove them, or restore into an empty database. Nothing was changed.",
                 );
             }
             if (options.replaceDatabase === undefined) {
@@ -270,14 +319,17 @@ export async function restoreBackup(options: RestoreOptions): Promise<RestoreRes
                     );
                 }
                 await sql.raw(`alter schema public rename to ${aside}`).execute(trx);
-                await sql`create schema public`.execute(trx);
+                if (!createsPublic) await sql`create schema public`.execute(trx);
             });
+        } else if (createsPublic) {
+            // The empty database's own `public` makes way for the one the dump creates.
+            await sql`drop schema public`.execute(db);
         }
         const putBack = async () => {
-            if (!populated) return;
             await db.transaction().execute(async (trx) => {
-                await sql`drop schema public cascade`.execute(trx);
-                await sql.raw(`alter schema ${aside} rename to public`).execute(trx);
+                await sql`drop schema if exists public cascade`.execute(trx);
+                if (populated) await sql.raw(`alter schema ${aside} rename to public`).execute(trx);
+                else await sql`create schema public`.execute(trx);
             });
         };
         try {
@@ -322,13 +374,16 @@ async function verifyRestored(db: Kysely<any>, manifest: BackupManifest) {
             "The restored database does not hold the migrations the backup recorded.",
         );
     }
+    // A backup older than the artifact table (before migration 010) has none to compare.
     const uncollected = (await columnExists(db, "artifact", "collected_at"))
         ? sql`where collected_at is null`
         : sql``;
-    const keys = (
-        await sql<{ storage_key: string }>`
-            select storage_key from artifact ${uncollected} order by storage_key`.execute(db)
-    ).rows.map((r) => r.storage_key);
+    const keys = (await columnExists(db, "artifact", "storage_key"))
+        ? (
+              await sql<{ storage_key: string }>`
+                  select storage_key from artifact ${uncollected} order by storage_key`.execute(db)
+          ).rows.map((r) => r.storage_key)
+        : [];
     if (
         JSON.stringify(keys) !== JSON.stringify(manifest.artifacts.map((a) => a.storageKey).sort())
     ) {

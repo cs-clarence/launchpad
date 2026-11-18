@@ -302,6 +302,82 @@ describe("restoreBackup", () => {
         );
     });
 
+    it("refuses a dump that would create another schema, and a replace with outside dependents", async () => {
+        // A dump taken without the public-only filter, from a database with a second schema.
+        const odd = await createTestDatabase();
+        targets.push(odd);
+        await odd.migrate();
+        await sql`create schema extra`.execute(odd.db);
+        await sql`create table extra.t (id int)`.execute(odd.db);
+        const unfiltered = path.join(work, "pg_dump_unfiltered.sh");
+        await fs.writeFile(
+            unfiltered,
+            `#!/bin/sh\nargs=""\nfor a in "$@"; do [ "$a" = "--schema=public" ] || args="$args $a"; done\n${tool("pg_dump").replace('"$@"', "$args")}\n`,
+            { mode: 0o700 },
+        );
+        const everything = path.join(work, "backup-everything");
+        await createBackup({
+            db: odd.db,
+            databaseUrl: odd.url,
+            dataDir: path.join(work, "odd-data"),
+            dest: everything,
+            workersStopped: true,
+            lifecycleEnabled: false,
+            version: "0.0.0-test",
+            pgDump: unfiltered,
+        });
+        const empty = await emptyTarget();
+        await expect(
+            restoreBackup(restoreOptions(empty, { backupDir: everything })),
+        ).rejects.toThrow(/also creates schema extra/);
+        expect(await tableCount(empty.db)).toBe(0);
+
+        // A view in another schema that depends on a public table blocks --replace.
+        const target = await emptyTarget();
+        await target.migrate();
+        await sql`create schema reporting`.execute(target.db);
+        await sql`create view reporting.users as select id from public."user"`.execute(target.db);
+        await expect(
+            restoreBackup(restoreOptions(target, { replaceDatabase: replaceTarget(target.url) })),
+        ).rejects.toThrow(/reporting\.users.*depend/);
+        expect(await tableCount(target.db)).toBeGreaterThan(1);
+    });
+
+    it("restores a backup older than the artifact table", async () => {
+        const sourceFolder = path.resolve(
+            import.meta.dirname,
+            "../../../../../packages/database/src",
+        );
+        const root = path.join(work, "very-old-schema");
+        const folder = path.join(root, "migrations");
+        await fs.mkdir(folder, { recursive: true });
+        await fs.copyFile(
+            path.join(sourceFolder, "auth-schema.ts"),
+            path.join(root, "auth-schema.ts"),
+        );
+        const files = (await fs.readdir(path.join(sourceFolder, "migrations"))).sort();
+        for (const file of files.slice(0, 9)) {
+            await fs.copyFile(path.join(sourceFolder, "migrations", file), path.join(folder, file));
+        }
+        const old = await createTestDatabase();
+        targets.push(old);
+        await migrateToLatest(old.db, folder);
+        const dest = path.join(work, "very-old-backup");
+        await createBackup({
+            db: old.db,
+            databaseUrl: old.url,
+            dataDir: path.join(work, "very-old-data"),
+            dest,
+            workersStopped: true,
+            lifecycleEnabled: false,
+            version: "0.0.0-test",
+            pgDump: dump,
+        });
+        const target = await emptyTarget();
+        const result = await restoreBackup(restoreOptions(target, { backupDir: dest }));
+        expect(result.pendingMigrations).toHaveLength(files.length - 9);
+    });
+
     it("refuses a backup that does not verify, before changing anything", async () => {
         const broken = path.join(work, "broken");
         await fs.cp(backupDir, broken, { recursive: true });
