@@ -31,8 +31,12 @@ const gate = ci.jobs["ci-gatekeeper"]!;
 const VALUE_OPTIONS = new Set(["-p", "--project", "-e", "--env-file", "-a", "--args"]);
 const runs = (commands: string, task: string) =>
     commands.split("\n").some((line) => {
-        // Only what Omni itself is given: stop at a comment or a shell operator.
-        const command = line.split("#")[0]!.split(/&&|\|\||[;|&<>]/)[0]!;
+        // Only what Omni itself is given: stop at a comment or a command separator, and set
+        // redirections (`>log`, `2>&1`) aside, since they do not change which task Omni gets.
+        const command = line
+            .split("#")[0]!
+            .split(/&&|\|\||[;|]/)[0]!
+            .replace(/\d*(?:>>?|<)(?:&\d+|\s*\S+)/g, " ");
         const match = command.match(/^\s*omni -i run\b(.*)$/);
         if (!match) return false;
         const tokens = match[1]!.trim().split(/\s+/).filter(Boolean);
