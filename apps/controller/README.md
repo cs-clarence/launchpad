@@ -152,7 +152,43 @@ checksums. A database whose migrations are still pending can be backed up (do th
   cookies, so never store the secret beside the backup. Environment files, the secret and
   Dokku's own state are **not** included; back those up separately.
 - `verify-backup` re-checks every file against the manifest and reports anything missing,
-  changed, extra or not a plain file; it needs no database. Restoring is not built yet.
+  changed, extra or not a plain file; it needs no database.
+
+## Restore
+
+Restoring is a procedure, not one command. These are the steps (the reasons are in
+`docs/plans/application.md`, "Restore order and the lifecycle"):
+
+1. Switch the lifecycle **and deployments off** (controller and worker), stop every worker, wait
+   until each has exited, and then wait longer than the longest Dokku command and the deletion
+   lease (five minutes by default). A worker's exit does not prove a Dokku destroy it started has
+   finished, and a missing app is not proof either.
+2. `restore <dir> --i-have-stopped-the-workers` into an **empty** database, or
+   `--replace <database name>` to replace one that has data (everything in it is deleted).
+   It checks the backup against its manifest first and changes nothing if it does not verify; it
+   refuses a backup that holds migrations this version does not know, and a database a worker has
+   reported in during the last minute; it never overwrites a stored archive that has other
+   content, and it never touches Dokku. The archives are copied first and the database second.
+   A backup made by an older version restores fine: run `migrate` afterwards.
+3. `check-restore` (read-only): lists live archives whose file is missing, and every deployed
+   preview whose Dokku app is gone (it asks Dokku with `apps:exists` over the worker's
+   `DOKKU_SSH_*` settings, or pass `--no-dokku` to skip that). It exits 1 if it finds anything.
+4. Switch **deployments on** and start the workers, with the lifecycle **still off**.
+5. For each preview you want to keep: redeploy it (a deployment recreates a missing app), and
+   **extend** any whose expiry has already passed. Then switch the lifecycle on, and delete the
+   previews you chose to end.
+
+```sh
+omni -i run admin -p @launchpad/controller -a command=restore \
+  -a "options=/var/backups/launchpad/2026-11-18 --i-have-stopped-the-workers"
+omni -i run admin -p @launchpad/controller -a command=check-restore
+```
+
+`restore` runs `pg_restore` (override with `LAUNCHPAD_PG_RESTORE`) with the dump on its standard
+input and the connection settings in `PG*` variables. The environment files, the authentication
+secret and Dokku's own state are not in a backup: put them back yourself. Archives the data
+directory holds that the backup does not are left alone; the worker's cleanup removes unreferenced
+ones after the retention.
 
 ## API keys
 

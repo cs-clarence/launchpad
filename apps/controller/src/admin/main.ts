@@ -10,7 +10,9 @@ import { createDatabase, migrateToLatest, migrationStatus } from "@launchpad/dat
 import { lifecycleConfigFromEnv } from "@launchpad/services";
 import { readFileSync, statSync } from "node:fs";
 import path from "node:path";
+import { createDokkuClient } from "@launchpad/dokku";
 import { createBackup, verifyBackup } from "./backup";
+import { checkRestore, restoreBackup } from "./restore";
 
 async function readStdin(): Promise<string> {
     const chunks: Buffer[] = [];
@@ -20,6 +22,12 @@ async function readStdin(): Promise<string> {
     return Buffer.concat(chunks)
         .toString("utf8")
         .replace(/\r?\n$/, "");
+}
+
+function required(env: NodeJS.ProcessEnv, name: string): string {
+    const value = env[name];
+    if (!value) throw new Error(`${name} is required (or pass --no-dokku).`);
+    return value;
 }
 
 // Opens the database named by DATABASE_URL for one command and always closes it.
@@ -127,6 +135,83 @@ program
             throw new Error(`The backup does not verify (${problems.length} problem(s)).`);
         }
         console.log("The backup verifies.");
+    });
+
+program
+    .command("restore")
+    .description(
+        "Restore a backup into an empty database (or --replace one), and its archives into the data directory",
+    )
+    .argument("<dir>", "the backup directory")
+    .option(
+        "--i-have-stopped-the-workers",
+        "confirm the lifecycle and deployments are off and every worker has stopped (required)",
+    )
+    .option("--replace <database>", "replace a database that has data: type its name")
+    .action(async (dir, options) => {
+        const url = process.env.DATABASE_URL;
+        if (!url) throw new Error("DATABASE_URL is required.");
+        const result = await restoreBackup({
+            backupDir: dir,
+            databaseUrl: url,
+            dataDir: path.resolve(process.env.LAUNCHPAD_DATA_DIR ?? ".data/controller"),
+            workersStopped: options.iHaveStoppedTheWorkers === true,
+            replaceDatabase: options.replace,
+            pgRestore: process.env.LAUNCHPAD_PG_RESTORE,
+        });
+        console.log(
+            `Restored the database (${result.manifest.migrations.length} migrations applied) and ` +
+                `${result.filesRestored} archive(s) copied (${result.filesAlreadyPresent} already there).`,
+        );
+        if (result.pendingMigrations.length > 0) {
+            console.log(
+                `This version has ${result.pendingMigrations.length} migration(s) the backup lacks: run migrate.`,
+            );
+        }
+        console.log(
+            "Next: run check-restore, then follow the rest of the restore runbook (docs/plans/application.md): " +
+                "bring deployments back on first, with the lifecycle still off.",
+        );
+    });
+
+program
+    .command("check-restore")
+    .description(
+        "Read-only: list live artifacts whose file is missing and live previews whose Dokku app is gone",
+    )
+    .option("--no-dokku", "skip the Dokku check (otherwise DOKKU_SSH_* settings are required)")
+    .action(async (options) => {
+        const env = process.env;
+        const dokku =
+            options.dokku === false
+                ? null
+                : createDokkuClient({
+                      host: required(env, "DOKKU_SSH_HOST"),
+                      port: Number(env.DOKKU_SSH_PORT ?? 22),
+                      username: env.DOKKU_SSH_USER || "dokku",
+                      privateKeyPath: required(env, "DOKKU_SSH_KEY_PATH"),
+                      knownHostsPath: required(env, "DOKKU_SSH_KNOWN_HOSTS_PATH"),
+                  });
+        const report = await withDatabase((db) =>
+            checkRestore({
+                db,
+                dataDir: path.resolve(env.LAUNCHPAD_DATA_DIR ?? ".data/controller"),
+                appExists: dokku ? (name) => dokku.apps.exists(name) : undefined,
+            }),
+        );
+        for (const key of report.missingFiles) console.log(`missing archive: ${key}`);
+        for (const app of report.missingApps) {
+            console.log(
+                `missing app: ${app.appName} (preview ${app.previewId}, slug ${app.slug}, organization ${app.organizationId})`,
+            );
+        }
+        console.log(
+            `${report.missingFiles.length} archive(s) missing; ` +
+                (report.dokkuChecked
+                    ? `${report.missingApps.length} of ${report.appsChecked} deployed preview(s) have no app`
+                    : "Dokku was not checked"),
+        );
+        process.exitCode = report.missingFiles.length + report.missingApps.length > 0 ? 1 : 0;
     });
 
 program
