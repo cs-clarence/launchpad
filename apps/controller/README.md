@@ -123,6 +123,11 @@ Run checks from the repository root as described in
 complete; keep `LAUNCHPAD_API_DOCS=false` on internet-facing installs unless you want
 the API shape public, and put the controller behind HTTPS before exposing it.
 
+For operators, use the task-oriented [backup](../../docs/backup.md),
+[restore](../../docs/restore.md), [upgrade](../../docs/upgrade.md) and
+[installation](../../docs/install.md) guides. The details below are the
+command and behavior reference.
+
 ## Backup
 
 ```sh
@@ -156,8 +161,9 @@ checksums. A database whose migrations are still pending can be backed up (do th
 
 ## Restore
 
-Restoring is a procedure, not one command. These are the steps (the reasons are in
-`docs/plans/application.md`, "Restore order and the lifecycle"):
+Restoring is a procedure, not one command. The current step-by-step
+[restore how-to](../../docs/restore.md) includes the safety and recovery checks
+(the rationale is in `docs/plans/application.md`, "Restore order and the lifecycle"):
 
 1. Switch the lifecycle **and deployments off** (controller and worker), **stop every worker and
    the controller** (it keeps its database connections and only checks the schema when it starts,

@@ -52,3 +52,51 @@ replacement and rollback, destroy-with-neighbour), the suite left no apps behind
 was stopped. The destroy and Dokku code it exercises (`packages/dokku`, `apps/worker/src/lifecycle-ports.ts`,
 `apps/worker/src/docker.ts`) has not changed since the first run. Still worth adding: a neighbour that
 is deployed and probed over HTTP after the destroy.
+
+## Restore runbook rehearsal (2026-11-18)
+
+Approved test-only adapter (user chose it after the upgrade-drill review):
+`apps/controller/src/admin/live/restore.live.ts` on the existing
+`launchpad-live-dokku` (loopback SSH 33022, proxy 39080, isolated
+`/tmp/opencode/live-dokku-20261117/data`) and `launchpad-test-db`
+(loopback 55432). The test checked their identity before any mutation,
+changed only its own disposable database's preview-name constraint to
+`lp-test-<6>`, and injected that pattern into a test-only Dokku client and
+deletion ports. Production schema/validation were unchanged.
+
+The final opt-in `test:restore:live` run passed: created and deployed three
+`lp-test-` apps; backed up the database and artifacts; initiated a deletion
+after the backup and simulated stopping the worker while its local destroy
+adapter was paused; **after** the stop signal it issued the real Dokku destroy,
+then waited for that remote command to complete and for its
+shortened one-second **test** lease to pass; restored into a fresh database
+and data directory; `checkRestore` using the real guarded Dokku client
+found two missing apps and an expired preview; recreated and redeployed
+the missing kept app from its restored archive; extended the expired preview while lifecycle
+was off; enabled lifecycle and finished deletion of the preview chosen to
+end. The kept and extended apps remained until the test's exact-name
+cleanup. An `apps:list` after completion reported no apps. Two earlier
+runs failed while debugging redeployment with the old deployment id;
+the final run uses a fresh id, as a real redeployment does.
+
+The follow-up review requested bounded cleanup and stronger terminal-state
+assertions; the opt-in test now has a deadline before Vitest's own timeout,
+a separate cleanup deadline, and asserts the ending app remains absent and
+the ending preview is deleted. The final run with those changes passed and
+recreated a _missing_ kept app before redeploying it. One first attempt
+immediately after starting the disposable Dokku failed at `apps:exists`
+before SSH was ready; a pinned-key `apps:list` confirmed readiness, then
+the complete run passed. Exact-name cleanup left no apps.
+
+The test models a stopped worker's lost response and delayed remote
+completion, not an OS process killed in the middle of an SSH command;
+the one-second test lease is **not** the five-minute production lease.
+An operator must still wait for the full lease and slow Dokku triggers
+in a real restore. No `view-demo` or other Dokku was touched.
+
+After PR #50 review fixes on 2026-11-18, the opt-in run passed again with
+the subprocess deadline and persistent exact-name resource record. The
+pinned-key `apps:list` showed no remaining apps; both disposable containers
+were stopped. The simulated local stop happens **before** the real SSH destroy
+starts; this does not test a remote command already in progress when the
+worker exits.

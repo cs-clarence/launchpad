@@ -181,7 +181,7 @@ program
             );
         }
         console.log(
-            "Next: run check-restore, then follow the rest of the restore runbook (docs/plans/application.md): " +
+            "Next: if migrations are pending run migrate, then run check-restore and follow docs/restore.md: " +
                 "bring deployments back on first, with the lifecycle still off.",
         );
     });

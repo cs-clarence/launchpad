@@ -25,6 +25,8 @@ export interface RestoreOptions {
     // naming a scratch copy with the live one's name is not enough.
     replaceDatabase?: string;
     pgRestore?: string;
+    // Optional bounded drill cancellation; production CLI normally lets a restore complete.
+    signal?: AbortSignal;
 }
 
 export interface RestoreResult {
@@ -56,14 +58,16 @@ async function runPgRestore(options: RestoreOptions, dump: string) {
         {
             env: { PATH: process.env.PATH, ...pgEnvironment(options.databaseUrl) },
             stdio: ["pipe", "pipe", "pipe"],
+            signal: options.signal,
         },
     );
     let errors = "";
     child.stderr.on("data", (chunk) => (errors += chunk));
     child.stdout.resume();
     const exited = new Promise<number | null>((resolve, reject) => {
-        child.once("error", reject);
-        child.once("close", resolve);
+        let spawnError: Error | undefined;
+        child.once("error", (error) => (spawnError = error));
+        child.once("close", (code) => (spawnError ? reject(spawnError) : resolve(code)));
     });
     // The dump is fed on stdin so the program may run elsewhere (a container) than this file.
     let feedError: unknown;
@@ -103,14 +107,16 @@ async function preflightPgRestore(
     const child = spawn(binary, ["--list"], {
         env: { PATH: process.env.PATH, ...pgEnvironment(options.databaseUrl) },
         stdio: ["pipe", "pipe", "pipe"],
+        signal: options.signal,
     });
     let errors = "";
     let toc = "";
     child.stderr.on("data", (chunk) => (errors += chunk));
     child.stdout.on("data", (chunk) => (toc += chunk));
     const exited = new Promise<number | null>((resolve, reject) => {
-        child.once("error", reject);
-        child.once("close", resolve);
+        let spawnError: Error | undefined;
+        child.once("error", (error) => (spawnError = error));
+        child.once("close", (code) => (spawnError ? reject(spawnError) : resolve(code)));
     });
     const fed = pipeline(createReadStream(dump), child.stdin).catch(() => {});
     const [code] = await Promise.all([exited, fed]).catch((error) => {
@@ -146,13 +152,15 @@ async function dumpCreatesPublic(options: RestoreOptions, dump: string): Promise
     const child = spawn(binary, ["--schema-only", "--no-owner", "--no-privileges", "-f", "-"], {
         env: { PATH: process.env.PATH, ...pgEnvironment(options.databaseUrl) },
         stdio: ["pipe", "pipe", "pipe"],
+        signal: options.signal,
     });
     let sqlText = "";
     child.stdout.on("data", (chunk) => (sqlText += chunk));
     child.stderr.resume();
     const exited = new Promise<number | null>((resolve, reject) => {
-        child.once("error", reject);
-        child.once("close", resolve);
+        let spawnError: Error | undefined;
+        child.once("error", (error) => (spawnError = error));
+        child.once("close", (code) => (spawnError ? reject(spawnError) : resolve(code)));
     });
     const fed = pipeline(createReadStream(dump), child.stdin).catch(() => {});
     const [code] = await Promise.all([exited, fed]);
@@ -217,7 +225,7 @@ async function userTableCount(db: Kysely<any>) {
 // there changes nothing that matters), then the database. It never touches Dokku. It restores
 // into an empty database, or into one the operator names to be replaced, and it refuses while a
 // worker is running against the target. What the operator must do before and after is the
-// restore runbook in docs/plans/application.md; this does the middle of it.
+// restore runbook in docs/restore.md; this does the middle of it.
 export async function restoreBackup(options: RestoreOptions): Promise<RestoreResult> {
     if (!options.workersStopped) {
         throw new RestoreError(
