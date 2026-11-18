@@ -67,7 +67,7 @@ tasks:
   #     -a command=setup -a "options=--email you@example.com"
   # Needs DATABASE_URL (and the LAUNCHPAD_* settings for setup / reset-password).
   admin:
-    description: Run an operator command (migrate, setup, create-user, reset-password)
+    description: Run an operator command (migrate, backup, verify-backup, setup, create-user, reset-password)
     exec: bun run admin {{ args.command }} {{ args.options }}
     args:
       command: "--help"

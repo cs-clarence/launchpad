@@ -11,6 +11,8 @@ import {
     type Principal,
 } from "@launchpad/services";
 import { SITE, tarGz } from "@launchpad/services/testing";
+import { spawnSync } from "node:child_process";
+import { sql } from "kysely";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { BackupError, createBackup, pgEnvironment, verifyBackup } from "../backup";
 
@@ -26,12 +28,20 @@ let org = "";
 let owner: Principal;
 let plainDump = "";
 let pausedDump = "";
+let pausedBefore = "";
+let markerBefore = "";
+let releaseBefore = "";
 let marker = "";
 let release = "";
 let counter = 0;
 
-const wrapper = (after = "") =>
+// Bounded, so a test that fails before releasing it cannot leave a shell looping forever.
+const waitFor = (mark: string, release: string) =>
+    `touch "${mark}"\nfor i in $(seq 1 600); do [ -e "${release}" ] && break; sleep 0.1; done`;
+
+const wrapper = (before = "", after = "") =>
     `#!/bin/sh
+${before}
 docker exec -i -e PGHOST=127.0.0.1 -e PGPORT=5432 -e PGUSER -e PGPASSWORD -e PGDATABASE ${CONTAINER} pg_dump "$@"
 rc=$?
 ${after}
@@ -75,6 +85,14 @@ const options = (dest: string, extra: Partial<Parameters<typeof createBackup>[0]
     pgDump: plainDump,
     ...extra,
 });
+const firstDigest = async () =>
+    testDb.db
+        .selectFrom("artifact")
+        .select("digest")
+        .where("collected_at", "is", null)
+        .orderBy("created_at")
+        .limit(1)
+        .executeTakeFirstOrThrow();
 const fresh = () => path.join(work, `backup-${++counter}`);
 
 beforeAll(async () => {
@@ -85,11 +103,13 @@ beforeAll(async () => {
     plainDump = path.join(work, "pg_dump_plain.sh");
     pausedDump = path.join(work, "pg_dump_paused.sh");
     await fs.writeFile(plainDump, wrapper(), { mode: 0o700 });
-    await fs.writeFile(
-        pausedDump,
-        wrapper(`touch "${marker}"\nwhile [ ! -e "${release}" ]; do sleep 0.1; done`),
-        { mode: 0o700 },
-    );
+    await fs.writeFile(pausedDump, wrapper("", waitFor(marker, release)), { mode: 0o700 });
+    markerBefore = path.join(work, "before-dump");
+    releaseBefore = path.join(work, "release-before");
+    pausedBefore = path.join(work, "pg_dump_paused_before.sh");
+    await fs.writeFile(pausedBefore, wrapper(waitFor(markerBefore, releaseBefore)), {
+        mode: 0o700,
+    });
     testDb = await createTestDatabase();
     await testDb.migrate();
     const rootId = randomUUID();
@@ -180,11 +200,14 @@ describe("createBackup", () => {
             lifecycleEnabled: true,
             started: true,
         });
-        await expect(createBackup(options(fresh()))).rejects.toThrow(BackupError);
-        await expect(
-            createBackup(options(fresh(), { workersStopped: true, lifecycleEnabled: true })),
-        ).resolves.toBeTruthy();
-        await testDb.db.deleteFrom("worker_heartbeat").execute();
+        try {
+            await expect(createBackup(options(fresh()))).rejects.toThrow(BackupError);
+            await expect(
+                createBackup(options(fresh(), { workersStopped: true, lifecycleEnabled: true })),
+            ).resolves.toBeTruthy();
+        } finally {
+            await testDb.db.deleteFrom("worker_heartbeat").execute();
+        }
     });
 
     it("fails and leaves nothing when a live archive's file is missing or altered", async () => {
@@ -209,6 +232,75 @@ describe("createBackup", () => {
             createBackup(options(dest, { pgDump: path.join(work, "no-such-pg_dump") })),
         ).rejects.toThrow(/was not found/);
         await expect(fs.stat(dest)).rejects.toThrow();
+    });
+
+    it("backs up a database whose migrations are pending, and refuses one a newer build migrated", async () => {
+        // The folder this build "ships": every applied migration by name, plus one not applied.
+        const source = path.resolve(
+            import.meta.dirname,
+            "../../../../../packages/database/src/migrations",
+        );
+        const folder = path.join(work, "behind-migrations");
+        await fs.mkdir(folder);
+        for (const file of await fs.readdir(source)) {
+            await fs.writeFile(path.join(folder, file), "export async function up() {}");
+        }
+        await fs.writeFile(
+            path.join(folder, "20991231_900_pending_check.mjs"),
+            "export async function up() {}",
+        );
+        const before = process.env.LAUNCHPAD_MIGRATIONS_DIR;
+        process.env.LAUNCHPAD_MIGRATIONS_DIR = folder;
+        try {
+            const dest = fresh();
+            const manifest = await createBackup(options(dest));
+            expect(manifest.migrations).not.toContain("20991231_900_pending_check");
+            expect(manifest.migrations.length).toBeGreaterThan(10);
+            expect(await verifyBackup(dest)).toEqual([]);
+        } finally {
+            if (before === undefined) delete process.env.LAUNCHPAD_MIGRATIONS_DIR;
+            else process.env.LAUNCHPAD_MIGRATIONS_DIR = before;
+        }
+        await sql`insert into launchpad_migration (name, timestamp) values ('20991231_999_newer', now()::text)`.execute(
+            testDb.db,
+        );
+        try {
+            await expect(createBackup(options(fresh()))).rejects.toThrow(/does not know/);
+        } finally {
+            await sql`delete from launchpad_migration where name = '20991231_999_newer'`.execute(
+                testDb.db,
+            );
+        }
+    });
+
+    it("dumps the snapshot the rows were read in, not a later state", async () => {
+        await fs.rm(markerBefore, { force: true });
+        await fs.rm(releaseBefore, { force: true });
+        const dest = fresh();
+        // pg_dump is held back until after the artifact rows were read.
+        const running = createBackup(options(dest, { pgDump: pausedBefore }));
+        const outcome = running.then(
+            (manifest) => ({ manifest }),
+            (error) => ({ error }),
+        );
+        for (let i = 0; i < 200 && !(await fs.stat(markerBefore).catch(() => null)); i++) {
+            await new Promise((r) => setTimeout(r, 100));
+        }
+        const late = await upload("committed-before-the-dump");
+        await fs.writeFile(releaseBefore, "");
+        const result = await outcome;
+        expect("error" in result ? String(result.error) : "").toBe("");
+        const text = spawnSync(
+            "docker",
+            ["exec", "-i", CONTAINER, "pg_restore", "--data-only", "-t", "artifact", "-f", "-"],
+            {
+                input: await fs.readFile(path.join(dest, "database.dump")),
+                maxBuffer: 64 * 1024 * 1024,
+            },
+        ).stdout.toString();
+        expect(text).toContain(Object.values(await firstDigest())[0]!);
+        // Without --snapshot the dump would hold this row, whose file was never copied.
+        expect(text).not.toContain(late.digest);
     });
 
     it("is consistent when an archive is uploaded between the dump and the copy", async () => {
@@ -256,6 +348,8 @@ describe("createBackup", () => {
 
 describe("verifyBackup", () => {
     it("finds a changed, missing or extra file", async () => {
+        await upload("verify-1");
+        await upload("verify-2");
         const dest = fresh();
         const manifest = await createBackup(options(dest));
         const first = manifest.artifacts[0]!;
@@ -266,6 +360,18 @@ describe("verifyBackup", () => {
         expect(problems.join("\n")).toMatch(/does not match/);
         expect(problems.join("\n")).toMatch(/missing/);
         expect(problems.join("\n")).toMatch(/extra.txt: not in the manifest/);
+        // A link in place of a file is not a plain file, whatever it points at.
+        const second = manifest.artifacts[2]!;
+        const linked = path.join(dest, second.storageKey);
+        const content = await fs.readFile(linked);
+        await fs.rm(linked);
+        await fs.writeFile(path.join(work, "target.bin"), content);
+        await fs.symlink(path.join(work, "target.bin"), linked);
+        expect((await verifyBackup(dest)).join("\n")).toMatch(/not a plain file/);
+        await fs.writeFile(path.join(dest, "manifest.json"), "null");
+        expect(await verifyBackup(dest)).toEqual([
+            expect.stringMatching(/unsupported backup format/),
+        ]);
         await fs.rm(path.join(dest, "manifest.json"));
         expect(await verifyBackup(dest)).toEqual([
             expect.stringMatching(/manifest.json is missing/),

@@ -3,7 +3,7 @@ import { createHash } from "node:crypto";
 import { createReadStream, createWriteStream, promises as fs } from "node:fs";
 import path from "node:path";
 import { pipeline } from "node:stream/promises";
-import { assertSchemaCurrent, type Database, migrationStatus } from "@launchpad/database";
+import { type Database, migrationStatus } from "@launchpad/database";
 import { resolveArtifactPath, WORKER_LIVE_SECONDS } from "@launchpad/services";
 import { type Kysely, sql } from "kysely";
 
@@ -73,7 +73,13 @@ async function dumpDatabase(options: BackupOptions, snapshot: string, file: stri
     const binary = options.pgDump ?? "pg_dump";
     const child = spawn(
         binary,
-        ["--format=custom", "--no-owner", "--no-privileges", `--snapshot=${snapshot}`],
+        [
+            "--format=custom",
+            "--no-owner",
+            "--no-privileges",
+            "--no-password",
+            `--snapshot=${snapshot}`,
+        ],
         {
             env: { PATH: process.env.PATH, ...pgEnvironment(options.databaseUrl) },
             stdio: ["ignore", "pipe", "pipe"],
@@ -128,8 +134,15 @@ export async function createBackup(options: BackupOptions): Promise<BackupManife
             );
         }
     }
-    await assertSchemaCurrent(db);
-    const migrations = (await migrationStatus(db)).applied;
+    // A database that is BEHIND this build can be backed up (that is what comes before migrating);
+    // one a newer build already migrated cannot: this build would not know what it dumped.
+    const known = await migrationStatus(db);
+    if (known.unknown.length > 0) {
+        throw new BackupError(
+            `The database has migrations this version does not know (${known.unknown.join(", ")}): ` +
+                "run the backup with the newer version.",
+        );
+    }
 
     const dest = path.resolve(options.dest);
     await fs.mkdir(path.dirname(dest), { recursive: true });
@@ -144,13 +157,18 @@ export async function createBackup(options: BackupOptions): Promise<BackupManife
     // From here the directory is ours: a failed backup leaves nothing half-written behind.
     try {
         const dumpFile = path.join(dest, DUMP);
-        const rows = await db
+        const { rows, migrations } = await db
             .transaction()
             .setIsolationLevel("repeatable read")
             .execute(async (trx) => {
                 const { rows: snap } = await sql<{
                     id: string;
                 }>`select pg_export_snapshot() as id`.execute(trx);
+                // This session only waits while pg_dump reads: a server setting must not end it.
+                await sql`set local idle_in_transaction_session_timeout = 0`.execute(trx);
+                const applied = await sql<{
+                    name: string;
+                }>`select name from launchpad_migration order by name`.execute(trx);
                 const live = await trx
                     .selectFrom("artifact")
                     .select(["storage_key", "digest"])
@@ -158,7 +176,7 @@ export async function createBackup(options: BackupOptions): Promise<BackupManife
                     .orderBy("storage_key")
                     .execute();
                 await dumpDatabase(options, snap[0]!.id, dumpFile);
-                return live;
+                return { rows: live, migrations: applied.rows.map((r) => r.name) };
             });
 
         const artifacts: BackupManifest["artifacts"] = [];
@@ -203,7 +221,8 @@ export async function createBackup(options: BackupOptions): Promise<BackupManife
             artifacts,
             excludes:
                 "Environment files, the authentication secret, Dokku's own state and any preview datastore. " +
-                "The dump contains password and API-key hashes: keep this directory private.",
+                "The dump contains password and API-key hashes and live session tokens: keep this directory private " +
+                "and never store the authentication secret beside it.",
         };
         const temp = path.join(dest, `${MANIFEST}.partial`);
         await fs.writeFile(temp, `${JSON.stringify(manifest, null, 2)}\n`, { mode: 0o600 });
@@ -216,7 +235,7 @@ export async function createBackup(options: BackupOptions): Promise<BackupManife
         }
         return manifest;
     } catch (error) {
-        await fs.rm(dest, { recursive: true, force: true });
+        await fs.rm(dest, { recursive: true, force: true }).catch(() => {});
         throw error;
     }
 }
@@ -241,8 +260,15 @@ export async function verifyBackup(dir: string): Promise<string[]> {
     } catch {
         return [`${MANIFEST} is missing or unreadable`];
     }
-    if (manifest.format !== BACKUP_FORMAT) {
-        return [`unsupported backup format ${String(manifest.format)}`];
+    if (manifest?.format !== BACKUP_FORMAT) {
+        return [`unsupported backup format ${String(manifest?.format)}`];
+    }
+    if (
+        manifest.database?.file !== DUMP ||
+        !Array.isArray(manifest.artifacts) ||
+        !Array.isArray(manifest.migrations)
+    ) {
+        return [`${MANIFEST} is not a backup manifest`];
     }
     const problems: string[] = [];
     const expected = new Map<string, { sha256: string; bytes: number }>();
@@ -260,6 +286,11 @@ export async function verifyBackup(dir: string): Promise<string[]> {
             continue;
         }
         try {
+            // A link or special file at an expected path could hang or point elsewhere.
+            if (!(await fs.lstat(path.join(root, file))).isFile()) {
+                problems.push(`${file}: not a plain file`);
+                continue;
+            }
             const got = await hashFile(path.join(root, file));
             if (got.bytes !== want.bytes || got.sha256 !== want.sha256) {
                 problems.push(`${file}: does not match its recorded size and checksum`);

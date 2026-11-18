@@ -62,33 +62,6 @@ controller and `dist/migrations` for the worker. `LAUNCHPAD_MIGRATIONS_DIR` name
 A built controller cannot run `migrate` itself (the shipped files import packages it does not
 carry); run `migrate` from the source checkout or, later, the packaged admin (milestone 6).
 
-## Backup
-
-```sh
-omni -i run admin -p @launchpad/controller -a command=backup \
-  -a "options=/var/backups/launchpad/2026-11-18 --i-have-stopped-the-workers"
-omni -i run admin -p @launchpad/controller -a command=verify-backup -a options=/var/backups/launchpad/2026-11-18
-```
-
-`backup` needs `DATABASE_URL`, the same `LAUNCHPAD_DATA_DIR` as the controller and the
-PostgreSQL client tool `pg_dump` (version at least the server's; name another program with
-`LAUNCHPAD_PG_DUMP`). It writes a **new** directory (it never overwrites one, and a failed run
-removes what it wrote) holding `database.dump` (custom format), exactly the stored archives the
-dump's live artifact rows refer to, and `manifest.json` with sizes and SHA-256 checksums.
-
-- **One consistent view.** The live artifact rows are read in the same exported snapshot the dump
-  uses, and the files are copied for exactly those rows; an upload made meanwhile is just not
-  in this backup. If a live row's file is missing or altered, the backup fails rather than
-  record a restore that cannot work.
-- **Run it with the lifecycle stopped.** Only the lifecycle's collection removes archives, so with
-  `LAUNCHPAD_LIFECYCLE` on (or a worker with it on running) `backup` refuses unless you pass
-  `--i-have-stopped-the-workers`, confirming every worker is stopped.
-- **Keep the directory private** (it is created mode 0700): the dump holds password and API-key
-  hashes. Environment files, the authentication secret and Dokku's own state are **not**
-  included; back those up separately (restore is covered in the next slice).
-- `verify-backup` re-checks every file against the manifest and reports anything missing,
-  changed or extra; it needs no database.
-
 Operator commands run as an Omni task whose command and options are named arguments.
 Passwords come from a file only you can read (mode 600) or from piped stdin, never from
 an argument or the environment. Omni does not forward piped stdin, so use a file:
@@ -149,6 +122,37 @@ Run checks from the repository root as described in
 [CONTRIBUTING.md](../../CONTRIBUTING.md). Milestone 1's independent security review is
 complete; keep `LAUNCHPAD_API_DOCS=false` on internet-facing installs unless you want
 the API shape public, and put the controller behind HTTPS before exposing it.
+
+## Backup
+
+```sh
+omni -i run admin -p @launchpad/controller -a command=backup -a options=/var/backups/launchpad/2026-11-18
+omni -i run admin -p @launchpad/controller -a command=verify-backup -a options=/var/backups/launchpad/2026-11-18
+```
+
+`backup` needs `DATABASE_URL`, the same `LAUNCHPAD_DATA_DIR` as the controller and the
+PostgreSQL client tool `pg_dump` (version at least the server's; name another program with
+`LAUNCHPAD_PG_DUMP`). It writes a **new** directory (it never overwrites one, and a run that fails
+removes what it wrote; one that is killed can leave a partial directory, which has no
+`manifest.json` and never verifies) holding `database.dump` (custom format), exactly the stored
+archives the dump's live artifact rows refer to, and `manifest.json` with sizes and SHA-256
+checksums. A database whose migrations are still pending can be backed up (do that before
+`migrate`); one that a newer version already migrated is refused.
+
+- **One consistent view.** The live artifact rows, the list of applied migrations and the dump
+  are read in the same exported snapshot, and the files are copied for exactly those rows; an upload
+  made meanwhile is just not in this backup. If a live row's file is missing or altered, the backup
+  fails rather than record a restore that cannot work (a file that a worker moved aside during an
+  interrupted collection is put back when a worker starts).
+- **Run it with the lifecycle stopped.** Only the lifecycle's collection removes archives, so with
+  `LAUNCHPAD_LIFECYCLE` on (or a worker with it on running) `backup` refuses unless you add
+  `--i-have-stopped-the-workers` to the command, confirming every worker is stopped.
+- **Keep the directory private** (it is created mode 0700). The dump holds password and API-key
+  hashes **and live session tokens**: with the authentication secret they would let someone sign
+  cookies, so never store the secret beside the backup. Environment files, the secret and
+  Dokku's own state are **not** included; back those up separately.
+- `verify-backup` re-checks every file against the manifest and reports anything missing,
+  changed, extra or not a plain file; it needs no database. Restoring is not built yet.
 
 ## API keys
 
