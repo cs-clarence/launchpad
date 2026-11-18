@@ -193,7 +193,8 @@ the Dokku image once it moves there), built from the monorepo root (each has a D
 env files, state, dependencies and agent context, overriding the root Dokku build ignore file):
 
 ```sh
-version="$(bun -p 'require("./package.json").version')"
+version="$(sed -n 's/^ *"version": *"\([^"]*\)".*/\1/p' package.json | head -n 1)"
+[ -n "$version" ] || { echo "could not read the version from package.json" >&2; false; }
 docker build --build-arg LAUNCHPAD_VERSION="$version" -f apps/controller/Dockerfile -t launchpad/controller:dev .   # needs BuildKit
 docker build --build-arg LAUNCHPAD_VERSION="$version" -f apps/worker/Dockerfile -t launchpad/worker:dev .
 ```
