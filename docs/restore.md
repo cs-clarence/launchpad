@@ -70,13 +70,17 @@ The **remote** portion is a separate opt-in task, never run by CI:
 those settings with `omni -i -e .env.live-disposable-only`; the non-existent
 env filename prevents a root `.env.local` from overriding the test host.
 The test refuses any other host, port, key path, database or data mount.
+This fixed path is a **maintainer-only** disposable environment, not a
+portable install recipe; its provisioning and previous runs are recorded in
+[live verification](plans/live-dokku-verification.md). It may need to be
+recreated after a reboot.
 
 In its **throwaway database only**, it substitutes an `lp-test-` name
 constraint and a test-only Dokku allowlist. It backs up three deployed
 previews, simulates stopping a worker while a remote destroy call is
 outstanding, waits for that destroy and a shortened **one-second test lease**
-to settle, restores the database and archives, finds the app missing on
-the real disposable Dokku, redeploys a kept preview, extends an expired
+to settle, restores the database and archives, finds two missing apps on
+the real disposable Dokku, recreates and redeploys a missing kept preview, extends an expired
 one before enabling lifecycle, and deletes the preview chosen to end.
 Production validation is unchanged. The recorded run is in
 [live verification](plans/live-dokku-verification.md#restore-runbook-rehearsal-2026-11-18).
@@ -84,3 +88,13 @@ The shortened lease and simulated worker stop do **not** measure the
 production five-minute wait or prove what an arbitrary slow remote trigger
 will do; follow step 1's full wait in a real incident. Never point this
 task at `view-demo`, production PostgreSQL or a non-disposable Dokku.
+If the task is interrupted or reports leftover names, inspect **only** the
+approved disposable Dokku with its pinned SSH key:
+`ssh -i /tmp/opencode/live-dokku-20261117/id_ed25519 -o UserKnownHostsFile=/tmp/opencode/live-dokku-20261117/known_hosts -o StrictHostKeyChecking=yes -p 33022 dokku@127.0.0.1 apps:list`.
+Confirm each leftover is an `lp-test-` name recorded by this run, then destroy
+it by **exact name**, one at a time (`ssh` with the same options, then
+`apps:destroy <exact-lp-test-name>`). Do not bulk-delete matching apps and
+never run a destroy against the normal Dokku or `view-demo`. The task creates
+`lp_test_*` databases only in the disposable PostgreSQL; on an abrupt kill,
+list them there and remove only the exact names this run recorded, after
+confirming no test process is still connected.

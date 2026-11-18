@@ -105,7 +105,11 @@ it(
     { timeout: 12 * 60_000 },
     async () => {
         requireDisposable();
+        // Leave four minutes before Vitest's own timeout for bounded, exact-name cleanup.
         const root = await fs.mkdtemp(path.join(os.tmpdir(), "launchpad-restore-live-"));
+        const deadline = new AbortController();
+        const deadlineTimer = setTimeout(() => deadline.abort(), 8 * 60_000);
+        const signal = deadline.signal;
         const sourceData = path.join(root, "source");
         const targetData = path.join(root, "target");
         const backupDir = path.join(root, "backup");
@@ -221,7 +225,7 @@ it(
             const initialPorts = portsFor(sourceData);
             for (const slug of ["kept", "expired", "ending"]) {
                 const app = `lp-test-${randomBytes(3).toString("hex")}`;
-                if (!APP.test(app) || (await dokku.apps.exists(app))) {
+                if (!APP.test(app) || (await dokku.apps.exists(app, signal))) {
                     throw new Error(`Test app ${app} already exists; refusing to adopt it.`);
                 }
                 // Register before create: a lost create response still leaves only this exact app to clean up.
@@ -264,7 +268,6 @@ it(
                     storageKey,
                     spa: false,
                 };
-                const signal = new AbortController().signal;
                 await dokku.apps.create(app, signal);
                 const { imageTag } = await initialPorts.build(context, signal);
                 await dokku.domains.set(app, hostname, signal);
@@ -327,7 +330,7 @@ it(
                             destroy: async (app: string) => {
                                 entered();
                                 await resume;
-                                await dokku.apps.destroy(app); // the remote side outlives the local stop
+                                await dokku.apps.destroy(app, signal); // remote outlives local stop, not the drill deadline
                                 throw new Error(
                                     "The stopped worker did not receive the remote result.",
                                 );
@@ -336,13 +339,31 @@ it(
                     },
                 },
                 deps,
-                { signal: stopSignal.signal },
+                { signal: AbortSignal.any([stopSignal.signal, signal]) },
             );
-            await started;
+            await Promise.race([
+                started,
+                interrupted.then(() => {
+                    throw new Error("Deletion finished before the remote destroy began.");
+                }),
+                new Promise<never>((_, reject) =>
+                    signal.addEventListener(
+                        "abort",
+                        () => reject(new Error("Drill deadline reached.")),
+                        {
+                            once: true,
+                        },
+                    ),
+                ),
+            ]);
             stopSignal.abort();
             release();
             await interrupted;
-            expect(await dokku.apps.exists(names.get("ending")!.app)).toBe(false);
+            expect(await dokku.apps.exists(names.get("ending")!.app, signal)).toBe(false);
+            // The other missing app is deliberately kept: unlike `ending`, it must be
+            // recreated and deployed from the restored artifact in step 4.
+            await dokku.apps.destroy(names.get("kept")!.app, signal);
+            expect(await dokku.apps.exists(names.get("kept")!.app, signal)).toBe(false);
             await new Promise((resolve) => setTimeout(resolve, 1200)); // > the test's 1s lease
             await source.destroy();
             source = undefined;
@@ -360,16 +381,15 @@ it(
             const report = await checkRestore({
                 db: target.db,
                 dataDir: targetData,
-                appExists: (name) => dokku.apps.exists(name),
+                appExists: (name) => dokku.apps.exists(name, signal),
             });
             expect(report.missingFiles).toEqual([]);
-            expect(report.missingApps.map((item) => item.appName)).toEqual([
-                names.get("ending")!.app,
-            ]);
+            expect(report.missingApps.map((item) => item.appName).sort()).toEqual(
+                [names.get("ending")!.app, names.get("kept")!.app].sort(),
+            );
             expect(report.expired.map((item) => item.slug)).toEqual(["expired"]);
             const restoredPorts = portsFor(targetData);
             const kept = names.get("kept")!;
-            const signal = new AbortController().signal;
             const newDeploymentId = randomUUID();
             const context: DeployContext = {
                 appName: kept.app,
@@ -378,6 +398,7 @@ it(
                 storageKey,
                 spa: false,
             };
+            await dokku.apps.create(kept.app, signal);
             const { imageTag } = await restoredPorts.build(context, signal);
             await restoredPorts.loadImage(context, imageTag, signal).catch((error: unknown) => {
                 throw new Error(`Kept preview could not redeploy: ${diagnostic(error)}`);
@@ -423,31 +444,47 @@ it(
                 leaseMs: 1000,
             });
             expect(result.deletion).toBe("succeeded");
+            expect(await dokku.apps.exists(names.get("ending")!.app, signal)).toBe(false);
+            const ended = await target.db
+                .selectFrom("preview")
+                .select("desired_state")
+                .where("id", "=", names.get("ending")!.id)
+                .executeTakeFirstOrThrow();
+            expect(ended.desired_state).toBe("deleted");
             const expired = await target.db
                 .selectFrom("preview")
                 .select("desired_state")
                 .where("id", "=", names.get("expired")!.id)
                 .executeTakeFirstOrThrow();
             expect(expired.desired_state).toBe("active");
-            expect(await dokku.apps.exists(kept.app)).toBe(true);
-            expect(await dokku.apps.exists(names.get("expired")!.app)).toBe(true);
+            expect(await dokku.apps.exists(kept.app, signal)).toBe(true);
+            expect(await dokku.apps.exists(names.get("expired")!.app, signal)).toBe(true);
         } finally {
+            clearTimeout(deadlineTimer);
+            // A separate deadline ensures a stalled SSH cleanup cannot wait until Vitest
+            // terminates its worker. Any leftovers are reported by exact test-only name.
+            const cleanupSignal = AbortSignal.timeout(3 * 60_000);
             const leftover: string[] = [];
             for (const app of created) {
                 if (!APP.test(app)) continue;
                 try {
-                    if (await dokku.apps.exists(app)) await dokku.apps.destroy(app);
-                    if (await dokku.apps.exists(app)) leftover.push(app);
+                    if (await dokku.apps.exists(app, cleanupSignal))
+                        await dokku.apps.destroy(app, cleanupSignal);
+                    if (await dokku.apps.exists(app, cleanupSignal)) leftover.push(app);
                 } catch {
                     leftover.push(app);
                 }
             }
-            await target?.destroy();
-            await source?.destroy();
-            await fs.rm(root, { recursive: true, force: true });
+            const cleaned = await Promise.allSettled([
+                target?.destroy(),
+                source?.destroy(),
+                fs.rm(root, { recursive: true, force: true }),
+            ]);
             if (leftover.length > 0) {
                 throw new Error(`Test apps still need exact-name cleanup: ${leftover.join(", ")}`);
             }
+            const failure = cleaned.find((result) => result.status === "rejected");
+            if (failure?.status === "rejected") throw failure.reason;
         }
     },
 );

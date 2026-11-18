@@ -70,13 +70,22 @@ after the backup and simulated stopping the worker with an outstanding
 remote destroy; waited for the remote command to complete and for its
 shortened one-second **test** lease to pass; restored into a fresh database
 and data directory; `checkRestore` using the real guarded Dokku client
-found the missing app and an expired preview; redeployed a kept preview
-from its restored archive; extended the expired preview while lifecycle
+found two missing apps and an expired preview; recreated and redeployed
+the missing kept app from its restored archive; extended the expired preview while lifecycle
 was off; enabled lifecycle and finished deletion of the preview chosen to
 end. The kept and extended apps remained until the test's exact-name
 cleanup. An `apps:list` after completion reported no apps. Two earlier
 runs failed while debugging redeployment with the old deployment id;
 the final run uses a fresh id, as a real redeployment does.
+
+The follow-up review requested bounded cleanup and stronger terminal-state
+assertions; the opt-in test now has a deadline before Vitest's own timeout,
+a separate cleanup deadline, and asserts the ending app remains absent and
+the ending preview is deleted. The final run with those changes passed and
+recreated a _missing_ kept app before redeploying it. One first attempt
+immediately after starting the disposable Dokku failed at `apps:exists`
+before SSH was ready; a pinned-key `apps:list` confirmed readiness, then
+the complete run passed. Exact-name cleanup left no apps.
 
 The test models a stopped worker's lost response and delayed remote
 completion, not an OS process killed in the middle of an SSH command;
