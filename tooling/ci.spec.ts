@@ -150,3 +150,35 @@ describe("CI gatekeeper script", () => {
         expect(evaluate("push", { ...allGreen, commits: "failure" })).toContain("commits");
     });
 });
+
+// The release rehearsal must stay a rehearsal: manual, read-only, with no credential and no
+// command that publishes, pushes, tags or logs in.
+describe("release dry-run workflow", () => {
+    const file = readFileSync(path.join(workflows, "release-dry-run.yaml"), "utf8");
+    const parsed = Bun.YAML.parse(file) as {
+        on: Record<string, unknown>;
+        permissions: Record<string, string>;
+        jobs: Record<string, Job & { permissions?: unknown; environment?: unknown }>;
+    };
+
+    it("starts only by hand, with read-only permissions", () => {
+        expect(Object.keys(parsed.on)).toEqual(["workflow_dispatch"]);
+        expect(parsed.permissions).toEqual({ contents: "read" });
+        for (const job of Object.values(parsed.jobs)) {
+            expect(job.permissions).toBeUndefined();
+            expect(job.environment).toBeUndefined();
+        }
+    });
+
+    it("uses no secret and no publishing, pushing, tagging or login command", () => {
+        expect(file).not.toMatch(/secrets\.|id-token|NODE_AUTH_TOKEN|NPM_TOKEN/);
+        const commands = Object.values(parsed.jobs)
+            .flatMap((job) => job.steps ?? [])
+            .map((step) => step.run ?? "")
+            .join("\n");
+        expect(commands).not.toMatch(
+            /\b(publish|push|login|release create|git tag)\b|docker (push|login)/,
+        );
+        expect(runs(commands, "release:dry-run")).toBe(true);
+    });
+});

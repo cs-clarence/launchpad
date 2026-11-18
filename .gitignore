@@ -4,6 +4,7 @@
 node_modules/
 dist/
 .output/
+.release-dry-run/
 .tanstack/
 coverage/
 *.tsbuildinfo
