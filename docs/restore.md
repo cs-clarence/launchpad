@@ -45,9 +45,12 @@ or prove. `restore` never contacts Dokku. Back up the target database first.
    management access, compare restored API keys, organization memberships
    and roles with a trustworthy **external** record of changes since the
    backup. Revoke those keys again. For each membership removed since the
-   backup, use authenticated
+   backup, an **authorized organization member** (an owner or a member with
+   member-management rights; an instance operator has no automatic
+   membership, and a member cannot re-add themselves after removing their own
+   membership) must use their authenticated session for
    `DELETE /api/v1/organizations/{orgId}/members/{userId}`. For each role
-   reduction, remove that membership and then use authenticated
+   reduction, have that authorized member remove the membership and then use
    `POST /api/v1/organizations/{orgId}/members` with the user's email and
    lower `role` (there is no in-place role-change endpoint; re-adding
    deactivates the user's API keys, so reissue any that are still needed). Verify the
