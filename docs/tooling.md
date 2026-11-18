@@ -187,13 +187,16 @@ controller's settings (PostgreSQL, authentication, email, API docs) are document
 in `apps/controller/README.md` and `apps/controller/.env.local.example`; the worker's SSH settings to Dokku are in `apps/worker/README.md`. Do not bake
 credentials into an image.
 
-`containers/controller/Dockerfile` and `containers/worker/Dockerfile` are multistage Bun image
-recipes, built from the monorepo root (each has a Dockerfile-specific ignore file that excludes local
+`apps/controller/Dockerfile` and `apps/worker/Dockerfile` are multistage Bun image
+recipes, kept beside the app they build (`containers/` is reserved for images of external software, such as
+the Dokku image once it moves there), built from the monorepo root (each has a Dockerfile-specific ignore file that excludes local
 env files, state, dependencies and agent context, overriding the root Dokku build ignore file):
 
 ```sh
-docker build -f containers/controller/Dockerfile -t launchpad/controller:dev .   # needs BuildKit
-docker build -f containers/worker/Dockerfile -t launchpad/worker:dev .
+version="$(sed -n 's/^ *"version": *"\([^"]*\)".*/\1/p' package.json | head -n 1)"
+[ -n "$version" ] || { echo "could not read the version from package.json" >&2; false; }
+docker build --build-arg LAUNCHPAD_VERSION="$version" -f apps/controller/Dockerfile -t launchpad/controller:dev .   # needs BuildKit
+docker build --build-arg LAUNCHPAD_VERSION="$version" -f apps/worker/Dockerfile -t launchpad/worker:dev .
 ```
 
 Both run as the fixed unprivileged uid 10001 (they share one data directory), hold no secret (every

@@ -6,7 +6,7 @@ Keep this page current when the entry points or runtime change.
 - `src/routes/api.$.ts` mounts `src/server/api.ts` without starting another server.
 - Services live in `@launchpad/services`, outside HTTP and UI frameworks.
 - `src/styles.css` installs Skeleton 5, Tailwind 4, and the Cerberus theme.
-- `containers/controller/Dockerfile` (repository root) produces a non-root Bun runtime from Nitro's build output, with the operator commands (`bun .output/admin.mjs ...`).
+- `Dockerfile` (built from the repository root with `-f apps/controller/Dockerfile`) produces a non-root Bun runtime from Nitro's build output, with the operator commands (`bun .output/admin.mjs ...`).
 - `src/server/runtime.ts` composes configuration, the shared Kysely database,
   Better Auth and the API on first use.
 - `src/admin/main.ts` is the operator command, run through Omni (see First run). Omni

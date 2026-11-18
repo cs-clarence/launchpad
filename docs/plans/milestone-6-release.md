@@ -73,8 +73,8 @@ live infrastructure, plus a drill an operator can repeat.
    Bun, a `files` allowlist, dependency ranges, no workspace `workspace:` specifiers. The
    names are **placeholders**: the npm scope and product name are undecided and are not
    registered. Proposed: yes.
-7. **Images.** Controller and worker Dockerfiles under `containers/controller/` and
-   `containers/worker/`, multi-stage, non-root (one fixed uid for both, because they share the
+7. **Images.** Controller and worker Dockerfiles beside their apps (`apps/controller/`, `apps/worker/`;
+   moved there after the first draft put them under `containers/`), multi-stage, non-root (one fixed uid for both, because they share the
    data directory), migrations folder copied in, no secrets in layers, healthcheck. Built
    in CI, **not pushed**. The Dokku Dockerfile moves in the follow-up, not here.
    Proposed: yes.
@@ -183,8 +183,8 @@ expired restored preview, and a preview whose app is gone.
   pointed at nothing, so nothing resolved by name can stand in for a packed tarball. Before
   publishing: the packed READMEs are still developer docs (links into the repository), and the
   manifests have no `license` or `repository`, which wait for the licence and name decisions.
-- Slice 5 (images): `containers/controller/Dockerfile` and `containers/worker/Dockerfile` (the
-  controller recipe moved from `apps/controller/`), `tooling/check-images.ts` and `test:images`
+- Slice 5 (images): `apps/controller/Dockerfile` and `apps/worker/Dockerfile` (beside their
+  apps), `tooling/check-images.ts` and `test:images`
   (run in the CI integration job). Migrations are now bundled per file
   (`packages/database/scripts/bundle-migrations.mjs`) and the controller build also produces
   `.output/admin.mjs`, so `migrate` runs from the image (slice 1's known limit is closed). Found
@@ -213,3 +213,26 @@ expired restored preview, and a preview whose app is gone.
   `check:versions` and a frozen install pass) and by a real local dry run (four tarballs verified
   with `sha256sum -c`, both images built and removed). **Not done, by design:** publishing, tags,
   registry names; the checklist records the open licence, scope and name decisions.
+
+## Close-out (2026-11-18)
+
+An independent whole-milestone review (Opus 5.5, read-only, at `b6c51d1`) found no blocker or high
+finding. Fixed before closing: images now record the release version (`LAUNCHPAD_VERSION` build
+argument, asserted by `test:images`, passed by the dry run), so backups and the operator status no
+longer say `unknown`. Deferred, with owners, to `docs/plans/production-compose-follow-up.md`: the
+worker healthcheck, a PostgreSQL client for backups from the stack, a credential-reset command, TLS
+connection options for the dump and restore clients, and digest pinning.
+
+**Proven:** each slice by its tests and CI jobs (schema guard, backup, restore and `check-restore`,
+packed clients on Node and Bun outside the workspace, image build and run, the upgrade drill from a
+frozen 14-migration fixture through the controller image, the dry-run rehearsal), plus one live
+rehearsal of the restore runbook on a disposable Dokku.
+
+**Not proven, stated plainly:** an operator install from published artifacts on a clean machine (no
+production stack or published artifacts exist); an upgrade from a real previous release (no tags;
+the fixture stands in); the five-minute production lease and a remote destroy in flight when a
+worker is killed (the live rehearsal used a one-second lease and a simulated stop, and is not in CI);
+what a published tarball or image holds after a real publish; and anything touching registry names,
+licence or publishing, which stay undecided and unauthorized. A restore also copies archives before
+swapping the database, so a failed restore can leave extra archive files (content-addressed and
+never overwritten, so harmless).
