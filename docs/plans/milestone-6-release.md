@@ -191,3 +191,10 @@ expired restored preview, and a preview whose app is gone.
   by running the worker image: with deployments off the worker exited at once under Bun (a pending
   promise does not keep it alive), which a restart policy would have turned into a loop; it now
   idles on a timer, with a test.
+- Slice 6 (upgrade drill and docs): the frozen 14-migration PostgreSQL fixture and
+  `test:upgrade` exercise the built admin command and controller against disposable
+  PostgreSQL (backup, migration, restart/status, fresh restore). The operator
+  install, backup, restore, upgrade, private routing and onboarding how-tos are
+  under `docs/`; the restore how-to records the isolated Dokku rehearsal separately.
+  An actual remote in-flight destroy is **not** run by CI: it needs the explicitly
+  isolated host and is not implied by the database-only test.

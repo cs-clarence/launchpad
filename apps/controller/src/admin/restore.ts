@@ -217,7 +217,7 @@ async function userTableCount(db: Kysely<any>) {
 // there changes nothing that matters), then the database. It never touches Dokku. It restores
 // into an empty database, or into one the operator names to be replaced, and it refuses while a
 // worker is running against the target. What the operator must do before and after is the
-// restore runbook in docs/plans/application.md; this does the middle of it.
+// restore runbook in docs/restore.md; this does the middle of it.
 export async function restoreBackup(options: RestoreOptions): Promise<RestoreResult> {
     if (!options.workersStopped) {
         throw new RestoreError(

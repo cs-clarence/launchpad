@@ -65,6 +65,15 @@ Rules that keep the graph correct:
   controller integration need disposable PostgreSQL (`omni -i run test:db:up`).
   The SDK's integration suite only uses ephemeral loopback HTTP fixtures; run it
   alone with `omni -i run test:integration -p @launchpad/sdk`. No database is needed.
+- **Upgrade drill.** `omni -i run test:upgrade -p @launchpad/controller` builds a
+  disposable controller image, runs its `migrate` command and exercises the built
+  admin's backup/restore and server against the frozen
+  `apps/controller/src/admin/__tests__/fixtures/schema-014.dump` (14 migrations,
+  synthetic user), on disposable PostgreSQL only. It backs up, migrates,
+  restarts, checks schema status and restores a fresh database. It is also in
+  `test:integration`; no Dokku is touched. The complete operator procedure and
+  isolated-host rehearsal are in [restore](restore.md), with
+  [installation](install.md), [upgrade](upgrade.md) and [routing](access.md).
 - **Omni loads `.env.local`** from the repository root and the project into task
   environments without expanding variables, and task `env.vars` override the shell. For
   a default that the shell may override, apply it in the command
@@ -196,7 +205,8 @@ carry: mount one and set `LAUNCHPAD_PG_DUMP` / `LAUNCHPAD_PG_RESTORE`.
 layer, no `.env`, `.git`, key or source file, the expected files present), runs `migrate` from the
 controller image against the disposable PostgreSQL, starts the controller and waits for `/api/health`
 and a healthy healthcheck, and starts the worker (deployments off). It needs Docker and
-`TEST_DATABASE_URL`, removes everything it creates by exact name, never pushes, and never touches
+`TEST_DATABASE_URL` (defaults to the disposable fixture), removes its named containers, volumes,
+images and database, never pushes, and never touches
 Dokku. CI runs it in the integration job. Its containers, anonymous volumes, images and database are
 removed by exact name (also on an interrupt); Docker's build cache is not. `docker-compose.yml` still manages Dokku only;
 controller/PostgreSQL orchestration and secure controller-to-Dokku networking remain future work
