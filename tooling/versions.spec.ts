@@ -12,6 +12,8 @@ import {
 } from "./versions";
 
 const dirs: string[] = [];
+// `sync` leaves bun.lock to `bun install --lockfile-only`, which the command line runs.
+const withoutLock = (problems: string[]) => problems.filter((p) => !p.startsWith("bun.lock"));
 afterEach(() => {
     for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
 });
@@ -44,6 +46,23 @@ function repository(overrides: { appVersion?: string; include?: string[] } = {})
               : `const info = {\n    version: "1.2.3",\n};`;
         writeFileSync(path.join(root, source.file), `${line}\n`);
     }
+    const lockWorkspaces = Object.fromEntries(
+        ["packages/lib", "apps/app", "packages/tool"].map((dir) => [
+            dir,
+            {
+                version:
+                    dir === "apps/app"
+                        ? (overrides.appVersion ?? "1.2.3")
+                        : dir === "packages/tool"
+                          ? "0.5.0"
+                          : "1.2.3",
+            },
+        ]),
+    );
+    writeFileSync(
+        path.join(root, "bun.lock"),
+        `{\n  "lockfileVersion": 2,\n  "workspaces": ${JSON.stringify({ "": { name: "@t/root" }, ...lockWorkspaces })},\n}\n`,
+    );
     const include = overrides.include ?? ["packages/lib/**", "apps/**"];
     writeFileSync(
         path.join(root, "cog.toml"),
@@ -95,10 +114,43 @@ describe("version strings in source", () => {
         writeFileSync(file, `program.version("0.0.1");\n`);
         expect(checkVersions(root).join("\n")).toContain("says 0.0.1; the root is 1.2.3");
         syncVersions(root, "core", "2.0.0");
-        expect(checkVersions(root)).toEqual([]);
+        expect(withoutLock(checkVersions(root))).toEqual([]);
         for (const source of SOURCE_VERSIONS) {
             expect(readFileSync(path.join(root, source.file), "utf8")).toContain('"2.0.0"');
         }
+    });
+});
+
+describe("lockfile and strictness", () => {
+    it("reports a workspace version bun.lock still records as old", () => {
+        const root = repository();
+        const lock = path.join(root, "bun.lock");
+        writeFileSync(
+            lock,
+            readFileSync(lock, "utf8").replace(
+                '"packages/lib":{"version":"1.2.3"',
+                '"packages/lib":{"version":"0.0.0"',
+            ),
+        );
+        expect(checkVersions(root).join("\n")).toContain("bun.lock records 0.0.0 for packages/lib");
+    });
+
+    it("accepts strict SemVer only", () => {
+        for (const bad of ["01.2.3", "1.2.3-rc..1", "1.2", "1.2.3-", "v1.2.3"]) {
+            expect(() => syncVersions(repository(), "core", bad), bad).toThrow("not a version");
+        }
+        for (const good of ["0.0.0", "1.2.3-rc.1", "1.2.3+build.7"]) {
+            expect(() => syncVersions(repository(), "core", good), good).not.toThrow();
+        }
+    });
+
+    it("refuses a workspace entry it cannot read", () => {
+        const root = repository();
+        writeFileSync(
+            path.join(root, "package.json"),
+            `{\n    "name": "@t/root",\n    "version": "1.2.3",\n    "workspaces": ["packages/extra/sdk"]\n}\n`,
+        );
+        expect(() => checkVersions(root)).toThrow("Unsupported workspace entry");
     });
 });
 
@@ -116,7 +168,7 @@ describe("syncVersions", () => {
         const root = repository();
         const before = readFileSync(path.join(root, "apps/app/package.json"), "utf8");
         syncVersions(root, "core", "2.0.0");
-        expect(checkVersions(root)).toEqual([]);
+        expect(withoutLock(checkVersions(root))).toEqual([]);
         expect(readFileSync(path.join(root, "apps/app/package.json"), "utf8")).toBe(
             before.replace('"1.2.3"', '"2.0.0"'),
         );
@@ -135,7 +187,7 @@ describe("syncVersions", () => {
         expect(readFileSync(path.join(root, "packages/tool/package.json"), "utf8")).toContain(
             '"version": "0.6.0"',
         );
-        expect(checkVersions(root)).toEqual([]);
+        expect(withoutLock(checkVersions(root))).toEqual([]);
     });
 
     it("refuses an unknown package and a bad version", () => {

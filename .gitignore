@@ -5,6 +5,7 @@ node_modules/
 dist/
 .output/
 .release-dry-run/
+.release-dry-run.lock/
 .tanstack/
 coverage/
 *.tsbuildinfo

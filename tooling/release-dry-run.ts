@@ -8,7 +8,15 @@
 //
 //   bun tooling/release-dry-run.ts [outDir] [--skip-images]
 import { createHash } from "node:crypto";
-import { mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import {
+    existsSync,
+    mkdirSync,
+    readFileSync,
+    readdirSync,
+    realpathSync,
+    rmSync,
+    writeFileSync,
+} from "node:fs";
 import path from "node:path";
 import { build, checkListing, checkManifest, pack, stage, TARGETS } from "./package-clients";
 import { checkVersions, sharedWorkspaces } from "./versions";
@@ -28,6 +36,31 @@ export function checksumLines(files: { name: string; digest: string }[]): string
             .join("\n") + "\n"
     );
 }
+
+// The folder is emptied first, so it is only ever one named for this purpose that really lies
+// inside the repository: its nearest existing ancestor is resolved through symlinks, so a link
+// out of the checkout cannot redirect the delete.
+export function checkOutput(out: string, repository = root): string | null {
+    if (!path.basename(out).includes("release-dry-run"))
+        return "its name must contain release-dry-run";
+    const inside = (candidate: string, base: string) => candidate.startsWith(`${base}${path.sep}`);
+    if (!inside(out, repository)) return "it must be inside the repository";
+    let ancestor = out;
+    while (!existsSync(ancestor)) ancestor = path.dirname(ancestor);
+    if (
+        !inside(realpathSync(ancestor), realpathSync(repository)) &&
+        realpathSync(ancestor) !== realpathSync(repository)
+    ) {
+        return "it resolves outside the repository through a symbolic link";
+    }
+    if (existsSync(out) && !inside(realpathSync(out), realpathSync(repository))) {
+        return "it resolves outside the repository through a symbolic link";
+    }
+    return null;
+}
+
+// Docker tags allow neither `+` (SemVer build metadata) nor anything outside [\w.-].
+export const dockerTag = (version: string) => version.replaceAll("+", "_");
 
 async function exec(command: string[], cwd = root) {
     const proc = Bun.spawn(command, { cwd, stdout: "pipe", stderr: "pipe", stdin: "ignore" });
@@ -50,12 +83,23 @@ async function main() {
     if (problems.length > 0) throw new Error(`Versions disagree:\n${problems.join("\n")}`);
     const version = sharedWorkspaces(root)[0]!.version;
 
-    // The folder is emptied first: only ever one named for this purpose, inside the repository.
-    if (!path.basename(out).includes("release-dry-run") || !out.startsWith(`${root}${path.sep}`)) {
-        throw new Error(
-            `Refusing to empty ${out}: use a folder named *release-dry-run* inside the repository.`,
-        );
+    const refused = checkOutput(out);
+    if (refused) throw new Error(`Refusing to empty ${out}: ${refused}.`);
+    // One run at a time: a second would empty the folder under the first.
+    const lock = `${out}.lock`;
+    try {
+        mkdirSync(lock);
+    } catch {
+        throw new Error(`Another dry run holds ${lock}; remove it only if none is running.`);
     }
+    try {
+        await rehearse(out, version, skipImages);
+    } finally {
+        rmSync(lock, { recursive: true, force: true });
+    }
+}
+
+async function rehearse(out: string, version: string, skipImages: boolean) {
     rmSync(out, { recursive: true, force: true });
     const tarballs = path.join(out, "packages");
     mkdirSync(tarballs, { recursive: true });
@@ -95,9 +139,10 @@ async function main() {
     if (!skipImages) {
         const run = process.pid.toString(36);
         const built: string[] = [];
+        let failure: unknown;
         try {
             for (const name of ["controller", "worker"]) {
-                const tag = `launchpad-release-dry-run-${run}/${name}:${version}`;
+                const tag = `launchpad-release-dry-run-${run}/${name}:${dockerTag(version)}`;
                 built.push(tag);
                 await exec([
                     "docker",
@@ -112,14 +157,29 @@ async function main() {
                 const id = await exec(["docker", "image", "inspect", "--format", "{{.Id}}", tag]);
                 images.push(`${name} ${id}`);
             }
-        } finally {
-            for (const tag of built) {
-                Bun.spawnSync(["docker", "image", "rm", tag], {
-                    stdout: "ignore",
-                    stderr: "ignore",
-                });
-            }
+        } catch (error) {
+            failure = error;
         }
+        // Removed by exact name; an image that never got built is not a leftover.
+        const remaining = built.filter((tag) => {
+            const removed = Bun.spawnSync(["docker", "image", "rm", tag], {
+                stdout: "ignore",
+                stderr: "ignore",
+            });
+            if (removed.exitCode === 0) return false;
+            const present = Bun.spawnSync(["docker", "image", "inspect", tag], {
+                stdout: "ignore",
+                stderr: "pipe",
+            });
+            return !(present.exitCode !== 0 && present.stderr.toString().includes("No such"));
+        });
+        if (remaining.length > 0) {
+            const leftover = new Error(
+                `Images could not be removed; remove them by exact name: ${remaining.join(", ")}`,
+            );
+            throw failure ? new AggregateError([failure, leftover], "Dry run failed.") : leftover;
+        }
+        if (failure) throw failure;
     }
 
     const commit = await exec(["git", "rev-parse", "HEAD"]).catch(() => "unknown");

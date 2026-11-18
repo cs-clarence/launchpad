@@ -19,7 +19,12 @@ export const SOURCE_VERSIONS: { file: string; pattern: RegExp }[] = [
     { file: "apps/mcp/src/server.ts", pattern: /(name: "launchpad-mcp", version: )"[^"]*"/ },
     { file: "apps/controller/src/server/openapi.ts", pattern: /(\n\s+version: )"[^"]*"/ },
 ];
-const SEMVER = /^\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$/;
+// Strict SemVer 2.0.0: no leading zeros, no empty identifiers.
+const NUMERIC = "(?:0|[1-9]\\d*)";
+const PRERELEASE = `(?:${NUMERIC}|\\d*[A-Za-z-][0-9A-Za-z-]*)`;
+const SEMVER = new RegExp(
+    `^${NUMERIC}\\.${NUMERIC}\\.${NUMERIC}(?:-${PRERELEASE}(?:\\.${PRERELEASE})*)?(?:\\+[0-9A-Za-z-]+(?:\\.[0-9A-Za-z-]+)*)?$`,
+);
 // Matches the first top-level "version" line without reformatting the file.
 const VERSION_LINE = /^(\s*"version":\s*)"[^"]*"/m;
 
@@ -60,8 +65,12 @@ export function workspaces(root: string): Workspace[] {
         { name: rootManifest.name, dir: ".", version: String(rootManifest.version ?? "") },
     ];
     for (const pattern of (rootManifest.workspaces ?? []) as string[]) {
-        const parent = pattern.replace(/\/\*$/, "");
-        if (parent.includes("*") || !existsSync(path.join(root, parent))) continue;
+        // Only `dir/*` is understood; anything else would be silently skipped, so refuse it.
+        if (!/^[^*]+\/\*$/.test(pattern)) {
+            throw new Error(`Unsupported workspace entry "${pattern}": use the dir/* form.`);
+        }
+        const parent = pattern.slice(0, -2);
+        if (!existsSync(path.join(root, parent))) continue;
         for (const entry of readdirSync(path.join(root, parent), { withFileTypes: true })) {
             const manifest = path.join(root, parent, entry.name, "package.json");
             if (!entry.isDirectory() || !existsSync(manifest)) continue;
@@ -103,6 +112,24 @@ export function checkVersions(root: string): string[] {
         // A package whose changes cog.toml does not watch would never cause a bump.
         if (w.dir !== "." && !covered(includes, w.dir)) {
             problems.push(`${w.dir} is not in the core include list of cog.toml`);
+        }
+    }
+    // The lockfile records each workspace's version; a stale one passes `--frozen-lockfile`.
+    const lockFile = path.join(root, "bun.lock");
+    if (!existsSync(lockFile)) {
+        problems.push("bun.lock is missing");
+    } else {
+        const lock = Bun.JSONC.parse(readFileSync(lockFile, "utf8")) as {
+            workspaces?: Record<string, { version?: string }>;
+        };
+        for (const w of shared) {
+            if (w.dir === ".") continue;
+            const recorded = lock.workspaces?.[w.dir]?.version;
+            if (recorded !== w.version) {
+                problems.push(
+                    `bun.lock records ${recorded} for ${w.dir}; the manifest says ${w.version}`,
+                );
+            }
         }
     }
     for (const source of SOURCE_VERSIONS) {

@@ -27,10 +27,11 @@ const ci = load("ci.yaml");
 const gate = ci.jobs["ci-gatekeeper"]!;
 
 // True when an `omni ... run` command lists exactly this task (not a qualified one).
+// The command itself must start the line (a quoted `echo "omni ..."` is not a run).
 const runs = (commands: string, task: string) =>
     commands
         .split("\n")
-        .some((line) => new RegExp(`omni -i run\\b.*(^|\\s)${task}(\\s|$)`).test(line));
+        .some((line) => new RegExp(`^\\s*omni -i run\\b.*(^|\\s)${task}(\\s|$)`).test(line));
 
 describe("CI workflow", () => {
     // Adding a job without adding it to the gate would let it fail unnoticed.
@@ -77,6 +78,12 @@ describe("CI workflow", () => {
         expect(runs("omni -i run test:integration", "test")).toBe(false);
         expect(runs("omni -i run check:compose", "check")).toBe(false);
         expect(runs("omni -i run -f=failed check check:compose", "check")).toBe(true);
+        expect(
+            runs('echo "omni -i run release:dry-run -p @launchpad/tooling"', "release:dry-run"),
+        ).toBe(false);
+        expect(
+            runs("  omni -i run release:dry-run -p '@launchpad/tooling'", "release:dry-run"),
+        ).toBe(true);
     });
 
     it("pins the Omni version used by the setup action", () => {
@@ -175,7 +182,9 @@ describe("release dry-run workflow", () => {
         const commands = Object.values(parsed.jobs)
             .flatMap((job) => job.steps ?? [])
             .map((step) => step.run ?? "")
-            .join("\n");
+            .join("\n")
+            // A shell comment is not a command.
+            .replace(/^\s*#.*$/gm, "");
         expect(commands).not.toMatch(
             /\b(publish|push|login|release create|git tag)\b|docker (push|login)/,
         );

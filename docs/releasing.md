@@ -116,6 +116,10 @@ A release is a person's decision. Work through this in order and stop at the fir
 6. Run the [dry run](#rehearse-a-release); inspect the tarball listings, `SHA256SUMS` and the
    image notes. No `.env`, key, source map or workspace specifier in any tarball.
 7. `cog bump` on a clean checkout, then review the bump commit, changelog and tag locally.
+   The bump commit rewrites manifests, source version strings and `bun.lock` and carries
+   `[skip ci]`, so CI does **not** validate it: on that commit rerun step 1's local gate and
+   step 6's dry run, and use the checksums from **that** run. The ones from before the bump
+   are for a different version.
 8. Obtain explicit authorization to publish. Publishing uses a least-privilege identity,
    provenance attestation, and pinned image tags and digests; it is a separate workflow
    written and reviewed for that purpose, and it is not part of this repository yet.

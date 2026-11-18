@@ -34,6 +34,11 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: release-dry-run
-          path: .release-dry-run/
+          # The folder is hidden, which upload-artifact skips unless told otherwise.
+          include-hidden-files: true
+          path: |
+            .release-dry-run/RELEASE-DRY-RUN.txt
+            .release-dry-run/packages/SHA256SUMS
+            .release-dry-run/packages/*.tgz
           retention-days: 7
           if-no-files-found: error
