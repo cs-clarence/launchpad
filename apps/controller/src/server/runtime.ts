@@ -115,11 +115,7 @@ function compose() {
         // Serves the OpenAPI document and Scalar reference; set to "false" to remove them.
         docs: process.env.LAUNCHPAD_API_DOCS !== "false",
     });
-    // Checked once, in the background; every request awaits it through getReadyRuntime, so a
-    // controller never serves from a schema it was not built for.
-    const schemaReady = assertSchemaCurrent(db);
-    schemaReady.catch((error) => console.error(error instanceof Error ? error.message : error));
-    return { config, db, auth, api, invitations, features, previews, artifacts, schemaReady };
+    return { config, db, auth, api, invitations, features, previews, artifacts };
 }
 
 let runtime: ReturnType<typeof compose> | undefined;
@@ -129,9 +125,26 @@ export function getRuntime() {
     return runtime;
 }
 
-// The runtime once the schema is known to match; rejects when it does not.
+// A schema check that passed is final. One that failed is repeated, at most every few seconds
+// and shared by concurrent requests, so a database that was briefly unreachable, or one the
+// operator has since migrated, recovers without a restart.
+const RECHECK_AFTER_MS = 3000;
+let schemaCheck: Promise<void> | undefined;
+let schemaFailedAt = 0;
+
+// The runtime once the schema is known to match. Rejects with SchemaMismatchError when it
+// does not; any other rejection is a failure to check (and surfaces as an error).
 export async function getReadyRuntime() {
     const ready = getRuntime();
-    await ready.schemaReady;
+    if (!schemaCheck || (schemaFailedAt > 0 && Date.now() - schemaFailedAt > RECHECK_AFTER_MS)) {
+        const check = assertSchemaCurrent(ready.db);
+        schemaCheck = check;
+        schemaFailedAt = 0;
+        check.catch((error) => {
+            schemaFailedAt = Date.now();
+            console.error(error instanceof Error ? error.message : error);
+        });
+    }
+    await schemaCheck;
     return ready;
 }

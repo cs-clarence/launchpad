@@ -53,6 +53,12 @@ function createMigrator(db: Kysely<any>, folder: string) {
     });
 }
 
+// Raised when the database and this build disagree about the schema (as opposed to the
+// database being unreachable): the one failure an operator fixes with `migrate` or a restore.
+export class SchemaMismatchError extends Error {
+    override name = "SchemaMismatchError";
+}
+
 async function knownMigrations(migrator: Migrator, folder: string) {
     const known = await migrator.getMigrations().catch((error) => {
         throw error instanceof Error ? error : new Error(String(error));
@@ -66,6 +72,8 @@ async function knownMigrations(migrator: Migrator, folder: string) {
 // Forward-only: no down migrations exist, and nothing runs them automatically.
 // `folder` exists for tests of the loading rules.
 export async function migrateToLatest(db: Kysely<any>, folder = defaultMigrationsFolder()) {
+    // The same naming rules the status check applies, so the two cannot disagree.
+    listMigrationNames(folder);
     const migrator = createMigrator(db, folder);
     await knownMigrations(migrator, folder);
     const { error, results } = await migrator.migrateToLatest();
@@ -80,9 +88,16 @@ export async function migrateToLatest(db: Kysely<any>, folder = defaultMigration
 // without its extension); `migrateToLatest` still enforces the loading rules.
 function listMigrationNames(folder: string) {
     const names = readdirSync(folder)
-        .filter((file) => !file.endsWith(".d.ts"))
-        .map((file) => /^(\d{8}_\d{3}_.+)\.(?:[cm]?[tj]s)$/.exec(file)?.[1])
-        .filter((name): name is string => name !== undefined)
+        .filter((file) => !/\.d\.[cm]?ts$/.test(file))
+        .map((file) => {
+            const name = /^(\d{8}_\d{3}_.+)\.(?:[cm]?[tj]s)$/.exec(file)?.[1];
+            if (name === undefined) {
+                throw new Error(
+                    `Unexpected file in the migrations folder: ${file} (a migration is named <date>_<three digits>_<what> with a script extension)`,
+                );
+            }
+            return name;
+        })
         .sort();
     if (names.length === 0) {
         throw new Error(`No migrations were found in ${folder}.`);
@@ -128,13 +143,13 @@ export async function migrationStatus(
 export async function assertSchemaCurrent(db: Kysely<any>, folder = defaultMigrationsFolder()) {
     const status = await migrationStatus(db, folder);
     if (status.unknown.length > 0) {
-        throw new Error(
+        throw new SchemaMismatchError(
             `The database has migrations this version does not know (${status.unknown.join(", ")}). ` +
                 "It was migrated by a newer Launchpad: run that version, or restore a backup.",
         );
     }
     if (status.pending.length > 0) {
-        throw new Error(
+        throw new SchemaMismatchError(
             `The database schema is behind: ${status.pending.length} migration(s) pending ` +
                 `(${status.pending.join(", ")}). Take a backup, then run \`launchpad-admin migrate\`.`,
         );

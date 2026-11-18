@@ -5,6 +5,7 @@ export {
     assertSchemaCurrent,
     migrateToLatest,
     migrationStatus,
+    SchemaMismatchError,
     type MigrationStatus,
 } from "./migrate";
 

@@ -45,6 +45,7 @@ import {
 } from "@launchpad/services";
 import { z } from "zod";
 import { type FakeSmtp, mailText, startFakeSmtp } from "@launchpad/auth/testing";
+import { migrateToLatest } from "@launchpad/database";
 import { createTestDatabase } from "@launchpad/database/testing";
 import { SITE, tarGz } from "@launchpad/services/testing";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
@@ -2743,12 +2744,23 @@ describe("a controller on a schema it was not built for", () => {
     it("answers 503 instead of serving", async () => {
         const behind = await createTestDatabase();
         let proc: ChildProcess | undefined;
+        let folder = "";
         try {
             await behind.migrate();
-            await behind.db
-                .deleteFrom("launchpad_migration" as never)
-                .where("name" as never, "=", "20261116_017_worker_heartbeat_lifecycle" as never)
-                .execute();
+            // A folder with one migration this database has not seen: names only for the
+            // applied ones (the status check never loads them), one real pending file.
+            const source = path.resolve(
+                import.meta.dirname,
+                "../../../../packages/database/src/migrations",
+            );
+            folder = await fs.mkdtemp(path.join(os.tmpdir(), "lp-behind-"));
+            for (const file of await fs.readdir(source)) {
+                await fs.writeFile(path.join(folder, file), "export async function up() {}");
+            }
+            await fs.writeFile(
+                path.join(folder, "20991231_900_pending_check.mjs"),
+                "export async function up() {}",
+            );
             const port = nextPort++;
             proc = spawn("bun", [".output/server/index.mjs"], {
                 env: {
@@ -2756,13 +2768,17 @@ describe("a controller on a schema it was not built for", () => {
                     HOME: process.env.HOME,
                     NODE_ENV: "production",
                     DATABASE_URL: behind.url,
+                    LAUNCHPAD_MIGRATIONS_DIR: folder,
                     LAUNCHPAD_AUTH_SECRET: "integration-secret-".repeat(3),
                     LAUNCHPAD_BASE_URL: `http://127.0.0.1:${port}`,
                     HOST: "127.0.0.1",
                     PORT: String(port),
                 },
-                stdio: "ignore",
+                stdio: ["ignore", "pipe", "pipe"],
             });
+            let logs = "";
+            proc.stdout?.on("data", (d) => (logs += d));
+            proc.stderr?.on("data", (d) => (logs += d));
             let response: Response | undefined;
             for (let i = 0; i < 100 && !response; i++) {
                 response = await fetch(`http://127.0.0.1:${port}/api/health`).catch(
@@ -2772,9 +2788,22 @@ describe("a controller on a schema it was not built for", () => {
             }
             expect(response?.status).toBe(503);
             expect(await response?.json()).toMatchObject({ code: "schema-mismatch" });
+            // The cause is the pending migration, not a missing folder or broken settings.
+            expect(logs).toContain("schema is behind");
+            expect(logs).toContain("20991231_900_pending_check");
+
+            // Migrating while it runs recovers it without a restart.
+            await migrateToLatest(behind.db, folder);
+            let recovered = 503;
+            for (let i = 0; i < 30 && recovered === 503; i++) {
+                await new Promise((r) => setTimeout(r, 500));
+                recovered = (await fetch(`http://127.0.0.1:${port}/api/health`)).status;
+            }
+            expect(recovered).toBe(200);
         } finally {
             proc?.kill("SIGTERM");
             await behind.destroy();
+            if (folder) await fs.rm(folder, { recursive: true, force: true });
         }
     });
 });
