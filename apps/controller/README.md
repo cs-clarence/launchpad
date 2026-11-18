@@ -6,7 +6,7 @@ Keep this page current when the entry points or runtime change.
 - `src/routes/api.$.ts` mounts `src/server/api.ts` without starting another server.
 - Services live in `@launchpad/services`, outside HTTP and UI frameworks.
 - `src/styles.css` installs Skeleton 5, Tailwind 4, and the Cerberus theme.
-- `Dockerfile` produces a non-root Bun runtime from Nitro's build output.
+- `containers/controller/Dockerfile` (repository root) produces a non-root Bun runtime from Nitro's build output, with the operator commands (`bun .output/admin.mjs ...`).
 - `src/server/runtime.ts` composes configuration, the shared Kysely database,
   Better Auth and the API on first use.
 - `src/admin/main.ts` is the operator command, run through Omni (see First run). Omni
@@ -57,10 +57,10 @@ seconds, so it recovers by itself once the database is migrated (or reachable). 
 is **behind** (the API answers `503 schema-mismatch`; the worker exits) needs `migrate`, and one
 a **newer** version already migrated needs that version or a restored backup. `migrate --status`
 lists applied and pending migrations and changes nothing (exit code 1 if any are pending or
-unknown). Both built artifacts carry their migration files: `.output/server/migrations` for the
-controller and `dist/migrations` for the worker. `LAUNCHPAD_MIGRATIONS_DIR` names another folder.
-A built controller cannot run `migrate` itself (the shipped files import packages it does not
-carry); run `migrate` from the source checkout or, later, the packaged admin (milestone 6).
+unknown). Both built artifacts carry their migrations, bundled so they run without the repository:
+`.output/migrations` for the controller (and the operator commands in `.output/admin.mjs`, so
+`bun .output/admin.mjs migrate` works in the image) and `dist/migrations` for the worker.
+`LAUNCHPAD_MIGRATIONS_DIR` names another folder.
 
 Operator commands run as an Omni task whose command and options are named arguments.
 Passwords come from a file only you can read (mode 600) or from piped stdin, never from

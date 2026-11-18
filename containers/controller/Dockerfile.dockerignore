@@ -1,5 +1,5 @@
 .git
-.data
+**/.data
 .omni
 .agents
 docs
@@ -10,3 +10,9 @@ docs
 **/.env*
 **/*.pem
 **/*.key
+**/id_*
+**/*_key
+**/.ssh
+**/known_hosts
+**/.npmrc
+**/*.p12

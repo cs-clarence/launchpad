@@ -124,6 +124,10 @@ jobs:
       - name: Integration tests
         run: omni -i run -f=failed test:integration
 
+      # The controller and worker images, built and run against the same disposable database.
+      - name: Images
+        run: omni -i run test:images -p '@launchpad/tooling'
+
       - name: Prune stale caches
         run: omni -i cache prune -sy -o="7d"
 

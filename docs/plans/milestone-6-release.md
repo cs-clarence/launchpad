@@ -183,3 +183,11 @@ expired restored preview, and a preview whose app is gone.
   pointed at nothing, so nothing resolved by name can stand in for a packed tarball. Before
   publishing: the packed READMEs are still developer docs (links into the repository), and the
   manifests have no `license` or `repository`, which wait for the licence and name decisions.
+- Slice 5 (images): `containers/controller/Dockerfile` and `containers/worker/Dockerfile` (the
+  controller recipe moved from `apps/controller/`), `tooling/check-images.ts` and `test:images`
+  (run in the CI integration job). Migrations are now bundled per file
+  (`packages/database/scripts/bundle-migrations.mjs`) and the controller build also produces
+  `.output/admin.mjs`, so `migrate` runs from the image (slice 1's known limit is closed). Found
+  by running the worker image: with deployments off the worker exited at once under Bun (a pending
+  promise does not keep it alive), which a restart policy would have turned into a loop; it now
+  idles on a timer, with a test.

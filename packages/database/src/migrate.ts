@@ -12,7 +12,7 @@ import { FileMigrationProvider, Migrator } from "kysely/migration";
 // migration that sorts before one already applied.
 //
 // Migrations are read from disk at run time. From source the folder sits next to this file;
-// a built artifact ships a copy next to its bundle (the controller's build copies it), so the
+// a built artifact ships its migrations, bundled, next to its bundle (the controller and worker builds do), so the
 // folder is searched for in this file's directory and the few above it.
 // LAUNCHPAD_MIGRATIONS_DIR names one explicitly. See docs/plans/milestone-6-release.md.
 function looksLikeMigrations(dir: string) {
