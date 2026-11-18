@@ -40,6 +40,8 @@ export interface BackupOptions {
     version: string;
     // The dump program: `pg_dump` unless named (the version must not be older than the server).
     pgDump?: string;
+    // Optional bounded drill cancellation; production CLI normally lets a dump complete.
+    signal?: AbortSignal;
 }
 
 // Connection settings travel in the environment, never in the argument list where any
@@ -100,13 +102,15 @@ async function dumpDatabase(options: BackupOptions, snapshot: string, file: stri
         {
             env: { PATH: process.env.PATH, ...pgEnvironment(options.databaseUrl) },
             stdio: ["ignore", "pipe", "pipe"],
+            signal: options.signal,
         },
     );
     let errors = "";
     child.stderr.on("data", (chunk) => (errors += chunk));
     const exited = new Promise<number | null>((resolve, reject) => {
-        child.once("error", reject);
-        child.once("close", resolve);
+        let spawnError: Error | undefined;
+        child.once("error", (error) => (spawnError = error));
+        child.once("close", (code) => (spawnError ? reject(spawnError) : resolve(code)));
     });
     const written = pipeline(child.stdout, createWriteStream(file, { mode: 0o600 }));
     const [code] = await Promise.all([exited, written]).catch((error) => {

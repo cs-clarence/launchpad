@@ -46,6 +46,17 @@ omni -i run test:integration      # auth/services/controller on PostgreSQL; SDK 
 omni -i run test:db:down
 ```
 
+To repeat the frozen previous-schema backup → migrate → restart → restore drill
+against disposable PostgreSQL, run `omni -i run test:upgrade -p @launchpad/controller`
+between `test:db:up` and `test:db:down` **on Linux** (Docker host networking).
+`test:integration` runs the host-built variant on other platforms; it does not
+exercise the image. The image and packaged-client checks are `omni -i run test:images
+-p @launchpad/tooling` (Docker, disposable database) and `omni -i run
+test:packages -p @launchpad/tooling` (network, Node and Bun). These build,
+inspect and exercise local artifacts, never publish them. The operator
+[restore drill](docs/restore.md) separates the no-Dokku automated checks from
+the opt-in isolated-host rehearsal (`test:restore:live`, guarded and never in CI).
+
 The SDK's transport suite uses ephemeral loopback HTTP fixtures instead of the
 database: `omni -i run test:integration -p @launchpad/sdk` runs it alone. Fixtures
 close after each test; default `test` remains unit-only and opens no listeners.
@@ -73,19 +84,22 @@ Omni loads `.env.local` files from the repository root and from the project into
 environments, unexpanded. Keep only values you want every task to see in the root file.
 
 Adding a package: use the Omni generator (see [tooling](docs/tooling.md)); it produces
-a package that passes `omni -i run check test build` as generated. ## CI
+a package that passes `omni -i run check test build` as generated.
+
+## CI
 
 `.github/workflows/ci.yaml` runs the same Omni tasks you run locally, as a chain of
 jobs on pushes to `main`, pull requests and the merge queue:
 
-| Job           | Runs                                                                           |
-| ------------- | ------------------------------------------------------------------------------ |
-| `commits`     | Conventional Commits check of the pull request's commits (PRs only)            |
-| `check`       | `omni -i run check check:compose`: types, lint, format, dependency consistency |
-| `build`       | `omni -i run build`                                                            |
-| `test`        | `omni -i run test` (unit tests)                                                |
-| `integration` | `omni -i run test:db:up`, then `omni -i run test:integration`                  |
-| `CI Passed`   | The gatekeeper: runs last and always, and fails unless every job passed        |
+| Job           | Runs                                                                                                             |
+| ------------- | ---------------------------------------------------------------------------------------------------------------- |
+| `commits`     | Conventional Commits check of the pull request's commits (PRs only)                                              |
+| `check`       | `omni -i run check check:compose`: types, lint, format, dependency consistency                                   |
+| `build`       | `omni -i run build`                                                                                              |
+| `test`        | `omni -i run test` (unit tests)                                                                                  |
+| `integration` | Disposable database, `test:integration` (host-built variant), `test:images`, `test:upgrade` (built image; Linux) |
+| `packages`    | `test:packages`: install packed clients outside the workspace                                                    |
+| `CI Passed`   | The gatekeeper: runs last and always, and fails unless every job passed                                          |
 
 **Require only `CI Passed`** in the `main` branch protection or ruleset. GitHub cannot
 match job names that change, and a required job that is skipped never reports, so the
@@ -104,7 +118,8 @@ together with the version you use locally. Bun comes from `packageManager` in
 No CI-only checks exist: anything CI runs you can run locally with the commands above. Install the Cocogitto commit-msg hook
 locally with `cog install-hook --all`; it validates Conventional Commit messages
 and checks existing history once the repository has a first commit. Browser tests, live
-SSH tests, image builds and deployment tests are not part of the default checks.
+SSH tests and deployment tests are not part of the default checks; image builds run in
+the integration job.
 See [tooling](docs/tooling.md) and [patterns](docs/patterns/README.md).
 
 ## Git

@@ -191,3 +191,15 @@ expired restored preview, and a preview whose app is gone.
   by running the worker image: with deployments off the worker exited at once under Bun (a pending
   promise does not keep it alive), which a restart policy would have turned into a loop; it now
   idles on a timer, with a test.
+- Slice 6 (upgrade drill and docs): the frozen 14-migration PostgreSQL fixture and
+  `test:upgrade` exercise the built admin command and controller image against disposable
+  PostgreSQL (backup, image migration, image restart, authenticated operator status,
+  fresh restore). The operator
+  install, backup, restore, upgrade, private routing and onboarding how-tos are
+  under `docs/`; the restore how-to records the isolated Dokku rehearsal separately.
+  The separate opt-in `test:restore:live` uses a _test-only_ name constraint
+  on a throwaway database and a test-only Dokku allowlist, so only `lp-test-`
+  apps reach the approved disposable host. It rehearsed the full order on
+  2026-11-18 (recorded in `docs/plans/live-dokku-verification.md`); CI does
+  not run it, and the shortened lease/simulated worker stop cannot prove a
+  production remote command settles within five minutes.

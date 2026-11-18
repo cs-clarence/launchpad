@@ -29,6 +29,24 @@ tasks:
       append:
         - build
 
+  # Frozen previous-schema fixture: backup, built admin migrate, controller restart, restore.
+  # Uses the same disposable PostgreSQL as test:integration; never contacts Dokku.
+  test:upgrade:
+    description: Build the controller image and drill an upgrade and restore against disposable PostgreSQL
+    exec: sh -c 'root="$(git rev-parse --show-toplevel)"; tag="launchpad-upgrade-drill-$$:test"; trap "docker image rm \"$tag\" >/dev/null 2>&1 || true" EXIT; export TEST_DATABASE_URL="${TEST_DATABASE_URL:-postgres://postgres:dev@127.0.0.1:55432/postgres}"; docker build -q -f "$root/containers/controller/Dockerfile" -t "$tag" "$root" && LAUNCHPAD_UPGRADE_IMAGE="$tag" bun --bun vitest run --config vitest.config.integration.ts src/admin/__tests__/upgrade.spec.ts'
+    dependencies:
+      - build
+    cache:
+      enabled: false
+
+  # Explicit opt-in on the approved disposable Dokku only. The test refuses any other
+  # PostgreSQL target and allows only lp-test- app names; no CI job calls this.
+  test:restore:live:
+    description: Rehearse the whole restore runbook on disposable PostgreSQL and Dokku
+    exec: bun --bun vitest run --config vitest.config.restore-live.ts
+    cache:
+      enabled: false
+
   test:
     enabled: true
 
