@@ -9,13 +9,14 @@ import {
 } from "@launchpad/database";
 import { createTestDatabase } from "@launchpad/database/testing";
 import { sql } from "kysely";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeEach, describe, expect, it } from "vitest";
 
 let testDb: Awaited<ReturnType<typeof createTestDatabase>>;
-beforeAll(async () => {
+// A fresh database for every test: none depends on another's history.
+beforeEach(async () => {
     testDb = await createTestDatabase();
 });
-afterAll(async () => {
+afterEach(async () => {
     await testDb.destroy();
 });
 
@@ -73,6 +74,11 @@ describe("migration status and the schema guard", () => {
     });
 
     it("reports unknown and pending migrations together", async () => {
+        const older = await folderWith(["20300101_001_a.mjs"]);
+        await migrateToLatest(testDb.db, older);
+        await sql`insert into launchpad_migration (name, timestamp) values ('20300101_099_future', now()::text)`.execute(
+            testDb.db,
+        );
         const both = await folderWith(["20300101_001_a.mjs", "20300101_002_b.mjs"]);
         const status = await migrationStatus(testDb.db, both);
         expect(status.pending).toEqual(["20300101_002_b"]);
@@ -89,8 +95,28 @@ describe("migration status and the schema guard", () => {
         await expect(migrateToLatest(testDb.db, misnamed)).rejects.toThrow(/Unexpected file.*_2_b/);
     });
 
+    it("accepts a declaration file beside the migrations, in status and in migrate", async () => {
+        const dir = await folderWith(["20300101_001_a.mjs", "20300101_001_a.d.mts"]);
+        expect((await migrationStatus(testDb.db, dir)).pending).toEqual(["20300101_001_a"]);
+        await expect(migrateToLatest(testDb.db, dir)).resolves.toHaveLength(1);
+    });
+
+    it("resolves a relative LAUNCHPAD_MIGRATIONS_DIR so status and migrate use one folder", async () => {
+        const dir = await folderWith(["20300101_001_a.mjs"]);
+        const before = process.env.LAUNCHPAD_MIGRATIONS_DIR;
+        process.env.LAUNCHPAD_MIGRATIONS_DIR = path.relative(process.cwd(), dir);
+        try {
+            await expect(migrateToLatest(testDb.db)).resolves.toHaveLength(1);
+            expect((await migrationStatus(testDb.db)).applied).toEqual(["20300101_001_a"]);
+        } finally {
+            if (before === undefined) delete process.env.LAUNCHPAD_MIGRATIONS_DIR;
+            else process.env.LAUNCHPAD_MIGRATIONS_DIR = before;
+        }
+    });
+
     it("finds the migrations folder from LAUNCHPAD_MIGRATIONS_DIR", async () => {
         const dir = await folderWith(["20300101_001_a.mjs"]);
+        await migrateToLatest(testDb.db, dir);
         const before = process.env.LAUNCHPAD_MIGRATIONS_DIR;
         process.env.LAUNCHPAD_MIGRATIONS_DIR = dir;
         try {

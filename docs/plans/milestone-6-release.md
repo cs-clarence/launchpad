@@ -49,13 +49,17 @@ live infrastructure, plus a drill an operator can repeat.
    packaging the controller later wants it split out, that is a mechanical move.) It needs
    `DATABASE_URL`, runs `pg_dump`/`pg_restore` from the host's PostgreSQL client, and refuses
    to restore unless the workers are provably stopped (see 4). Proposed: yes.
-4. **Restore safety.** `restore` refuses to run while a worker heartbeat in the live
-   database is recent (the heartbeat in `status.ts`), unless `--i-have-stopped-the-workers`
-   is given, and it never touches Dokku. After restore it prints the remaining steps of the
-   runbook (artifact check, detection, bring-up order). A `check-restore` command does the
-   read-only detection steps 3 and 4 (every live artifact has its file; list live previews
-   whose Dokku app is gone via the allowlisted `apps:exists`), closing the "no tool built"
-   follow-up. It never redeploys or deletes. Proposed: yes.
+4. **Restore safety.** The primary requirement is the runbook's step 1 in
+   `docs/plans/application.md`: lifecycle and deployments off, every worker **stopped and
+   waited for**, and remote destroys given time to settle. A command cannot prove that: an
+   expired heartbeat does not show a worker has exited. So `restore` requires the operator's
+   explicit confirmation that step 1 is done (`--i-have-stopped-the-workers`, which confirms
+   the whole step, not only the heartbeat), and, as a secondary safety net, also refuses
+   while a worker heartbeat in the live database is recent, whatever the flag says. It never
+   touches Dokku. After restore it prints the remaining steps of the runbook. A `check-restore`
+   command does the read-only detection steps 3 and 4 (every live artifact has its file; list
+   live previews whose Dokku app is gone via the allowlisted `apps:exists`). It never redeploys
+   or deletes. Proposed: yes.
 5. **Migrations.** The existing `launchpad-admin migrate` command (and `migrate --status`, a dry run
    listing pending migrations) that is the only thing that applies migrations in a
    packaged install; processes check the schema version at start and refuse to run against
@@ -92,8 +96,14 @@ Each slice is one PR, with checks green and a self-review before the review roun
    PostgreSQL (empty, current, behind, ahead).
 2. **Backup.** `launchpad-admin backup <dir>`: consistent dump, copy of the data
    directory, manifest with checksums; secrets excluded; refuses to overwrite; verifies its
-   own output. Tests: round trip of a database with artifacts; a corrupted file is
-   detected by `verify`.
+   own output. **One consistent snapshot of both sources:** the
+   database is dumped first and the data directory copied after it, then the command checks
+   that every live artifact row in the dump has its file in the copy and fails if one does not.
+   An archive uploaded in between is only an extra file (archives are immutable and named by
+   their digest), and only the lifecycle's collection removes one, so `backup` refuses to run
+   while the lifecycle is on unless told the workers are stopped. Tests: round trip of a database with artifacts; a corrupted file is
+   detected by `verify`; an upload made between the dump and the copy leaves a consistent
+   backup, and a file removed between them is reported and fails the backup.
 3. **Restore and check-restore.** `restore` (worker-heartbeat guard, manifest and checksum
    verification, restores into an empty database or `--replace` with a typed
    confirmation), and `check-restore` (read-only). Tests: restore into a fresh database,

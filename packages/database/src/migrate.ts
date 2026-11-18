@@ -25,7 +25,7 @@ function looksLikeMigrations(dir: string) {
 
 function defaultMigrationsFolder() {
     const explicit = process.env.LAUNCHPAD_MIGRATIONS_DIR;
-    if (explicit) return explicit;
+    if (explicit) return path.resolve(explicit);
     let dir = import.meta.dirname;
     for (let depth = 0; depth < 4; depth++) {
         const candidate = path.join(dir, "migrations");
@@ -43,6 +43,8 @@ function createMigrator(db: Kysely<any>, folder: string) {
             path,
             migrationFolder: folder,
             onFileIgnored(fileName, reason) {
+                // Declaration files may sit beside the migrations; status skips them too.
+                if (/\.d\.[cm]?ts$/.test(fileName)) return;
                 throw new Error(
                     `Unexpected file in the migrations folder: ${fileName} (${reason})`,
                 );
