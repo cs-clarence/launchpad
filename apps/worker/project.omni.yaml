@@ -39,7 +39,7 @@ tasks:
       key:
         files:
           append:
-            - "scripts/**/*"
+            - "@workspace/packages/database/scripts/**/*"
             - "@workspace/packages/database/src/migrations/**/*"
 
   publish:

@@ -69,6 +69,7 @@ describe("CI workflow", () => {
             "test:integration",
             "test:db:up",
             "test:packages",
+            "test:images",
         ]) {
             expect(runs(all, task), task).toBe(true);
         }

@@ -6,7 +6,7 @@
     "type": "module",
     "scripts": {
         "dev": "vite dev --host 127.0.0.1",
-        "build": "vite build && node scripts/copy-migrations.mjs",
+        "build": "vite build && bun ../../packages/database/scripts/bundle-migrations.mjs .output/migrations && bun build src/admin/main.ts --target=bun --outfile=.output/admin.mjs",
         "start": "bun .output/server/index.mjs",
         "test:unit": "bun --bun vitest run",
         "check:types": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.node.json",

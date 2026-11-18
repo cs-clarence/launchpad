@@ -26,9 +26,13 @@ async function main() {
     if (!loaded.enabled) {
         // Idle rather than exit, so a supervisor does not restart it in a loop.
         log({ event: "disabled", message: "LAUNCHPAD_DEPLOYMENTS is off; the worker is idle." });
+        // A pending promise does not keep the process alive on its own (Bun exits, and a supervisor
+        // would restart it in a loop): a timer does, and ends with the shutdown signal.
+        const keepAlive = setInterval(() => {}, 2 ** 30);
         await new Promise<void>((resolve) =>
             shutdown.signal.addEventListener("abort", () => resolve(), { once: true }),
         );
+        clearInterval(keepAlive);
         return;
     }
     const { config } = loaded;

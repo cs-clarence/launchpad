@@ -32,7 +32,7 @@ Every project extends a preset in `omni/presets` (all of them extend `ts.omni.ya
 which defines the shared tasks: `build`, `check:types`, `check:lint`, `check:format`,
 `check`, `test:unit`, `test:integration` and `test`. The `tooling/` project holds
 repository-wide tasks that belong to no package (whole-repo format, tooling types and
-lint, `check:deps`, `check:compose`, `test:db:up`/`down`, `test:packages`, and tests of this tooling).
+lint, `check:deps`, `check:compose`, `test:db:up`/`down`, `test:packages`, `test:images`, and tests of this tooling).
 
 Rules that keep the graph correct:
 
@@ -169,20 +169,30 @@ controller's settings (PostgreSQL, authentication, email, API docs) are document
 in `apps/controller/README.md` and `apps/controller/.env.local.example`; the worker's SSH settings to Dokku are in `apps/worker/README.md`. Do not bake
 credentials into an image.
 
-`apps/controller/Dockerfile` is a multistage Bun image recipe, built from the
-monorepo root. Its Dockerfile-specific ignore file excludes local env files,
-state, dependencies, and agent context, overriding the root Dokku build ignore
-file. The runtime runs as `bun` and gets no Docker socket.
-
-Image building and runtime startup are intentionally deferred. When authorized:
+`containers/controller/Dockerfile` and `containers/worker/Dockerfile` are multistage Bun image
+recipes, built from the monorepo root (each has a Dockerfile-specific ignore file that excludes local
+env files, state, dependencies and agent context, overriding the root Dokku build ignore file):
 
 ```sh
-docker build -f apps/controller/Dockerfile -t launchpad/controller:dev .
+docker build -f containers/controller/Dockerfile -t launchpad/controller:dev .
+docker build -f containers/worker/Dockerfile -t launchpad/worker:dev .
 ```
 
-The recipe has not been container-built or runtime-tested with the current
-controller. It ships only the built server: the operator commands (`migrate`,
-`setup`) and the migration files run from a source checkout until milestone 6
-packages them. `docker-compose.yml`
-still manages Dokku only; controller/PostgreSQL orchestration and secure
-controller-to-Dokku networking remain future work.
+Both run as the fixed unprivileged uid 10001 (they share one data directory), hold no secret (every
+setting arrives at run time), and contain no source, env file or key. The controller image has a
+healthcheck and carries the operator commands: `bun .output/admin.mjs migrate` (and `setup`,
+`backup`, ...). The worker image carries the `docker` client and `ssh`; at run time it still needs
+the data directory, a Dokku SSH key and pinned known_hosts file, and a Docker engine whose socket
+its user may use (give the container the socket's group). A built artifact's migrations are
+bundled into `.output/migrations` (controller) and `dist/migrations` (worker). `backup` and
+`restore` need a `pg_dump`/`pg_restore` at least as new as the server, which the image does not
+carry: mount one and set `LAUNCHPAD_PG_DUMP` / `LAUNCHPAD_PG_RESTORE`.
+
+`omni -i run test:images -p @launchpad/tooling` builds both, checks them (non-root, no secret in a
+layer, no `.env`, `.git`, key or source file, the expected files present), runs `migrate` from the
+controller image against the disposable PostgreSQL, starts the controller and waits for `/api/health`
+and a healthy healthcheck, and starts the worker (deployments off). It needs Docker and
+`TEST_DATABASE_URL`, removes everything it creates by exact name, never pushes, and never touches
+Dokku. CI runs it in the integration job. `docker-compose.yml` still manages Dokku only;
+controller/PostgreSQL orchestration and secure controller-to-Dokku networking remain future work
+(`docs/plans/production-compose-follow-up.md`).

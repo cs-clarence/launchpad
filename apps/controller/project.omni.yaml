@@ -41,7 +41,7 @@ tasks:
         files:
           append:
             - "public/**/*"
-            - "scripts/**/*"
+            - "@workspace/packages/database/scripts/**/*"
             - "@workspace/packages/database/src/migrations/**/*"
       output:
         files:
