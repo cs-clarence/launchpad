@@ -12,10 +12,11 @@ where they are more specific.
 ## Requested outcome
 
 - Clean up development/test resources created by the agent after milestone work.
-  The user explicitly authorized both taking down their existing Dokku/demo
-  setup and deleting its persistent data during the final cleanup. Identify the
-  associated containers, volumes, `.data/dokku` and `view-demo` data before
-  deletion. Do not broadly prune Docker or touch unrelated resources/data.
+  The user approved the intent to retire the existing Dokku/demo setup,
+  including its persistent data. Executing deletion remains gated on the approved
+  exact target list in slice 5 below. Identify the associated containers, volumes,
+  `.data/dokku` and `view-demo` data before deletion. Do not broadly prune Docker
+  or touch unrelated resources/data.
 - Prepare a production Compose stack with controller, worker, PostgreSQL, Dokku
   and other required dependencies wired together and operationally documented.
 - Move the Dokku Dockerfile to `containers/dokku/` and put other custom Dockerfiles
@@ -45,6 +46,11 @@ publishing images/namespaces.
 ## Status
 
 Queued. Application milestones 0 to 6 are built (milestone 6 closed 2026-11-18, `docs/plans/milestone-6-release.md`).
+The user requested one draft production-preparation PR on 2026-11-19, with this
+plan committed first and the package-scope rename next. Its initial implementation
+is the `@launchpad-kit` workspace rename, not a production stack. npm scope
+ownership remains unverified; publishing or claiming registry namespaces needs
+separate verification and explicit authorization.
 Requirements this work must meet that the application milestones surfaced:
 
 - The controller and the worker share one data directory and must run as **one user** with read
@@ -269,7 +275,8 @@ if ownership, dependencies or backup scope are unclear.
   approved; no production credentials in CI.
 - Require independent review of security/storage/routing contracts and of the
   final destructive target list; review does not authorize executing deletion.
-- No commits, pushes or PRs for this draft unless requested. During approved
+- The draft umbrella PR was requested; committing and pushing its preparation
+  work does not authorize deployment, publishing or cleanup. During approved
   implementation use the existing requested PR/review workflow.
 - Report configuration prepared, disposable behavior verified, cleanup completed,
   and production **not started** as separate outcomes. Published-artifact install
