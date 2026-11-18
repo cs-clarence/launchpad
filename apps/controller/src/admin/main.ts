@@ -7,7 +7,10 @@ import {
     setupFirstOperator,
 } from "@launchpad/auth";
 import { createDatabase, migrateToLatest, migrationStatus } from "@launchpad/database";
+import { lifecycleConfigFromEnv } from "@launchpad/services";
 import { readFileSync, statSync } from "node:fs";
+import path from "node:path";
+import { createBackup, verifyBackup } from "./backup";
 
 async function readStdin(): Promise<string> {
     const chunks: Buffer[] = [];
@@ -81,6 +84,49 @@ program
                 ? "Database is up to date."
                 : results.map((r) => `${r.name}: ${r.status}`).join("\n"),
         );
+    });
+
+program
+    .command("backup")
+    .description(
+        "Write a backup (database dump, stored archives, manifest with checksums) to a new directory",
+    )
+    .argument("<dir>", "a directory that does not exist yet")
+    .option(
+        "--i-have-stopped-the-workers",
+        "confirm every worker and the lifecycle are stopped (required while the lifecycle is on)",
+    )
+    .action(async (dir, options) => {
+        const manifest = await withDatabase((db) =>
+            createBackup({
+                db,
+                databaseUrl: process.env.DATABASE_URL!,
+                dataDir: path.resolve(process.env.LAUNCHPAD_DATA_DIR ?? ".data/controller"),
+                dest: dir,
+                workersStopped: options.iHaveStoppedTheWorkers === true,
+                lifecycleEnabled: lifecycleConfigFromEnv(process.env).enabled,
+                version:
+                    process.env.LAUNCHPAD_VERSION || process.env.npm_package_version || "unknown",
+                pgDump: process.env.LAUNCHPAD_PG_DUMP,
+            }),
+        );
+        console.log(
+            `Backup written to ${path.resolve(dir)}: ${manifest.migrations.length} migrations, ` +
+                `${manifest.artifacts.length} archive(s). Keep it private: the dump holds password and API-key hashes.`,
+        );
+    });
+
+program
+    .command("verify-backup")
+    .description("Check a backup directory against its manifest (no database needed)")
+    .argument("<dir>", "the backup directory")
+    .action(async (dir) => {
+        const problems = await verifyBackup(dir);
+        if (problems.length > 0) {
+            console.error(problems.map((p) => `  ${p}`).join("\n"));
+            throw new Error(`The backup does not verify (${problems.length} problem(s)).`);
+        }
+        console.log("The backup verifies.");
     });
 
 program
