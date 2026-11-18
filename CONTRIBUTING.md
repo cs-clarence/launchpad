@@ -54,7 +54,7 @@ runs it. The image and packaged-client checks are `omni -i run test:images
 test:packages -p @launchpad/tooling` (network, Node and Bun). These build,
 inspect and exercise local artifacts, never publish them. The operator
 [restore drill](docs/restore.md) separates the no-Dokku automated checks from
-the optional isolated-host rehearsal.
+the opt-in isolated-host rehearsal (`test:restore:live`, guarded and never in CI).
 
 The SDK's transport suite uses ephemeral loopback HTTP fixtures instead of the
 database: `omni -i run test:integration -p @launchpad/sdk` runs it alone. Fixtures

@@ -197,11 +197,9 @@ expired restored preview, and a preview whose app is gone.
   fresh restore). The operator
   install, backup, restore, upgrade, private routing and onboarding how-tos are
   under `docs/`; the restore how-to records the isolated Dokku rehearsal separately.
-  An actual remote in-flight destroy is **not** run by CI: it needs the explicitly
-  isolated host and is not implied by the database-only test. The whole-runbook
-  remote rehearsal is still open and must be recorded before the slice is called
-  complete. It is currently blocked on the safety boundary: milestone live tests
-  are limited to `lp-test-` apps, but the production preview table only accepts
-  `lp-` plus ten characters and the normal Dokku client applies that same
-  allowlist. Do not weaken production validation or run the drill with real
-  preview names without a separate decision on the disposable-host exception.
+  The separate opt-in `test:restore:live` uses a _test-only_ name constraint
+  on a throwaway database and a test-only Dokku allowlist, so only `lp-test-`
+  apps reach the approved disposable host. It rehearsed the full order on
+  2026-11-18 (recorded in `docs/plans/live-dokku-verification.md`); CI does
+  not run it, and the shortened lease/simulated worker stop cannot prove a
+  production remote command settles within five minutes.

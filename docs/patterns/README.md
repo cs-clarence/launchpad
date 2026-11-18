@@ -65,7 +65,9 @@ outcomes; never use the generic loader-invalidating mutation path for a reveal.
 The operator command and its backup/restore helpers are
 `apps/controller/src/admin/{main,backup,restore}.ts`; the frozen earlier-schema
 fixture and built-artifact upgrade drill live in
-`apps/controller/src/admin/__tests__/`. Operator procedures are
+`apps/controller/src/admin/__tests__/`; the opt-in live restore drill with
+the worker's real ports and a test-only `lp-test-` adapter is
+`apps/controller/src/admin/live/restore.live.ts`. Operator procedures are
 [install](../install.md), [upgrade](../upgrade.md), [backup](../backup.md),
 [restore](../restore.md), [private routing](../access.md), and
 [onboarding](../onboarding.md).

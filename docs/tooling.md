@@ -74,6 +74,10 @@ Rules that keep the graph correct:
   `test:integration`; no Dokku is touched. The complete operator procedure and
   isolated-host rehearsal are in [restore](restore.md), with
   [installation](install.md), [upgrade](upgrade.md) and [routing](access.md).
+  The separate `omni -i run test:restore:live -p @launchpad/controller`
+  uses only the approved disposable Dokku and PostgreSQL, guarded `lp-test-`
+  names, and a test-only database constraint; see [the restore drill](restore.md).
+  It is opt-in and is not a CI job.
 - **Omni loads `.env.local`** from the repository root and the project into task
   environments without expanding variables, and task `env.vars` override the shell. For
   a default that the shell may override, apply it in the command

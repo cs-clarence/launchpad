@@ -52,3 +52,34 @@ replacement and rollback, destroy-with-neighbour), the suite left no apps behind
 was stopped. The destroy and Dokku code it exercises (`packages/dokku`, `apps/worker/src/lifecycle-ports.ts`,
 `apps/worker/src/docker.ts`) has not changed since the first run. Still worth adding: a neighbour that
 is deployed and probed over HTTP after the destroy.
+
+## Restore runbook rehearsal (2026-11-18)
+
+Approved test-only adapter (user chose it after the upgrade-drill review):
+`apps/controller/src/admin/live/restore.live.ts` on the existing
+`launchpad-live-dokku` (loopback SSH 33022, proxy 39080, isolated
+`/tmp/opencode/live-dokku-20261117/data`) and `launchpad-test-db`
+(loopback 55432). The test checked their identity before any mutation,
+changed only its own disposable database's preview-name constraint to
+`lp-test-<6>`, and injected that pattern into a test-only Dokku client and
+deletion ports. Production schema/validation were unchanged.
+
+The final opt-in `test:restore:live` run passed: created and deployed three
+`lp-test-` apps; backed up the database and artifacts; initiated a deletion
+after the backup and simulated stopping the worker with an outstanding
+remote destroy; waited for the remote command to complete and for its
+shortened one-second **test** lease to pass; restored into a fresh database
+and data directory; `checkRestore` using the real guarded Dokku client
+found the missing app and an expired preview; redeployed a kept preview
+from its restored archive; extended the expired preview while lifecycle
+was off; enabled lifecycle and finished deletion of the preview chosen to
+end. The kept and extended apps remained until the test's exact-name
+cleanup. An `apps:list` after completion reported no apps. Two earlier
+runs failed while debugging redeployment with the old deployment id;
+the final run uses a fresh id, as a real redeployment does.
+
+The test models a stopped worker's lost response and delayed remote
+completion, not an OS process killed in the middle of an SSH command;
+the one-second test lease is **not** the five-minute production lease.
+An operator must still wait for the full lease and slow Dokku triggers
+in a real restore. No `view-demo` or other Dokku was touched.

@@ -61,18 +61,26 @@ start/restart from that image, an authenticated operator status read, and
 restoration into another disposable database.
 It creates only temporary test databases/directories and cleans them up.
 
-The **remote** portion cannot be simulated by that test. A full rehearsal would
-use an isolated disposable Dokku: take a backup with test previews and an
-already-expiring preview, start a deletion, stop workers as in step 1, and
-observe the remote destroy settling **before** restoring. Then run steps 2–5,
-record which app `check-restore` listed as missing, redeploy a kept preview,
-extend the expired preview before enabling lifecycle, and verify it survives
-while the preview chosen to end is deleted.
+The **remote** portion is a separate opt-in task, never run by CI:
+`omni -i run test:restore:live -p @launchpad/controller`. It requires
+`LAUNCHPAD_LIVE_DOKKU=1`, the approved disposable Dokku at
+`127.0.0.1:33022`, its test key and pinned host-key files under
+`/tmp/opencode/live-dokku-20261117/`, and the disposable PostgreSQL at
+`127.0.0.1:55432/postgres`. Start only those two test containers and pass
+those settings with `omni -i -e .env.live-disposable-only`; the non-existent
+env filename prevents a root `.env.local` from overriding the test host.
+The test refuses any other host, port, key path, database or data mount.
 
-**Do not run that rehearsal yet.** The approved live-test boundary allows
-only `lp-test-` apps, while production preview rows and the normal Dokku
-client require `lp-` followed by ten characters. That mismatch needs an
-explicit fixture/safety decision before a real run; weakening production
-validation or pointing the drill at `view-demo` is not a workaround.
-The read-only fake `apps:exists` integration test covers detection but cannot
-prove that a remote destroy has settled.
+In its **throwaway database only**, it substitutes an `lp-test-` name
+constraint and a test-only Dokku allowlist. It backs up three deployed
+previews, simulates stopping a worker while a remote destroy call is
+outstanding, waits for that destroy and a shortened **one-second test lease**
+to settle, restores the database and archives, finds the app missing on
+the real disposable Dokku, redeploys a kept preview, extends an expired
+one before enabling lifecycle, and deletes the preview chosen to end.
+Production validation is unchanged. The recorded run is in
+[live verification](plans/live-dokku-verification.md#restore-runbook-rehearsal-2026-11-18).
+The shortened lease and simulated worker stop do **not** measure the
+production five-minute wait or prove what an arbitrary slow remote trigger
+will do; follow step 1's full wait in a real incident. Never point this
+task at `view-demo`, production PostgreSQL or a non-disposable Dokku.
