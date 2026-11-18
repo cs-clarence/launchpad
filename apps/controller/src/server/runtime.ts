@@ -1,5 +1,5 @@
 import { createAuth, createMailer, loadAuthConfig } from "@launchpad/auth";
-import { createDatabase } from "@launchpad/database";
+import { assertSchemaCurrent, createDatabase } from "@launchpad/database";
 import type { InvitationDeps } from "@launchpad/services";
 import { mkdirSync } from "node:fs";
 import path from "node:path";
@@ -115,7 +115,11 @@ function compose() {
         // Serves the OpenAPI document and Scalar reference; set to "false" to remove them.
         docs: process.env.LAUNCHPAD_API_DOCS !== "false",
     });
-    return { config, db, auth, api, invitations, features, previews, artifacts };
+    // Checked once, in the background; every request awaits it through getReadyRuntime, so a
+    // controller never serves from a schema it was not built for.
+    const schemaReady = assertSchemaCurrent(db);
+    schemaReady.catch((error) => console.error(error instanceof Error ? error.message : error));
+    return { config, db, auth, api, invitations, features, previews, artifacts, schemaReady };
 }
 
 let runtime: ReturnType<typeof compose> | undefined;
@@ -123,4 +127,11 @@ let runtime: ReturnType<typeof compose> | undefined;
 export function getRuntime() {
     runtime ??= compose();
     return runtime;
+}
+
+// The runtime once the schema is known to match; rejects when it does not.
+export async function getReadyRuntime() {
+    const ready = getRuntime();
+    await ready.schemaReady;
+    return ready;
 }

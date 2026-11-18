@@ -1,4 +1,4 @@
-import { createDatabase } from "@launchpad/database";
+import { assertSchemaCurrent, createDatabase } from "@launchpad/database";
 import { createDokkuClient } from "@launchpad/dokku";
 import { recoverInterruptedCollections } from "@launchpad/services";
 import { sweepScratch } from "./build";
@@ -35,6 +35,8 @@ async function main() {
     // A worker killed mid-build leaves its scratch directory behind.
     await sweepScratch(config.dataDir);
     const db = createDatabase(config.databaseUrl, { max: 4 });
+    // Refuse a schema this build was not made for, before anything reads or writes.
+    await assertSchemaCurrent(db);
     // A collection that died between moving an archive aside and committing leaves a live
     // artifact without its file: put it back before any deployment can read it.
     const recovered = await recoverInterruptedCollections(db, { dataDir: config.dataDir });

@@ -11,9 +11,9 @@ export interface CurrentUser {
 // the client bundle.
 export const getCurrentUser = createServerFn({ method: "GET" }).handler(
     async (): Promise<CurrentUser | null> => {
-        const { getRuntime } = await import("./runtime");
+        const { getReadyRuntime } = await import("./runtime");
         const { readSession } = await import("./auth-session");
-        const session = await readSession(getRuntime().auth);
+        const session = await readSession((await getReadyRuntime()).auth);
         if (!session) {
             return null;
         }

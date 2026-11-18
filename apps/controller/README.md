@@ -51,12 +51,21 @@ Copy `.env.local.example` to `.env.local` here and edit it; Omni loads it for `d
 back means stopping the controller and restoring the dump. Stopping management access
 never touches Dokku workloads.
 
+The controller and the worker check the database schema when they start and refuse to run
+against one they were not built for: a database that is **behind** (the controller answers
+`503 schema-mismatch`; the worker exits) needs `migrate`, and one a **newer** version already
+migrated needs that version or a restored backup. `migrate --status` lists applied and pending
+migrations and changes nothing (exit code 1 if any are pending or unknown). A built controller
+carries its migration files at `.output/server/migrations`; `LAUNCHPAD_MIGRATIONS_DIR` names
+another folder.
+
 Operator commands run as an Omni task whose command and options are named arguments.
 Passwords come from a file only you can read (mode 600) or from piped stdin, never from
 an argument or the environment. Omni does not forward piped stdin, so use a file:
 
 ```sh
 omni -i run admin -p @launchpad/controller -a command=migrate           # forward-only, explicit
+omni -i run admin -p @launchpad/controller -a command=migrate -a options=--status  # read-only
 omni -i run admin -p @launchpad/controller -a command=setup \
   -a "options=--email you@example.com --password-file /run/secrets/launchpad-operator"
 omni -i run dev -p @launchpad/controller                                 # dev server

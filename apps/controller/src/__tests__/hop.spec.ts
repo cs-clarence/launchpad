@@ -2738,3 +2738,43 @@ describe("sign-in throttling", () => {
         expect(statuses.slice(20)).toContain(429);
     });
 });
+
+describe("a controller on a schema it was not built for", () => {
+    it("answers 503 instead of serving", async () => {
+        const behind = await createTestDatabase();
+        let proc: ChildProcess | undefined;
+        try {
+            await behind.migrate();
+            await behind.db
+                .deleteFrom("launchpad_migration" as never)
+                .where("name" as never, "=", "20261116_017_worker_heartbeat_lifecycle" as never)
+                .execute();
+            const port = nextPort++;
+            proc = spawn("bun", [".output/server/index.mjs"], {
+                env: {
+                    PATH: process.env.PATH,
+                    HOME: process.env.HOME,
+                    NODE_ENV: "production",
+                    DATABASE_URL: behind.url,
+                    LAUNCHPAD_AUTH_SECRET: "integration-secret-".repeat(3),
+                    LAUNCHPAD_BASE_URL: `http://127.0.0.1:${port}`,
+                    HOST: "127.0.0.1",
+                    PORT: String(port),
+                },
+                stdio: "ignore",
+            });
+            let response: Response | undefined;
+            for (let i = 0; i < 100 && !response; i++) {
+                response = await fetch(`http://127.0.0.1:${port}/api/health`).catch(
+                    () => undefined,
+                );
+                if (!response) await new Promise((r) => setTimeout(r, 200));
+            }
+            expect(response?.status).toBe(503);
+            expect(await response?.json()).toMatchObject({ code: "schema-mismatch" });
+        } finally {
+            proc?.kill("SIGTERM");
+            await behind.destroy();
+        }
+    });
+});
