@@ -180,7 +180,9 @@ Restoring is a procedure, not one command. These are the steps (the reasons are 
       the old schema. If the restore fails or does not check out, the old data is put back.
       Everything in the `public` schema is replaced; other schemas are not touched. A backup is
       taken of `public` only, and a dump that would create another schema or an extension is refused;
-      so is a replace while views or foreign keys in other schemas depend on `public`'s tables.
+      so is a replace while views, foreign keys or column defaults in other schemas depend on
+      objects in `public` (other kinds of cross-schema dependency are not detected: keep
+      Launchpad's database to itself).
     - Run it as the database role the controller and worker use, and that role must own the
       database: `--no-owner` makes the restoring role the owner of everything it creates, and the new
       `public` schema has only the default grants.
@@ -207,12 +209,13 @@ settings in `PG*` variables. The environment files, the authentication secret an
 are not in a backup: put them back yourself. Archives the data directory holds that the backup
 does not are left alone; the worker's cleanup removes unreferenced ones after the retention. A
 restore killed halfway can leave `*.restore-*` temporary files beside the archives (delete them).
-If it was killed after the old schema was moved aside, the database has an empty `public` schema
-and the old data in a `launchpad_replaced_*` schema: list them with
-`select nspname from pg_namespace where nspname like 'launchpad_replaced_%'`, confirm `public` is
-empty, then either restore the pre-restore backup, or put the old data back with
-`drop schema public; alter schema launchpad_replaced_<timestamp> rename to public;`. Do this
-before the controller or any worker starts.
+If it was killed after the old schema was moved aside, the database may have an empty, partly
+restored or missing `public` schema, with the old data in a `launchpad_replaced_*` schema: list
+them with `select nspname from pg_namespace where nspname like 'launchpad_replaced_%'`, then either
+restore the pre-restore backup, or put the old data back, whatever state `public` is in, with
+`drop schema if exists public cascade; alter schema launchpad_replaced_<timestamp> rename to public;`
+(what was restored into `public` had not been checked yet). Do this before the controller or any
+worker starts.
 
 ## API keys
 

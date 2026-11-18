@@ -223,7 +223,7 @@ describe("restoreBackup", () => {
         const failing = path.join(work, "pg_restore_failing.sh");
         await fs.writeFile(
             failing,
-            `#!/bin/sh\ncase "$*" in *--list*) exec ${restoreTool} "$@";; esac\ncat >/dev/null\necho 'boom' >&2\nexit 1\n`,
+            `#!/bin/sh\ncase "$*" in *--list*|*--schema-only*) exec ${restoreTool} "$@";; esac\ncat >/dev/null\necho 'boom' >&2\nexit 1\n`,
             { mode: 0o700 },
         );
         await expect(
@@ -253,7 +253,7 @@ describe("restoreBackup", () => {
         const empty = path.join(work, "pg_restore_noop.sh");
         await fs.writeFile(
             empty,
-            `#!/bin/sh\ncase "$*" in *--list*) exec ${restoreTool} "$@";; esac\ncat >/dev/null\nexit 0\n`,
+            `#!/bin/sh\ncase "$*" in *--list*|*--schema-only*) exec ${restoreTool} "$@";; esac\ncat >/dev/null\nexit 0\n`,
             { mode: 0o700 },
         );
         await expect(
@@ -341,6 +341,60 @@ describe("restoreBackup", () => {
             restoreBackup(restoreOptions(target, { replaceDatabase: replaceTarget(target.url) })),
         ).rejects.toThrow(/reporting\.users.*depend/);
         expect(await tableCount(target.db)).toBeGreaterThan(1);
+
+        // So does a column default in another schema that uses a sequence in public.
+        await sql`drop view reporting.users`.execute(target.db);
+        await sql`create sequence public.shared_seq`.execute(target.db);
+        await sql`create table reporting.t (id bigint default nextval('public.shared_seq'))`.execute(
+            target.db,
+        );
+        await expect(
+            restoreBackup(restoreOptions(target, { replaceDatabase: replaceTarget(target.url) })),
+        ).rejects.toThrow(/reporting\.t.*depend/);
+    });
+
+    it("restores into an empty database that has no public schema", async () => {
+        const target = await emptyTarget();
+        await sql`drop schema public`.execute(target.db);
+        const result = await restoreBackup(restoreOptions(target));
+        expect(result.filesRestored).toBe(3);
+        expect((await target.db.selectFrom("user").select("id").execute()).length).toBe(2);
+    });
+
+    it("restores a dump whose public schema has a non-default owner (listed, but not created)", async () => {
+        const role = `lp_owner_${randomUUID().replaceAll("-", "").slice(0, 8)}`;
+        const odd = await createTestDatabase();
+        targets.push(odd);
+        await odd.migrate();
+        await sql.raw(`create role ${role}`).execute(odd.db);
+        try {
+            await sql.raw(`alter schema public owner to ${role}`).execute(odd.db);
+            // Taken without --schema=public, as an older version did.
+            const unfiltered = path.join(work, "pg_dump_unfiltered2.sh");
+            await fs.writeFile(
+                unfiltered,
+                `#!/bin/sh\nargs=""\nfor a in "$@"; do [ "$a" = "--schema=public" ] || args="$args $a"; done\n${tool("pg_dump").replace('"$@"', "$args")}\n`,
+                { mode: 0o700 },
+            );
+            const dest = path.join(work, "backup-owner");
+            await createBackup({
+                db: odd.db,
+                databaseUrl: odd.url,
+                dataDir: path.join(work, "owner-data"),
+                dest,
+                workersStopped: true,
+                lifecycleEnabled: false,
+                version: "0.0.0-test",
+                pgDump: unfiltered,
+            });
+            const target = await emptyTarget();
+            await restoreBackup(restoreOptions(target, { backupDir: dest }));
+            expect((await target.db.selectFrom("user").select("id").execute()).length).toBe(0);
+            expect(await tableCount(target.db)).toBeGreaterThan(5);
+        } finally {
+            await sql.raw(`alter schema public owner to current_user`).execute(odd.db);
+            await sql.raw(`drop role ${role}`).execute(odd.db);
+        }
     });
 
     it("restores a backup older than the artifact table", async () => {

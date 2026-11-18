@@ -135,11 +135,36 @@ async function preflightPgRestore(
             `The dump also creates ${outside.join(", ")}, outside the public schema that a restore replaces. Nothing was changed.`,
         );
     }
-    // A dump taken with --schema=public creates the schema itself (an older one does not).
-    return { createsPublic: /^\s*\d+;\s+\d+\s+\d+\s+SCHEMA\s+-\s+public\b/m.test(toc) };
+    return { createsPublic: await dumpCreatesPublic(options, dump) };
 }
 
-// Views and foreign keys in other schemas that depend on a table in `public`: dropping the old
+// Whether restoring this dump runs `CREATE SCHEMA public` (one taken with --schema=public does; an
+// older one does not; one whose `public` has a non-default owner can list the entry with only a
+// comment). Read from the SQL it would run, not from its table of contents.
+async function dumpCreatesPublic(options: RestoreOptions, dump: string): Promise<boolean> {
+    const binary = options.pgRestore ?? "pg_restore";
+    const child = spawn(binary, ["--schema-only", "--no-owner", "--no-privileges", "-f", "-"], {
+        env: { PATH: process.env.PATH, ...pgEnvironment(options.databaseUrl) },
+        stdio: ["pipe", "pipe", "pipe"],
+    });
+    let sqlText = "";
+    child.stdout.on("data", (chunk) => (sqlText += chunk));
+    child.stderr.resume();
+    const exited = new Promise<number | null>((resolve, reject) => {
+        child.once("error", reject);
+        child.once("close", resolve);
+    });
+    const fed = pipeline(createReadStream(dump), child.stdin).catch(() => {});
+    const [code] = await Promise.all([exited, fed]);
+    if (code !== 0) {
+        throw new RestoreError(
+            `${binary} could not read the schema of this dump. Nothing was changed.`,
+        );
+    }
+    return /^CREATE SCHEMA public;\s*$/m.test(sqlText);
+}
+
+// Views, foreign keys and column defaults in other schemas that depend on an object in `public`: dropping the old
 // schema afterwards would cascade into them, outside what a restore may touch.
 async function outsideDependents(db: Kysely<any>): Promise<string[]> {
     const views = await sql<{ name: string }>`
@@ -159,7 +184,16 @@ async function outsideDependents(db: Kysely<any>): Promise<string[]> {
         join pg_class t on t.oid = k.confrelid
         join pg_namespace ts on ts.oid = t.relnamespace
         where k.contype = 'f' and ts.nspname = 'public' and cs.nspname <> 'public'`.execute(db);
-    return [...views.rows, ...keys.rows].map((r) => r.name).sort();
+    const defaults = await sql<{ name: string }>`
+        select distinct ns.nspname || '.' || c.relname as name
+        from pg_depend d
+        join pg_attrdef a on a.oid = d.objid and d.classid = 'pg_attrdef'::regclass
+        join pg_class c on c.oid = a.adrelid
+        join pg_namespace ns on ns.oid = c.relnamespace
+        join pg_class q on q.oid = d.refobjid and d.refclassid = 'pg_class'::regclass
+        join pg_namespace qs on qs.oid = q.relnamespace
+        where qs.nspname = 'public' and ns.nspname <> 'public'`.execute(db);
+    return [...views.rows, ...keys.rows, ...defaults.rows].map((r) => r.name).sort();
 }
 
 async function liveWorkers(db: Kysely<any>) {
@@ -323,7 +357,9 @@ export async function restoreBackup(options: RestoreOptions): Promise<RestoreRes
             });
         } else if (createsPublic) {
             // The empty database's own `public` makes way for the one the dump creates.
-            await sql`drop schema public`.execute(db);
+            await sql`drop schema if exists public`.execute(db);
+        } else {
+            await sql`create schema if not exists public`.execute(db);
         }
         const putBack = async () => {
             await db.transaction().execute(async (trx) => {
