@@ -156,7 +156,8 @@ export async function stage(target: Target, outDir: string): Promise<string> {
         version: manifest.version,
         description: manifest.description,
         type: "module",
-        engines: { node: ">=20" },
+        // The bundles depend on commander 15, which needs Node 22.12 or newer.
+        engines: { node: ">=22.12" },
     };
     const readme = path.join(source, "README.md");
     if (existsSync(readme)) cpSync(readme, path.join(stageDir, "README.md"));
@@ -166,11 +167,20 @@ export async function stage(target: Target, outDir: string): Promise<string> {
         // The workspace dependency is the other published library; the rest is from the registry.
         const dependencies: Record<string, string> = {};
         for (const [name, spec] of Object.entries(manifest.dependencies ?? {})) {
-            dependencies[name] = WORKSPACE.test(name)
-                ? `^${byName(name).version}`
-                : spec === "catalog:"
-                  ? catalog()[name]!
-                  : spec;
+            if (WORKSPACE.test(name)) {
+                if (
+                    !TARGETS.some(
+                        (t) => readJson(path.join(root, t.dir, "package.json")).name === name,
+                    )
+                ) {
+                    throw new Error(`${manifest.name} depends on ${name}, which is not packed.`);
+                }
+                dependencies[name] = `^${byName(name).version}`;
+                continue;
+            }
+            const version = spec === "catalog:" ? catalog()[name] : spec;
+            if (!version) throw new Error(`${name} has no version in the root catalog.`);
+            dependencies[name] = version;
         }
         writeFileSync(
             path.join(stageDir, "package.json"),
@@ -179,7 +189,13 @@ export async function stage(target: Target, outDir: string): Promise<string> {
                     ...common,
                     main: "./index.mjs",
                     types: "./index.d.ts",
-                    exports: { ".": { types: "./index.d.ts", import: "./index.mjs" } },
+                    exports: {
+                        ".": {
+                            types: "./index.d.ts",
+                            import: "./index.mjs",
+                            default: "./index.mjs",
+                        },
+                    },
                     sideEffects: false,
                     files: ["*.mjs", "*.d.ts", "**/*.d.ts", "README.md"],
                     dependencies,
@@ -197,6 +213,7 @@ export async function stage(target: Target, outDir: string): Promise<string> {
             "src/index.ts",
             "--target=node",
             "--format=esm",
+            "--env=disable",
             `--outfile=${path.join(stageDir, bin.file)}`,
             ...externalsFor(dependencies).flatMap((name) => ["--external", name]),
         ];
@@ -231,22 +248,24 @@ export async function pack(stageDir: string, destination: string): Promise<strin
     return path.join(destination, path.basename(name));
 }
 
-const FORBIDDEN_PATH = [
-    /(^|\/)\.env/,
-    /(^|\/)src\//,
-    /(^|\/)__tests__\//,
-    /\.spec\./,
-    /\.map$/,
-    /(^|\/)node_modules\//,
-    /(^|\/)tsconfig/,
-    /(^|\/)\.git/,
+// A package holds its manifest, its README and built files, nothing else: an allowlist, so a file
+// nobody thought of (a key, an npmrc, a stray archive) is refused rather than shipped.
+const ALLOWED_PATH = [
+    /^package\.json$/,
+    /^README\.md$/,
+    /^[A-Za-z0-9_-]+\.mjs$/,
+    /^([A-Za-z0-9_-]+\/)*[A-Za-z0-9_.-]+\.d\.ts$/,
 ];
+const FORBIDDEN_PATH = [/\.spec\./, /(^|\/)__tests__\//];
 
 // Problems with what a tarball contains (file paths relative to the package root).
 export function checkListing(files: string[]): string[] {
     const problems: string[] = [];
     for (const file of files) {
-        if (FORBIDDEN_PATH.some((pattern) => pattern.test(file))) {
+        if (
+            FORBIDDEN_PATH.some((pattern) => pattern.test(file)) ||
+            !ALLOWED_PATH.some((p) => p.test(file))
+        ) {
             problems.push(`${file}: must not be packed`);
         }
     }
@@ -262,7 +281,7 @@ export function checkManifest(manifest: Record<string, unknown>): string[] {
     for (const key of ["dependencies", "devDependencies", "peerDependencies"]) {
         const deps = (manifest[key] ?? {}) as Record<string, string>;
         for (const [name, spec] of Object.entries(deps)) {
-            if (/^(workspace|catalog|link|file):/.test(spec)) {
+            if (/^(workspace|catalog|link|file|git|github|http|https|npm):|^git\+/.test(spec)) {
                 problems.push(
                     `${key}.${name} is "${spec}", which only works inside the repository`,
                 );

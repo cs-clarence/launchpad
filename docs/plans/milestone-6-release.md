@@ -175,5 +175,11 @@ expired restored preview, and a preview whose app is gone.
   the `test:packages` task and a `Packages` CI job (in the gate). Found while building it: the
   declarations had extensionless relative imports that `nodenext` consumers cannot resolve
   (fixed when staging). The SDK and contracts are published as libraries and the CLI and MCP as
-  bundled files whose third-party dependencies stay dependencies. Tested on Bun and the current
-  Node LTS; `engines` says Node 20 or newer but only the LTS in CI is exercised.
+  bundled files whose third-party dependencies stay dependencies. Exercised on Bun and the
+  current Node LTS (the Node run was first done in a container here; CI is the check that counts).
+  `engines` is Node 22.12 or newer, which `commander` 15 requires. The libraries are ESM
+  (a `default` export condition lets `require(esm)` work on Node versions that support it). The
+  install step runs without lifecycle scripts, with a cache of its own and the `@launchpad` scope
+  pointed at nothing, so nothing resolved by name can stand in for a packed tarball. Before
+  publishing: the packed READMEs are still developer docs (links into the repository), and the
+  manifests have no `license` or `repository`, which wait for the licence and name decisions.

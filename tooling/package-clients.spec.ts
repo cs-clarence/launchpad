@@ -25,6 +25,9 @@ describe("checkListing", () => {
             "tsconfig.json",
         ]);
         expect(problems).toHaveLength(8);
+        expect(
+            checkListing(["package.json", ".npmrc", "key.pem", "stray.tgz", "x.ts", "dist/a.mjs"]),
+        ).toHaveLength(5);
     });
 
     it("needs a package.json", () => {
@@ -44,10 +47,10 @@ describe("checkManifest", () => {
             checkManifest({
                 ...good,
                 private: true,
-                dependencies: { a: "workspace:^", b: "catalog:", c: "file:../c" },
+                dependencies: { a: "workspace:^", b: "catalog:", c: "file:../c", e: "github:x/y" },
                 devDependencies: { d: "^1.0.0" },
             }),
-        ).toHaveLength(5);
+        ).toHaveLength(6);
     });
 });
 

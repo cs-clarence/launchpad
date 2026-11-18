@@ -8,12 +8,20 @@ import { TARGETS, build, checkListing, checkManifest, pack, stage } from "./pack
 
 const root = path.resolve(import.meta.dirname, "..");
 
-async function exec(command: string[], cwd: string, input?: string) {
+// What a child sees: no LAUNCHPAD_* settings, credentials or .env of the developer, and a home of
+// its own, so a run means the same everywhere. `extra` adds to it.
+let scrubbed: Record<string, string> = {};
+const STEP_TIMEOUT_MS = 5 * 60_000;
+
+async function exec(command: string[], cwd: string, extra: Record<string, string> = {}) {
     const proc = Bun.spawn(command, {
         cwd,
-        stdin: input === undefined ? "ignore" : new Blob([input]),
+        env: { ...scrubbed, ...extra },
+        stdin: "ignore",
         stdout: "pipe",
         stderr: "pipe",
+        timeout: STEP_TIMEOUT_MS,
+        killSignal: "SIGKILL",
     });
     const [out, err, code] = await Promise.all([
         new Response(proc.stdout).text(),
@@ -28,6 +36,13 @@ const fail = (message: string) => problems.push(message);
 
 async function main() {
     const work = mkdtempSync(path.join(tmpdir(), "launchpad-packages-"));
+    scrubbed = {
+        PATH: process.env.PATH ?? "",
+        HOME: path.join(work, "home"),
+        // Not the shared package cache: nothing this job installs may reach a cache that is saved.
+        BUN_INSTALL_CACHE_DIR: path.join(work, "bun-cache"),
+    };
+    mkdirSync(scrubbed.HOME!, { recursive: true });
     try {
         const tarballs: Record<string, string> = {};
         for (const target of TARGETS) {
@@ -67,8 +82,28 @@ async function main() {
                 resolutions: files,
             }),
         );
-        const install = await exec(["bun", "install", "--no-save"], consumer);
+        // The registry may hold a package named like ours (the scope is not registered here): the
+        // overrides pin each one to its tarball, and this makes any lookup that still happens fail
+        // instead of being answered by someone else's package.
+        writeFileSync(
+            path.join(consumer, "bunfig.toml"),
+            '[install.scopes]\n"@launchpad" = "http://127.0.0.1:9/"\n',
+        );
+        const install = await exec(["bun", "install", "--no-save", "--ignore-scripts"], consumer);
         if (install.code !== 0) return fail(`install failed:\n${install.out}\n${install.err}`);
+
+        // What was installed is what was packed, not something resolved by name.
+        for (const [name, file] of Object.entries(tarballs)) {
+            const installed = JSON.parse(
+                readFileSync(path.join(consumer, "node_modules", name, "package.json"), "utf8"),
+            );
+            const wanted = JSON.parse(
+                (await exec(["tar", "xzOf", file, "package/package.json"], work)).out,
+            );
+            if (JSON.stringify(installed) !== JSON.stringify(wanted)) {
+                fail(`${name}: the installed manifest is not the packed one`);
+            }
+        }
 
         const runtimes = [
             "bun",
@@ -81,6 +116,7 @@ async function main() {
 
         // The SDK against a tiny local server standing in for the controller.
         const server = Bun.serve({
+            hostname: "127.0.0.1",
             port: 0,
             fetch(request) {
                 const url = new URL(request.url);
@@ -109,16 +145,20 @@ let buffer = "";
 const reply = new Promise((resolve, reject) => {
     child.stdout.on("data", (chunk) => {
         buffer += chunk;
-        const line = buffer.split("\\n").find((l) => l.trim());
-        if (line) resolve(JSON.parse(line));
+        // Only a complete line is a message.
+        const end = buffer.indexOf("\\n");
+        if (end >= 0) resolve(JSON.parse(buffer.slice(0, end)));
     });
     child.once("error", reject);
     child.once("exit", (code) => reject(new Error("exited " + code)));
 });
 child.stdin.write(JSON.stringify({ jsonrpc: "2.0", id: 1, method: "initialize", params: {
     protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "pack-check", version: "0" } } }) + "\\n");
-const message = await Promise.race([reply, new Promise((_, r) => setTimeout(() => r(new Error("no reply")), 20000))]);
-child.kill();
+let timer;
+const message = await Promise.race([
+    reply,
+    new Promise((_, r) => { timer = setTimeout(() => r(new Error("no reply")), 20000); }),
+]).finally(() => { clearTimeout(timer); child.kill(); });
 if (!message.result?.serverInfo?.name) throw new Error("no server info: " + JSON.stringify(message));
 console.log("mcp ok: " + message.result.serverInfo.name);
 `,
@@ -134,7 +174,9 @@ console.log("mcp ok: " + message.result.serverInfo.name);
                 ],
             ] as const) {
                 const result = await exec([...args], consumer);
-                if (result.code !== 0 && label !== "mcp --help") {
+                const helpShown =
+                    label !== "mcp --help" || /launchpad-mcp/.test(`${result.out}${result.err}`);
+                if (result.code !== 0 || !helpShown) {
                     fail(
                         `${runtime}: ${label} failed (${result.code}):\n${result.out}\n${result.err}`,
                     );
@@ -142,6 +184,19 @@ console.log("mcp ok: " + message.result.serverInfo.name);
                     console.log(`${runtime}: ${label} ok`);
                 }
             }
+        }
+        // The installed command itself (its link, shebang and bin field), as a user runs it.
+        // (The shebang names node, so this needs it.)
+        for (const command of runtimes.includes("node") ? ["launchpad", "launchpad-mcp"] : []) {
+            const result = await exec(
+                [path.join(consumer, "node_modules/.bin", command), "--help"],
+                consumer,
+            );
+            if (result.code !== 0 || !/launchpad/.test(`${result.out}${result.err}`)) {
+                fail(
+                    `${command} --help through node_modules/.bin failed (${result.code}):\n${result.err}`,
+                );
+            } else console.log(`${command} (bin) ok`);
         }
         server.stop(true);
 
