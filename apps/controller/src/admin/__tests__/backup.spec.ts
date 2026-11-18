@@ -336,12 +336,13 @@ describe("createBackup", () => {
             testDb.db,
         );
         const schema = rows[0]!.name;
+        const stored = await upload("search-path");
         await sql.raw(`create schema "${schema}"`).execute(testDb.db);
         try {
             const dest = fresh();
             const manifest = await createBackup(options(dest));
-            // Earlier tests stored archives: an empty list would be a silently incomplete backup.
-            expect(manifest.artifacts.length).toBeGreaterThan(0);
+            // An empty list would be a silently incomplete backup.
+            expect(manifest.artifacts.map((x) => x.sha256)).toContain(stored.digest);
             expect(await verifyBackup(dest)).toEqual([]);
         } finally {
             await sql.raw(`drop schema "${schema}"`).execute(testDb.db);
