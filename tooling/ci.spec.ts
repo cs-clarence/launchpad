@@ -68,6 +68,7 @@ describe("CI workflow", () => {
             "test",
             "test:integration",
             "test:db:up",
+            "test:packages",
         ]) {
             expect(runs(all, task), task).toBe(true);
         }
@@ -107,6 +108,7 @@ describe("CI gatekeeper script", () => {
         build: "success",
         test: "success",
         integration: "success",
+        packages: "success",
     };
 
     it("passes a pull request where every job succeeded", () => {
@@ -120,7 +122,7 @@ describe("CI gatekeeper script", () => {
     });
 
     it("fails when any job failed or was cancelled", () => {
-        for (const job of ["commits", "check", "build", "test", "integration"]) {
+        for (const job of ["commits", "check", "build", "test", "integration", "packages"]) {
             for (const result of ["failure", "cancelled"]) {
                 expect(
                     evaluate("pull_request", { ...allGreen, [job]: result }),
@@ -131,7 +133,7 @@ describe("CI gatekeeper script", () => {
     });
 
     it("fails when a required job was skipped, as happens when an earlier job failed", () => {
-        for (const job of ["check", "build", "test", "integration"]) {
+        for (const job of ["check", "build", "test", "integration", "packages"]) {
             expect(
                 evaluate("push", { ...allGreen, commits: "skipped", [job]: "skipped" }),
                 job,

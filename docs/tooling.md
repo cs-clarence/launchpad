@@ -32,7 +32,7 @@ Every project extends a preset in `omni/presets` (all of them extend `ts.omni.ya
 which defines the shared tasks: `build`, `check:types`, `check:lint`, `check:format`,
 `check`, `test:unit`, `test:integration` and `test`. The `tooling/` project holds
 repository-wide tasks that belong to no package (whole-repo format, tooling types and
-lint, `check:deps`, `check:compose`, `test:db:up`/`down`, and tests of this tooling).
+lint, `check:deps`, `check:compose`, `test:db:up`/`down`, `test:packages`, and tests of this tooling).
 
 Rules that keep the graph correct:
 
@@ -53,6 +53,14 @@ Rules that keep the graph correct:
   build first and their outputs change dependents' keys. A project that needs generated
   files (the controller's route tree) lists its `build` as a dependency and its
   generated files as build outputs.
+- **Packaging.** `omni -i run test:packages -p @launchpad/tooling` builds the SDK, contracts, CLI and
+  MCP server, packs them (`tooling/package-clients.ts`: a generated manifest per package, the SDK
+  and contracts as libraries, the CLI and MCP as one bundled file each), installs the tarballs in a
+  clean project outside the workspace and runs them under Bun and, when it is on the PATH, Node
+  (CLI and MCP `--help`, an MCP handshake, an SDK call against a local server, and a strict
+  TypeScript check of the declarations). It also checks the tarballs hold no `.env`, source, tests
+  or `workspace:`/`catalog:` specifiers. It needs the network and publishes nothing; the package
+  names are placeholders until the product name is decided. CI runs it as the `Packages` job.
 - **`test` is unit tests only.** `test:integration` is explicit. Auth, services and
   controller integration need disposable PostgreSQL (`omni -i run test:db:up`).
   The SDK's integration suite only uses ephemeral loopback HTTP fixtures; run it

@@ -171,3 +171,9 @@ expired restored preview, and a preview whose app is gone.
   deferred to slice 6, where the upgrade drill is written: the how-to under `docs/` and the
   repeatable drill script (the integration tests already exercise each step against a disposable
   database, but not the whole runbook with Dokku and workers).
+- Slice 4 (packaging the clients): `tooling/package-clients.ts` and `tooling/check-packages.ts`,
+  the `test:packages` task and a `Packages` CI job (in the gate). Found while building it: the
+  declarations had extensionless relative imports that `nodenext` consumers cannot resolve
+  (fixed when staging). The SDK and contracts are published as libraries and the CLI and MCP as
+  bundled files whose third-party dependencies stay dependencies. Tested on Bun and the current
+  Node LTS; `engines` says Node 20 or newer but only the LTS in CI is exercised.
