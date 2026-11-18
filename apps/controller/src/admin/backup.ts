@@ -44,10 +44,22 @@ export interface BackupOptions {
 
 // Connection settings travel in the environment, never in the argument list where any
 // local user could read the password.
+// The backup may run against a schema that is behind this build (the point is to back up before
+// migrating), so a column a later migration added is only used where it exists.
+async function columnExists(db: Kysely<any>, table: string, column: string) {
+    const { rows } = await sql<{ present: boolean }>`
+        select exists (
+            select 1 from information_schema.columns
+            where table_schema = current_schema() and table_name = ${table} and column_name = ${column}
+        ) as present`.execute(db);
+    return rows[0]?.present === true;
+}
+
 export function pgEnvironment(databaseUrl: string): Record<string, string> {
     const url = new URL(databaseUrl);
     const env: Record<string, string> = {};
-    const host = url.searchParams.get("host") ?? url.hostname;
+    // libpq wants an IPv6 address without the brackets a URL puts around it.
+    const host = (url.searchParams.get("host") ?? url.hostname).replace(/^\[(.*)\]$/, "$1");
     if (host) env.PGHOST = decodeURIComponent(host);
     if (url.port) env.PGPORT = url.port;
     if (url.username) env.PGUSER = decodeURIComponent(url.username);
@@ -116,17 +128,21 @@ async function dumpDatabase(options: BackupOptions, snapshot: string, file: stri
 export async function createBackup(options: BackupOptions): Promise<BackupManifest> {
     const { db } = options;
     if (!options.workersStopped) {
-        const live = await db
-            .selectFrom("worker_heartbeat")
-            .select((eb) => eb.fn.countAll<string>().as("n"))
-            .where("lifecycle_enabled", "=", true)
-            .where(
-                "last_seen_at",
-                ">",
-                sql<Date>`now() - ${WORKER_LIVE_SECONDS} * interval '1 second'`,
-            )
-            .executeTakeFirstOrThrow();
-        if (options.lifecycleEnabled || Number(live.n) > 0) {
+        // Before the lifecycle existed no worker collected anything, but one that is running
+        // still counts: only a column that exists is used to narrow the question.
+        let live = 0;
+        if (await columnExists(db, "worker_heartbeat", "last_seen_at")) {
+            const onlyLifecycle = (await columnExists(db, "worker_heartbeat", "lifecycle_enabled"))
+                ? sql`and lifecycle_enabled`
+                : sql``;
+            const { rows } = await sql<{ n: string }>`
+                select count(*) as n from worker_heartbeat
+                where last_seen_at > now() - ${WORKER_LIVE_SECONDS} * interval '1 second' ${onlyLifecycle}`.execute(
+                db,
+            );
+            live = Number(rows[0]?.n ?? 0);
+        }
+        if (options.lifecycleEnabled || live > 0) {
             throw new BackupError(
                 "The lifecycle is on (or a worker with it on is running): its collection can remove an archive " +
                     "while the backup copies. Stop the workers and the lifecycle, then confirm with " +
@@ -169,12 +185,18 @@ export async function createBackup(options: BackupOptions): Promise<BackupManife
                 const applied = await sql<{
                     name: string;
                 }>`select name from launchpad_migration order by name`.execute(trx);
-                const live = await trx
-                    .selectFrom("artifact")
-                    .select(["storage_key", "digest"])
-                    .where("collected_at", "is", null)
-                    .orderBy("storage_key")
-                    .execute();
+                const uncollected = (await columnExists(trx, "artifact", "collected_at"))
+                    ? sql`where collected_at is null`
+                    : sql``;
+                const hasArtifacts = await columnExists(trx, "artifact", "storage_key");
+                const live = hasArtifacts
+                    ? (
+                          await sql<{ storage_key: string; digest: string }>`
+                              select storage_key, digest from artifact ${uncollected} order by storage_key`.execute(
+                              trx,
+                          )
+                      ).rows
+                    : [];
                 await dumpDatabase(options, snap[0]!.id, dumpFile);
                 return { rows: live, migrations: applied.rows.map((r) => r.name) };
             });
@@ -256,6 +278,10 @@ export async function verifyBackup(dir: string): Promise<string[]> {
     const root = path.resolve(dir);
     let manifest: BackupManifest;
     try {
+        // A link in place of the manifest could point anywhere.
+        if (!(await fs.lstat(path.join(root, MANIFEST))).isFile()) {
+            return [`${MANIFEST} is not a plain file`];
+        }
         manifest = JSON.parse(await fs.readFile(path.join(root, MANIFEST), "utf8"));
     } catch {
         return [`${MANIFEST} is missing or unreadable`];
@@ -274,6 +300,10 @@ export async function verifyBackup(dir: string): Promise<string[]> {
     const expected = new Map<string, { sha256: string; bytes: number }>();
     expected.set(manifest.database.file, manifest.database);
     for (const artifact of manifest.artifacts) {
+        if (artifact === null || typeof artifact !== "object") {
+            problems.push("an artifact entry is not an object");
+            continue;
+        }
         if (!STORAGE_KEY.test(artifact.storageKey)) {
             problems.push(`${artifact.storageKey}: not an artifact storage key`);
             continue;
