@@ -19,7 +19,7 @@ const dockerEnv = () => ({
     PATH: process.env.PATH,
     DOCKER_HOST: process.env.DOCKER_HOST,
     DOCKER_CONTEXT: process.env.DOCKER_CONTEXT,
-    DOCKER_CONFIG: process.env.DOCKER_CONFIG,
+    DOCKER_CONFIG: process.env.DOCKER_CONFIG ?? path.join(os.homedir(), ".docker"),
     DOCKER_TLS_VERIFY: process.env.DOCKER_TLS_VERIFY,
     DOCKER_CERT_PATH: process.env.DOCKER_CERT_PATH,
 });
