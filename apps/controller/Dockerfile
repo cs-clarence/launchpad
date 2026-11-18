@@ -1,6 +1,6 @@
 # Build from the repository root with BuildKit (the default in current Docker; the classic builder
 # ignores this recipe's own .dockerignore and would copy nothing):
-#   docker build -f containers/controller/Dockerfile -t launchpad/controller:dev .
+#   docker build -f apps/controller/Dockerfile -t launchpad/controller:dev .
 #
 # Runs as an unprivileged user (uid 10001, the same as the worker image: the two share one data
 # directory). Holds no secret: every setting arrives at run time. The operator commands are in
@@ -21,6 +21,9 @@ RUN bun run --filter @launchpad/controller build
 
 FROM oven/bun:${BUN_VERSION}-slim AS runtime
 ARG LAUNCHPAD_UID=10001
+# The release version, recorded in backups and shown in the operator status. Pass it at build
+# time (`--build-arg LAUNCHPAD_VERSION=<version>`); an image built without it reports `unknown`.
+ARG LAUNCHPAD_VERSION=unknown
 # openssh-client: `check-restore` asks Dokku over SSH.
 RUN apt-get update \
     && apt-get install -y --no-install-recommends openssh-client \
@@ -29,7 +32,7 @@ RUN apt-get update \
     && useradd --uid "${LAUNCHPAD_UID}" --gid launchpad --no-create-home --shell /usr/sbin/nologin launchpad \
     && install -d -o launchpad -g launchpad -m 0700 /data
 WORKDIR /app
-ENV NODE_ENV=production HOST=0.0.0.0 PORT=3000 LAUNCHPAD_DATA_DIR=/data
+ENV NODE_ENV=production HOST=0.0.0.0 PORT=3000 LAUNCHPAD_DATA_DIR=/data LAUNCHPAD_VERSION=${LAUNCHPAD_VERSION}
 # Owned by root and read-only to the service user: the program cannot rewrite itself.
 COPY --from=build --chown=root:root /app/apps/controller/.output ./.output
 USER ${LAUNCHPAD_UID}:${LAUNCHPAD_UID}

@@ -12,6 +12,7 @@ import path from "node:path";
 
 const root = path.resolve(import.meta.dirname, "..");
 const run = randomBytes(4).toString("hex");
+const version: string = JSON.parse(readFileSync(path.join(root, "package.json"), "utf8")).version;
 const images = {
     controller: `launchpad-image-check-${run}/controller:test`,
     worker: `launchpad-image-check-${run}/worker:test`,
@@ -106,6 +107,9 @@ async function inspectImage(name: string, expectFiles: string[]) {
     if (!/^\d+:\d+$/.test(config.User ?? "") || config.User.startsWith("0:")) {
         fail(`${name}: runs as "${config.User}", not a fixed unprivileged uid:gid`);
     }
+    if (!(config.Env ?? []).includes(`LAUNCHPAD_VERSION=${version}`)) {
+        fail(`${name}: does not record the release version ${version}`);
+    }
     const history = (await docker(["history", "--no-trunc", "--format", "{{.CreatedBy}}", name]))
         .out;
     if (SECRET_IN_HISTORY.test(history))
@@ -197,12 +201,14 @@ async function main() {
         })());
     try {
         for (const [name, file] of Object.entries({
-            controller: "containers/controller/Dockerfile",
-            worker: "containers/worker/Dockerfile",
+            controller: "apps/controller/Dockerfile",
+            worker: "apps/worker/Dockerfile",
         })) {
             await docker([
                 "build",
                 "-q",
+                "--build-arg",
+                `LAUNCHPAD_VERSION=${version}`,
                 "-f",
                 file,
                 "-t",

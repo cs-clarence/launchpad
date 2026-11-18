@@ -1,6 +1,6 @@
 # Build from the repository root with BuildKit (the default in current Docker; the classic builder
 # ignores this recipe's own .dockerignore and would copy nothing):
-#   docker build -f containers/worker/Dockerfile -t launchpad/worker:dev .
+#   docker build -f apps/worker/Dockerfile -t launchpad/worker:dev .
 #
 # Runs as uid 10001 (the controller's uid: both use one data directory). It needs, at run time
 # and not in the image: the data directory, SSH access to Dokku (a private key and a pinned
@@ -30,6 +30,9 @@ FROM docker:${DOCKER_CLI_VERSION}-cli AS docker-cli
 
 FROM oven/bun:${BUN_VERSION}-slim AS runtime
 ARG LAUNCHPAD_UID=10001
+# The release version, recorded in backups and shown in the operator status. Pass it at build
+# time (`--build-arg LAUNCHPAD_VERSION=<version>`); an image built without it reports `unknown`.
+ARG LAUNCHPAD_VERSION=unknown
 RUN apt-get update \
     && apt-get install -y --no-install-recommends openssh-client \
     && rm -rf /var/lib/apt/lists/* \
@@ -38,7 +41,7 @@ RUN apt-get update \
     && install -d -o launchpad -g launchpad -m 0700 /data
 COPY --from=docker-cli /usr/local/bin/docker /usr/local/bin/docker
 WORKDIR /app
-ENV NODE_ENV=production LAUNCHPAD_DATA_DIR=/data
+ENV NODE_ENV=production LAUNCHPAD_DATA_DIR=/data LAUNCHPAD_VERSION=${LAUNCHPAD_VERSION}
 COPY --from=build --chown=root:root /app/apps/worker/dist ./dist
 USER ${LAUNCHPAD_UID}:${LAUNCHPAD_UID}
 VOLUME /data

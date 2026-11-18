@@ -12,14 +12,23 @@ the controller publicly. Those are the [separate production follow-up](plans/pro
 2. Build the images from the repository root with BuildKit:
 
     ```sh
-    docker build -f containers/controller/Dockerfile -t launchpad/controller:local .
-    docker build -f containers/worker/Dockerfile -t launchpad/worker:local .
+    version="$(sed -n 's/^ *"version": *"\([^"]*\)".*/\1/p' package.json | head -n 1)"
+    [ -n "$version" ] || { echo "could not read the version from package.json" >&2; false; }
+    docker build --build-arg LAUNCHPAD_VERSION="$version" -f apps/controller/Dockerfile -t launchpad/controller:local .
+    docker build --build-arg LAUNCHPAD_VERSION="$version" -f apps/worker/Dockerfile -t launchpad/worker:local .
     ```
+
+    The build argument records the version in backups and in the operator status; an image
+    built without it reports `unknown`.
 
     These are local tags, not published images. Both images run as uid/gid 10001.
     Mount the **same** durable `/data` into both; a bind mount must be owned by
     10001:10001. Without an explicit mount, each gets a separate anonymous volume.
     See [tooling](tooling.md#configuration-and-containers) for image caveats.
+
+    ```
+
+    ```
 
 3. Supply `DATABASE_URL`, `LAUNCHPAD_AUTH_SECRET` (at least 32 random characters),
    `LAUNCHPAD_BASE_URL` (the exact HTTPS origin used by browsers), and
