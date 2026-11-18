@@ -6,7 +6,7 @@ import {
     resetPassword,
     setupFirstOperator,
 } from "@launchpad/auth";
-import { createDatabase, migrateToLatest } from "@launchpad/database";
+import { createDatabase, migrateToLatest, migrationStatus } from "@launchpad/database";
 import { readFileSync, statSync } from "node:fs";
 
 async function readStdin(): Promise<string> {
@@ -61,7 +61,20 @@ const program = new Command()
 program
     .command("migrate")
     .description("Apply pending database migrations (forward-only)")
-    .action(async () => {
+    .option("--status", "only list applied and pending migrations; change nothing")
+    .action(async (options) => {
+        if (options.status) {
+            const status = await withDatabase((db) => migrationStatus(db));
+            console.log(
+                `applied: ${status.applied.length}\npending: ${status.pending.length}` +
+                    status.pending.map((name) => `\n  ${name}`).join("") +
+                    (status.unknown.length > 0
+                        ? `\nunknown to this version (migrated by a newer one): ${status.unknown.join(", ")}`
+                        : ""),
+            );
+            process.exitCode = status.pending.length > 0 || status.unknown.length > 0 ? 1 : 0;
+            return;
+        }
         const results = await withDatabase((db) => migrateToLatest(db));
         console.log(
             results.length === 0

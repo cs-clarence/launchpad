@@ -6,8 +6,8 @@ import { keySessionFreshness } from "../lib/api-keys";
 // Server functions read through the same authorized services as the HTTP API.
 // Imports are dynamic so server-only code stays out of the client bundle.
 async function principal() {
-    const { getRuntime } = await import("./runtime");
-    const runtime = getRuntime();
+    const { getReadyRuntime } = await import("./runtime");
+    const runtime = await getReadyRuntime();
     const { readSession } = await import("./auth-session");
     const session = await readSession(runtime.auth);
     if (!session) {
@@ -84,8 +84,8 @@ export const getOrganizationViewFn = createServerFn({ method: "GET" })
 
 // Safe to show before sign-in: whether optional email flows exist at all.
 export const getFeaturesFn = createServerFn({ method: "GET" }).handler(async () => {
-    const { getRuntime } = await import("./runtime");
-    return getRuntime().features;
+    const { getReadyRuntime } = await import("./runtime");
+    return (await getReadyRuntime()).features;
 });
 
 // POST so the token travels in the body, never in a URL that could be logged.
@@ -93,8 +93,8 @@ export const getInvitationPreviewFn = createServerFn({ method: "POST" })
     .validator((input: unknown) => z.object({ token: z.string().max(200) }).parse(input))
     .handler(async ({ data }) => {
         const { previewInvitation } = await import("@launchpad/services");
-        const { getRuntime } = await import("./runtime");
-        const runtime = getRuntime();
+        const { getReadyRuntime } = await import("./runtime");
+        const runtime = await getReadyRuntime();
         const preview = await previewInvitation(runtime.db, data.token, runtime.invitations).catch(
             () => null,
         );

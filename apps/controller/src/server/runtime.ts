@@ -1,5 +1,5 @@
 import { createAuth, createMailer, loadAuthConfig } from "@launchpad/auth";
-import { createDatabase } from "@launchpad/database";
+import { assertSchemaCurrent, createDatabase } from "@launchpad/database";
 import type { InvitationDeps } from "@launchpad/services";
 import { mkdirSync } from "node:fs";
 import path from "node:path";
@@ -123,4 +123,28 @@ let runtime: ReturnType<typeof compose> | undefined;
 export function getRuntime() {
     runtime ??= compose();
     return runtime;
+}
+
+// A schema check that passed is final. One that failed is repeated, at most every few seconds
+// and shared by concurrent requests, so a database that was briefly unreachable, or one the
+// operator has since migrated, recovers without a restart.
+const RECHECK_AFTER_MS = 3000;
+let schemaCheck: Promise<void> | undefined;
+let schemaFailedAt = 0;
+
+// The runtime once the schema is known to match. Rejects with SchemaMismatchError when it
+// does not; any other rejection is a failure to check (and surfaces as an error).
+export async function getReadyRuntime() {
+    const ready = getRuntime();
+    if (!schemaCheck || (schemaFailedAt > 0 && Date.now() - schemaFailedAt > RECHECK_AFTER_MS)) {
+        const check = assertSchemaCurrent(ready.db);
+        schemaCheck = check;
+        schemaFailedAt = 0;
+        check.catch((error) => {
+            schemaFailedAt = Date.now();
+            console.error(error instanceof Error ? error.message : error);
+        });
+    }
+    await schemaCheck;
+    return ready;
 }

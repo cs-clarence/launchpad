@@ -1,7 +1,13 @@
 import { Kysely, type Generated } from "kysely";
 import { BunSqlDialect, type BunSqlOptions } from "./bun-sql-dialect";
 
-export { migrateToLatest } from "./migrate";
+export {
+    assertSchemaCurrent,
+    migrateToLatest,
+    migrationStatus,
+    SchemaMismatchError,
+    type MigrationStatus,
+} from "./migrate";
 
 // Auth tables are owned by Better Auth; only columns Launchpad reads or writes
 // directly are described. Their column names are camelCase, ours are snake_case.
