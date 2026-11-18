@@ -12,6 +12,13 @@ import { existsSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
 
 export const CORE = "core";
+// Version strings written in source, which no manifest feeds: each is rewritten by `sync core`
+// and compared by `check`. The pattern's first group is everything before the version.
+export const SOURCE_VERSIONS: { file: string; pattern: RegExp }[] = [
+    { file: "apps/cli/src/program.ts", pattern: /(\.version\()"[^"]*"/ },
+    { file: "apps/mcp/src/server.ts", pattern: /(name: "launchpad-mcp", version: )"[^"]*"/ },
+    { file: "apps/controller/src/server/openapi.ts", pattern: /(\n\s+version: )"[^"]*"/ },
+];
 const SEMVER = /^\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$/;
 // Matches the first top-level "version" line without reformatting the file.
 const VERSION_LINE = /^(\s*"version":\s*)"[^"]*"/m;
@@ -98,13 +105,25 @@ export function checkVersions(root: string): string[] {
             problems.push(`${w.dir} is not in the core include list of cog.toml`);
         }
     }
+    for (const source of SOURCE_VERSIONS) {
+        const found = readFileSync(path.join(root, source.file), "utf8").match(
+            new RegExp(source.pattern.source.replace('"[^"]*"', '"([^"]*)"')),
+        );
+        if (!found) problems.push(`${source.file}: the version string was not found`);
+        else if (found[2] !== expected) {
+            problems.push(`${source.file} says ${found[2]}; the root is ${expected}`);
+        }
+    }
     return problems;
 }
 
 function setVersion(file: string, version: string) {
     const text = readFileSync(file, "utf8");
     if (!VERSION_LINE.test(text)) throw new Error(`${file} has no "version" line`);
-    writeFileSync(file, text.replace(VERSION_LINE, `$1"${version}"`));
+    const next = text.replace(VERSION_LINE, `$1"${version}"`);
+    // The first "version" line is the top-level one by convention; make sure it was.
+    if (JSON.parse(next).version !== version) throw new Error(`${file}: not the top-level version`);
+    writeFileSync(file, next);
 }
 
 // Rewrites the manifests of one cog package: all of `core`, or a single independent one.
@@ -120,6 +139,14 @@ export function syncVersions(root: string, pkg: string, version: string): string
         dirs = [dir];
     }
     for (const dir of dirs) setVersion(path.join(root, dir, "package.json"), version);
+    if (pkg === CORE) {
+        for (const source of SOURCE_VERSIONS) {
+            const file = path.join(root, source.file);
+            const text = readFileSync(file, "utf8");
+            if (!source.pattern.test(text)) throw new Error(`${source.file}: no version string`);
+            writeFileSync(file, text.replace(source.pattern, `$1"${version}"`));
+        }
+    }
     return dirs;
 }
 

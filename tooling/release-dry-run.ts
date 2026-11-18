@@ -50,6 +50,12 @@ async function main() {
     if (problems.length > 0) throw new Error(`Versions disagree:\n${problems.join("\n")}`);
     const version = sharedWorkspaces(root)[0]!.version;
 
+    // The folder is emptied first: only ever one named for this purpose, inside the repository.
+    if (!path.basename(out).includes("release-dry-run") || !out.startsWith(`${root}${path.sep}`)) {
+        throw new Error(
+            `Refusing to empty ${out}: use a folder named *release-dry-run* inside the repository.`,
+        );
+    }
     rmSync(out, { recursive: true, force: true });
     const tarballs = path.join(out, "packages");
     mkdirSync(tarballs, { recursive: true });

@@ -23,6 +23,8 @@ number), except the shared tooling packages (`@launchpad/tsconfig`, `vite-config
   Run `cog bump` only on a clean checkout of the commit you mean to release, review the
   result, and **do not push** the commit or tag until the release is authorized. The commit
   message carries `[skip ci]`; run the checks before bumping, not after.
+- Three version strings are written in source (the CLI's `--version`, the MCP server info and
+  the OpenAPI `info.version`); `sync core` rewrites them and `check:versions` compares them.
 - `from_latest_tag = false`: with no earlier tag the first changelog covers all history.
   Tag a baseline first if that is not wanted.
 
@@ -48,7 +50,7 @@ omni -i run release:dry-run -p @launchpad/tooling
 or run the manual **Release dry run** workflow. It checks that versions agree, packs the
 four client packages with the same allowlist checks as `test:packages`, writes
 `packages/SHA256SUMS`, builds both images **without pushing them**, removes those images by
-exact name, and leaves everything in `.release-dry-run/` (kept 7 days as a workflow
+exact name (Docker's build cache and pulled base images stay), and leaves everything in `.release-dry-run/` (kept 7 days as a workflow
 artifact). The workflow has read-only permissions, no secret and no write token, and a test
 (`tooling/ci.spec.ts`) fails if it ever gains a trigger other than manual dispatch, a
 secret, or a publish, push, tag or login command. Verify the checksums with
