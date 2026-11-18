@@ -106,13 +106,13 @@ it(
     async () => {
         requireDisposable();
         // Leave four minutes before Vitest's own timeout for bounded, exact-name cleanup.
-        const root = await fs.mkdtemp(path.join(os.tmpdir(), "launchpad-restore-live-"));
         // Survives an abrupt test-process exit; never record the URL (it holds credentials).
         const record = `/tmp/opencode/launchpad-restore-live-${randomUUID()}.log`;
         await fs.writeFile(record, "Disposable restore drill resources (exact names only)\n", {
             mode: 0o600,
         });
         console.info(`Restore drill resource record: ${record}`);
+        const root = await fs.mkdtemp(path.join(os.tmpdir(), "launchpad-restore-live-"));
         const note = (kind: string, name: string) => fs.appendFile(record, `${kind}: ${name}\n`);
         const deadline = new AbortController();
         const deadlineTimer = setTimeout(() => deadline.abort(), 8 * 60_000);

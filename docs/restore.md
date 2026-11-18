@@ -57,7 +57,8 @@ or prove. `restore` never contacts Dokku. Back up the target database first.
    Start the controller and workers with **deployments on but lifecycle still
    off**. Inspect deployments in `reconciliation-needed` for every preview
    you will keep; resolve each using the deployment resolution workflow
-   (verify remote state, then retry or mark resolved) before enqueueing a new
+   (verify remote state, then mark it `succeeded` or `failed`; for a held
+   deletion, choose `retry` or `deleted` only after checking Dokku) before enqueueing a new
    deployment. For each preview you will keep, redeploy its active artifact (this
    recreates a missing app), and **extend** any already-expired preview _before_
    turning lifecycle on. Check each deployment succeeds. Keep a record of

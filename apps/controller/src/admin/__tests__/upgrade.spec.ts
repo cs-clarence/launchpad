@@ -240,6 +240,8 @@ it(
         let source: Awaited<ReturnType<typeof createTestDatabase>> | undefined;
         let target: Awaited<ReturnType<typeof createTestDatabase>> | undefined;
         let server: Awaited<ReturnType<typeof start>> | undefined;
+        let drillError: unknown;
+        const cleanupErrors: unknown[] = [];
         try {
             if (process.env.LAUNCHPAD_UPGRADE_IMAGE && process.platform !== "linux") {
                 throw new Error(
@@ -375,8 +377,9 @@ it(
             ).toContain("pending: 0");
             const rows = await target.db.selectFrom("user").select("email").execute();
             expect(rows.map((row) => row.email)).toContain(oldUser);
+        } catch (error) {
+            drillError = error;
         } finally {
-            const cleanupErrors: unknown[] = [];
             if (server) await server.stop().catch((error) => cleanupErrors.push(error));
             for (const name of [...containers]) cleanContainer(name);
             if (containers.size)
@@ -388,7 +391,11 @@ it(
             ]);
             for (const result of settled)
                 if (result.status === "rejected") cleanupErrors.push(result.reason);
-            if (cleanupErrors.length) console.error("Upgrade drill cleanup failed:", cleanupErrors);
         }
+        if (drillError || cleanupErrors.length)
+            throw new AggregateError(
+                [drillError, ...cleanupErrors].filter(Boolean),
+                "Upgrade drill or cleanup failed.",
+            );
     },
 );

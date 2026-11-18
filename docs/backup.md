@@ -10,7 +10,8 @@ Dokku state or any preview datastore; back those up separately.
    `--i-have-stopped-the-workers`; otherwise leave that flag off.
 2. Supply `DATABASE_URL` and the controller's actual `LAUNCHPAD_DATA_DIR`
    to the admin command, and a `pg_dump` at least as new as the PostgreSQL
-   server (`LAUNCHPAD_PG_DUMP` can name the tool). Choose a **new** destination:
+   server (`LAUNCHPAD_PG_DUMP` can name the tool). Choose a **new** destination.
+   This example is **only for a confirmed worker stop**:
 
     ```sh
     bun .output/admin.mjs backup /private/backups/launchpad-2026-11-18 --i-have-stopped-the-workers
