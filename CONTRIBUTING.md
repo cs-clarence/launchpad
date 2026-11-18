@@ -113,7 +113,9 @@ Jobs restore the Omni cache (`.omni`) so unchanged projects are skipped; this is
 safe because every task's cache key names its inputs (see [tooling](docs/tooling.md)).
 The Omni version is pinned in `.github/actions/setup-workspace/action.yaml`: raise it
 together with the version you use locally. Bun comes from `packageManager` in
-`package.json`. Nothing is published or deployed from CI yet.
+`package.json`. Nothing is published or deployed from CI. The manual **Release dry run** workflow
+(`omni -i run release:dry-run -p @launchpad/tooling`) rehearses a release without publishing; see
+[releasing](docs/releasing.md) for versioning, compatibility rules and the release checklist.
 
 No CI-only checks exist: anything CI runs you can run locally with the commands above. Install the Cocogitto commit-msg hook
 locally with `cog install-hook --all`; it validates Conventional Commit messages

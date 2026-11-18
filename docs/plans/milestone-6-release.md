@@ -203,3 +203,13 @@ expired restored preview, and a preview whose app is gone.
   2026-11-18 (recorded in `docs/plans/live-dokku-verification.md`); CI does
   not run it, and the shortened lease/simulated worker stop cannot prove a
   production remote command settles within five minutes.
+- Slice 7 (release machinery): `tooling/versions.ts` (`check:versions`, in `check`, and the sync the
+  Cocogitto `pre_package_bump_hooks` runs), `cog.toml`'s `core` group widened to everything that
+  ships and the root manifest versioned, `tooling/release-dry-run.ts` with `release:dry-run` and a
+  manual, read-only `release-dry-run.yaml` workflow (a test pins its triggers, permissions and the
+  absence of any publish, push, tag or login), and `docs/releasing.md` (versioning, REST, SDK, MCP,
+  CLI, database compatibility rules, and the checklist). Proven by running `cog bump --auto
+  --package core` in a throwaway clone (one commit with manifests, `bun.lock` and changelog, then
+  `check:versions` and a frozen install pass) and by a real local dry run (four tarballs verified
+  with `sha256sum -c`, both images built and removed). **Not done, by design:** publishing, tags,
+  registry names; the checklist records the open licence, scope and name decisions.

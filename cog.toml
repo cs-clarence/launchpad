@@ -13,9 +13,12 @@ skip_ci = "[skip ci]"
 skip_untracked = false
 pre_bump_hooks = []
 post_bump_hooks = []
-# Pureform's package-version update script is not present in Launchpad.
-# Add version/lockfile synchronization before using cog bump for releases.
-pre_package_bump_hooks = []
+# Rewrites the manifests of the package being bumped and refreshes the lockfile, so the bump
+# commit holds both (tooling/versions.ts). `{{package}}` is `core` or a registered package name;
+# cog runs package hooks from the package's own directory, hence the repository-root lookup.
+pre_package_bump_hooks = [
+    "sh -c 'bun \"$(git rev-parse --show-toplevel)/tooling/versions.ts\" sync {{package}} {{version}}'",
+]
 # Never push automatically as a side effect of bumping.
 post_package_bump_hooks = []
 tag_prefix = "v"
@@ -39,7 +42,9 @@ authors = []
 
 [bump_profiles]
 
-# Shared-version controller libraries.
+# Everything that ships together shares one version: the libraries, the apps, the images and
+# the root manifest. `bun tooling/versions.ts check` (omni run check:versions) fails when a
+# workspace package is missing from this list or its version differs.
 [monorepo.packages.core]
 path = "."
 changelog_path = "CHANGELOG.md"
@@ -47,6 +52,12 @@ include = [
     "packages/services/**",
     "packages/database/**",
     "packages/dokku/**",
+    "packages/auth/**",
+    "packages/client-core/**",
+    "packages/contracts/**",
+    "packages/sdk/**",
+    "apps/**",
+    "containers/**",
     # @anchor:new-core-package
 ]
 
