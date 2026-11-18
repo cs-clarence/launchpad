@@ -31,6 +31,11 @@ down migration. Rehearse on disposable infrastructure first: the checked-in
 If the migration fails or the new version cannot run, **do not** start the old
 version against the migrated database. Stop processes, turn both switches off,
 and follow [restore](restore.md) using the pre-upgrade backup and the old
-version. The [automated drill](restore.md#repeat-the-disposable-drill) exercises
+version. Prefer restoring into a **fresh empty database**, verify the restored
+state with the old admin build, then point the old controller and workers at
+that database. The old admin cannot back up a database containing migrations
+it does not know. If an in-place `--replace` is unavoidable, first back up
+the migrated target using the **new** admin build before replacing it; never
+bypass the target-backup requirement. The [automated drill](restore.md#repeat-the-disposable-drill) exercises
 backup → built migration → controller restart → status → fresh restore, but
 does not provision or modify Dokku.

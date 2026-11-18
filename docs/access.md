@@ -6,7 +6,8 @@ Do not expose the controller directly to the public internet: the production
 ingress and threat review are [follow-up work](plans/production-compose-follow-up.md).
 
 1. Choose a private management origin, e.g.
-   `https://control.example.internal`, and a **different** preview domain,
+   `https://control.example.internal`, and a preview domain on a **different
+   registrable domain** from management,
    e.g. `previews.example.net`. Set `LAUNCHPAD_BASE_URL` to the exact management
    origin and `LAUNCHPAD_PREVIEW_DOMAIN` to the preview domain. The controller
    must not share a cookie origin with untrusted preview content.

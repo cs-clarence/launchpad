@@ -36,7 +36,9 @@ the controller publicly. Those are the [separate production follow-up](plans/pro
 5. Start the controller with its private listener connected to the database and
    shared volume. Verify `/api/health`, then sign in after running
    `bun .output/admin.mjs setup --email <operator-address> --password-file <mode-600-file>`
-   in the controller image with the auth settings. The health endpoint reports
+   in the controller image with the auth settings. The mode-`0600` password
+   file must be readable by the admin process (the stock image runs as UID
+   `10001`; a host-owned `0600` file with another UID will not work). The health endpoint reports
    static metadata, **not** database/Dokku readiness; use the signed-in
    operator-only `GET /api/v1/status` for runtime state.
 6. Mount the Dokku SSH key and pinned `known_hosts` file **read-only** into the

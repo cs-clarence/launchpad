@@ -13,15 +13,19 @@ Dokku state or any preview datastore; back those up separately.
    server (`LAUNCHPAD_PG_DUMP` can name the tool). Choose a **new** destination:
 
     ```sh
-    bun .output/admin.mjs backup /private/backups/launchpad-2026-11-18
+    bun .output/admin.mjs backup /private/backups/launchpad-2026-11-18 --i-have-stopped-the-workers
     bun .output/admin.mjs verify-backup /private/backups/launchpad-2026-11-18
     ```
 
-    The commands run in the controller image's `/app` with its database and
-    `/data` mounts, or use the equivalent
+    Run these from a configured checkout (or an admin environment with a
+    compatible PostgreSQL client installed); the stock controller image
+    does **not** include `pg_dump`. Where lifecycle has never run and no
+    recent lifecycle worker heartbeat exists, omit the stop-confirmation flag.
+    Alternatively use the equivalent
     `omni -i run admin -p @launchpad/controller -a command=backup -a options=<new-dir>`
-    from a configured checkout. Mount the destination into the command's
-    container if running it in Docker. Do **not** pass a real password on a
+    from a configured checkout. If using a separate admin container, supply a
+    compatible `pg_dump`, the database configuration, `/data` and the backup
+    destination as mounts. Do **not** pass a real password on a
     command line. The backup includes a custom-format `database.dump` and
     a checked `manifest.json`, plus the archive files its snapshot refers to.
 

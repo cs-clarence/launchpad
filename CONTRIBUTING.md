@@ -48,8 +48,9 @@ omni -i run test:db:down
 
 To repeat the frozen previous-schema backup → migrate → restart → restore drill
 against disposable PostgreSQL, run `omni -i run test:upgrade -p @launchpad/controller`
-between `test:db:up` and `test:db:down`. The controller integration suite also
-runs it. The image and packaged-client checks are `omni -i run test:images
+between `test:db:up` and `test:db:down` **on Linux** (Docker host networking).
+`test:integration` runs the host-built variant on other platforms; it does not
+exercise the image. The image and packaged-client checks are `omni -i run test:images
 -p @launchpad/tooling` (Docker, disposable database) and `omni -i run
 test:packages -p @launchpad/tooling` (network, Node and Bun). These build,
 inspect and exercise local artifacts, never publish them. The operator
@@ -90,15 +91,15 @@ a package that passes `omni -i run check test build` as generated.
 `.github/workflows/ci.yaml` runs the same Omni tasks you run locally, as a chain of
 jobs on pushes to `main`, pull requests and the merge queue:
 
-| Job           | Runs                                                                             |
-| ------------- | -------------------------------------------------------------------------------- |
-| `commits`     | Conventional Commits check of the pull request's commits (PRs only)              |
-| `check`       | `omni -i run check check:compose`: types, lint, format, dependency consistency   |
-| `build`       | `omni -i run build`                                                              |
-| `test`        | `omni -i run test` (unit tests)                                                  |
-| `integration` | Disposable database, `test:integration` (including upgrade drill), `test:images` |
-| `packages`    | `test:packages`: install packed clients outside the workspace                    |
-| `CI Passed`   | The gatekeeper: runs last and always, and fails unless every job passed          |
+| Job           | Runs                                                                                                             |
+| ------------- | ---------------------------------------------------------------------------------------------------------------- |
+| `commits`     | Conventional Commits check of the pull request's commits (PRs only)                                              |
+| `check`       | `omni -i run check check:compose`: types, lint, format, dependency consistency                                   |
+| `build`       | `omni -i run build`                                                                                              |
+| `test`        | `omni -i run test` (unit tests)                                                                                  |
+| `integration` | Disposable database, `test:integration` (host-built variant), `test:images`, `test:upgrade` (built image; Linux) |
+| `packages`    | `test:packages`: install packed clients outside the workspace                                                    |
+| `CI Passed`   | The gatekeeper: runs last and always, and fails unless every job passed                                          |
 
 **Require only `CI Passed`** in the `main` branch protection or ruleset. GitHub cannot
 match job names that change, and a required job that is skipped never reports, so the

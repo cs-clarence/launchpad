@@ -107,6 +107,13 @@ it(
         requireDisposable();
         // Leave four minutes before Vitest's own timeout for bounded, exact-name cleanup.
         const root = await fs.mkdtemp(path.join(os.tmpdir(), "launchpad-restore-live-"));
+        // Survives an abrupt test-process exit; never record the URL (it holds credentials).
+        const record = `/tmp/opencode/launchpad-restore-live-${randomUUID()}.log`;
+        await fs.writeFile(record, "Disposable restore drill resources (exact names only)\n", {
+            mode: 0o600,
+        });
+        console.info(`Restore drill resource record: ${record}`);
+        const note = (kind: string, name: string) => fs.appendFile(record, `${kind}: ${name}\n`);
         const deadline = new AbortController();
         const deadlineTimer = setTimeout(() => deadline.abort(), 8 * 60_000);
         const signal = deadline.signal;
@@ -149,8 +156,11 @@ it(
                 },
             });
         const names = new Map<string, { id: string; app: string; deploymentId: string }>();
+        let drillError: unknown;
+        let cleanupError: unknown;
         try {
             source = await createTestDatabase();
+            await note("database", new URL(source.url).pathname.slice(1));
             await source.migrate();
             // This DB is exclusively ours and is dropped below, including this test-only constraint.
             await sql`alter table preview drop constraint preview_app_name_check`.execute(
@@ -230,6 +240,7 @@ it(
                 }
                 // Register before create: a lost create response still leaves only this exact app to clean up.
                 created.add(app);
+                await note("app", app);
                 const id = randomUUID();
                 const deploymentId = randomUUID();
                 const hostname = `${app}.live.example.com`;
@@ -297,6 +308,7 @@ it(
                 lifecycleEnabled: false,
                 version: "restore-live-test",
                 pgDump,
+                signal,
             });
             // Step 1: the deletion began after the backup. This test-only port holds the remote
             // command after the worker has issued it, models stopping the local worker, and lets the
@@ -371,12 +383,14 @@ it(
             // client. The missing app must be listed, and the expired preview extended while
             // lifecycle remains off.
             target = await createTestDatabase();
+            await note("database", new URL(target.url).pathname.slice(1));
             await restoreBackup({
                 backupDir,
                 databaseUrl: target.url,
                 dataDir: targetData,
                 workersStopped: true,
                 pgRestore,
+                signal,
             });
             const report = await checkRestore({
                 db: target.db,
@@ -459,6 +473,8 @@ it(
             expect(expired.desired_state).toBe("active");
             expect(await dokku.apps.exists(kept.app, signal)).toBe(true);
             expect(await dokku.apps.exists(names.get("expired")!.app, signal)).toBe(true);
+        } catch (error) {
+            drillError = error;
         } finally {
             clearTimeout(deadlineTimer);
             // A separate deadline ensures a stalled SSH cleanup cannot wait until Vitest
@@ -481,10 +497,27 @@ it(
                 fs.rm(root, { recursive: true, force: true }),
             ]);
             if (leftover.length > 0) {
-                throw new Error(`Test apps still need exact-name cleanup: ${leftover.join(", ")}`);
+                cleanupError = new Error(
+                    `Test apps still need exact-name cleanup: ${leftover.join(", ")}`,
+                );
             }
             const failure = cleaned.find((result) => result.status === "rejected");
-            if (failure?.status === "rejected") throw failure.reason;
+            if (failure?.status === "rejected")
+                cleanupError = new AggregateError(
+                    [cleanupError, failure.reason].filter(Boolean),
+                    "Restore drill cleanup failed.",
+                );
+            await note("cleanup", cleanupError ? "incomplete" : "completed").catch((error) => {
+                cleanupError = new AggregateError(
+                    [cleanupError, error].filter(Boolean),
+                    `Could not update resource record ${record}`,
+                );
+            });
         }
+        if (drillError || cleanupError)
+            throw new AggregateError(
+                [drillError, cleanupError].filter(Boolean),
+                `Restore drill failed; exact resource names: ${record}`,
+            );
     },
 );

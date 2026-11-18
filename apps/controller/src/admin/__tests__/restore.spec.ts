@@ -151,6 +151,20 @@ afterAll(async () => {
 });
 
 describe("restoreBackup", () => {
+    it("cancels a PostgreSQL preflight on an aborted drill deadline", async () => {
+        const target = await emptyTarget();
+        const deadline = new AbortController();
+        deadline.abort();
+        await expect(
+            restoreBackup(restoreOptions(target, { signal: deadline.signal })),
+        ).rejects.toThrow();
+        expect(
+            await sql<{
+                present: boolean;
+            }>`select to_regclass('public.user') is not null as present`.execute(target.db),
+        ).toMatchObject({ rows: [{ present: false }] });
+    });
+
     it("restores into an empty database with its archives, and the result checks clean", async () => {
         const target = await emptyTarget();
         const options = restoreOptions(target);

@@ -4,7 +4,9 @@ For an instance operator restoring a **matched** database dump and archive
 directory. This procedure includes the steps that `restore` cannot perform
 or prove. `restore` never contacts Dokku. Back up the target database first.
 
-1. Set `LAUNCHPAD_DEPLOYMENTS=off` and `LAUNCHPAD_LIFECYCLE=off` for controller
+1. Close **all management access** at the private ingress (including API-key
+   access); keep it closed through restore and credential reconciliation.
+   Set `LAUNCHPAD_DEPLOYMENTS=off` and `LAUNCHPAD_LIFECYCLE=off` for controller
    **and** every worker. Stop all workers and the controller and wait for their
    processes to exit. Give workers a 25-minute stop grace period; **after** the
    last worker exits, wait longer than the longest possible remote Dokku command
@@ -38,12 +40,32 @@ or prove. `restore` never contacts Dokku. Back up the target database first.
    apps and expired previews**. `--no-dokku` is only a partial check.
    Missing archives require repair before a deployment; an unreachable Dokku
    is an error, not a missing app. The check changes nothing.
-4. Start the controller and workers with **deployments on but lifecycle still
-   off**. For each preview you will keep, redeploy its active artifact (this
+4. With the normal ingress still closed, allow only a trusted operator
+   maintenance connection to the restored controller. Before opening
+   management access, compare the restored API keys and
+   memberships with an **external** record of revocations made since the
+   backup. Revoke those keys again. If no complete and trustworthy record is
+   available, revoke **all restored API keys** via the authenticated
+   `DELETE /api/v1/organizations/{orgId}/api-keys/{keyId}` endpoint (or
+   follow the account-recovery procedure where appropriate), notify their owners, and
+   reissue only the keys they still need after access is reopened. Review
+   restored sessions and account changes made since the backup too; invalidate
+   any sessions that should no longer be valid, including credentials for
+   users removed since the backup. Do not assume deployments or
+   lifecycle being off prevents authenticated reads. Confirm revocations
+   before reopening the private ingress.
+   Start the controller and workers with **deployments on but lifecycle still
+   off**. Inspect deployments in `reconciliation-needed` for every preview
+   you will keep; resolve each using the deployment resolution workflow
+   (verify remote state, then retry or mark resolved) before enqueueing a new
+   deployment. For each preview you will keep, redeploy its active artifact (this
    recreates a missing app), and **extend** any already-expired preview _before_
    turning lifecycle on. Check each deployment succeeds. Keep a record of
    previews intentionally ending.
-5. Turn lifecycle on in both controller and workers only after step 4. Delete
+5. Immediately before enabling lifecycle, recheck **every** preview you will
+   keep for an expiry that has passed or may pass before cutover; extend it
+   while lifecycle is still off. Do not rely on the step 3 expiry list.
+   Turn lifecycle on in both controller and workers only after step 4. Delete
    the previews you chose to end and follow their deletion operations to a
    terminal state. Never manually delete a Dokku app just because it was
    absent in step 3. A restored database can also leave unreferenced apps;
@@ -77,8 +99,8 @@ recreated after a reboot.
 
 In its **throwaway database only**, it substitutes an `lp-test-` name
 constraint and a test-only Dokku allowlist. It backs up three deployed
-previews, simulates stopping a worker while a remote destroy call is
-outstanding, waits for that destroy and a shortened **one-second test lease**
+previews, pauses the local destroy adapter, signals the worker to stop, then
+issues the real Dokku destroy. It waits for that destroy and a shortened **one-second test lease**
 to settle, restores the database and archives, finds two missing apps on
 the real disposable Dokku, recreates and redeploys a missing kept preview, extends an expired
 one before enabling lifecycle, and deletes the preview chosen to end.
@@ -91,7 +113,9 @@ task at `view-demo`, production PostgreSQL or a non-disposable Dokku.
 If the task is interrupted or reports leftover names, inspect **only** the
 approved disposable Dokku with its pinned SSH key:
 `ssh -i /tmp/opencode/live-dokku-20261117/id_ed25519 -o UserKnownHostsFile=/tmp/opencode/live-dokku-20261117/known_hosts -o StrictHostKeyChecking=yes -p 33022 dokku@127.0.0.1 apps:list`.
-Confirm each leftover is an `lp-test-` name recorded by this run, then destroy
+The task prints a mode-`0600` resource log path under `/tmp/opencode/` before
+creating resources; it records each exact database and app name. Confirm each
+leftover is an `lp-test-` name recorded by this run, then destroy
 it by **exact name**, one at a time (`ssh` with the same options, then
 `apps:destroy <exact-lp-test-name>`). Do not bulk-delete matching apps and
 never run a destroy against the normal Dokku or `view-demo`. The task creates

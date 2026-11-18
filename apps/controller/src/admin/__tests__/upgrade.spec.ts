@@ -15,10 +15,18 @@ const operatorEmail = "upgrade-operator@example.invalid";
 const operatorPassword = "upgrade-drill-only-password";
 const authSecret = "upgrade-drill-secret-".repeat(3);
 const containers = new Set<string>();
+const dockerEnv = () => ({
+    PATH: process.env.PATH,
+    DOCKER_HOST: process.env.DOCKER_HOST,
+    DOCKER_CONTEXT: process.env.DOCKER_CONTEXT,
+    DOCKER_CONFIG: process.env.DOCKER_CONFIG,
+    DOCKER_TLS_VERIFY: process.env.DOCKER_TLS_VERIFY,
+    DOCKER_CERT_PATH: process.env.DOCKER_CERT_PATH,
+});
 
 function docker(args: string[], env: NodeJS.ProcessEnv = {}) {
     const result = spawnSync("docker", args, {
-        env: { PATH: process.env.PATH, ...env },
+        env: { ...dockerEnv(), ...env },
         encoding: "utf8",
         timeout: 60_000,
     });
@@ -29,17 +37,32 @@ function docker(args: string[], env: NodeJS.ProcessEnv = {}) {
 
 function cleanContainer(name: string) {
     // Also handles a `docker run` that timed out after creating the named container.
-    spawnSync("docker", ["rm", "-fv", name], { timeout: 30_000, stdio: "ignore" });
-    containers.delete(name);
+    const removed = spawnSync("docker", ["rm", "-fv", name], {
+        env: dockerEnv(),
+        timeout: 30_000,
+        encoding: "utf8",
+    });
+    if (!removed.error && removed.status === 0) {
+        containers.delete(name);
+        return;
+    }
+    const absent = spawnSync("docker", ["inspect", name], {
+        env: dockerEnv(),
+        timeout: 10_000,
+        encoding: "utf8",
+    });
+    if (!absent.error && absent.status !== 0 && absent.stderr.includes("No such object"))
+        containers.delete(name);
 }
 
 function pgClient(name: "pg_dump" | "pg_restore") {
+    const override = process.env[name === "pg_dump" ? "TEST_PG_DUMP" : "TEST_PG_RESTORE"];
+    if (override) return `${override} "$@"`;
     const url = new URL(testDatabaseUrl());
     const disposable =
         ["127.0.0.1", "localhost"].includes(url.hostname) &&
         url.port === (process.env.TEST_DB_PORT ?? "55432");
-    if (!disposable)
-        return process.env[name === "pg_dump" ? "TEST_PG_DUMP" : "TEST_PG_RESTORE"] ?? name;
+    if (!disposable) return `${name} "$@"`;
     return `docker exec -i -e PGHOST=127.0.0.1 -e PGPORT=5432 -e PGUSER -e PGPASSWORD -e PGDATABASE launchpad-test-db ${name} "$@"`;
 }
 
@@ -68,7 +91,7 @@ async function admin(url: string, data: string, work: string, command: string, .
                     ...args,
                 ],
                 {
-                    env: { PATH: process.env.PATH, DATABASE_URL: url },
+                    env: { ...dockerEnv(), DATABASE_URL: url },
                     encoding: "utf8",
                     timeout: 60_000,
                 },
@@ -353,11 +376,19 @@ it(
             const rows = await target.db.selectFrom("user").select("email").execute();
             expect(rows.map((row) => row.email)).toContain(oldUser);
         } finally {
-            if (server) await server.stop();
-            for (const name of containers) cleanContainer(name);
-            await target?.destroy();
-            await source?.destroy();
-            await fs.rm(work, { recursive: true, force: true });
+            const cleanupErrors: unknown[] = [];
+            if (server) await server.stop().catch((error) => cleanupErrors.push(error));
+            for (const name of [...containers]) cleanContainer(name);
+            if (containers.size)
+                cleanupErrors.push(new Error(`Containers remain: ${[...containers].join(", ")}`));
+            const settled = await Promise.allSettled([
+                target?.destroy(),
+                source?.destroy(),
+                fs.rm(work, { recursive: true, force: true }),
+            ]);
+            for (const result of settled)
+                if (result.status === "rejected") cleanupErrors.push(result.reason);
+            if (cleanupErrors.length) console.error("Upgrade drill cleanup failed:", cleanupErrors);
         }
     },
 );
