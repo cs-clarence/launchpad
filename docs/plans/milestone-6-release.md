@@ -213,3 +213,26 @@ expired restored preview, and a preview whose app is gone.
   `check:versions` and a frozen install pass) and by a real local dry run (four tarballs verified
   with `sha256sum -c`, both images built and removed). **Not done, by design:** publishing, tags,
   registry names; the checklist records the open licence, scope and name decisions.
+
+## Close-out (2026-11-18)
+
+An independent whole-milestone review (Opus 5.5, read-only, at `b6c51d1`) found no blocker or high
+finding. Fixed before closing: images now record the release version (`LAUNCHPAD_VERSION` build
+argument, asserted by `test:images`, passed by the dry run), so backups and the operator status no
+longer say `unknown`. Deferred, with owners, to `docs/plans/production-compose-follow-up.md`: the
+worker healthcheck, a PostgreSQL client for backups from the stack, a credential-reset command, TLS
+connection options for the dump and restore clients, and digest pinning.
+
+**Proven:** each slice by its tests and CI jobs (schema guard, backup, restore and `check-restore`,
+packed clients on Node and Bun outside the workspace, image build and run, the upgrade drill from a
+frozen 14-migration fixture through the controller image, the dry-run rehearsal), plus one live
+rehearsal of the restore runbook on a disposable Dokku.
+
+**Not proven, stated plainly:** an operator install from published artifacts on a clean machine (no
+production stack or published artifacts exist); an upgrade from a real previous release (no tags;
+the fixture stands in); the five-minute production lease and a remote destroy in flight when a
+worker is killed (the live rehearsal used a one-second lease and a simulated stop, and is not in CI);
+what a published tarball or image holds after a real publish; and anything touching registry names,
+licence or publishing, which stay undecided and unauthorized. A restore also copies archives before
+swapping the database, so a failed restore can leave extra archive files (content-addressed and
+never overwritten, so harmless).

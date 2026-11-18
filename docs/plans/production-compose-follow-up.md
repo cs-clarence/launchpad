@@ -37,7 +37,7 @@ publishing images/namespaces.
 
 ## Status
 
-Queued. Application milestones 0 to 5 are built; milestone 6 (backup, restore, release) remains.
+Queued. Application milestones 0 to 6 are built (milestone 6 closed 2026-11-18, `docs/plans/milestone-6-release.md`).
 Requirements this work must meet that the application milestones surfaced:
 
 - The controller and the worker share one data directory and must run as **one user** with read
@@ -53,3 +53,21 @@ Requirements this work must meet that the application milestones surfaced:
   and per data directory.
 - Decide where images for previews live when Dokku is a separate engine (the worker does not remove
   images it loaded onto another host).
+
+Items the milestone 6 review deferred to this work:
+
+- **Worker healthcheck.** Only the controller image has a `HEALTHCHECK`; the worker has no HTTP
+  surface. Decide what "healthy" means (a recent `worker_heartbeat` row is the natural signal, which
+  needs a small database probe or a heartbeat file) and add it with a check in `test:images`.
+- **PostgreSQL client for backups.** The controller image carries no `pg_dump`/`pg_restore`. Provide a
+  matching client (an admin sidecar or a documented checkout) and rehearse a backup from the stack.
+- **Credential reset after a restore** is manual (`docs/restore.md` step 4). Consider
+  `launchpad-admin` commands that revoke every restored API key and session, so a mistake cannot
+  leave revoked access working.
+- **TLS and connection options.** `backup`/`restore` pass only host, port, user, password, database
+  and `sslmode` to the PostgreSQL clients; options such as `sslrootcert` are dropped. Pass them
+  through, or document the limit, before a TLS-strict database is used.
+- **Base images by digest.** Pin `oven/bun`, `docker` and the Dokku base by digest (a release
+  checklist gate in `docs/releasing.md`).
+- **Operator install, end to end,** from published artifacts on a clean machine: only possible once
+  the stack exists and names are decided.

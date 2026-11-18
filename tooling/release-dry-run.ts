@@ -163,6 +163,8 @@ async function rehearse(out: string, version: string, skipImages: boolean) {
                     "docker",
                     "build",
                     "-q",
+                    "--build-arg",
+                    `LAUNCHPAD_VERSION=${version}`,
                     "-f",
                     `containers/${name}/Dockerfile`,
                     "-t",

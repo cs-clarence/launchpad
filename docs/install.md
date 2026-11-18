@@ -12,9 +12,13 @@ the controller publicly. Those are the [separate production follow-up](plans/pro
 2. Build the images from the repository root with BuildKit:
 
     ```sh
-    docker build -f containers/controller/Dockerfile -t launchpad/controller:local .
-    docker build -f containers/worker/Dockerfile -t launchpad/worker:local .
+    version="$(bun -p 'require("./package.json").version')"
+    docker build --build-arg LAUNCHPAD_VERSION="$version" -f containers/controller/Dockerfile -t launchpad/controller:local .
+    docker build --build-arg LAUNCHPAD_VERSION="$version" -f containers/worker/Dockerfile -t launchpad/worker:local .
     ```
+
+    The build argument records the version in backups and in the operator status; an image
+    built without it reports `unknown`.
 
     These are local tags, not published images. Both images run as uid/gid 10001.
     Mount the **same** durable `/data` into both; a bind mount must be owned by

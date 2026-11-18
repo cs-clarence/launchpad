@@ -192,8 +192,9 @@ recipes, built from the monorepo root (each has a Dockerfile-specific ignore fil
 env files, state, dependencies and agent context, overriding the root Dokku build ignore file):
 
 ```sh
-docker build -f containers/controller/Dockerfile -t launchpad/controller:dev .   # needs BuildKit
-docker build -f containers/worker/Dockerfile -t launchpad/worker:dev .
+version="$(bun -p 'require("./package.json").version')"
+docker build --build-arg LAUNCHPAD_VERSION="$version" -f containers/controller/Dockerfile -t launchpad/controller:dev .   # needs BuildKit
+docker build --build-arg LAUNCHPAD_VERSION="$version" -f containers/worker/Dockerfile -t launchpad/worker:dev .
 ```
 
 Both run as the fixed unprivileged uid 10001 (they share one data directory), hold no secret (every
