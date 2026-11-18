@@ -49,7 +49,8 @@ or prove. `restore` never contacts Dokku. Back up the target database first.
    `DELETE /api/v1/organizations/{orgId}/members/{userId}`. For each role
    reduction, remove that membership and then use authenticated
    `POST /api/v1/organizations/{orgId}/members` with the user's email and
-   lower `role` (there is no in-place role-change endpoint). Verify the
+   lower `role` (there is no in-place role-change endpoint; re-adding
+   deactivates the user's API keys, so reissue any that are still needed). Verify the
    resulting membership and role using
    `GET /api/v1/organizations/{orgId}/members` for **every** affected
    organization. The last owner cannot be removed; confirm another authorized
