@@ -13,12 +13,9 @@ the controller publicly. Those are the [separate production follow-up](plans/pro
 
     ```sh
     version="$(sed -n 's/^ *"version": *"\([^"]*\)".*/\1/p' package.json | head -n 1)"
-    ```
-
     [ -n "$version" ] || { echo "could not read the version from package.json" >&2; false; }
     docker build --build-arg LAUNCHPAD_VERSION="$version" -f apps/controller/Dockerfile -t launchpad/controller:local .
     docker build --build-arg LAUNCHPAD_VERSION="$version" -f apps/worker/Dockerfile -t launchpad/worker:local .
-
     ```
 
     The build argument records the version in backups and in the operator status; an image
@@ -28,6 +25,8 @@ the controller publicly. Those are the [separate production follow-up](plans/pro
     Mount the **same** durable `/data` into both; a bind mount must be owned by
     10001:10001. Without an explicit mount, each gets a separate anonymous volume.
     See [tooling](tooling.md#configuration-and-containers) for image caveats.
+
+    ```
 
     ```
 
