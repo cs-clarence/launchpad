@@ -26,8 +26,8 @@ Dokku state or any preview datastore; back those up separately.
     recent lifecycle worker heartbeat exists, omit the stop-confirmation flag.
     Alternatively use the equivalent
     `omni -i run admin -p @launchpad/controller -a command=backup -a "options=<new-dir> --i-have-stopped-the-workers"`
-    from a configured checkout (drop `--i-have-stopped-the-workers` from that
-    option string when lifecycle has never run). If using a separate admin container, supply a
+    from a configured checkout. This is the confirmed-stop form; for the
+    no-confirmation case use `-a "options=<new-dir>"` instead. If using a separate admin container, supply a
     compatible `pg_dump`, the database configuration, `/data` and the backup
     destination as mounts. Do **not** pass a real password on a
     command line. The backup includes a custom-format `database.dump` and

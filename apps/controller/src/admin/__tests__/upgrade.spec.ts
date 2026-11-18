@@ -63,7 +63,13 @@ function pgClient(name: "pg_dump" | "pg_restore") {
         ["127.0.0.1", "localhost"].includes(url.hostname) &&
         url.port === (process.env.TEST_DB_PORT ?? "55432");
     if (!disposable) return `${name} "$@"`;
-    return `docker exec -i -e PGHOST=127.0.0.1 -e PGPORT=5432 -e PGUSER -e PGPASSWORD -e PGDATABASE launchpad-test-db ${name} "$@"`;
+    // The admin commands start this wrapper with a minimal environment, so the selected
+    // Docker endpoint is written into the script itself.
+    const exports = Object.entries(dockerEnv())
+        .filter(([key, value]) => key !== "PATH" && value)
+        .map(([key, value]) => `export ${key}='${String(value).replaceAll("'", "'\\''")}'`)
+        .join("\n");
+    return `${exports}\ndocker exec -i -e PGHOST=127.0.0.1 -e PGPORT=5432 -e PGUSER -e PGPASSWORD -e PGDATABASE launchpad-test-db ${name} "$@"`;
 }
 
 async function admin(url: string, data: string, work: string, command: string, ...args: string[]) {
