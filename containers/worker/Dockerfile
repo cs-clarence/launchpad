@@ -5,8 +5,18 @@
 # and not in the image: the data directory, SSH access to Dokku (a private key and a pinned
 # known_hosts file), and a Docker engine it can reach, whose socket it must be allowed to use
 # (give the container the socket's group). It holds no secret.
+#
+# Two things to know when running it:
+# - Access to the Docker socket is root-equivalent on that host. Run the worker only where that
+#   is acceptable, and treat the data directory it shares with the controller as trusted.
+# - It needs time to stop: a load or a rollback can take about 24 minutes, and a stop that kills
+#   it earlier leaves that deployment held for an administrator. Stop it with
+#   `docker stop --time 1500` (or `stop_grace_period: 25m` in Compose); the image cannot set it.
+# - Mount the shared /data volume as described in the controller recipe. The base images are
+#   pinned by tag and must be pinned by digest before a release; `docker build` here uses the
+#   classic builder (no buildx plugin in the client image).
 ARG BUN_VERSION=1.4.4
-ARG DOCKER_CLI_VERSION=27
+ARG DOCKER_CLI_VERSION=28
 
 FROM oven/bun:${BUN_VERSION} AS build
 WORKDIR /app

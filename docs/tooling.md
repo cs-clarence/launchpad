@@ -183,7 +183,11 @@ setting arrives at run time), and contain no source, env file or key. The contro
 healthcheck and carries the operator commands: `bun .output/admin.mjs migrate` (and `setup`,
 `backup`, ...). The worker image carries the `docker` client and `ssh`; at run time it still needs
 the data directory, a Dokku SSH key and pinned known_hosts file, and a Docker engine whose socket
-its user may use (give the container the socket's group). A built artifact's migrations are
+its user may use (give the container the socket's group: that access is root-equivalent on the host, so run the
+worker only where that is acceptable). Stop the worker with `docker stop --time 1500` (`stop_grace_period: 25m`
+in Compose): a load can take about 24 minutes. Mount the same volume at `/data` in both containers
+(a named volume gets the image's ownership; a bind-mounted directory must be owned by 10001:10001).
+The base images are pinned by tag and must be pinned by digest before a release. A built artifact's migrations are
 bundled into `.output/migrations` (controller) and `dist/migrations` (worker). `backup` and
 `restore` need a `pg_dump`/`pg_restore` at least as new as the server, which the image does not
 carry: mount one and set `LAUNCHPAD_PG_DUMP` / `LAUNCHPAD_PG_RESTORE`.
@@ -193,6 +197,7 @@ layer, no `.env`, `.git`, key or source file, the expected files present), runs 
 controller image against the disposable PostgreSQL, starts the controller and waits for `/api/health`
 and a healthy healthcheck, and starts the worker (deployments off). It needs Docker and
 `TEST_DATABASE_URL`, removes everything it creates by exact name, never pushes, and never touches
-Dokku. CI runs it in the integration job. `docker-compose.yml` still manages Dokku only;
+Dokku. CI runs it in the integration job. Its containers, anonymous volumes, images and database are
+removed by exact name (also on an interrupt); Docker's build cache is not. `docker-compose.yml` still manages Dokku only;
 controller/PostgreSQL orchestration and secure controller-to-Dokku networking remain future work
 (`docs/plans/production-compose-follow-up.md`).

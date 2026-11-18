@@ -2,7 +2,8 @@
 // unprivileged, holding no secret and no source, able to run `migrate` and to start. The only
 // services it touches are the disposable PostgreSQL named by TEST_DATABASE_URL and Docker itself;
 // it never contacts Dokku. Every container, image and database it creates is removed by exact
-// name (no prune). Nothing is pushed. Run by `omni run test:images`.
+// name (no prune), volumes included, and also when interrupted; BuildKit's build cache is left
+// to Docker. Nothing is pushed. Run by `omni run test:images`.
 import { SQL } from "bun";
 import { randomBytes } from "node:crypto";
 import path from "node:path";
@@ -31,7 +32,9 @@ async function docker(args: string[], options: { allowFailure?: boolean } = {}) 
         proc.exited,
     ]);
     if (code !== 0 && !options.allowFailure) {
-        throw new Error(`docker ${args.join(" ")} failed (${code}):\n${out}\n${err}`);
+        // The disposable database's password must not end up in a log.
+        const shown = args.join(" ").replace(/DATABASE_URL=\S+/g, "DATABASE_URL=<redacted>");
+        throw new Error(`docker ${shown} failed (${code}):\n${out}\n${err}`);
     }
     return { out: out.trim(), err: err.trim(), code };
 }
@@ -47,6 +50,11 @@ const FORBIDDEN_IN_IMAGE = [
     /^app\/(apps|packages|docs|tooling)\//,
 ];
 const SECRET_IN_HISTORY = /(PASSWORD|SECRET|TOKEN|API_?KEY|PRIVATE_?KEY)\s*=\s*\S/i;
+
+async function logs(name: string) {
+    const result = await docker(["logs", name], { allowFailure: true });
+    return `${result.out}\n${result.err}`;
+}
 
 async function inspectImage(name: string, expectFiles: string[]) {
     const config = JSON.parse((await docker(["image", "inspect", name])).out)[0].Config;
@@ -74,8 +82,15 @@ async function inspectImage(name: string, expectFiles: string[]) {
     for (const wanted of expectFiles) {
         if (!listing.includes(wanted)) fail(`${name}: ${wanted} is missing`);
     }
-    await docker(["rm", "-f", created]);
+    await docker(["rm", "-fv", created]);
     return config;
+}
+
+let cleanup: () => Promise<void> = async () => {};
+for (const signal of ["SIGINT", "SIGTERM"] as const) {
+    process.on(signal, () => {
+        void cleanup().finally(() => process.exit(130));
+    });
 }
 
 async function main() {
@@ -92,6 +107,15 @@ async function main() {
         "-e",
         `LAUNCHPAD_AUTH_SECRET=${"image-check-secret-".repeat(3)}`,
     ];
+    // What this run created, removed by exact name (also when it is interrupted).
+    cleanup = async () => {
+        for (const container of containers)
+            await docker(["rm", "-fv", container], { allowFailure: true });
+        for (const image of Object.values(images))
+            await docker(["image", "rm", image], { allowFailure: true });
+        await admin.unsafe(`drop database if exists ${database} with (force)`).catch(() => {});
+        await admin.close().catch(() => {});
+    };
     try {
         for (const [name, file] of Object.entries({
             controller: "containers/controller/Dockerfile",
@@ -201,11 +225,15 @@ async function main() {
             if (!ready) await Bun.sleep(500);
         }
         if (!ready) {
-            fail(
-                `the controller did not answer /api/health:\n${(await docker(["logs", name], { allowFailure: true })).err}`,
-            );
+            fail(`the controller did not answer /api/health:\n${await logs(name)}`);
         } else {
             console.log("the controller answers");
+            // Not another process's answer on the shared host network: this container is up and
+            // it is the one that says it listens on this port.
+            const state = (await docker(["inspect", "--format", "{{.State.Running}}", name])).out;
+            if (state !== "true" || !(await logs(name)).includes(String(port))) {
+                fail(`the answer on port ${port} did not come from the controller container`);
+            }
             const uid = (await docker(["exec", name, "id", "-u"])).out;
             if (uid !== "10001") fail(`the controller runs as uid ${uid}`);
             const write = await docker(
@@ -225,7 +253,11 @@ async function main() {
             }
             if (health !== "healthy") fail(`the controller's healthcheck says "${health}"`);
         }
-        await docker(["rm", "-f", name]);
+        // A stop is graceful: it exits 0 well within a few seconds.
+        await docker(["stop", "--time", "20", name], { allowFailure: true });
+        const stopped = (await docker(["inspect", "--format", "{{.State.ExitCode}}", name])).out;
+        if (stopped !== "0") fail(`the controller exited ${stopped} on a stop, not 0`);
+        await docker(["rm", "-fv", name]);
 
         // The worker with deployments off idles; it carries the tools it needs.
         const workerName = `launchpad-image-check-${run}-worker`;
@@ -242,9 +274,7 @@ async function main() {
         ]);
         let idle = false;
         for (let i = 0; i < 40 && !idle; i++) {
-            idle = (await docker(["logs", workerName], { allowFailure: true })).out.includes(
-                '"event":"disabled"',
-            );
+            idle = (await logs(workerName)).includes('"event":"disabled"');
             if (!idle) await Bun.sleep(500);
         }
         if (!idle) fail("the worker did not report that deployments are off");
@@ -260,14 +290,17 @@ async function main() {
         }
         const workerUid = (await docker(["exec", workerName, "id", "-u"])).out;
         if (workerUid !== "10001") fail(`the worker runs as uid ${workerUid}`);
-        console.log("the worker starts");
+        const asked = Date.now();
+        await docker(["stop", "--time", "20", workerName], { allowFailure: true });
+        const workerStopped = (
+            await docker(["inspect", "--format", "{{.State.ExitCode}}", workerName])
+        ).out;
+        if (workerStopped !== "0" || Date.now() - asked > 15_000) {
+            fail(`the worker did not stop gracefully (exit ${workerStopped})`);
+        }
+        console.log("the worker starts and stops");
     } finally {
-        for (const container of containers)
-            await docker(["rm", "-f", container], { allowFailure: true });
-        for (const image of Object.values(images))
-            await docker(["image", "rm", image], { allowFailure: true });
-        await admin.unsafe(`drop database if exists ${database} with (force)`).catch(() => {});
-        await admin.close();
+        await cleanup();
     }
 }
 

@@ -3,8 +3,13 @@
 #
 # Runs as an unprivileged user (uid 10001, the same as the worker image: the two share one data
 # directory). Holds no secret: every setting arrives at run time. The operator commands are in
-# the image too: `bun .output/admin.mjs migrate` (run it before the first start and after every
-# upgrade, from a backup you have taken).
+# the image too: `bun .output/admin.mjs migrate` (run it before the first start, and after an
+# upgrade once you have taken a backup).
+#
+# /data must be shared with the worker: mount the same volume in both (a named volume picks up
+# the image's ownership; a bind-mounted host directory must be owned by 10001:10001 and mode
+# 0700). Without a mount each container gets its own anonymous volume. The base images are
+# pinned by tag here and must be pinned by digest before a release.
 ARG BUN_VERSION=1.4.4
 
 FROM oven/bun:${BUN_VERSION} AS build

@@ -10,7 +10,14 @@ if (!out) throw new Error("Usage: bun bundle-migrations.mjs <outDir>");
 const source = path.resolve(import.meta.dirname, "../src/migrations");
 const target = path.resolve(process.cwd(), out);
 rmSync(target, { recursive: true, force: true });
-const files = readdirSync(source).filter((name) => /^\d{8}_\d{3}_.+\.ts$/.test(name));
+// The same naming rule `migrate` enforces: a file that does not match is an error here too, never
+// quietly left out of the artifact.
+const files = readdirSync(source).filter((name) => !name.endsWith(".d.ts"));
+for (const name of files) {
+    if (!/^\d{8}_\d{3}_.+\.ts$/.test(name)) {
+        throw new Error(`Unexpected file in the migrations folder: ${name}`);
+    }
+}
 if (files.length === 0) throw new Error(`No migrations found in ${source}.`);
 for (const file of files.sort()) {
     const result = await Bun.build({
