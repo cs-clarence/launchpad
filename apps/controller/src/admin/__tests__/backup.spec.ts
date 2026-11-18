@@ -331,6 +331,23 @@ describe("createBackup", () => {
         }
     });
 
+    it("finds the tables through the search path when the user's own schema is empty", async () => {
+        const { rows } = await sql<{ name: string }>`select current_user as name`.execute(
+            testDb.db,
+        );
+        const schema = rows[0]!.name;
+        await sql.raw(`create schema "${schema}"`).execute(testDb.db);
+        try {
+            const dest = fresh();
+            const manifest = await createBackup(options(dest));
+            // Earlier tests stored archives: an empty list would be a silently incomplete backup.
+            expect(manifest.artifacts.length).toBeGreaterThan(0);
+            expect(await verifyBackup(dest)).toEqual([]);
+        } finally {
+            await sql.raw(`drop schema "${schema}"`).execute(testDb.db);
+        }
+    });
+
     it("dumps the snapshot the rows were read in, not a later state", async () => {
         await fs.rm(markerBefore, { force: true });
         await fs.rm(releaseBefore, { force: true });
