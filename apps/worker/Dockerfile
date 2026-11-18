@@ -1,6 +1,6 @@
 # Build from the repository root with BuildKit (the default in current Docker; the classic builder
 # ignores this recipe's own .dockerignore and would copy nothing):
-#   docker build -f containers/worker/Dockerfile -t launchpad/worker:dev .
+#   docker build -f apps/worker/Dockerfile -t launchpad/worker:dev .
 #
 # Runs as uid 10001 (the controller's uid: both use one data directory). It needs, at run time
 # and not in the image: the data directory, SSH access to Dokku (a private key and a pinned

@@ -31,12 +31,12 @@ number), except the shared tooling packages (`@launchpad/tsconfig`, `vite-config
 
 ## What a release contains
 
-| Artifact                                                  | Built by                           | Checked by                         |
-| --------------------------------------------------------- | ---------------------------------- | ---------------------------------- |
-| `@launchpad/contracts`, `sdk`, `cli`, `mcp` tarballs      | `tooling/package-clients.ts`       | `test:packages`, the dry run       |
-| Controller and worker images                              | `containers/*/Dockerfile`          | `test:images`, the dry run (build) |
-| Database migrations (forward-only, bundled in the images) | `packages/database/src/migrations` | `test:integration`, `test:upgrade` |
-| Operator documentation                                    | `docs/`                            | review                             |
+| Artifact                                                  | Built by                              | Checked by                         |
+| --------------------------------------------------------- | ------------------------------------- | ---------------------------------- |
+| `@launchpad/contracts`, `sdk`, `cli`, `mcp` tarballs      | `tooling/package-clients.ts`          | `test:packages`, the dry run       |
+| Controller and worker images                              | `apps/{controller,worker}/Dockerfile` | `test:images`, the dry run (build) |
+| Database migrations (forward-only, bundled in the images) | `packages/database/src/migrations`    | `test:integration`, `test:upgrade` |
+| Operator documentation                                    | `docs/`                               | review                             |
 
 The `@launchpad/*` package names are placeholders until the npm scope and product name are
 decided; renaming them is one change. Packed READMEs are still developer documentation and
@@ -113,7 +113,7 @@ A release is a person's decision. Work through this in order and stop at the fir
 4. Licence, npm scope and product name are decided and recorded; the packed READMEs and
    manifests carry `license` and `repository`; **registry ownership of the name is verified
    with an authenticated account**. (Not done: all three are open decisions.)
-5. Base images in `containers/*/Dockerfile` are pinned by digest, not tag.
+5. Base images in `apps/{controller,worker}/Dockerfile` are pinned by digest, not tag.
 6. Run the [dry run](#rehearse-a-release); inspect the tarball listings, `SHA256SUMS` and the
    image notes. No `.env`, key, source map or workspace specifier in any tarball.
 7. `cog bump` on a clean checkout, then review the bump commit, changelog and tag locally.

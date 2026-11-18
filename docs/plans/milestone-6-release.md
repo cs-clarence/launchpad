@@ -73,8 +73,8 @@ live infrastructure, plus a drill an operator can repeat.
    Bun, a `files` allowlist, dependency ranges, no workspace `workspace:` specifiers. The
    names are **placeholders**: the npm scope and product name are undecided and are not
    registered. Proposed: yes.
-7. **Images.** Controller and worker Dockerfiles under `containers/controller/` and
-   `containers/worker/`, multi-stage, non-root (one fixed uid for both, because they share the
+7. **Images.** Controller and worker Dockerfiles beside their apps (`apps/controller/`, `apps/worker/`;
+   moved there after the first draft put them under `containers/`), multi-stage, non-root (one fixed uid for both, because they share the
    data directory), migrations folder copied in, no secrets in layers, healthcheck. Built
    in CI, **not pushed**. The Dokku Dockerfile moves in the follow-up, not here.
    Proposed: yes.
@@ -183,8 +183,8 @@ expired restored preview, and a preview whose app is gone.
   pointed at nothing, so nothing resolved by name can stand in for a packed tarball. Before
   publishing: the packed READMEs are still developer docs (links into the repository), and the
   manifests have no `license` or `repository`, which wait for the licence and name decisions.
-- Slice 5 (images): `containers/controller/Dockerfile` and `containers/worker/Dockerfile` (the
-  controller recipe moved from `apps/controller/`), `tooling/check-images.ts` and `test:images`
+- Slice 5 (images): `apps/controller/Dockerfile` and `apps/worker/Dockerfile` (beside their
+  apps), `tooling/check-images.ts` and `test:images`
   (run in the CI integration job). Migrations are now bundled per file
   (`packages/database/scripts/bundle-migrations.mjs`) and the controller build also produces
   `.output/admin.mjs`, so `migrate` runs from the image (slice 1's known limit is closed). Found

@@ -149,7 +149,7 @@ commands, the disposable test database); see [CONTRIBUTING.md](CONTRIBUTING.md#t
 
 Build generates the ignored TanStack route tree and production Bun output; it
 does not start the app. The controller Dockerfile is in
-`containers/controller/Dockerfile` (and the worker's in `containers/worker/`), separate from the root Dokku image.
+`apps/controller/Dockerfile` (and the worker's in `apps/worker/`), separate from the root Dokku image.
 
 Authentication, organizations, projects, email flows, uploads, deployments, expiry and
 deletion are implemented and tested against a disposable PostgreSQL (and, opt-in, a disposable

@@ -201,8 +201,8 @@ async function main() {
         })());
     try {
         for (const [name, file] of Object.entries({
-            controller: "containers/controller/Dockerfile",
-            worker: "containers/worker/Dockerfile",
+            controller: "apps/controller/Dockerfile",
+            worker: "apps/worker/Dockerfile",
         })) {
             await docker([
                 "build",

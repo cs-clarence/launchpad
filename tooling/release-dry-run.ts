@@ -166,7 +166,7 @@ async function rehearse(out: string, version: string, skipImages: boolean) {
                     "--build-arg",
                     `LAUNCHPAD_VERSION=${version}`,
                     "-f",
-                    `containers/${name}/Dockerfile`,
+                    `apps/${name}/Dockerfile`,
                     "-t",
                     tag,
                     ".",

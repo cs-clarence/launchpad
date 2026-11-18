@@ -14,7 +14,9 @@ packaging in place of unfinished application milestones.
 - Prepare a production Compose stack with controller, worker, PostgreSQL, Dokku
   and other required dependencies wired together and operationally documented.
 - Move the Dokku Dockerfile to `containers/dokku/` and put other custom Dockerfiles
-  for external services under `containers/<service>/`. Update build contexts,
+  for external services under `containers/<service>/`. (Launchpad's own controller and worker
+  Dockerfiles stay beside their apps, `apps/controller/` and `apps/worker/`; `containers/` is only for
+  images of external software.) Update build contexts,
   paths, tooling checks and documentation together.
 - Avoid commonly used **host** ports, including 8080 and 443. Distinguish internal
   service ports from host bindings, and settle public TLS/ingress routing before

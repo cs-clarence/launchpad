@@ -1,6 +1,6 @@
 # Build from the repository root with BuildKit (the default in current Docker; the classic builder
 # ignores this recipe's own .dockerignore and would copy nothing):
-#   docker build -f containers/controller/Dockerfile -t launchpad/controller:dev .
+#   docker build -f apps/controller/Dockerfile -t launchpad/controller:dev .
 #
 # Runs as an unprivileged user (uid 10001, the same as the worker image: the two share one data
 # directory). Holds no secret: every setting arrives at run time. The operator commands are in
