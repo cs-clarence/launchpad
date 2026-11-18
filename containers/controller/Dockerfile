@@ -1,4 +1,5 @@
-# Build from the repository root (the context is the whole monorepo):
+# Build from the repository root with BuildKit (the default in current Docker; the classic builder
+# ignores this recipe's own .dockerignore and would copy nothing):
 #   docker build -f containers/controller/Dockerfile -t launchpad/controller:dev .
 #
 # Runs as an unprivileged user (uid 10001, the same as the worker image: the two share one data
@@ -20,7 +21,11 @@ RUN bun run --filter @launchpad/controller build
 
 FROM oven/bun:${BUN_VERSION}-slim AS runtime
 ARG LAUNCHPAD_UID=10001
-RUN groupadd --gid "${LAUNCHPAD_UID}" launchpad \
+# openssh-client: `check-restore` asks Dokku over SSH.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends openssh-client \
+    && rm -rf /var/lib/apt/lists/* \
+    && groupadd --gid "${LAUNCHPAD_UID}" launchpad \
     && useradd --uid "${LAUNCHPAD_UID}" --gid launchpad --no-create-home --shell /usr/sbin/nologin launchpad \
     && install -d -o launchpad -g launchpad -m 0700 /data
 WORKDIR /app

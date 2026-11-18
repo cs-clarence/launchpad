@@ -6,6 +6,8 @@
 // to Docker. Nothing is pushed. Run by `omni run test:images`.
 import { SQL } from "bun";
 import { randomBytes } from "node:crypto";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
 import path from "node:path";
 
 const root = path.resolve(import.meta.dirname, "..");
@@ -18,7 +20,23 @@ const containers: string[] = [];
 const problems: string[] = [];
 const fail = (message: string) => problems.push(message);
 
-async function docker(args: string[], options: { allowFailure?: boolean } = {}) {
+// Once an interrupt arrives nothing new is created; commands already running are waited for, so
+// the one shared cleanup sees everything this run made.
+let stopping = false;
+const inflight = new Set<Promise<unknown>>();
+
+function docker(args: string[], options: { allowFailure?: boolean; cleanup?: boolean } = {}) {
+    if (stopping && !options.cleanup) return Promise.reject(new Error("interrupted"));
+    const running = dockerNow(args, options);
+    inflight.add(running);
+    void running.then(
+        () => inflight.delete(running),
+        () => inflight.delete(running),
+    );
+    return running;
+}
+
+async function dockerNow(args: string[], options: { allowFailure?: boolean }) {
     const proc = Bun.spawn(["docker", ...args], {
         cwd: root,
         stdout: "pipe",
@@ -56,6 +74,8 @@ async function logs(name: string) {
     return `${result.out}\n${result.err}`;
 }
 
+let inspected = 0;
+
 async function inspectImage(name: string, expectFiles: string[]) {
     const config = JSON.parse((await docker(["image", "inspect", name])).out)[0].Config;
     if (!/^\d+:\d+$/.test(config.User ?? "") || config.User.startsWith("0:")) {
@@ -66,8 +86,10 @@ async function inspectImage(name: string, expectFiles: string[]) {
     if (SECRET_IN_HISTORY.test(history))
         fail(`${name}: a layer sets something that looks like a secret`);
 
-    const created = (await docker(["create", name])).out;
+    // Named first, so a cleanup that starts while the create is still running can remove it.
+    const created = `launchpad-image-check-${run}-inspect-${++inspected}`;
     containers.push(created);
+    await docker(["create", "--name", created, name]);
     const exportProc = Bun.spawn(["sh", "-c", `docker export ${created} | tar tf -`], {
         stdout: "pipe",
         stderr: "pipe",
@@ -83,6 +105,28 @@ async function inspectImage(name: string, expectFiles: string[]) {
         if (!listing.includes(wanted)) fail(`${name}: ${wanted} is missing`);
     }
     await docker(["rm", "-fv", created]);
+
+    // A file one layer adds and a later layer deletes is not in the final filesystem but is still
+    // in the image: every layer is scanned, deletions (whiteouts) read as the file they hide.
+    const saved = mkdtempSync(path.join(tmpdir(), "launchpad-image-save-"));
+    try {
+        const archive = path.join(saved, "image.tar");
+        await docker(["save", "-o", archive, name]);
+        await Bun.spawn(["tar", "xf", archive, "-C", saved]).exited;
+        const manifest = JSON.parse(readFileSync(path.join(saved, "manifest.json"), "utf8"));
+        for (const layer of manifest[0].Layers as string[]) {
+            const entries = Bun.spawn(["tar", "tf", path.join(saved, layer)], { stdout: "pipe" });
+            const names = (await new Response(entries.stdout).text()).split("\n").filter(Boolean);
+            for (const entry of names) {
+                const file = entry.replace(/^\.\//, "").replace(/(^|\/)\.wh\./, "$1");
+                if (FORBIDDEN_IN_IMAGE.some((pattern) => pattern.test(file))) {
+                    fail(`${name}: a layer contains ${file}, even if a later layer removes it`);
+                }
+            }
+        }
+    } finally {
+        rmSync(saved, { recursive: true, force: true });
+    }
     return config;
 }
 
@@ -108,14 +152,20 @@ async function main() {
         `LAUNCHPAD_AUTH_SECRET=${"image-check-secret-".repeat(3)}`,
     ];
     // What this run created, removed by exact name (also when it is interrupted).
-    cleanup = async () => {
-        for (const container of containers)
-            await docker(["rm", "-fv", container], { allowFailure: true });
-        for (const image of Object.values(images))
-            await docker(["image", "rm", image], { allowFailure: true });
-        await admin.unsafe(`drop database if exists ${database} with (force)`).catch(() => {});
-        await admin.close().catch(() => {});
-    };
+    let cleaning: Promise<void> | undefined;
+    cleanup = () =>
+        (cleaning ??= (async () => {
+            stopping = true;
+            await Promise.allSettled(inflight);
+            for (const container of containers) {
+                await docker(["rm", "-fv", container], { allowFailure: true, cleanup: true });
+            }
+            for (const image of Object.values(images)) {
+                await docker(["image", "rm", image], { allowFailure: true, cleanup: true });
+            }
+            await admin.unsafe(`drop database if exists ${database} with (force)`).catch(() => {});
+            await admin.close().catch(() => {});
+        })());
     try {
         for (const [name, file] of Object.entries({
             controller: "containers/controller/Dockerfile",

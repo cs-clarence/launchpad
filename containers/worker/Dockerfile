@@ -1,4 +1,5 @@
-# Build from the repository root:
+# Build from the repository root with BuildKit (the default in current Docker; the classic builder
+# ignores this recipe's own .dockerignore and would copy nothing):
 #   docker build -f containers/worker/Dockerfile -t launchpad/worker:dev .
 #
 # Runs as uid 10001 (the controller's uid: both use one data directory). It needs, at run time
@@ -13,8 +14,9 @@
 #   it earlier leaves that deployment held for an administrator. Stop it with
 #   `docker stop --time 1500` (or `stop_grace_period: 25m` in Compose); the image cannot set it.
 # - Mount the shared /data volume as described in the controller recipe. The base images are
-#   pinned by tag and must be pinned by digest before a release; `docker build` here uses the
-#   classic builder (no buildx plugin in the client image).
+#   pinned by tag and must be pinned by digest before a release. The `docker` client inside the
+#   image has no buildx plugin, so the worker's own `docker build` of a preview uses the classic
+#   builder (a deprecation notice on stderr is expected).
 ARG BUN_VERSION=1.4.4
 ARG DOCKER_CLI_VERSION=28
 

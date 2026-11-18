@@ -174,7 +174,7 @@ recipes, built from the monorepo root (each has a Dockerfile-specific ignore fil
 env files, state, dependencies and agent context, overriding the root Dokku build ignore file):
 
 ```sh
-docker build -f containers/controller/Dockerfile -t launchpad/controller:dev .
+docker build -f containers/controller/Dockerfile -t launchpad/controller:dev .   # needs BuildKit
 docker build -f containers/worker/Dockerfile -t launchpad/worker:dev .
 ```
 
