@@ -74,6 +74,31 @@ async function logs(name: string) {
     return `${result.out}\n${result.err}`;
 }
 
+// Temporary directories this run made, removed by the shared cleanup as well as by the normal path.
+const tempDirs = new Set<string>();
+
+// Runs a host tool (tar) tracked like a docker command, and fails on a non-zero exit: an
+// incomplete listing must never read as a clean scan.
+function hostTool(args: string[]) {
+    if (stopping) return Promise.reject(new Error("interrupted"));
+    const running = (async () => {
+        const proc = Bun.spawn(args, { stdout: "pipe", stderr: "pipe", timeout: 5 * 60_000 });
+        const [out, err, code] = await Promise.all([
+            new Response(proc.stdout).text(),
+            new Response(proc.stderr).text(),
+            proc.exited,
+        ]);
+        if (code !== 0) throw new Error(`${args.join(" ")} failed (${code}): ${err.trim()}`);
+        return out;
+    })();
+    inflight.add(running);
+    void running.then(
+        () => inflight.delete(running),
+        () => inflight.delete(running),
+    );
+    return running;
+}
+
 let inspected = 0;
 
 async function inspectImage(name: string, expectFiles: string[]) {
@@ -109,14 +134,16 @@ async function inspectImage(name: string, expectFiles: string[]) {
     // A file one layer adds and a later layer deletes is not in the final filesystem but is still
     // in the image: every layer is scanned, deletions (whiteouts) read as the file they hide.
     const saved = mkdtempSync(path.join(tmpdir(), "launchpad-image-save-"));
+    tempDirs.add(saved);
     try {
         const archive = path.join(saved, "image.tar");
         await docker(["save", "-o", archive, name]);
-        await Bun.spawn(["tar", "xf", archive, "-C", saved]).exited;
+        await hostTool(["tar", "xf", archive, "-C", saved]);
         const manifest = JSON.parse(readFileSync(path.join(saved, "manifest.json"), "utf8"));
         for (const layer of manifest[0].Layers as string[]) {
-            const entries = Bun.spawn(["tar", "tf", path.join(saved, layer)], { stdout: "pipe" });
-            const names = (await new Response(entries.stdout).text()).split("\n").filter(Boolean);
+            const names = (await hostTool(["tar", "tf", path.join(saved, layer)]))
+                .split("\n")
+                .filter(Boolean);
             for (const entry of names) {
                 const file = entry.replace(/^\.\//, "").replace(/(^|\/)\.wh\./, "$1");
                 if (FORBIDDEN_IN_IMAGE.some((pattern) => pattern.test(file))) {
@@ -126,6 +153,7 @@ async function inspectImage(name: string, expectFiles: string[]) {
         }
     } finally {
         rmSync(saved, { recursive: true, force: true });
+        tempDirs.delete(saved);
     }
     return config;
 }
@@ -157,6 +185,7 @@ async function main() {
         (cleaning ??= (async () => {
             stopping = true;
             await Promise.allSettled(inflight);
+            for (const dir of tempDirs) rmSync(dir, { recursive: true, force: true });
             for (const container of containers) {
                 await docker(["rm", "-fv", container], { allowFailure: true, cleanup: true });
             }
