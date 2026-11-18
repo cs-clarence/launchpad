@@ -200,4 +200,8 @@ expired restored preview, and a preview whose app is gone.
   An actual remote in-flight destroy is **not** run by CI: it needs the explicitly
   isolated host and is not implied by the database-only test. The whole-runbook
   remote rehearsal is still open and must be recorded before the slice is called
-  complete.
+  complete. It is currently blocked on the safety boundary: milestone live tests
+  are limited to `lp-test-` apps, but the production preview table only accepts
+  `lp-` plus ten characters and the normal Dokku client applies that same
+  allowlist. Do not weaken production validation or run the drill with real
+  preview names without a separate decision on the disposable-host exception.

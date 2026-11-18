@@ -61,14 +61,18 @@ start/restart from that image, an authenticated operator status read, and
 restoration into another disposable database.
 It creates only temporary test databases/directories and cleans them up.
 
-The **remote** portion cannot be simulated by that test. For a full rehearsal,
-use only an isolated disposable Dokku and `lp-test-` apps: take a backup with
-test previews and an already-expiring preview, start a deletion, stop workers
-as in step 1, and observe the remote destroy settling **before** restoring.
-Run steps 2–5 against that isolated host, record which app `check-restore`
-listed as missing, redeploy one kept preview, extend the expired preview
-before enabling lifecycle, and verify it survives while the preview chosen
-to end is deleted. Never point this drill at an existing production Dokku,
-`view-demo`, or real preview data. A simulated `apps:exists` check in the
-admin integration tests covers detection; it cannot prove a remote destroy
-has settled.
+The **remote** portion cannot be simulated by that test. A full rehearsal would
+use an isolated disposable Dokku: take a backup with test previews and an
+already-expiring preview, start a deletion, stop workers as in step 1, and
+observe the remote destroy settling **before** restoring. Then run steps 2–5,
+record which app `check-restore` listed as missing, redeploy a kept preview,
+extend the expired preview before enabling lifecycle, and verify it survives
+while the preview chosen to end is deleted.
+
+**Do not run that rehearsal yet.** The approved live-test boundary allows
+only `lp-test-` apps, while production preview rows and the normal Dokku
+client require `lp-` followed by ten characters. That mismatch needs an
+explicit fixture/safety decision before a real run; weakening production
+validation or pointing the drill at `view-demo` is not a workaround.
+The read-only fake `apps:exists` integration test covers detection but cannot
+prove that a remote destroy has settled.
