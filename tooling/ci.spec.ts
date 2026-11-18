@@ -31,7 +31,8 @@ const gate = ci.jobs["ci-gatekeeper"]!;
 const VALUE_OPTIONS = new Set(["-p", "--project", "-e", "--env-file", "-a", "--args"]);
 const runs = (commands: string, task: string) =>
     commands.split("\n").some((line) => {
-        const command = line.split("#")[0]!;
+        // Only what Omni itself is given: stop at a comment or a shell operator.
+        const command = line.split("#")[0]!.split(/&&|\|\||[;|&<>]/)[0]!;
         const match = command.match(/^\s*omni -i run\b(.*)$/);
         if (!match) return false;
         const tokens = match[1]!.trim().split(/\s+/).filter(Boolean);

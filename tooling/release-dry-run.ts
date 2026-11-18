@@ -60,6 +60,13 @@ export function checkOutput(out: string, repository = root): string | null {
     if (existsSync(out) && !inside(realpathSync(out), realpathSync(repository))) {
         return "it resolves outside the repository through a symbolic link";
     }
+    // Where the folder will really be, missing parts included, against the real lock folder:
+    // a link to the checkout root must not smuggle the output into the lock.
+    const canonical = path.join(realpathSync(ancestor), path.relative(ancestor, out));
+    const canonicalLock = path.join(realpathSync(repository), LOCK);
+    if (canonical === canonicalLock || canonical.startsWith(`${canonicalLock}${path.sep}`)) {
+        return "it resolves inside the lock folder";
+    }
     return null;
 }
 

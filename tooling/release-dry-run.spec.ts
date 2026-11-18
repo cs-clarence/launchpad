@@ -47,6 +47,17 @@ describe("checkOutput", () => {
         ).toContain("lock");
     });
 
+    it("refuses a path that reaches the lock folder through a link to the repository", () => {
+        symlinkSync(repo, path.join(repo, "alias"));
+        const through = path.join(
+            repo,
+            "alias",
+            ".release-dry-run.lock",
+            "results-release-dry-run",
+        );
+        expect(checkOutput(through, repo)).toContain("lock");
+    });
+
     it("refuses a path that reaches outside through a symbolic link", () => {
         expect(checkOutput(path.join(repo, "link", "release-dry-run"), repo)).toContain("symbolic");
         rmSync(base, { recursive: true, force: true });
