@@ -77,7 +77,7 @@ export function workspaces(root: string): Workspace[] {
             const json = readJson(manifest);
             found.push({
                 name: json.name,
-                dir: `${parent}/${entry.name}`,
+                dir: path.posix.normalize(`${parent}/${entry.name}`),
                 version: String(json.version ?? ""),
             });
         }

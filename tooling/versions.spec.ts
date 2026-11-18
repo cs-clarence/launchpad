@@ -144,6 +144,16 @@ describe("lockfile and strictness", () => {
         }
     });
 
+    it("normalizes a dotted workspace entry to the path the lockfile records", () => {
+        const root = repository();
+        writeFileSync(
+            path.join(root, "package.json"),
+            `{\n    "name": "@t/root",\n    "version": "1.2.3",\n    "workspaces": ["packages/./*", "apps/*"]\n}\n`,
+        );
+        expect(sharedWorkspaces(root).map((w) => w.dir)).toContain("packages/lib");
+        expect(checkVersions(root)).toEqual([]);
+    });
+
     it("refuses a workspace entry it cannot read", () => {
         const root = repository();
         writeFileSync(

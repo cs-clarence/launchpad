@@ -22,7 +22,8 @@ number), except the shared tooling packages (`@launchpad/tsconfig`, `vite-config
   commit with every manifest, `bun.lock` and `CHANGELOG.md`, and the tag `core-v<version>`.
   Run `cog bump` only on a clean checkout of the commit you mean to release, review the
   result, and **do not push** the commit or tag until the release is authorized. The commit
-  message carries `[skip ci]`; run the checks before bumping, not after.
+  message carries `[skip ci]`, so CI will not check it: run the local checks before bumping **and**
+  again on the bump commit (checklist step 7).
 - Three version strings are written in source (the CLI's `--version`, the MCP server info and
   the OpenAPI `info.version`); `sync core` rewrites them and `check:versions` compares them.
 - `from_latest_tag = false`: with no earlier tag the first changelog covers all history.

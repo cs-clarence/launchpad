@@ -31,7 +31,7 @@ const gate = ci.jobs["ci-gatekeeper"]!;
 const runs = (commands: string, task: string) =>
     commands
         .split("\n")
-        .some((line) => new RegExp(`^\\s*omni -i run\\b.*(^|\\s)${task}(\\s|$)`).test(line));
+        .some((line) => new RegExp(`^\\s*omni -i run\\b[^#]*(^|\\s)${task}(\\s|$)`).test(line));
 
 describe("CI workflow", () => {
     // Adding a job without adding it to the gate would let it fail unnoticed.

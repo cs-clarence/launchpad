@@ -2,7 +2,7 @@ import { describe, expect, it } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { checkOutput, checksumLines, dockerTag } from "./release-dry-run";
+import { checkOutput, checksumLines, IMAGE_TAG } from "./release-dry-run";
 
 describe("checksumLines", () => {
     it("writes sha256sum format, sorted by name", () => {
@@ -15,10 +15,9 @@ describe("checksumLines", () => {
     });
 });
 
-describe("dockerTag", () => {
-    it("replaces the SemVer build separator, which Docker refuses", () => {
-        expect(dockerTag("1.2.3+build.7")).toBe("1.2.3_build.7");
-        expect(dockerTag("1.2.3-rc.1")).toBe("1.2.3-rc.1");
+describe("IMAGE_TAG", () => {
+    it("is a valid, short Docker tag whatever the release version", () => {
+        expect(IMAGE_TAG).toMatch(/^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$/);
     });
 });
 

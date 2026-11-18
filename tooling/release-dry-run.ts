@@ -59,8 +59,9 @@ export function checkOutput(out: string, repository = root): string | null {
     return null;
 }
 
-// Docker tags allow neither `+` (SemVer build metadata) nor anything outside [\w.-].
-export const dockerTag = (version: string) => version.replaceAll("+", "_");
+// A fixed, short tag under a run-specific image name: a SemVer version can hold characters and
+// a length Docker refuses in a tag. The release version stays in the report.
+export const IMAGE_TAG = "dry-run";
 
 async function exec(command: string[], cwd = root) {
     const proc = Bun.spawn(command, { cwd, stdout: "pipe", stderr: "pipe", stdin: "ignore" });
@@ -85,11 +86,13 @@ async function main() {
 
     const refused = checkOutput(out);
     if (refused) throw new Error(`Refusing to empty ${out}: ${refused}.`);
-    // One run at a time: a second would empty the folder under the first.
-    const lock = `${out}.lock`;
+    // One run at a time, whatever folders they use: a second would empty the first's folder, or
+    // one holding it. The lock sits at the checkout root, outside every selectable folder.
+    const lock = path.join(root, ".release-dry-run.lock");
     try {
         mkdirSync(lock);
-    } catch {
+    } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
         throw new Error(`Another dry run holds ${lock}; remove it only if none is running.`);
     }
     try {
@@ -142,7 +145,7 @@ async function rehearse(out: string, version: string, skipImages: boolean) {
         let failure: unknown;
         try {
             for (const name of ["controller", "worker"]) {
-                const tag = `launchpad-release-dry-run-${run}/${name}:${dockerTag(version)}`;
+                const tag = `launchpad-release-dry-run-${run}/${name}:${IMAGE_TAG}`;
                 built.push(tag);
                 await exec([
                     "docker",
