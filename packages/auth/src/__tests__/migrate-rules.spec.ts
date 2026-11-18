@@ -1,8 +1,8 @@
 import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { migrateToLatest } from "@launchpad/database";
-import { createTestDatabase } from "@launchpad/database/testing";
+import { migrateToLatest } from "@launchpad-kit/database";
+import { createTestDatabase } from "@launchpad-kit/database/testing";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 let testDb: Awaited<ReturnType<typeof createTestDatabase>>;

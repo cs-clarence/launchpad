@@ -1,5 +1,5 @@
 {
-    "name": "@launchpad/dokku",
+    "name": "@launchpad-kit/dokku",
     "version": "0.0.0",
     "private": true,
     "description": "Typed, allowlisted Dokku operations over pinned SSH",
@@ -23,9 +23,9 @@
         "test:unit": "vitest run --config vitest.config.unit.ts"
     },
     "devDependencies": {
-        "@launchpad/tsconfig": "workspace:^",
-        "@launchpad/vite-config": "workspace:^",
-        "@launchpad/vitest-config": "workspace:^",
+        "@launchpad-kit/tsconfig": "workspace:^",
+        "@launchpad-kit/vite-config": "workspace:^",
+        "@launchpad-kit/vitest-config": "workspace:^",
         "@types/bun": "catalog:",
         "typescript": "catalog:",
         "vite": "catalog:",

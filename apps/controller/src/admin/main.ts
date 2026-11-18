@@ -5,12 +5,12 @@ import {
     provisionUser,
     resetPassword,
     setupFirstOperator,
-} from "@launchpad/auth";
-import { createDatabase, migrateToLatest, migrationStatus } from "@launchpad/database";
-import { lifecycleConfigFromEnv } from "@launchpad/services";
+} from "@launchpad-kit/auth";
+import { createDatabase, migrateToLatest, migrationStatus } from "@launchpad-kit/database";
+import { lifecycleConfigFromEnv } from "@launchpad-kit/services";
 import { readFileSync, statSync } from "node:fs";
 import path from "node:path";
-import { createDokkuClient } from "@launchpad/dokku";
+import { createDokkuClient } from "@launchpad-kit/dokku";
 import { createBackup, verifyBackup } from "./backup";
 import { checkRestore, restoreBackup } from "./restore";
 

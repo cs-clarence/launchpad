@@ -1,6 +1,6 @@
 import { promises as fs } from "node:fs";
 import path from "node:path";
-import { SITE, tarGz, type FixtureEntry } from "@launchpad/services/testing";
+import { SITE, tarGz, type FixtureEntry } from "@launchpad-kit/services/testing";
 import { afterEach, describe, expect, it } from "vitest";
 import { extractSite } from "./extract";
 import { LIMITS, tempDir } from "./testing";

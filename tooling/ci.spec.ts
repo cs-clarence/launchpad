@@ -98,10 +98,10 @@ describe("CI workflow", () => {
         expect(runs("omni -i run check:compose", "check")).toBe(false);
         expect(runs("omni -i run -f=failed check check:compose", "check")).toBe(true);
         expect(
-            runs('echo "omni -i run release:dry-run -p @launchpad/tooling"', "release:dry-run"),
+            runs('echo "omni -i run release:dry-run -p @launchpad-kit/tooling"', "release:dry-run"),
         ).toBe(false);
         expect(
-            runs("  omni -i run release:dry-run -p '@launchpad/tooling'", "release:dry-run"),
+            runs("  omni -i run release:dry-run -p '@launchpad-kit/tooling'", "release:dry-run"),
         ).toBe(true);
     });
 

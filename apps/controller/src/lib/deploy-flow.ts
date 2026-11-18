@@ -1,4 +1,4 @@
-import { slugSchema } from "@launchpad/contracts";
+import { slugSchema } from "@launchpad-kit/contracts";
 import type { ApiResult } from "./api";
 
 const ARCHIVE = /\.(tar\.gz|tgz)$/i;

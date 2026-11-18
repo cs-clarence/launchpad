@@ -108,7 +108,7 @@ or prove. `restore` never contacts Dokku. Back up the target database first.
 
 For a contributor or operator rehearsing the database portion without live
 Dokku: `omni -i run test:db:up`, then
-`omni -i run test:upgrade -p @launchpad/controller`, then
+`omni -i run test:upgrade -p @launchpad-kit/controller`, then
 `omni -i run test:db:down`. Run the image drill on Linux (Docker host networking
 does not reach the test database on Docker Desktop). This builds a temporary controller image and runs
 the frozen previous-schema dump through backup, image migration, controller
@@ -117,7 +117,7 @@ restoration into another disposable database.
 It creates only temporary test databases/directories and cleans them up.
 
 The **remote** portion is a separate opt-in task, never run by CI:
-`omni -i run test:restore:live -p @launchpad/controller`. It requires
+`omni -i run test:restore:live -p @launchpad-kit/controller`. It requires
 `LAUNCHPAD_LIVE_DOKKU=1`, the approved disposable Dokku at
 `127.0.0.1:33022`, its test key and pinned host-key files under
 `/tmp/opencode/live-dokku-20261117/`, and the disposable PostgreSQL at

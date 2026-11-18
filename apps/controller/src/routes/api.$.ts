@@ -1,7 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { getRequestIP } from "@tanstack/react-start/server";
 import { resolveClientIp, withClientIp } from "../server/client-ip";
-import { SchemaMismatchError } from "@launchpad/database";
+import { SchemaMismatchError } from "@launchpad-kit/database";
 import { getReadyRuntime } from "../server/runtime";
 
 const handle = async ({ request }: { request: Request }) => {

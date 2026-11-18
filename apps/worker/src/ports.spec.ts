@@ -1,5 +1,5 @@
-import { DokkuError, type DokkuClient } from "@launchpad/dokku";
-import type { DeployContext } from "@launchpad/services";
+import { DokkuError, type DokkuClient } from "@launchpad-kit/dokku";
+import type { DeployContext } from "@launchpad-kit/services";
 import { describe, expect, it } from "vitest";
 import { createDocker, DockerError, type Docker } from "./docker";
 import { createDeployPorts } from "./ports";

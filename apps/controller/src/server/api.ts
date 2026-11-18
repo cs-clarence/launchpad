@@ -1,5 +1,10 @@
-import { allowLoginAttempt, allowResetRequest, CLIENT_IP_HEADER, type Auth } from "@launchpad/auth";
-import type { Database } from "@launchpad/database";
+import {
+    allowLoginAttempt,
+    allowResetRequest,
+    CLIENT_IP_HEADER,
+    type Auth,
+} from "@launchpad-kit/auth";
+import type { Database } from "@launchpad-kit/database";
 import type { Kysely } from "kysely";
 import {
     acceptInvitation,
@@ -50,7 +55,7 @@ import {
     removeMember,
     revokeInvitation,
     ServiceError,
-} from "@launchpad/services";
+} from "@launchpad-kit/services";
 import { Elysia } from "elysia";
 import { framingProblem, framingResponse, SAFE_METHODS } from "./body-framing";
 import { MAX_BODY_BYTES } from "./limits";

@@ -1,6 +1,6 @@
-import { assertSchemaCurrent, createDatabase } from "@launchpad/database";
-import { createDokkuClient } from "@launchpad/dokku";
-import { recoverInterruptedCollections } from "@launchpad/services";
+import { assertSchemaCurrent, createDatabase } from "@launchpad-kit/database";
+import { createDokkuClient } from "@launchpad-kit/dokku";
+import { recoverInterruptedCollections } from "@launchpad-kit/services";
 import { sweepScratch } from "./build";
 import { loadConfig } from "./config";
 import { createDocker } from "./docker";

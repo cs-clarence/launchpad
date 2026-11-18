@@ -244,7 +244,7 @@ describe("packaging", () => {
             const imports = [...source.matchAll(/from\s+"([^"]+)"/g)].map((m) => m[1]!);
             expect(
                 imports.filter(
-                    (i) => i !== "zod" && i !== "@launchpad/contracts" && !i.startsWith("./"),
+                    (i) => i !== "zod" && i !== "@launchpad-kit/contracts" && !i.startsWith("./"),
                 ),
                 file,
             ).toEqual([]);

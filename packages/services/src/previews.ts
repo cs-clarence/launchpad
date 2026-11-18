@@ -1,6 +1,6 @@
 import { createHash, randomInt } from "node:crypto";
-import { createPreviewSchema, extendPreviewSchema, parseDuration } from "@launchpad/contracts";
-import type { Database } from "@launchpad/database";
+import { createPreviewSchema, extendPreviewSchema, parseDuration } from "@launchpad-kit/contracts";
+import type { Database } from "@launchpad-kit/database";
 import { type Kysely, sql } from "kysely";
 import { z } from "zod";
 import type { Principal } from "./authorization";

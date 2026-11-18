@@ -1,5 +1,5 @@
-import { createProjectSchema } from "@launchpad/contracts";
-import type { Database } from "@launchpad/database";
+import { createProjectSchema } from "@launchpad-kit/contracts";
+import type { Database } from "@launchpad-kit/database";
 import type { Kysely } from "kysely";
 import type { Principal } from "./authorization";
 import { isUniqueViolation, ServiceError } from "./errors";

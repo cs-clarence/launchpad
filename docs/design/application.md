@@ -394,10 +394,17 @@ avoid a full monitoring stack until measurements justify it.
 
 ## Distribution and naming
 
-Product name remains Launchpad; publishing namespaces need not equal the
-internal `@launchpad/*` workspace scope.
+Product name remains Launchpad. On 2026-11-19 the user selected
+`@launchpad-kit/*` for all workspace packages, including private packages.
+Public package names use that same scope. The executables remain `launchpad`,
+`launchpad-mcp` and `launchpad-admin`. No registry ownership has been verified
+and nothing is published.
 
-Recommended candidate: **launchpadops**.
+The Docker namespace is a separate decision; the existing local image names
+are unchanged by the package-scope rename.
+
+Earlier candidate (2026-11-14, historical rather than the selected npm scope):
+**launchpadops**.
 
 ```text
 npm:        @launchpadops/cli, @launchpadops/mcp, @launchpadops/sdk
@@ -417,8 +424,8 @@ Availability observations from public read-only checks, 2026-11-14:
   be registered, is unreserved, or is controlled by this project.
 
 The user must confirm/register the selected namespaces through authenticated
-registry flows before release. Do not rename workspace packages or claim
-availability based on these checks. GitHub ownership does not confer npm or
+registry flows before release. The workspace rename was explicitly authorized;
+these old public checks do not establish availability. GitHub ownership does not confer npm or
 Docker Hub ownership. Confirm project license before any package publication;
 the copied generator's MIT notice is not a whole-project licensing decision.
 

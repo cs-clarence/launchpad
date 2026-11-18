@@ -17,7 +17,7 @@ FROM oven/bun:${BUN_VERSION} AS build
 WORKDIR /app
 COPY . .
 RUN bun install --frozen-lockfile
-RUN bun run --filter @launchpad/controller build
+RUN bun run --filter @launchpad-kit/controller build
 
 FROM oven/bun:${BUN_VERSION}-slim AS runtime
 ARG LAUNCHPAD_UID=10001

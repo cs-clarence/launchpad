@@ -1,6 +1,6 @@
 import { createHash, randomBytes, randomUUID } from "node:crypto";
-import { nameSchema } from "@launchpad/contracts";
-import type { Database } from "@launchpad/database";
+import { nameSchema } from "@launchpad-kit/contracts";
+import type { Database } from "@launchpad-kit/database";
 import { type Kysely, sql } from "kysely";
 import { z } from "zod";
 import { can, canAssignRole, ORGANIZATION_ROLES, type Principal } from "./authorization";

@@ -3,7 +3,7 @@
   "configVersion": 1,
   "workspaces": {
     "": {
-      "name": "@launchpad/root",
+      "name": "@launchpad-kit/root",
       "devDependencies": {
         "@types/bun": "catalog:",
         "@types/node": "catalog:",
@@ -16,21 +16,21 @@
       },
     },
     "apps/cli": {
-      "name": "@launchpad/cli",
+      "name": "@launchpad-kit/cli",
       "version": "0.0.0",
       "bin": {
         "launchpad": "./src/index.ts",
       },
       "dependencies": {
         "@commander-js/extra-typings": "catalog:",
-        "@launchpad/client-core": "workspace:^",
-        "@launchpad/sdk": "workspace:^",
+        "@launchpad-kit/client-core": "workspace:^",
+        "@launchpad-kit/sdk": "workspace:^",
         "commander": "catalog:",
       },
       "devDependencies": {
-        "@launchpad/tsconfig": "workspace:^",
-        "@launchpad/vite-config": "workspace:^",
-        "@launchpad/vitest-config": "workspace:^",
+        "@launchpad-kit/tsconfig": "workspace:^",
+        "@launchpad-kit/vite-config": "workspace:^",
+        "@launchpad-kit/vitest-config": "workspace:^",
         "@types/bun": "catalog:",
         "typescript": "catalog:",
         "vite": "catalog:",
@@ -38,16 +38,16 @@
       },
     },
     "apps/controller": {
-      "name": "@launchpad/controller",
+      "name": "@launchpad-kit/controller",
       "version": "0.0.0",
       "dependencies": {
         "@commander-js/extra-typings": "catalog:",
         "@elysia/openapi": "catalog:",
-        "@launchpad/auth": "workspace:^",
-        "@launchpad/contracts": "workspace:^",
-        "@launchpad/database": "workspace:^",
-        "@launchpad/dokku": "workspace:^",
-        "@launchpad/services": "workspace:^",
+        "@launchpad-kit/auth": "workspace:^",
+        "@launchpad-kit/contracts": "workspace:^",
+        "@launchpad-kit/database": "workspace:^",
+        "@launchpad-kit/dokku": "workspace:^",
+        "@launchpad-kit/services": "workspace:^",
         "@tanstack/react-router": "catalog:",
         "@tanstack/react-start": "catalog:",
         "better-auth": "catalog:",
@@ -60,12 +60,12 @@
         "zod": "catalog:",
       },
       "devDependencies": {
-        "@launchpad/cli": "workspace:^",
-        "@launchpad/client-core": "workspace:^",
-        "@launchpad/mcp": "workspace:^",
-        "@launchpad/tsconfig": "workspace:^",
-        "@launchpad/vite-config": "workspace:^",
-        "@launchpad/vitest-config": "workspace:^",
+        "@launchpad-kit/cli": "workspace:^",
+        "@launchpad-kit/client-core": "workspace:^",
+        "@launchpad-kit/mcp": "workspace:^",
+        "@launchpad-kit/tsconfig": "workspace:^",
+        "@launchpad-kit/vite-config": "workspace:^",
+        "@launchpad-kit/vitest-config": "workspace:^",
         "@modelcontextprotocol/sdk": "catalog:",
         "@scalar/api-reference": "catalog:",
         "@skeletonlabs/skeleton": "catalog:",
@@ -82,23 +82,23 @@
       },
     },
     "apps/mcp": {
-      "name": "@launchpad/mcp",
+      "name": "@launchpad-kit/mcp",
       "version": "0.0.0",
       "bin": {
         "launchpad-mcp": "./src/index.ts",
       },
       "dependencies": {
         "@commander-js/extra-typings": "catalog:",
-        "@launchpad/client-core": "workspace:^",
-        "@launchpad/sdk": "workspace:^",
+        "@launchpad-kit/client-core": "workspace:^",
+        "@launchpad-kit/sdk": "workspace:^",
         "@modelcontextprotocol/sdk": "catalog:",
         "commander": "catalog:",
         "zod": "catalog:",
       },
       "devDependencies": {
-        "@launchpad/tsconfig": "workspace:^",
-        "@launchpad/vite-config": "workspace:^",
-        "@launchpad/vitest-config": "workspace:^",
+        "@launchpad-kit/tsconfig": "workspace:^",
+        "@launchpad-kit/vite-config": "workspace:^",
+        "@launchpad-kit/vitest-config": "workspace:^",
         "@types/bun": "catalog:",
         "tar": "catalog:",
         "typescript": "catalog:",
@@ -107,19 +107,19 @@
       },
     },
     "apps/worker": {
-      "name": "@launchpad/worker",
+      "name": "@launchpad-kit/worker",
       "version": "0.0.0",
       "dependencies": {
-        "@launchpad/database": "workspace:^",
-        "@launchpad/dokku": "workspace:^",
-        "@launchpad/services": "workspace:^",
+        "@launchpad-kit/database": "workspace:^",
+        "@launchpad-kit/dokku": "workspace:^",
+        "@launchpad-kit/services": "workspace:^",
         "kysely": "catalog:",
         "tar": "catalog:",
       },
       "devDependencies": {
-        "@launchpad/tsconfig": "workspace:^",
-        "@launchpad/vite-config": "workspace:^",
-        "@launchpad/vitest-config": "workspace:^",
+        "@launchpad-kit/tsconfig": "workspace:^",
+        "@launchpad-kit/vite-config": "workspace:^",
+        "@launchpad-kit/vitest-config": "workspace:^",
         "@types/bun": "catalog:",
         "typescript": "catalog:",
         "vite": "catalog:",
@@ -127,19 +127,19 @@
       },
     },
     "packages/auth": {
-      "name": "@launchpad/auth",
+      "name": "@launchpad-kit/auth",
       "version": "0.0.0",
       "dependencies": {
-        "@launchpad/database": "workspace:^",
+        "@launchpad-kit/database": "workspace:^",
         "better-auth": "catalog:",
         "kysely": "catalog:",
         "nodemailer": "catalog:",
         "zod": "catalog:",
       },
       "devDependencies": {
-        "@launchpad/tsconfig": "workspace:^",
-        "@launchpad/vite-config": "workspace:^",
-        "@launchpad/vitest-config": "workspace:^",
+        "@launchpad-kit/tsconfig": "workspace:^",
+        "@launchpad-kit/vite-config": "workspace:^",
+        "@launchpad-kit/vitest-config": "workspace:^",
         "@types/nodemailer": "catalog:",
         "typescript": "catalog:",
         "vite": "catalog:",
@@ -147,18 +147,18 @@
       },
     },
     "packages/client-core": {
-      "name": "@launchpad/client-core",
+      "name": "@launchpad-kit/client-core",
       "version": "0.0.0",
       "dependencies": {
-        "@launchpad/sdk": "workspace:^",
+        "@launchpad-kit/sdk": "workspace:^",
         "picomatch": "catalog:",
         "tar": "catalog:",
         "zod": "catalog:",
       },
       "devDependencies": {
-        "@launchpad/tsconfig": "workspace:^",
-        "@launchpad/vite-config": "workspace:^",
-        "@launchpad/vitest-config": "workspace:^",
+        "@launchpad-kit/tsconfig": "workspace:^",
+        "@launchpad-kit/vite-config": "workspace:^",
+        "@launchpad-kit/vitest-config": "workspace:^",
         "@types/bun": "catalog:",
         "@types/picomatch": "catalog:",
         "typescript": "catalog:",
@@ -167,15 +167,15 @@
       },
     },
     "packages/contracts": {
-      "name": "@launchpad/contracts",
+      "name": "@launchpad-kit/contracts",
       "version": "0.0.0",
       "dependencies": {
         "zod": "catalog:",
       },
       "devDependencies": {
-        "@launchpad/tsconfig": "workspace:^",
-        "@launchpad/vite-config": "workspace:^",
-        "@launchpad/vitest-config": "workspace:^",
+        "@launchpad-kit/tsconfig": "workspace:^",
+        "@launchpad-kit/vite-config": "workspace:^",
+        "@launchpad-kit/vitest-config": "workspace:^",
         "@types/bun": "catalog:",
         "typescript": "catalog:",
         "vite": "catalog:",
@@ -183,15 +183,15 @@
       },
     },
     "packages/database": {
-      "name": "@launchpad/database",
+      "name": "@launchpad-kit/database",
       "version": "0.0.0",
       "dependencies": {
         "kysely": "catalog:",
       },
       "devDependencies": {
-        "@launchpad/tsconfig": "workspace:^",
-        "@launchpad/vite-config": "workspace:^",
-        "@launchpad/vitest-config": "workspace:^",
+        "@launchpad-kit/tsconfig": "workspace:^",
+        "@launchpad-kit/vite-config": "workspace:^",
+        "@launchpad-kit/vitest-config": "workspace:^",
         "@types/bun": "catalog:",
         "typescript": "catalog:",
         "vite": "catalog:",
@@ -199,12 +199,12 @@
       },
     },
     "packages/dokku": {
-      "name": "@launchpad/dokku",
+      "name": "@launchpad-kit/dokku",
       "version": "0.0.0",
       "devDependencies": {
-        "@launchpad/tsconfig": "workspace:^",
-        "@launchpad/vite-config": "workspace:^",
-        "@launchpad/vitest-config": "workspace:^",
+        "@launchpad-kit/tsconfig": "workspace:^",
+        "@launchpad-kit/vite-config": "workspace:^",
+        "@launchpad-kit/vitest-config": "workspace:^",
         "@types/bun": "catalog:",
         "typescript": "catalog:",
         "vite": "catalog:",
@@ -212,16 +212,16 @@
       },
     },
     "packages/sdk": {
-      "name": "@launchpad/sdk",
+      "name": "@launchpad-kit/sdk",
       "version": "0.0.0",
       "dependencies": {
-        "@launchpad/contracts": "workspace:^",
+        "@launchpad-kit/contracts": "workspace:^",
         "zod": "catalog:",
       },
       "devDependencies": {
-        "@launchpad/tsconfig": "workspace:^",
-        "@launchpad/vite-config": "workspace:^",
-        "@launchpad/vitest-config": "workspace:^",
+        "@launchpad-kit/tsconfig": "workspace:^",
+        "@launchpad-kit/vite-config": "workspace:^",
+        "@launchpad-kit/vitest-config": "workspace:^",
         "@types/bun": "catalog:",
         "typescript": "catalog:",
         "vite": "catalog:",
@@ -229,19 +229,19 @@
       },
     },
     "packages/services": {
-      "name": "@launchpad/services",
+      "name": "@launchpad-kit/services",
       "version": "0.0.0",
       "dependencies": {
-        "@launchpad/contracts": "workspace:^",
-        "@launchpad/database": "workspace:^",
+        "@launchpad-kit/contracts": "workspace:^",
+        "@launchpad-kit/database": "workspace:^",
         "kysely": "catalog:",
         "tar": "catalog:",
         "zod": "catalog:",
       },
       "devDependencies": {
-        "@launchpad/tsconfig": "workspace:^",
-        "@launchpad/vite-config": "workspace:^",
-        "@launchpad/vitest-config": "workspace:^",
+        "@launchpad-kit/tsconfig": "workspace:^",
+        "@launchpad-kit/vite-config": "workspace:^",
+        "@launchpad-kit/vitest-config": "workspace:^",
         "@types/bun": "catalog:",
         "typescript": "catalog:",
         "vite": "catalog:",
@@ -249,11 +249,11 @@
       },
     },
     "packages/tsconfig": {
-      "name": "@launchpad/tsconfig",
+      "name": "@launchpad-kit/tsconfig",
       "version": "0.0.0",
     },
     "packages/vite-config": {
-      "name": "@launchpad/vite-config",
+      "name": "@launchpad-kit/vite-config",
       "version": "0.0.0",
       "dependencies": {
         "unplugin-dts": "catalog:",
@@ -261,7 +261,7 @@
       },
     },
     "packages/vitest-config": {
-      "name": "@launchpad/vitest-config",
+      "name": "@launchpad-kit/vitest-config",
       "version": "0.0.0",
       "dependencies": {
         "vitest": "catalog:",
@@ -433,33 +433,33 @@
 
     "@jridgewell/trace-mapping": ["@jridgewell/trace-mapping@0.3.31", "", { "dependencies": { "@jridgewell/resolve-uri": "^3.1.0", "@jridgewell/sourcemap-codec": "^1.4.14" } }, "sha512-zzNR+SdQSDJzc8joaeP8QQoCQr8NuYx2dIIytl1QeBEZHJ9uW6hebsrYgbz8hJwUQao3TWCMtmfV8Nu1twOLAw=="],
 
-    "@launchpad/auth": ["@launchpad/auth@workspace:packages/auth"],
+    "@launchpad-kit/auth": ["@launchpad-kit/auth@workspace:packages/auth"],
 
-    "@launchpad/cli": ["@launchpad/cli@workspace:apps/cli"],
+    "@launchpad-kit/cli": ["@launchpad-kit/cli@workspace:apps/cli"],
 
-    "@launchpad/client-core": ["@launchpad/client-core@workspace:packages/client-core"],
+    "@launchpad-kit/client-core": ["@launchpad-kit/client-core@workspace:packages/client-core"],
 
-    "@launchpad/contracts": ["@launchpad/contracts@workspace:packages/contracts"],
+    "@launchpad-kit/contracts": ["@launchpad-kit/contracts@workspace:packages/contracts"],
 
-    "@launchpad/controller": ["@launchpad/controller@workspace:apps/controller"],
+    "@launchpad-kit/controller": ["@launchpad-kit/controller@workspace:apps/controller"],
 
-    "@launchpad/database": ["@launchpad/database@workspace:packages/database"],
+    "@launchpad-kit/database": ["@launchpad-kit/database@workspace:packages/database"],
 
-    "@launchpad/dokku": ["@launchpad/dokku@workspace:packages/dokku"],
+    "@launchpad-kit/dokku": ["@launchpad-kit/dokku@workspace:packages/dokku"],
 
-    "@launchpad/mcp": ["@launchpad/mcp@workspace:apps/mcp"],
+    "@launchpad-kit/mcp": ["@launchpad-kit/mcp@workspace:apps/mcp"],
 
-    "@launchpad/sdk": ["@launchpad/sdk@workspace:packages/sdk"],
+    "@launchpad-kit/sdk": ["@launchpad-kit/sdk@workspace:packages/sdk"],
 
-    "@launchpad/services": ["@launchpad/services@workspace:packages/services"],
+    "@launchpad-kit/services": ["@launchpad-kit/services@workspace:packages/services"],
 
-    "@launchpad/tsconfig": ["@launchpad/tsconfig@workspace:packages/tsconfig"],
+    "@launchpad-kit/tsconfig": ["@launchpad-kit/tsconfig@workspace:packages/tsconfig"],
 
-    "@launchpad/vite-config": ["@launchpad/vite-config@workspace:packages/vite-config"],
+    "@launchpad-kit/vite-config": ["@launchpad-kit/vite-config@workspace:packages/vite-config"],
 
-    "@launchpad/vitest-config": ["@launchpad/vitest-config@workspace:packages/vitest-config"],
+    "@launchpad-kit/vitest-config": ["@launchpad-kit/vitest-config@workspace:packages/vitest-config"],
 
-    "@launchpad/worker": ["@launchpad/worker@workspace:apps/worker"],
+    "@launchpad-kit/worker": ["@launchpad-kit/worker@workspace:apps/worker"],
 
     "@lezer/common": ["@lezer/common@1.5.5", "", {}, "sha512-Pw7PVCndruF1pb3ebCxpSVpkMHSDjwRCLcTRw+RizUKco5QbWylwq2g4lnG/RYN7yTTQDXE9F77MwtkAyphrjg=="],
 

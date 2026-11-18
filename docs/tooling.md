@@ -17,7 +17,7 @@ when tools, generators, or their commands change.
 - Vite builds libraries and the controller; Nitro's `bun` preset emits the
   controller's `.output/`. No custom HTTP/static-file server is maintained.
 - The CLI and the separate local MCP app use Bun executable builds. Build MCP with
-  `omni -i run build -p @launchpad/mcp`; it emits `apps/mcp/dist/index.js`.
+  `omni -i run build -p @launchpad-kit/mcp`; it emits `apps/mcp/dist/index.js`.
   MCP uses the official MIT-licensed `@modelcontextprotocol/sdk` (pinned in the
   catalog at 1.32.2) for stdio framing, capability negotiation and tool schemas,
   not a custom protocol implementation. Only stdio modules are imported.
@@ -53,7 +53,7 @@ Rules that keep the graph correct:
   build first and their outputs change dependents' keys. A project that needs generated
   files (the controller's route tree) lists its `build` as a dependency and its
   generated files as build outputs.
-- **Packaging.** `omni -i run test:packages -p @launchpad/tooling` builds the SDK, contracts, CLI and
+- **Packaging.** `omni -i run test:packages -p @launchpad-kit/tooling` builds the SDK, contracts, CLI and
   MCP server, packs them (`tooling/package-clients.ts`: a generated manifest per package, the SDK
   and contracts as libraries, the CLI and MCP as one bundled file each), installs the tarballs in a
   clean project outside the workspace and runs them under Bun and, when it is on the PATH, Node
@@ -64,8 +64,8 @@ Rules that keep the graph correct:
 - **`test` is unit tests only.** `test:integration` is explicit. Auth, services and
   controller integration need disposable PostgreSQL (`omni -i run test:db:up`).
   The SDK's integration suite only uses ephemeral loopback HTTP fixtures; run it
-  alone with `omni -i run test:integration -p @launchpad/sdk`. No database is needed.
-- **Upgrade drill.** `omni -i run test:upgrade -p @launchpad/controller` builds a
+  alone with `omni -i run test:integration -p @launchpad-kit/sdk`. No database is needed.
+- **Upgrade drill.** `omni -i run test:upgrade -p @launchpad-kit/controller` builds a
   disposable controller image, runs its `migrate` command and exercises the built
   admin's backup/restore and starts/restarts the image server against the frozen
   `apps/controller/src/admin/__tests__/fixtures/schema-014.dump` (14 migrations,
@@ -74,7 +74,7 @@ Rules that keep the graph correct:
   `test:integration`; no Dokku is touched. The complete operator procedure and
   isolated-host rehearsal are in [restore](restore.md), with
   [installation](install.md), [upgrade](upgrade.md) and [routing](access.md).
-  The separate `omni -i run test:restore:live -p @launchpad/controller`
+  The separate `omni -i run test:restore:live -p @launchpad-kit/controller`
   uses only the approved disposable Dokku and PostgreSQL, guarded `lp-test-`
   names, and a test-only database constraint; see [the restore drill](restore.md).
   It is opt-in and is not a CI job.
@@ -138,7 +138,7 @@ omni gen run --name ts-package --output packages/my-package \
   --use-defaults --value package_name=my-package \
   --value integration_test=false --save-session=false
 bun install
-omni -i run check:deps check test build -p @launchpad/my-package
+omni -i run check:deps check test build -p @launchpad-kit/my-package
 ```
 
 Generated files are formatted by the generator, and a generated package passes the
@@ -213,7 +213,7 @@ bundled into `.output/migrations` (controller) and `dist/migrations` (worker). `
 `restore` need a `pg_dump`/`pg_restore` at least as new as the server, which the image does not
 carry: mount one and set `LAUNCHPAD_PG_DUMP` / `LAUNCHPAD_PG_RESTORE`.
 
-`omni -i run test:images -p @launchpad/tooling` builds both, checks them (non-root, no secret in a
+`omni -i run test:images -p @launchpad-kit/tooling` builds both, checks them (non-root, no secret in a
 layer, no `.env`, `.git`, key or source file, the expected files present), runs `migrate` from the
 controller image against the disposable PostgreSQL, starts the controller and waits for `/api/health`
 and a healthy healthcheck, and starts the worker (deployments off). It needs Docker and

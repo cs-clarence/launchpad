@@ -1,6 +1,6 @@
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
-import { apiKeySummarySchema } from "@launchpad/contracts";
+import { apiKeySummarySchema } from "@launchpad-kit/contracts";
 import { keySessionFreshness } from "../lib/api-keys";
 
 // Server functions read through the same authorized services as the HTTP API.
@@ -25,7 +25,7 @@ async function principal() {
 }
 
 export const listOrganizationsFn = createServerFn({ method: "GET" }).handler(async () => {
-    const { listMyOrganizations } = await import("@launchpad/services");
+    const { listMyOrganizations } = await import("@launchpad-kit/services");
     const { runtime, who } = await principal();
     return listMyOrganizations(runtime.db, who);
 });
@@ -33,7 +33,7 @@ export const listOrganizationsFn = createServerFn({ method: "GET" }).handler(asy
 export const getOrganizationViewFn = createServerFn({ method: "GET" })
     .validator((input: unknown) => z.object({ orgId: z.string().min(1).max(64) }).parse(input))
     .handler(async ({ data }) => {
-        const services = await import("@launchpad/services");
+        const services = await import("@launchpad-kit/services");
         const { runtime, who, sessionCreatedAt } = await principal();
         const organization = await services.getOrganization(runtime.db, who, data.orgId);
         const projects = await services.listProjects(runtime.db, who, data.orgId);
@@ -92,7 +92,7 @@ export const getFeaturesFn = createServerFn({ method: "GET" }).handler(async () 
 export const getInvitationPreviewFn = createServerFn({ method: "POST" })
     .validator((input: unknown) => z.object({ token: z.string().max(200) }).parse(input))
     .handler(async ({ data }) => {
-        const { previewInvitation } = await import("@launchpad/services");
+        const { previewInvitation } = await import("@launchpad-kit/services");
         const { getReadyRuntime } = await import("./runtime");
         const runtime = await getReadyRuntime();
         const preview = await previewInvitation(runtime.db, data.token, runtime.invitations).catch(
@@ -118,9 +118,9 @@ const orgInput = (input: unknown) => z.object({ orgId: z.string().min(1).max(64)
 // What the deploy panel needs. The buttons are only for roles that could use them; the API
 // checks again.
 async function deployFacts(
-    services: typeof import("@launchpad/services"),
+    services: typeof import("@launchpad-kit/services"),
     runtime: ReturnType<typeof import("./runtime").getRuntime>,
-    role: Parameters<typeof import("@launchpad/services").can>[0],
+    role: Parameters<typeof import("@launchpad-kit/services").can>[0],
     projects: { id: string; name: string }[] | null,
 ) {
     return {
@@ -136,7 +136,7 @@ async function deployFacts(
 export const getPreviewsViewFn = createServerFn({ method: "GET" })
     .validator(orgInput)
     .handler(async ({ data }) => {
-        const services = await import("@launchpad/services");
+        const services = await import("@launchpad-kit/services");
         const { runtime, who } = await principal();
         const organization = await services.getOrganization(runtime.db, who, data.orgId);
         const projects = await services.listProjects(runtime.db, who, data.orgId);
@@ -175,7 +175,7 @@ export const getPreviewDetailFn = createServerFn({ method: "GET" })
         z.object({ orgId: z.string().min(1).max(64), previewId: z.string().max(64) }).parse(input),
     )
     .handler(async ({ data }) => {
-        const services = await import("@launchpad/services");
+        const services = await import("@launchpad-kit/services");
         const { runtime, who } = await principal();
         const organization = await services.getOrganization(runtime.db, who, data.orgId);
         const notFound = (error: unknown) =>
@@ -234,7 +234,7 @@ export const getDeploymentProgressFn = createServerFn({ method: "GET" })
             .parse(input),
     )
     .handler(async ({ data }) => {
-        const services = await import("@launchpad/services");
+        const services = await import("@launchpad-kit/services");
         const { runtime, who } = await principal();
         const deployment = await services.getDeployment(
             runtime.db,

@@ -4,9 +4,9 @@ import http from "node:http";
 import https from "node:https";
 import os from "node:os";
 import path from "node:path";
-import { createDokkuClient, type DokkuClient } from "@launchpad/dokku";
-import { artifactStorageKey, type DeployContext, type DeployPorts } from "@launchpad/services";
-import { tarGz, type FixtureEntry } from "@launchpad/services/testing";
+import { createDokkuClient, type DokkuClient } from "@launchpad-kit/dokku";
+import { artifactStorageKey, type DeployContext, type DeployPorts } from "@launchpad-kit/services";
+import { tarGz, type FixtureEntry } from "@launchpad-kit/services/testing";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createDocker } from "../docker";
 import { createLifecyclePorts } from "../lifecycle-ports";
@@ -14,7 +14,7 @@ import { createDeployPorts } from "../ports";
 import { compactId } from "../template";
 
 // LIVE TESTS. They talk to a real Dokku and a real Docker engine, so they are an
-// explicit opt-in: `omni -i run test:live -p @launchpad/worker`, never part of `test`
+// explicit opt-in: `omni -i run test:live -p @launchpad-kit/worker`, never part of `test`
 // or CI.
 //
 // What they touch: only apps named `lp-test-<6 letters or digits>` that they create

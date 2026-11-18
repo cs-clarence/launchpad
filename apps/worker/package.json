@@ -1,5 +1,5 @@
 {
-    "name": "@launchpad/worker",
+    "name": "@launchpad-kit/worker",
     "version": "0.0.0",
     "private": true,
     "description": "The privileged deployment worker: builds images and talks to Dokku",
@@ -11,16 +11,16 @@
         "test:live": "bun --bun vitest run --config vitest.config.live.ts"
     },
     "dependencies": {
-        "@launchpad/database": "workspace:^",
-        "@launchpad/dokku": "workspace:^",
-        "@launchpad/services": "workspace:^",
+        "@launchpad-kit/database": "workspace:^",
+        "@launchpad-kit/dokku": "workspace:^",
+        "@launchpad-kit/services": "workspace:^",
         "kysely": "catalog:",
         "tar": "catalog:"
     },
     "devDependencies": {
-        "@launchpad/tsconfig": "workspace:^",
-        "@launchpad/vite-config": "workspace:^",
-        "@launchpad/vitest-config": "workspace:^",
+        "@launchpad-kit/tsconfig": "workspace:^",
+        "@launchpad-kit/vite-config": "workspace:^",
+        "@launchpad-kit/vitest-config": "workspace:^",
         "@types/bun": "catalog:",
         "typescript": "catalog:",
         "vite": "catalog:",

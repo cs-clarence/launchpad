@@ -1,5 +1,9 @@
-import { ClientCoreError, redact } from "@launchpad/client-core";
-import { LaunchpadApiError, LaunchpadConfigError, LaunchpadTransportError } from "@launchpad/sdk";
+import { ClientCoreError, redact } from "@launchpad-kit/client-core";
+import {
+    LaunchpadApiError,
+    LaunchpadConfigError,
+    LaunchpadTransportError,
+} from "@launchpad-kit/sdk";
 import { CommanderError } from "@commander-js/extra-typings";
 
 // Stable exit codes, for scripts and CI.

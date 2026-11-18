@@ -24,7 +24,7 @@ FROM oven/bun:${BUN_VERSION} AS build
 WORKDIR /app
 COPY . .
 RUN bun install --frozen-lockfile
-RUN bun run --filter @launchpad/worker build
+RUN bun run --filter @launchpad-kit/worker build
 
 FROM docker:${DOCKER_CLI_VERSION}-cli AS docker-cli
 

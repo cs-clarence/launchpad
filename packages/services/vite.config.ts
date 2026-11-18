@@ -1,4 +1,4 @@
-import { createConfig } from "@launchpad/vite-config/library";
+import { createConfig } from "@launchpad-kit/vite-config/library";
 
 import packageJson from "./package.json" with { type: "json" };
 

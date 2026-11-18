@@ -18,7 +18,7 @@ Run tasks with `omni -i run <task>...` (`-i` passes your shell environment, such
 (`^build`: a project's upstream dependencies build first), runs independent ones in
 parallel, and caches results keyed on each project's sources, so a second run of an
 unchanged project is instant and a changed dependency re-runs its dependents.
-`-p <project>` limits a run to one project (`omni -i run check -p @launchpad/auth`),
+`-p <project>` limits a run to one project (`omni -i run check -p @launchpad-kit/auth`),
 `--force all` forces a fresh run; `--no-cache` only prevents saving new results.
 Use both for a fresh run that does not populate the cache. `-d` prints what would run.
 The `bun run <name>` scripts in the root `package.json` are only aliases for the
@@ -47,18 +47,18 @@ omni -i run test:db:down
 ```
 
 To repeat the frozen previous-schema backup → migrate → restart → restore drill
-against disposable PostgreSQL, run `omni -i run test:upgrade -p @launchpad/controller`
+against disposable PostgreSQL, run `omni -i run test:upgrade -p @launchpad-kit/controller`
 between `test:db:up` and `test:db:down` **on Linux** (Docker host networking).
 `test:integration` runs the host-built variant on other platforms; it does not
 exercise the image. The image and packaged-client checks are `omni -i run test:images
--p @launchpad/tooling` (Docker, disposable database) and `omni -i run
-test:packages -p @launchpad/tooling` (network, Node and Bun). These build,
+-p @launchpad-kit/tooling` (Docker, disposable database) and `omni -i run
+test:packages -p @launchpad-kit/tooling` (network, Node and Bun). These build,
 inspect and exercise local artifacts, never publish them. The operator
 [restore drill](docs/restore.md) separates the no-Dokku automated checks from
 the opt-in isolated-host rehearsal (`test:restore:live`, guarded and never in CI).
 
 The SDK's transport suite uses ephemeral loopback HTTP fixtures instead of the
-database: `omni -i run test:integration -p @launchpad/sdk` runs it alone. Fixtures
+database: `omni -i run test:integration -p @launchpad-kit/sdk` runs it alone. Fixtures
 close after each test; default `test` remains unit-only and opens no listeners.
 
 `test:integration` defaults `TEST_DATABASE_URL` to that container; export it to point
@@ -67,7 +67,7 @@ builds first and starts on a local port. Tests run under Bun (`bun --bun vitest`
 because the database layer uses Bun SQL, and each test file creates and drops its own
 database. Integration results are never cached.
 
-The worker also has an opt-in **live** suite, `omni -i run test:live -p @launchpad/worker`,
+The worker also has an opt-in **live** suite, `omni -i run test:live -p @launchpad-kit/worker`,
 that builds and deploys a fixture site on a real Dokku and Docker. It is not part of
 `test`, `test:integration` or CI, and needs a disposable Dokku you started yourself; it
 creates and removes only `lp-test-` apps. Its settings are in the header of
@@ -76,8 +76,8 @@ creates and removes only `lp-test-` apps. Its settings are in the header of
 Operator and development tasks live in the controller project:
 
 ```sh
-omni -i run dev -p @launchpad/controller                  # dev server (uses apps/controller/.env.local)
-omni -i run admin -p @launchpad/controller -a command=migrate
+omni -i run dev -p @launchpad-kit/controller                  # dev server (uses apps/controller/.env.local)
+omni -i run admin -p @launchpad-kit/controller -a command=migrate
 ```
 
 Omni loads `.env.local` files from the repository root and from the project into task
@@ -114,7 +114,7 @@ safe because every task's cache key names its inputs (see [tooling](docs/tooling
 The Omni version is pinned in `.github/actions/setup-workspace/action.yaml`: raise it
 together with the version you use locally. Bun comes from `packageManager` in
 `package.json`. Nothing is published or deployed from CI. The manual **Release dry run** workflow
-(`omni -i run release:dry-run -p @launchpad/tooling`) rehearses a release without publishing; see
+(`omni -i run release:dry-run -p @launchpad-kit/tooling`) rehearses a release without publishing; see
 [releasing](docs/releasing.md) for versioning, compatibility rules and the release checklist.
 
 No CI-only checks exist: anything CI runs you can run locally with the commands above. Install the Cocogitto commit-msg hook

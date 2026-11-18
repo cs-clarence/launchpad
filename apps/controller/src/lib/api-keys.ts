@@ -1,4 +1,8 @@
-import { apiKeySummarySchema, createApiKeySchema, createdApiKeySchema } from "@launchpad/contracts";
+import {
+    apiKeySummarySchema,
+    createApiKeySchema,
+    createdApiKeySchema,
+} from "@launchpad-kit/contracts";
 import { z } from "zod";
 
 const revealSchema = createdApiKeySchema

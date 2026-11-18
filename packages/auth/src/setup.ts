@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import type { Database } from "@launchpad/database";
+import type { Database } from "@launchpad-kit/database";
 import { type Kysely, sql } from "kysely";
 import type { Auth } from "./create-auth";
 import { normalizeEmail } from "./email";

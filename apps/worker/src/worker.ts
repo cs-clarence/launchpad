@@ -1,4 +1,4 @@
-import type { Database } from "@launchpad/database";
+import type { Database } from "@launchpad-kit/database";
 import {
     claimNext,
     runDeployment,
@@ -10,7 +10,7 @@ import {
     type LifecyclePorts,
     type LifecycleState,
     type RunOutcome,
-} from "@launchpad/services";
+} from "@launchpad-kit/services";
 import type { Kysely } from "kysely";
 
 export interface WorkerOptions {

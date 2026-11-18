@@ -5,7 +5,7 @@ import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 import { randomBytes } from "node:crypto";
-import { createAuth, loadAuthConfig, setupFirstOperator } from "@launchpad/auth";
+import { createAuth, loadAuthConfig, setupFirstOperator } from "@launchpad-kit/auth";
 import {
     createContext,
     deletePreview,
@@ -15,7 +15,7 @@ import {
     previewDeletion,
     getDeployment,
     listPreviews,
-} from "@launchpad/client-core";
+} from "@launchpad-kit/client-core";
 import {
     acceptedInvitationSchema,
     addedMemberSchema,
@@ -42,12 +42,12 @@ import {
     okSchema,
     organizationSummarySchema,
     projectSchema,
-} from "@launchpad/services";
+} from "@launchpad-kit/services";
 import { z } from "zod";
-import { type FakeSmtp, mailText, startFakeSmtp } from "@launchpad/auth/testing";
-import { migrateToLatest } from "@launchpad/database";
-import { createTestDatabase } from "@launchpad/database/testing";
-import { SITE, tarGz } from "@launchpad/services/testing";
+import { type FakeSmtp, mailText, startFakeSmtp } from "@launchpad-kit/auth/testing";
+import { migrateToLatest } from "@launchpad-kit/database";
+import { createTestDatabase } from "@launchpad-kit/database/testing";
+import { SITE, tarGz } from "@launchpad-kit/services/testing";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";

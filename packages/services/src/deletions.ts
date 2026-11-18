@@ -1,5 +1,5 @@
 import { startDeadline } from "./deadline";
-import type { Database } from "@launchpad/database";
+import type { Database } from "@launchpad-kit/database";
 import { type Kysely, sql, type Transaction } from "kysely";
 import { z } from "zod";
 import type { Principal } from "./authorization";
@@ -240,7 +240,7 @@ export interface DeletionContext {
     appName: string;
 }
 
-// What the worker can do for a deletion. `dokku.apps` is structurally the @launchpad/dokku
+// What the worker can do for a deletion. `dokku.apps` is structurally the @launchpad-kit/dokku
 // client's; there is deliberately nothing here that prunes, lists or removes anything but
 // one named app and this preview's own images.
 export interface LifecyclePorts {

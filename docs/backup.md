@@ -18,14 +18,14 @@ Dokku state or any preview datastore; back those up separately.
     bun .output/admin.mjs verify-backup /private/backups/launchpad-2026-11-18
     ```
 
-    First build with `omni -i run build -p @launchpad/controller`, then run
+    First build with `omni -i run build -p @launchpad-kit/controller`, then run
     these commands from `apps/controller/` in a configured checkout
     (or an admin environment with a
     compatible PostgreSQL client installed); the stock controller image
     does **not** include `pg_dump`. Where lifecycle has never run and no
     recent lifecycle worker heartbeat exists, omit the stop-confirmation flag.
     Alternatively use the equivalent
-    `omni -i run admin -p @launchpad/controller -a command=backup -a "options=<new-dir> --i-have-stopped-the-workers"`
+    `omni -i run admin -p @launchpad-kit/controller -a command=backup -a "options=<new-dir> --i-have-stopped-the-workers"`
     from a configured checkout. This is the confirmed-stop form; for the
     no-confirmation case use `-a "options=<new-dir>"` instead. If using a separate admin container, supply a
     compatible `pg_dump`, the database configuration, `/data` and the backup

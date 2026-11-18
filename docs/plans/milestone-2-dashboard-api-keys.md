@@ -63,7 +63,7 @@ existing `/api/v1/organizations/:orgId/api-keys` endpoints.
    secret on pagehide as well as navigation/unmount to avoid bfcache restoration.
    Show the secret in a readonly field outside forms with autocomplete and spellcheck
    off, never in title/aria/data attributes; copy only on an explicit user action.
-   Imports in client code must come from browser-safe `@launchpad/contracts`,
+   Imports in client code must come from browser-safe `@launchpad-kit/contracts`,
    never services/client-core/the bearer-only SDK.
 5. Classify attempts in a tested helper as issued, rejected or uncertain. Include
    a timeout. A network failure, 5xx or malformed success is uncertain: never retry

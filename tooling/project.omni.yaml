@@ -1,5 +1,5 @@
 # yaml-language-server: $schema=https://raw.githubusercontent.com/omni-oss/json-schemas/refs/heads/main/project.json
-name: "@launchpad/tooling"
+name: "@launchpad-kit/tooling"
 description: Repository-wide tasks that belong to no single package.
 
 # These tasks read the whole repository and finish in well under a second, so they

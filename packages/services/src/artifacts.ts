@@ -1,7 +1,7 @@
 import { createHash, randomBytes } from "node:crypto";
 import { promises as fs } from "node:fs";
 import path from "node:path";
-import type { Database } from "@launchpad/database";
+import type { Database } from "@launchpad-kit/database";
 import { type Kysely, sql } from "kysely";
 import { ArchiveError, validateArchive } from "./archive";
 import type { Principal } from "./authorization";

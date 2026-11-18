@@ -1,5 +1,9 @@
-import { ClientCoreError, safeOutput } from "@launchpad/client-core";
-import { LaunchpadApiError, LaunchpadConfigError, LaunchpadTransportError } from "@launchpad/sdk";
+import { ClientCoreError, safeOutput } from "@launchpad-kit/client-core";
+import {
+    LaunchpadApiError,
+    LaunchpadConfigError,
+    LaunchpadTransportError,
+} from "@launchpad-kit/sdk";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 
 const MAX_RESULT_BYTES = 64 * 1024;

@@ -1,6 +1,6 @@
-# @launchpad/auth
+# @launchpad-kit/auth
 
-Better Auth configuration for the controller. Depends on `@launchpad/database`.
+Better Auth configuration for the controller. Depends on `@launchpad-kit/database`.
 
 - `loadAuthConfig(env)` validates the `LAUNCHPAD_*` settings and fails fast.
 - `createAuth({ db, config })` builds Better Auth with email/password, the

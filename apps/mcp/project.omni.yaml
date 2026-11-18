@@ -1,16 +1,16 @@
 # yaml-language-server: $schema=https://raw.githubusercontent.com/omni-oss/json-schemas/refs/heads/main/project.json
-name: "@launchpad/mcp"
+name: "@launchpad-kit/mcp"
 
 extends:
   - "@workspace/omni/presets/ts-vite-app.omni.yaml"
 
 dependencies:
   append:
-    - "@launchpad/tsconfig"
-    - "@launchpad/vite-config"
-    - "@launchpad/vitest-config"
-    - "@launchpad/client-core"
-    - "@launchpad/sdk"
+    - "@launchpad-kit/tsconfig"
+    - "@launchpad-kit/vite-config"
+    - "@launchpad-kit/vitest-config"
+    - "@launchpad-kit/client-core"
+    - "@launchpad-kit/sdk"
 
 tasks:
   test:unit:
