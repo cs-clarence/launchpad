@@ -244,6 +244,124 @@ deployment. It is a routing change, not a rebuild. Failure before cutover leaves
 production unchanged; uncertain failure after cutover requires reconciliation,
 not a blind second cutover.
 
+## Drift detection
+
+Launchpad today detects only some drift: `check-restore` lists live previews whose
+Dokku app is missing, the operator status warns when the controller and worker
+disagree on settings, and uncertain remote outcomes are parked as
+`reconciliation-needed`. There is no scheduled comparison of the database with
+Dokku, and no detection of orphans or manual changes. Add a **read-only drift
+report**; it never repairs, deletes, withdraws, re-routes or gates anything.
+
+### Sources, compared by recorded identity
+
+| Source   | What it provides                                                                                                                                          |
+| -------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Database | Deployments (Dokku app name, hostname, state), aliases (target, generations, state), operations, reservations, legacy previews and retired history.       |
+| Dokku    | Apps by exact name, their domains and, where the allowlisted client can read it, running state. Needs new read operations (`apps:list`, a domain report). |
+| Router   | Authoritative per-alias routes: epoch, generation, operation ID, target and tombstones.                                                                   |
+| Probe    | Optional: the deployment identity a route actually serves.                                                                                                |
+| Archives | The set of stored artifact files, as `check-restore` already reads it.                                                                                    |
+
+Match by recorded identity: Dokku app name, hostname and router operation ID.
+**Never infer ownership from a naming pattern.** The app-name pattern only limits
+which Dokku apps are _considered_; an app is known when any deployment row (including
+retired or tombstoned history), or any `legacy_preview` record, names it exactly.
+Apps that do not match the pattern are not reported, or are shown only as a count.
+Until Slice 2 retires them, legacy previews are an input, or every legacy app would
+look like an orphan; and an app missing from an older backup appears as `orphan-app`
+after a restore, which is expected.
+
+### Statuses and findings
+
+A **status** says how far the report can be trusted and is not a finding:
+
+- Per source: `ok`, `unavailable` (read failed) or `skipped` (not requested). Findings
+  come only from sources that are `ok`; neither of the others is a clean result.
+- Per resource: `in-flight` when it has an unfinished operation, or its database
+  `reserved_generation` is above `committed_generation`. In-flight resources are not
+  compared. An expired lease on a dispatched operation makes it `stuck-operation`, not
+  comparable: the outcome is uncertain.
+
+A **finding** has a stable code, a severity, the exact resources and a suggested
+operator action, and never carries credentials or environment values.
+
+| Code                         | Meaning                                                                                                         | Severity | Suggested action                                                                   |
+| ---------------------------- | --------------------------------------------------------------------------------------------------------------- | -------- | ---------------------------------------------------------------------------------- |
+| `deployment-app-missing`     | A succeeded, pinned or uncertain-chain deployment's Dokku app does not exist.                                   | high     | Investigate; redeploy the artifact as a new deployment.                            |
+| `deployment-domain-mismatch` | The Dokku domain differs from the recorded hostname.                                                            | high     | Find who changed it; do not edit the record to match.                              |
+| `orphan-app`                 | A pattern-matching Dokku app is named by no deployment, history or legacy record.                               | medium   | Identify the owner; deletion is a separate, exact-name, authorized action.         |
+| `reservation-without-owner`  | A hostname reservation names an owner that does not exist.                                                      | high     | Integrity alarm; stop mutations and investigate.                                   |
+| `owner-without-reservation`  | A deployment or alias has no reservation for its hostname (the deferred trigger should make this impossible).   | high     | Integrity alarm; stop mutations and investigate.                                   |
+| `alias-route-missing`        | A bound alias has no route in the router.                                                                       | high     | Reconcile through a promotion operation.                                           |
+| `alias-router-ahead`         | The router's generation is above the database's committed one. Expected during verification or after a restore. | medium   | Keep it; raise `reserved_generation` as the restore rule says.                     |
+| `alias-router-behind`        | The router's generation is below the database's committed one.                                                  | high     | Reconcile; the route may have been lost.                                           |
+| `alias-target-conflict`      | Same generation, different target or operation ID.                                                              | high     | Stop promotions for the alias; investigate before correcting.                      |
+| `router-unknown-route`       | The router holds a route or tombstone the database does not know.                                               | high     | Pin its target; withdraw or record it after review.                                |
+| `router-epoch-mismatch`      | The router's epoch differs from the configured one.                                                             | high     | Expected after a restore until the epoch is re-established; otherwise investigate. |
+| `unreferenced-pin`           | `last_unpinned_at` is unset though no alias or operation references the deployment.                             | medium   | Recompute pins under the normal locks.                                             |
+| `stale-unpin`                | `last_unpinned_at` is set though an alias or operation still references the deployment.                         | high     | Recompute pins; do not collect it.                                                 |
+| `stuck-operation`            | An operation is unfinished past its lease, or is `reconciliation-needed`.                                       | medium   | Resolve it through the reconciliation workflow.                                    |
+| `archive-missing`            | A retained deployment's artifact file is missing.                                                               | high     | Repair from a backup before any redeploy.                                          |
+| `probe-mismatch`             | A route does not serve the expected deployment identity.                                                        | high     | Compare route and target before any change.                                        |
+
+Orphan findings are reports only. The report never offers a “delete all orphans”
+step and never treats a pattern match as proof of ownership.
+
+### Behaviour
+
+- Every read is bounded and tolerates failure: an unreachable Dokku or router
+  gives `unavailable` for that source, never a false “no drift”.
+- Take the database snapshot twice, before and after the remote reads, and drop any
+  finding whose resource's generation, operation ID or state changed between them.
+- It runs as `launchpad-admin drift`, beside `check-restore`, with `--no-dokku`
+  and `--no-router` to skip a source (reported as `skipped`). Exit 2 when any
+  requested source was unavailable, even with findings; exit 1 for findings when
+  every source was read; exit 0 otherwise. A later, opt-in worker schedule stores
+  findings in an additive table (its own migration, in Slice 3) with an audit event.
+  The operator status will report the count and age of the last successful check and
+  computes `drift-check-stale` itself, against a configured threshold.
+- **Instance operator only:** the `launchpad-admin drift` command and the operator
+  status. There is no organization-scoped API in this version: drift is an
+  installation-wide view (orphan apps, router epoch, routes across organizations) and
+  must not reach organization admins or owners. A later organization view would show
+  only findings whose resources belong to that organization.
+- **The report never gates operations.** Promotion safety comes from the generation
+  compare-and-swap, the router's generation and epoch checks, `reconciliation-needed`
+  and the restore rule on `reserved_generation`. A stored, possibly stale report must
+  not decide anything.
+- Dokku reads use new read-only allowlisted operations in the existing client
+  (`apps:list`, a domain report); the controller admin CLI and the worker both use
+  them. No mutating command is added, and non-Launchpad apps returned by
+  `apps:list` are filtered by exact recorded identity, not by a pattern.
+
+### After a restore
+
+Run the report after the epoch fence and before reopening ingress. A restored
+database commonly shows `router-unknown-route`, `alias-router-ahead` and
+`router-epoch-mismatch`. They are the inputs to reconciliation; promotions and
+deletions are re-enabled by the restore rule on `reserved_generation`, not by an
+empty report.
+
+### Acceptance
+
+- Each finding code is produced by a fixture test and is absent when the sources agree.
+- `unavailable` and `skipped` sources never give a clean result or exit 0.
+- An in-flight promotion produces no finding; an expired dispatched lease produces
+  `stuck-operation`; a router ahead after a restore is `alias-router-ahead`, not
+  `alias-target-conflict`.
+- An app named in retired history or a legacy record is not an orphan; an app that
+  does not match the pattern is not reported.
+- Generations above 2^53 compare correctly.
+- The report contains no secret by construction and writes nothing to Dokku, the
+  router or the database apart from the later findings table.
+- A manually changed domain and a stopped or deleted app are reported in the
+  disposable rehearsal (Slice 4).
+
+Delivery: the pure comparison (plain input types, no database, Dokku, router or file
+system imports) and its fixtures are Slice 0. The SQL readers, the Dokku and router
+reads and the CLI follow in Slices 2 and 3, after Slice 1 fixes the router contract.
+
 ## Configurable hostname templates
 
 ```env
@@ -507,13 +625,13 @@ The concrete bootstrap/recovery procedure must pass the routing experiment.
 
 ### Implementation slices and gates
 
-| Slice                                                               | Check                                                                                                                                                                        | Undo / stop condition                                                                                                                                                                                                                                                                         |
-| ------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 0. Docs, pure template/config functions, read-only legacy inventory | Unit tests; no remote calls or active API/schema changes                                                                                                                     | Remove additive helpers; preserve existing runtime.                                                                                                                                                                                                                                           |
-| 1. Disposable alias-router experiment                               | Router-only generation/idempotency, restart/crash, fixed-404, Host/SNI and epoch tests; throwaway driver simulates dispatch/response loss without the new application schema | Exact-name removal of newly created test resources; if an invariant fails, stop. Explicit disposable-infrastructure approval required.                                                                                                                                                        |
-| 2. Retirement and coordinated backend/model change                  | Schema upgrade, pre-model backup refusal, worker/auth tests, DB CAS, GC/reservation races, retention and corrective-chain pin tests                                          | Restore the pre-change matched backup with the previous binary into an isolated target. No mixed-version workers. New immutable apps/router state are absent from an old backup: inventory them by exact name and quarantine them from old workers before separately approved orphan cleanup. |
-| 3. API/UI/SDK/CLI/MCP integration                                   | New contracts, permission matrix and generated-hostname workflows across all clients                                                                                         | Keep draft/unreleased; do not publish a half-compatible client/server set.                                                                                                                                                                                                                    |
-| 4. Combined disposable rehearsal and operator docs                  | Build once, preview, multi-alias promotion/rollback, failures, restore and exact cleanup                                                                                     | Withdraw only test routes; retain uncertain targets until reconciled. Production remains untouched.                                                                                                                                                                                           |
+| Slice                                                                                      | Check                                                                                                                                                                        | Undo / stop condition                                                                                                                                                                                                                                                                         |
+| ------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 0. Docs, pure template/config functions, read-only legacy inventory, pure drift comparison | Unit tests, including each drift finding against fixtures; no remote calls or active API/schema changes                                                                      | Remove additive helpers; preserve existing runtime.                                                                                                                                                                                                                                           |
+| 1. Disposable alias-router experiment                                                      | Router-only generation/idempotency, restart/crash, fixed-404, Host/SNI and epoch tests; throwaway driver simulates dispatch/response loss without the new application schema | Exact-name removal of newly created test resources; if an invariant fails, stop. Explicit disposable-infrastructure approval required.                                                                                                                                                        |
+| 2. Retirement and coordinated backend/model change                                         | Schema upgrade, pre-model backup refusal, worker/auth tests, DB CAS, GC/reservation races, retention and corrective-chain pin tests                                          | Restore the pre-change matched backup with the previous binary into an isolated target. No mixed-version workers. New immutable apps/router state are absent from an old backup: inventory them by exact name and quarantine them from old workers before separately approved orphan cleanup. |
+| 3. API/UI/SDK/CLI/MCP integration                                                          | New contracts, permission matrix and generated-hostname workflows across all clients                                                                                         | Keep draft/unreleased; do not publish a half-compatible client/server set.                                                                                                                                                                                                                    |
+| 4. Combined disposable rehearsal and operator docs                                         | Build once, preview, multi-alias promotion/rollback, failures, restore and exact cleanup                                                                                     | Withdraw only test routes; retain uncertain targets until reconciled. Production remains untouched.                                                                                                                                                                                           |
 
 Use the production-preparation draft PR. It may temporarily be marked ready for
 CI/CodeRabbit review, then returned to draft once that round is green. Do not

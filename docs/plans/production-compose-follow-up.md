@@ -53,6 +53,12 @@ ownership remains unverified; publishing or claiming registry namespaces needs
 separate verification and explicit authorization.
 Requirements this work must meet that the application milestones surfaced:
 
+- Drift detection: a read-only report comparing the database, Dokku and the alias
+  router, specified in `docs/design/deployment-modes.md` (§Drift detection). It
+  reports orphans and mismatches and never repairs or deletes; deleting an orphan is
+  a separate authorized action. Cleanup of the old demo data uses an exact-name
+  inventory like this report, not a pattern match.
+
 - Selected product-model direction: one immutable deployment pipeline, with
   unique preview URLs and a stable production alias moved by promotion.
   See `docs/design/deployment-modes.md` for the revised database, routing and API
