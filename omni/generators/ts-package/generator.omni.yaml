@@ -8,7 +8,7 @@ inputs:
     type: string
     remember: true
     message: What is the name of your package scope?
-    default: "launchpad"
+    default: "launchpad-kit"
 
   - name: package_name
     type: string

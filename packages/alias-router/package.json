@@ -1,0 +1,37 @@
+{
+    "name": "@launchpad-kit/alias-router",
+    "version": "0.0.0",
+    "private": true,
+    "description": "Bun-only durable generation-checked alias routing authority (unwired core)",
+    "type": "module",
+    "exports": {
+        ".": {
+            "types": "./src/index.ts",
+            "import": {
+                "development": "./src/index.ts",
+                "default": "./src/index.ts"
+            },
+            "require": {
+                "development": "./src/index.ts",
+                "default": "./src/index.ts"
+            }
+        }
+    },
+    "scripts": {
+        "build": "vite build",
+        "check:types": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.node.json",
+        "test:unit": "bun --bun vitest run --config vitest.config.unit.ts"
+    },
+    "dependencies": {
+        "zod": "catalog:"
+    },
+    "devDependencies": {
+        "@launchpad-kit/tsconfig": "workspace:^",
+        "@launchpad-kit/vite-config": "workspace:^",
+        "@launchpad-kit/vitest-config": "workspace:^",
+        "@types/bun": "catalog:",
+        "typescript": "catalog:",
+        "vite": "catalog:",
+        "vitest": "catalog:"
+    }
+}

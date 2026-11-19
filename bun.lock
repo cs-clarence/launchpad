@@ -126,6 +126,22 @@
         "vitest": "catalog:",
       },
     },
+    "packages/alias-router": {
+      "name": "@launchpad-kit/alias-router",
+      "version": "0.0.0",
+      "dependencies": {
+        "zod": "catalog:",
+      },
+      "devDependencies": {
+        "@launchpad-kit/tsconfig": "workspace:^",
+        "@launchpad-kit/vite-config": "workspace:^",
+        "@launchpad-kit/vitest-config": "workspace:^",
+        "@types/bun": "catalog:",
+        "typescript": "catalog:",
+        "vite": "catalog:",
+        "vitest": "catalog:",
+      },
+    },
     "packages/auth": {
       "name": "@launchpad-kit/auth",
       "version": "0.0.0",
@@ -433,6 +449,8 @@
     "@jridgewell/sourcemap-codec": ["@jridgewell/sourcemap-codec@1.6.0", "", {}, "sha512-T7jf+5zgsZHwNJ4lvQ7/aezbyk0nNX+zJVWpmHA7VYsEx7a7qr5Rg5IbtJFqkgze5Y2sruq1RUY8Q837Od7iFw=="],
 
     "@jridgewell/trace-mapping": ["@jridgewell/trace-mapping@0.3.31", "", { "dependencies": { "@jridgewell/resolve-uri": "^3.1.0", "@jridgewell/sourcemap-codec": "^1.4.14" } }, "sha512-zzNR+SdQSDJzc8joaeP8QQoCQr8NuYx2dIIytl1QeBEZHJ9uW6hebsrYgbz8hJwUQao3TWCMtmfV8Nu1twOLAw=="],
+
+    "@launchpad-kit/alias-router": ["@launchpad-kit/alias-router@workspace:packages/alias-router"],
 
     "@launchpad-kit/auth": ["@launchpad-kit/auth@workspace:packages/auth"],
 

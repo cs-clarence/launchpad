@@ -57,6 +57,7 @@ include = [
     "packages/contracts/**",
     "packages/sdk/**",
     "apps/**",
+    "packages/alias-router/**",
     # @anchor:new-core-package
 ]
 
