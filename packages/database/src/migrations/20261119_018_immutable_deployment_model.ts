@@ -1,29 +1,27 @@
--- P1 executable specification: MODEL/RESERVATION SEGMENT, not migration 018.
--- Apply after immutable-retirement.sql in the SAME isolated test transaction.
--- No production grants, restore gate/floor or runtime wiring is installed.
-DO $model$
-BEGIN
-    IF current_database() !~ '^lp_test_[0-9a-f]{32}$'
-       OR to_regclass('public.legacy_preview') IS NULL
-       OR to_regclass('public.legacy_deployment') IS NULL
-       OR to_regclass('public.legacy_deployment_event') IS NULL
-       OR to_regclass('public.legacy_deletion_operation') IS NULL
-       OR to_regclass('public.preview') IS NOT NULL
-       OR to_regclass('public.deployment') IS NOT NULL
-       OR to_regclass('public.deployment_event') IS NOT NULL
-       OR to_regclass('public.deletion_operation') IS NOT NULL THEN
-        RAISE EXCEPTION 'immutable model fixture requires a retired isolated test database';
-    END IF;
-    IF (
-        SELECT count(DISTINCT relation) FROM pg_catalog.pg_locks
-        WHERE pid = pg_backend_pid() AND mode = 'AccessExclusiveLock' AND granted
-          AND relation IN (
-              'public.legacy_preview'::regclass, 'public.legacy_deployment'::regclass,
-              'public.legacy_deployment_event'::regclass, 'public.legacy_deletion_operation'::regclass
-          )
-    ) <> 4 THEN
-        RAISE EXCEPTION 'immutable model fixture requires retirement locks in the same transaction';
-    END IF;
+import { type Kysely, sql } from "kysely";
+
+// Forward-only, frozen SQL: Kysely owns the transaction. Before running this, stop
+// all old processes, settle dispatched Dokku work, back up, and inventory/remove
+// old apps with the pre-018 binary. Dropped identities are intentionally not kept.
+export async function up(db: Kysely<any>): Promise<void> {
+    await sql`set local lock_timeout = '5s'`.execute(db);
+    await sql`drop table deployment_event, deletion_operation, deployment, preview, worker_heartbeat`.execute(
+        db,
+    );
+    await sql`delete from idempotency_key`.execute(db);
+    await sql`delete from instance_state where key = 'lifecycle.enabled_at'`.execute(db);
+    await sql`
+        with revoked as (
+            update api_key set revoked_at = now()
+            where revoked_at is null
+              and exists (select 1 from unnest(scopes) as scope where scope like 'preview:%')
+            returning id
+        )
+        insert into audit_event (actor, action, target_type, target_id, organization_id, detail)
+        select 'system', 'immutable.cutover', 'instance', 'self', null,
+            'revoked_keys=' || count(*)::text from revoked
+    `.execute(db);
+    await sql`
 
     CREATE FUNCTION public.immutable_hostname_valid(value text) RETURNS boolean
     LANGUAGE sql IMMUTABLE STRICT SET search_path = pg_catalog AS $function$
@@ -155,6 +153,7 @@ BEGIN
         app_id uuid NOT NULL,
         alias_id uuid NOT NULL,
         action text NOT NULL CHECK (action IN ('bind', 'withdraw')),
+        idempotency_key text NOT NULL CHECK (length(idempotency_key) BETWEEN 1 AND 128),
         previous_target_deployment_id uuid,
         desired_target_deployment_id uuid,
         expected_generation bigint NOT NULL CHECK (expected_generation >= 0),
@@ -240,7 +239,7 @@ BEGIN
 
     CREATE TABLE public.hostname_reservation (
         hostname text PRIMARY KEY CHECK (public.immutable_hostname_valid(hostname)),
-        owner_kind text NOT NULL CHECK (owner_kind IN ('deployment', 'alias', 'legacy_preview')),
+        owner_kind text NOT NULL CHECK (owner_kind IN ('deployment', 'alias')),
         owner_id uuid NOT NULL,
         organization_id text NOT NULL REFERENCES public.organization(id) ON DELETE RESTRICT,
         created_at timestamptz NOT NULL DEFAULT now(),
@@ -250,7 +249,7 @@ BEGIN
     );
     CREATE TABLE public.dokku_name_reservation (
         app_name text PRIMARY KEY CHECK (app_name ~ '^lp-[a-z0-9]{10}$'),
-        owner_kind text NOT NULL CHECK (owner_kind IN ('deployment', 'legacy_preview')),
+        owner_kind text NOT NULL CHECK (owner_kind = 'deployment'),
         owner_id uuid NOT NULL,
         organization_id text NOT NULL REFERENCES public.organization(id) ON DELETE RESTRICT,
         created_at timestamptz NOT NULL DEFAULT now(),
@@ -259,10 +258,10 @@ BEGIN
         CHECK (released_at >= created_at)
     );
 
-    -- Fixture-only ownership: these SECURITY DEFINER functions are owned by the
-    -- test migrator. P2 must install the dedicated non-login owner/read grants.
+    -- Ordinary invoker functions: these enforce invariants, not privileges.
+    -- Separate application/owner roles are a production deployment gate.
     CREATE FUNCTION public.immutable_check_reservations(kind text, resource_id uuid)
-    RETURNS void LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog AS $function$
+    RETURNS void LANGUAGE plpgsql SET search_path = pg_catalog AS $function$
     DECLARE
         expected_host text;
         expected_app text;
@@ -278,10 +277,6 @@ BEGIN
                 SELECT hostname, organization_id, state = 'withdrawn'
                 INTO expected_host, expected_org, expected_retired
                 FROM public.app_alias WHERE id = resource_id;
-            WHEN 'legacy_preview' THEN
-                SELECT hostname, app_name, organization_id, desired_state = 'deleted'
-                INTO expected_host, expected_app, expected_org, expected_retired
-                FROM public.legacy_preview WHERE id = resource_id;
             ELSE
                 RAISE EXCEPTION 'unknown reservation owner kind' USING ERRCODE = '23514';
         END CASE;
@@ -311,22 +306,20 @@ BEGIN
     $function$;
 
     CREATE FUNCTION public.immutable_validate_reservation() RETURNS trigger
-    LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog AS $function$
+    LANGUAGE plpgsql SET search_path = pg_catalog AS $function$
     BEGIN
         PERFORM public.immutable_check_reservations(NEW.owner_kind, NEW.owner_id);
         RETURN NULL;
     END
     $function$;
     CREATE FUNCTION public.immutable_validate_owner() RETURNS trigger
-    LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog AS $function$
+    LANGUAGE plpgsql SET search_path = pg_catalog AS $function$
     BEGIN
         CASE TG_TABLE_NAME
             WHEN 'immutable_deployment' THEN
                 PERFORM public.immutable_check_reservations('deployment', NEW.id);
             WHEN 'app_alias' THEN
                 PERFORM public.immutable_check_reservations('alias', NEW.id);
-            WHEN 'legacy_preview' THEN
-                PERFORM public.immutable_check_reservations('legacy_preview', NEW.id);
             ELSE
                 RAISE EXCEPTION 'unexpected reservation owner table' USING ERRCODE = '23514';
         END CASE;
@@ -419,11 +412,11 @@ BEGIN
             RAISE EXCEPTION 'operation identity and fence are immutable or monotonic' USING ERRCODE = '23514';
         END IF;
         IF TG_TABLE_NAME = 'promotion_operation' THEN
-            IF ROW(NEW.alias_id, NEW.action, NEW.previous_target_deployment_id,
+            IF ROW(NEW.alias_id, NEW.action, NEW.idempotency_key, NEW.previous_target_deployment_id,
                    NEW.desired_target_deployment_id, NEW.expected_generation,
                    NEW.generation, NEW.supersedes_operation_id)
                IS DISTINCT FROM
-               ROW(OLD.alias_id, OLD.action, OLD.previous_target_deployment_id,
+                ROW(OLD.alias_id, OLD.action, OLD.idempotency_key, OLD.previous_target_deployment_id,
                    OLD.desired_target_deployment_id, OLD.expected_generation,
                    OLD.generation, OLD.supersedes_operation_id)
                OR (OLD.superseded_by_operation_id IS NOT NULL
@@ -457,13 +450,6 @@ BEGIN
     END
     $function$;
 
-    CREATE FUNCTION public.immutable_freeze_legacy() RETURNS trigger
-    LANGUAGE plpgsql SET search_path = pg_catalog AS $function$
-    BEGIN
-        RAISE EXCEPTION 'legacy deployment history is read only' USING ERRCODE = '23514';
-    END
-    $function$;
-
     REVOKE ALL ON FUNCTION public.immutable_check_reservations(text, uuid) FROM PUBLIC;
     REVOKE ALL ON FUNCTION public.immutable_validate_reservation() FROM PUBLIC;
     REVOKE ALL ON FUNCTION public.immutable_validate_owner() FROM PUBLIC;
@@ -471,7 +457,6 @@ BEGIN
     REVOKE ALL ON FUNCTION public.immutable_protect_owner() FROM PUBLIC;
     REVOKE ALL ON FUNCTION public.immutable_protect_app() FROM PUBLIC;
     REVOKE ALL ON FUNCTION public.immutable_protect_operation() FROM PUBLIC;
-    REVOKE ALL ON FUNCTION public.immutable_freeze_legacy() FROM PUBLIC;
     REVOKE ALL ON FUNCTION public.immutable_protect_event() FROM PUBLIC;
     REVOKE ALL ON FUNCTION public.immutable_protect_truncate() FROM PUBLIC;
 
@@ -516,14 +501,6 @@ BEGIN
         FOR EACH STATEMENT EXECUTE FUNCTION public.immutable_protect_truncate();
     CREATE TRIGGER app_deployment_event_no_truncate BEFORE TRUNCATE ON public.app_deployment_event
         FOR EACH STATEMENT EXECUTE FUNCTION public.immutable_protect_truncate();
-    CREATE TRIGGER legacy_preview_no_truncate BEFORE TRUNCATE ON public.legacy_preview
-        FOR EACH STATEMENT EXECUTE FUNCTION public.immutable_protect_truncate();
-    CREATE TRIGGER legacy_deployment_no_truncate BEFORE TRUNCATE ON public.legacy_deployment
-        FOR EACH STATEMENT EXECUTE FUNCTION public.immutable_protect_truncate();
-    CREATE TRIGGER legacy_event_no_truncate BEFORE TRUNCATE ON public.legacy_deployment_event
-        FOR EACH STATEMENT EXECUTE FUNCTION public.immutable_protect_truncate();
-    CREATE TRIGGER legacy_deletion_no_truncate BEFORE TRUNCATE ON public.legacy_deletion_operation
-        FOR EACH STATEMENT EXECUTE FUNCTION public.immutable_protect_truncate();
 
     CREATE CONSTRAINT TRIGGER hostname_reservation_owner
         AFTER INSERT OR UPDATE ON public.hostname_reservation
@@ -541,27 +518,9 @@ BEGIN
         AFTER INSERT OR UPDATE ON public.app_alias
         DEFERRABLE INITIALLY DEFERRED FOR EACH ROW
         EXECUTE FUNCTION public.immutable_validate_owner();
-    CREATE CONSTRAINT TRIGGER legacy_preview_reservations
-        AFTER INSERT OR UPDATE ON public.legacy_preview
-        DEFERRABLE INITIALLY DEFERRED FOR EACH ROW
-        EXECUTE FUNCTION public.immutable_validate_owner();
-    -- Normal legacy row writes are rejected by the freeze triggers below.
-    -- Existing seed reciprocity is checked by the registry INSERT events, not
-    -- by claiming coverage of this normally unreachable owner-side trigger.
-
-    -- No live/deleted/slug filter: every historical owner keeps both identities.
-    INSERT INTO public.hostname_reservation(hostname, owner_kind, owner_id, organization_id)
-        SELECT hostname, 'legacy_preview', id, organization_id FROM public.legacy_preview;
-    INSERT INTO public.dokku_name_reservation(app_name, owner_kind, owner_id, organization_id)
-        SELECT app_name, 'legacy_preview', id, organization_id FROM public.legacy_preview;
-
-    CREATE TRIGGER legacy_preview_read_only BEFORE INSERT OR UPDATE OR DELETE ON public.legacy_preview
-        FOR EACH ROW EXECUTE FUNCTION public.immutable_freeze_legacy();
-    CREATE TRIGGER legacy_deployment_read_only BEFORE INSERT OR UPDATE OR DELETE ON public.legacy_deployment
-        FOR EACH ROW EXECUTE FUNCTION public.immutable_freeze_legacy();
-    CREATE TRIGGER legacy_event_read_only BEFORE INSERT OR UPDATE OR DELETE ON public.legacy_deployment_event
-        FOR EACH ROW EXECUTE FUNCTION public.immutable_freeze_legacy();
-    CREATE TRIGGER legacy_deletion_read_only BEFORE INSERT OR UPDATE OR DELETE ON public.legacy_deletion_operation
-        FOR EACH ROW EXECUTE FUNCTION public.immutable_freeze_legacy();
-END
-$model$;
+    `.execute(db);
+    // An older restored dump may already have been marked blocked by this binary.
+    // Initialize a fresh instance, never overwrite that recovery decision.
+    await sql`insert into instance_state (key, value) values ('immutable_recovery', 'ready')
+        on conflict (key) do nothing`.execute(db);
+}

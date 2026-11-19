@@ -195,3 +195,46 @@ Breaking, for the release notes: the `preview:*` key scopes, the `/previews`, `/
 `deployments` clients and `uploadTimeoutMs`, the CLI `deploy`, `previews` and `deployments` commands,
 and the MCP `list_previews`, `get_preview`, `list_deployments`, `get_deployment`,
 `deployment_events`, `preview_deletion`, `deploy` and `delete_preview` tools and `--allow-*` options.
+
+## P2b progress
+
+Branch `feat/immutable-p2b-schema-recovery`, based on P2a merge `24c0324`.
+Implementation complete and independently reviewed locally; pending PR gates.
+Nothing here authorizes running the cutover against an installation.
+
+- Migration 018 now replaces the preview tables unconditionally, clears replay/lifecycle
+  state, revokes exact `preview:` prefixes with count-only audit, creates the eight guarded
+  model tables and initializes the ready gate. The P1 model SQL moved into the migration;
+  there is no second fixture copy.
+- The model tests use the real migration. Separate cutover tests cover populated 014/017
+  upgrades, session/artifact preservation, mixed/unknown/case-variant/already-revoked keys,
+  unexpected dependencies and lock-timeout rollback.
+- Initial read-only Opus review found no blockers/majors. Follow-up adds the missing immutable
+  promotion idempotency key, documents service-owned deletion progression, and shares the
+  migrator factory with test setup.
+- The [pre-cutover operator runbook](../immutable-cutover.md) records the pre-P2b inventory,
+  backup, exact-name app cleanup and remote-operation settling requirements.
+- `Database` now describes only the surviving/new tables. Artifact-GC pins immutable
+  deployments and gates collection/sweeps; `check-restore` reports deployment IDs/deadlines.
+- The fsynced external recovery marker is written before the first archive copy, based on
+  this binary's knowledge of 018 rather than the dump. Restore blocks/verifies the database
+  gate when its table exists; 018 preserves an older restore's blocked row. Model mutation
+  wrappers record/fsync writer-seen before callbacks and hold a shared recovery lock.
+  Restore/clear hold the exclusive lock through filesystem changes. Core administration
+  stays outside the model gate.
+- P2b `recovery-clear` checks every model table under locks and refuses writer-seen even
+  after an older dump erased model rows. P3 must replace that rule with the audited
+  attestation before adding a live writer; rollback from P3 to P2b remains unsupported.
+- P1 inventory, old-process/retirement tests, fixtures and tasks are removed. The dedicated
+  focused task is now `test:immutable-schema`; integration no longer requires full Git history.
+- Local checks, unit tests, build and all-project integration pass. Disposable image/package
+  checks and the image-based schema-014 upgrade/restore drill pass. Restore coverage includes
+  post-018 round trip, 014-over-model replacement, 017 blocked-row preservation and killing
+  the test's own admin process after import but before its gate write.
+
+Final read-only Opus review of the combined schema/recovery/readers diff found no blockers
+or majors. Minor follow-ups clarify OS-user ownership, conservative no-op GC writer records
+and missing-storage errors. The final full local gates, image/package checks and image upgrade
+drill pass after those follow-ups; disposable PostgreSQL is torn down.
+
+Remaining: commit/push, CI and CodeRabbit.

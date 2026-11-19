@@ -1,6 +1,7 @@
 import { createAuth, createMailer, loadAuthConfig } from "@launchpad-kit/auth";
 import { assertSchemaCurrent, createDatabase } from "@launchpad-kit/database";
-import type { InvitationDeps } from "@launchpad-kit/services";
+import { requireModelDataDirectory, type InvitationDeps } from "@launchpad-kit/services";
+import path from "node:path";
 import { createApi } from "./api";
 
 function requireEnv(name: string): string {
@@ -58,7 +59,11 @@ let schemaFailedAt = 0;
 export async function getReadyRuntime() {
     const ready = getRuntime();
     if (!schemaCheck || (schemaFailedAt > 0 && Date.now() - schemaFailedAt > RECHECK_AFTER_MS)) {
-        const check = assertSchemaCurrent(ready.db);
+        const check = assertSchemaCurrent(ready.db).then(async () => {
+            await requireModelDataDirectory(
+                path.resolve(process.env.LAUNCHPAD_DATA_DIR ?? ".data/controller"),
+            );
+        });
         schemaCheck = check;
         schemaFailedAt = 0;
         check.catch((error) => {

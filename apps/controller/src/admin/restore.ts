@@ -5,7 +5,13 @@ import { createReadStream, createWriteStream, promises as fs } from "node:fs";
 import path from "node:path";
 import { pipeline } from "node:stream/promises";
 import { createDatabase, type Database, migrationStatus } from "@launchpad-kit/database";
-import { resolveArtifactPath } from "@launchpad-kit/services";
+import {
+    resolveArtifactPath,
+    IMMUTABLE_MIGRATION,
+    markImmutableRecoveryBlocked,
+    blockRestoredModel,
+    withImmutableRecoveryMaintenance,
+} from "@launchpad-kit/services";
 import { type Kysely, sql } from "kysely";
 import { type BackupManifest, columnExists, pgEnvironment, verifyBackup } from "./backup";
 
@@ -18,8 +24,8 @@ export interface RestoreOptions {
     // The database to restore into: an empty one, or one named in `replaceDatabase`.
     databaseUrl: string;
     dataDir: string;
-    // The operator's confirmation that docs/plans/application.md's restore step 1 is done: the
-    // every writer stopped and waited for, and the Dokku operations they dispatched settled.
+    // Confirms docs/restore.md step 1: every writer stopped and waited for,
+    // and the Dokku operations they dispatched settled.
     workersStopped: boolean;
     // Replace a database that already has data: its address typed out as host:port/database, so
     // naming a scratch copy with the live one's name is not enough.
@@ -204,19 +210,6 @@ async function outsideDependents(db: Kysely<any>): Promise<string[]> {
     return [...views.rows, ...keys.rows, ...defaults.rows].map((r) => r.name).sort();
 }
 
-// An older build's worker may still be running (a rollback, a rolling upgrade). The table goes
-// with the schema cutover; until then a recent heartbeat means a writer is still alive.
-const WORKER_LIVE_SECONDS = 60;
-async function liveWorkers(db: Kysely<any>) {
-    const present = await sql<{ present: boolean }>`
-        select to_regclass('public.worker_heartbeat') is not null as present`.execute(db);
-    if (!present.rows[0]?.present) return 0;
-    const live = await sql<{ n: string }>`
-        select count(*) as n from public.worker_heartbeat
-        where last_seen_at > now() - ${WORKER_LIVE_SECONDS} * interval '1 second'`.execute(db);
-    return Number(live.rows[0]?.n ?? 0);
-}
-
 async function userTableCount(db: Kysely<any>) {
     const { rows } = await sql<{ n: string }>`
         select count(*) as n from pg_class c join pg_namespace s on s.oid = c.relnamespace
@@ -226,8 +219,8 @@ async function userTableCount(db: Kysely<any>) {
 
 // Restores a backup made by `createBackup`: the stored archives first (additive, so a failure
 // there changes nothing that matters), then the database. It never touches Dokku. It restores
-// into an empty database, or into one the operator names to be replaced, and it refuses while a
-// writer is running against the target. What the operator must do before and after is the
+// into an empty database, or into one the operator names to be replaced. The operator must
+// stop all writers: no database heartbeat proves dispatched work settled. Before and after is the
 // restore runbook in docs/restore.md; this does the middle of it.
 export async function restoreBackup(options: RestoreOptions): Promise<RestoreResult> {
     if (!options.workersStopped) {
@@ -257,150 +250,150 @@ export async function restoreBackup(options: RestoreOptions): Promise<RestoreRes
         path.join(root, manifest.database.file),
     );
 
-    const db = createDatabase(options.databaseUrl, { max: 1 });
+    const pool = createDatabase(options.databaseUrl, { max: 1 });
     try {
-        const populated = (await userTableCount(db)) > 0;
-        const target = replaceTarget(options.databaseUrl);
-        if (populated) {
-            if ((await liveWorkers(db)) > 0) {
-                throw new RestoreError(
-                    "A worker has reported in the last minute: it is still running against this database. " +
-                        "Stop every worker and wait for it to exit first.",
-                );
-            }
-            const dependents = await outsideDependents(db);
-            if (dependents.length > 0) {
-                throw new RestoreError(
-                    `${dependents.join(", ")} (outside the public schema) depend on tables that --replace would drop. ` +
-                        "Remove them, or restore into an empty database. Nothing was changed.",
-                );
-            }
-            if (options.replaceDatabase === undefined) {
-                throw new RestoreError(
-                    `${target} already has data. Restore into an empty database, or replace it by naming ` +
-                        `it with --replace ${target} (back it up first).`,
-                );
-            }
-            if (options.replaceDatabase !== target) {
+        return await withImmutableRecoveryMaintenance(pool, async (db) => {
+            const populated = (await userTableCount(db)) > 0;
+            const target = replaceTarget(options.databaseUrl);
+            if (populated) {
+                const dependents = await outsideDependents(db);
+                if (dependents.length > 0) {
+                    throw new RestoreError(
+                        `${dependents.join(", ")} (outside the public schema) depend on tables that --replace would drop. ` +
+                            "Remove them, or restore into an empty database. Nothing was changed.",
+                    );
+                }
+                if (options.replaceDatabase === undefined) {
+                    throw new RestoreError(
+                        `${target} already has data. Restore into an empty database, or replace it by naming ` +
+                            `it with --replace ${target} (back it up first).`,
+                    );
+                }
+                if (options.replaceDatabase !== target) {
+                    throw new RestoreError(
+                        `--replace names ${options.replaceDatabase}, but the target is ${target}.`,
+                    );
+                }
+            } else if (
+                options.replaceDatabase !== undefined &&
+                options.replaceDatabase !== target
+            ) {
                 throw new RestoreError(
                     `--replace names ${options.replaceDatabase}, but the target is ${target}.`,
                 );
             }
-        } else if (options.replaceDatabase !== undefined && options.replaceDatabase !== target) {
-            throw new RestoreError(
-                `--replace names ${options.replaceDatabase}, but the target is ${target}.`,
-            );
-        }
 
-        // This build must know every migration the backup holds; one it does not know came from a
-        // newer version, and restoring it here would leave a schema no code here understands.
-        const status = await migrationStatus(db).catch(() => null);
-        const known = status ? new Set([...status.applied, ...status.pending]) : new Set<string>();
-        const unknown = manifest.migrations.filter((name) => !known.has(name));
-        if (unknown.length > 0) {
-            throw new RestoreError(
-                `The backup holds migrations this version does not know (${unknown.join(", ")}): ` +
-                    "restore it with the version that made it, or a newer one.",
-            );
-        }
-
-        // Check every archive before anything is written: a file with the same name and other
-        // content is not ours to overwrite.
-        const toCopy: BackupManifest["artifacts"] = [];
-        let present = 0;
-        for (const artifact of manifest.artifacts) {
-            const target = resolveArtifactPath(options.dataDir, artifact.storageKey);
-            const existing = await fs.lstat(target).catch(() => null);
-            if (!existing) {
-                toCopy.push(artifact);
-            } else if (existing.isFile() && (await hashFile(target)) === artifact.sha256) {
-                present++;
-            } else {
+            // This build must know every migration the backup holds; one it does not know came from a
+            // newer version, and restoring it here would leave a schema no code here understands.
+            const status = await migrationStatus(db);
+            const known = new Set([...status.applied, ...status.pending]);
+            const unknown = manifest.migrations.filter((name) => !known.has(name));
+            if (unknown.length > 0) {
                 throw new RestoreError(
-                    `${target} exists with different content (or is not a plain file); nothing was restored.`,
+                    `The backup holds migrations this version does not know (${unknown.join(", ")}): ` +
+                        "restore it with the version that made it, or a newer one.",
                 );
             }
-        }
-        for (const artifact of toCopy) {
-            const target = resolveArtifactPath(options.dataDir, artifact.storageKey);
-            await fs.mkdir(path.dirname(target), { recursive: true, mode: 0o700 });
-            const temp = `${target}.restore-${randomBytes(6).toString("hex")}`;
-            try {
-                // Hashed as it is copied: the file is checked against the manifest at the moment it is used.
-                const hash = createHash("sha256");
-                await pipeline(
-                    createReadStream(path.join(root, artifact.storageKey)),
-                    new Transform({
-                        transform(chunk, _encoding, done) {
-                            hash.update(chunk);
-                            done(null, chunk);
-                        },
-                    }),
-                    createWriteStream(temp, { mode: 0o600, flags: "wx" }),
-                );
-                if (hash.digest("hex") !== artifact.sha256) {
+
+            // Check every archive before anything is written: a file with the same name and other
+            // content is not ours to overwrite.
+            const toCopy: BackupManifest["artifacts"] = [];
+            let present = 0;
+            for (const artifact of manifest.artifacts) {
+                const target = resolveArtifactPath(options.dataDir, artifact.storageKey);
+                const existing = await fs.lstat(target).catch(() => null);
+                if (!existing) {
+                    toCopy.push(artifact);
+                } else if (existing.isFile() && (await hashFile(target)) === artifact.sha256) {
+                    present++;
+                } else {
                     throw new RestoreError(
-                        `${artifact.storageKey} changed while it was being copied.`,
+                        `${target} exists with different content (or is not a plain file); nothing was restored.`,
                     );
                 }
-                await fs.rename(temp, target);
+            }
+            // Keyed on this binary's migration set, never the dump's: even an old dump
+            // can erase model rows while leaving remote resources behind.
+            const modelAware = known.has(IMMUTABLE_MIGRATION);
+            if (modelAware) await markImmutableRecoveryBlocked(options.dataDir);
+            for (const artifact of toCopy) {
+                const target = resolveArtifactPath(options.dataDir, artifact.storageKey);
+                await fs.mkdir(path.dirname(target), { recursive: true, mode: 0o700 });
+                const temp = `${target}.restore-${randomBytes(6).toString("hex")}`;
+                try {
+                    // Hashed as it is copied: the file is checked against the manifest at the moment it is used.
+                    const hash = createHash("sha256");
+                    await pipeline(
+                        createReadStream(path.join(root, artifact.storageKey)),
+                        new Transform({
+                            transform(chunk, _encoding, done) {
+                                hash.update(chunk);
+                                done(null, chunk);
+                            },
+                        }),
+                        createWriteStream(temp, { mode: 0o600, flags: "wx" }),
+                    );
+                    if (hash.digest("hex") !== artifact.sha256) {
+                        throw new RestoreError(
+                            `${artifact.storageKey} changed while it was being copied.`,
+                        );
+                    }
+                    await fs.rename(temp, target);
+                } catch (error) {
+                    await fs.rm(temp, { force: true });
+                    throw error;
+                }
+            }
+
+            // The old data is moved aside, not dropped: a restore that fails (or does not load what
+            // the backup holds) puts it back, and it is dropped only once the new data checks out.
+            const aside = `launchpad_replaced_${Date.now()}`;
+            if (populated) {
+                await db.transaction().execute(async (trx) => {
+                    // Do not wait behind a session that still holds the schema.
+                    await sql`set local lock_timeout = '10s'`.execute(trx);
+                    await sql.raw(`alter schema public rename to ${aside}`).execute(trx);
+                    if (!createsPublic) await sql`create schema public`.execute(trx);
+                });
+            } else if (createsPublic) {
+                // The empty database's own `public` makes way for the one the dump creates.
+                await sql`drop schema if exists public`.execute(db);
+            } else {
+                await sql`create schema if not exists public`.execute(db);
+            }
+            const putBack = async () => {
+                await db.transaction().execute(async (trx) => {
+                    await sql`drop schema if exists public cascade`.execute(trx);
+                    if (populated)
+                        await sql.raw(`alter schema ${aside} rename to public`).execute(trx);
+                    else await sql`create schema public`.execute(trx);
+                });
+            };
+            try {
+                await runPgRestore(options, path.join(root, manifest.database.file));
+                await verifyRestored(db, manifest);
+                if (modelAware) await blockRestoredModel(db);
             } catch (error) {
-                await fs.rm(temp, { force: true });
+                await putBack().catch((undo) => {
+                    throw new RestoreError(
+                        `The restore failed (${error instanceof Error ? error.message : String(error)}) and the old ` +
+                            `data could not be put back (${String(undo)}); it is in the schema ${aside}.`,
+                    );
+                });
                 throw error;
             }
-        }
+            if (populated) await sql.raw(`drop schema ${aside} cascade`).execute(db);
 
-        // The old data is moved aside, not dropped: a restore that fails (or does not load what
-        // the backup holds) puts it back, and it is dropped only once the new data checks out.
-        const aside = `launchpad_replaced_${Date.now()}`;
-        if (populated) {
-            await db.transaction().execute(async (trx) => {
-                // Do not wait behind a session that still holds the schema.
-                await sql`set local lock_timeout = '10s'`.execute(trx);
-                if ((await liveWorkers(trx)) > 0) {
-                    throw new RestoreError(
-                        "A worker has reported in: stop it and wait for it to exit first.",
-                    );
-                }
-                await sql.raw(`alter schema public rename to ${aside}`).execute(trx);
-                if (!createsPublic) await sql`create schema public`.execute(trx);
-            });
-        } else if (createsPublic) {
-            // The empty database's own `public` makes way for the one the dump creates.
-            await sql`drop schema if exists public`.execute(db);
-        } else {
-            await sql`create schema if not exists public`.execute(db);
-        }
-        const putBack = async () => {
-            await db.transaction().execute(async (trx) => {
-                await sql`drop schema if exists public cascade`.execute(trx);
-                if (populated) await sql.raw(`alter schema ${aside} rename to public`).execute(trx);
-                else await sql`create schema public`.execute(trx);
-            });
-        };
-        try {
-            await runPgRestore(options, path.join(root, manifest.database.file));
-            await verifyRestored(db, manifest);
-        } catch (error) {
-            await putBack().catch((undo) => {
-                throw new RestoreError(
-                    `The restore failed (${error instanceof Error ? error.message : String(error)}) and the old ` +
-                        `data could not be put back (${String(undo)}); it is in the schema ${aside}.`,
-                );
-            });
-            throw error;
-        }
-        if (populated) await sql.raw(`drop schema ${aside} cascade`).execute(db);
-
-        const after = await migrationStatus(db);
-        return {
-            manifest,
-            pendingMigrations: after.pending,
-            filesRestored: toCopy.length,
-            filesAlreadyPresent: present,
-        };
+            const after = await migrationStatus(db);
+            return {
+                manifest,
+                pendingMigrations: after.pending,
+                filesRestored: toCopy.length,
+                filesAlreadyPresent: present,
+            };
+        });
     } finally {
-        await db.destroy();
+        await pool.destroy();
     }
 }
 
@@ -447,17 +440,15 @@ export interface CheckRestoreOptions {
 export interface CheckRestoreReport {
     // Live archives whose file is not in the data directory.
     missingFiles: string[];
-    // Live previews with a deployment whose Dokku app is gone.
-    missingApps: { previewId: string; organizationId: string; slug: string; appName: string }[];
+    // Non-deleted deployments that may have reached Dokku, whose exact app name is absent.
+    missingApps: { deploymentId: string; organizationId: string; appName: string }[];
     appsChecked: number;
     dokkuChecked: boolean;
-    // Live previews whose expiry has passed: extend any to keep before the lifecycle is switched on.
-    expired: { previewId: string; slug: string; expiresAt: Date }[];
+    expired: { deploymentId: string; expiresAt: Date }[];
 }
 
-// Read-only: steps 3 and 4 of the restore runbook. It changes nothing and never destroys or
-// recreates anything; what to do about what it finds (redeploy, extend, delete) is the
-// administrator's, after deployments are back on.
+// Read-only observations for the restore runbook. Missing/expired resources are
+// reconciliation inputs, never authorization to recreate or destroy anything.
 export async function checkRestore(options: CheckRestoreOptions): Promise<CheckRestoreReport> {
     const { db } = options;
     const missingFiles: string[] = [];
@@ -475,22 +466,22 @@ export async function checkRestore(options: CheckRestoreOptions): Promise<CheckR
     const missingApps: CheckRestoreReport["missingApps"] = [];
     let appsChecked = 0;
     if (options.appExists) {
-        // Only a preview that was ever deployed has an app; one being deleted is the deletion's.
-        const previews = await db
-            .selectFrom("preview")
-            .select(["id", "organization_id", "slug", "app_name"])
-            .where("desired_state", "=", "active")
-            .where("active_deployment_id", "is not", null)
+        // A queued job has not touched Dokku. Include in-flight/held jobs conservatively:
+        // absence is an observation to reconcile, never permission to recreate or delete.
+        const deployments = await db
+            .selectFrom("immutable_deployment")
+            .select(["id", "organization_id", "app_name"])
+            .where("desired_state", "<>", "deleted")
+            .where("status", "<>", "queued")
             .orderBy("created_at")
             .execute();
-        for (const preview of previews) {
+        for (const deployment of deployments) {
             appsChecked++;
-            if (!(await options.appExists(preview.app_name))) {
+            if (!(await options.appExists(deployment.app_name))) {
                 missingApps.push({
-                    previewId: preview.id,
-                    organizationId: preview.organization_id,
-                    slug: preview.slug,
-                    appName: preview.app_name,
+                    deploymentId: deployment.id,
+                    organizationId: deployment.organization_id,
+                    appName: deployment.app_name,
                 });
             }
         }
@@ -502,12 +493,12 @@ export async function checkRestore(options: CheckRestoreOptions): Promise<CheckR
         dokkuChecked: options.appExists !== undefined,
         expired: (
             await db
-                .selectFrom("preview")
-                .select(["id", "slug", "expires_at"])
+                .selectFrom("immutable_deployment")
+                .select(["id", "preview_expires_at"])
                 .where("desired_state", "=", "active")
-                .where("expires_at", "<", sql<Date>`now()`)
-                .orderBy("expires_at")
+                .where("preview_expires_at", "<", sql<Date>`now()`)
+                .orderBy("preview_expires_at")
                 .execute()
-        ).map((p) => ({ previewId: p.id, slug: p.slug, expiresAt: p.expires_at! })),
+        ).map((p) => ({ deploymentId: p.id, expiresAt: p.preview_expires_at })),
     };
 }

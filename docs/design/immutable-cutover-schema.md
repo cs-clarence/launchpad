@@ -86,6 +86,10 @@ lock before the app lock. Every pin reservation, finalization, correction and GC
 decision takes app, ordered aliases, ordered deployments, then operation locks.
 Operations reference previous/desired targets through the full unresolved chain.
 These requirements become service/SQL integration tests, not merely this map.
+Likewise, the service requires deletion to enter `deleting` and complete its deletion operation
+before recording `deleted`; the schema prevents reversal/reactivation but does not prove the
+remote destroy occurred. A promotion records its immutable `idempotency_key` on the operation;
+the shared `idempotency_key` table binds replay to organization, principal and endpoint.
 
 ## Permanent identity registries
 
@@ -130,7 +134,9 @@ back an empty registry and stale generations while the router and Dokku keep the
   first archive copy, so a refused restore blocks nothing. A restore that fails part-way keeps
   the marker on purpose: partial state is never offered to workers.
 - **Database gate.** `instance_state` key `immutable_recovery`, `blocked` or `ready`. Migration
-  018 initializes `ready`. After import, restore sets and verifies `blocked`.
+  018 initializes `ready` only when the key is absent; it preserves any pre-migration
+  `blocked` row written while restoring an older dump. After import, restore sets and verifies `blocked`
+  wherever `instance_state` exists; for dumps predating that table, the external marker blocks after migration.
 - **Scope.** The gate covers **model mutations only**: apps, deployments, aliases, promotions,
   deletions, artifact collection and the worker. Sign-in, sessions, organizations, projects,
   members and API-key administration stay available, or a restored controller could not be used.

@@ -26,20 +26,25 @@ or prove. `restore` never contacts Dokku. Back up the target database first.
 
     For a populated target, first back it up, then add
     `--replace <host:port/database>` with **exactly** the address printed by
-    the refusal. The flag confirms _all of step 1_. On a populated target,
-    restore also refuses a worker heartbeat within the last minute, even with
-    the flag; that check cannot prove that admin jobs or remote operations stopped. It checks
+    the refusal. The flag confirms _all of step 1_. There is no worker heartbeat
+    table or automatic proof that writers or remote operations stopped. Restore checks
     the manifest and dump before changing anything, restores archives first,
     then swaps the `public` schema. A failed restore rolls back a schema swap
     where possible; for an interrupted process, follow the recovery notes in
     [the controller reference](../apps/controller/README.md#restore) before
-    starting anything.
+    starting anything. Run restore and recovery-clear as the controller's **OS
+    user** (UID 10001 in the images), not root: owner-only maintenance files must
+    remain accessible to that same user. The existing, shared `LAUNCHPAD_DATA_DIR` mount must be
+    available: this binary writes an owner-only recovery marker after all refusals
+    and archive pre-checks, before copying any archive. A failed or killed restore
+    keeps that marker. A restored `ready` database row cannot bypass it.
 
 3. If `restore` reports pending migrations, run `bun .output/admin.mjs migrate`
    from the **intended** version, then `migrate --status` (`pending: 0`, exit
    0). Run `bun .output/admin.mjs check-restore` with the `DOKKU_SSH_*` settings (the worker is idle and does not read them; these are only for this check). It records
    its lists of **missing archives, missing
-   apps and expired previews**. `--no-dokku` is only a partial check.
+   immutable deployment apps and passed deployment preview deadlines**. Queued
+   jobs have not touched Dokku and are not probed. `--no-dokku` is only a partial check.
    Missing archives require repair before a deployment; an unreachable Dokku
    is an error, not a missing app. The check changes nothing.
 4. Start the restored controller with normal ingress still closed. Use temporary
@@ -115,12 +120,22 @@ or prove. `restore` never contacts Dokku. Back up the target database first.
    otherwise keep ingress closed. Do not assume that stopped workers prevent
    authenticated reads. Confirm revocations before reopening the private
    ingress. Then start the idle worker if needed.
-5. Restored preview data is inert: the preview runtime was removed, so nothing
-   redeploys, extends or deletes previews. Never manually delete a Dokku app
+5. Migration 018 unconditionally drops preview-era data, including from an old
+   restored backup; inventory/cleanup must use the pre-P2b binary first
+   ([cutover runbook](immutable-cutover.md)). Never manually delete a Dokku app
    just because it was absent in step 3. A restored database can also leave
    unreferenced apps; Launchpad deliberately leaves those alone. The
-   immutable-model migration will handle the old tables; see
-   [the cutover plan](plans/immutable-p2-cutover.md).
+   immutable model remains mutation-blocked until recovery is explicitly cleared.
+6. As the controller's OS user, for **P2b only**, `bun .output/admin.mjs recovery-clear` succeeds only when all
+   eight model tables are empty and no durable `maintenance/model-writer-seen`
+   file exists. It audits the operation, commits the ready gate, then removes
+   `maintenance/immutable-recovery-blocked` and fsyncs its directory. If a writer
+   has ever run, or any table has rows, it refuses: do not delete either file to
+   bypass it. Rolling back to P2b after P3 wrote model state is unsupported.
+   P3 replaces this limited rule with mandatory audited reconciliation attestation;
+   P5 supplies verification ([recovery design](design/immutable-cutover-schema.md#restore-and-the-recovery-gate)).
+   Sign-in, organizations, members, projects and key administration remain available
+   while the model is blocked; the marker is not an access-control substitute.
 
 ## Repeat the disposable drill
 
@@ -131,7 +146,7 @@ Dokku: `omni -i run test:db:up`, then
 does not reach the test database on Docker Desktop). This builds a temporary controller image and runs
 the frozen previous-schema dump through backup, image migration, controller
 start/restart from that image, an authenticated operator status read, and
-restoration into another disposable database.
+restoration into another disposable database, plus a post-018 backup round trip.
 It creates only temporary test databases/directories and cleans them up.
 
 The opt-in remote rehearsal (`test:restore:live`) was removed with the preview runtime.

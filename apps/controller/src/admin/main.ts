@@ -10,8 +10,8 @@ import { createDatabase, migrateToLatest, migrationStatus } from "@launchpad-kit
 import { readFileSync, statSync } from "node:fs";
 import path from "node:path";
 import { createDokkuClient } from "@launchpad-kit/dokku";
+import { clearImmutableRecovery } from "@launchpad-kit/services";
 import { createBackup, verifyBackup } from "./backup";
-import { inventoryPreviews } from "./inventory";
 import { checkRestore, restoreBackup } from "./restore";
 
 async function readStdin(): Promise<string> {
@@ -181,10 +181,23 @@ program
     });
 
 program
-    .command("check-restore")
+    .command("recovery-clear")
     .description(
-        "Read-only: list live artifacts whose file is missing and live previews whose Dokku app is gone",
+        "P2b only: clear immutable recovery if every model table is empty and no model writer has run",
     )
+    .action(async () => {
+        await withDatabase((db) =>
+            clearImmutableRecovery(
+                db,
+                path.resolve(process.env.LAUNCHPAD_DATA_DIR ?? ".data/controller"),
+            ),
+        );
+        console.log("Immutable recovery cleared: empty model, no writer seen.");
+    });
+
+program
+    .command("check-restore")
+    .description("Read-only: list missing archives and immutable deployment apps")
     .option("--no-dokku", "skip the Dokku check (otherwise DOKKU_SSH_* settings are required)")
     .action(async (options) => {
         const env = process.env;
@@ -205,61 +218,27 @@ program
                 appExists: dokku ? (name) => dokku.apps.exists(name) : undefined,
             }),
         );
-        for (const preview of report.expired) {
+        for (const deployment of report.expired) {
             console.log(
-                `expired: preview ${preview.previewId} (slug ${preview.slug}) expired ${preview.expiresAt.toISOString()}; extend it to keep it`,
+                `expired: deployment ${deployment.deploymentId} preview deadline ${deployment.expiresAt.toISOString()}; reconcile before enabling model mutations`,
             );
         }
         for (const key of report.missingFiles) console.log(`missing archive: ${key}`);
         for (const app of report.missingApps) {
             console.log(
-                `missing app: ${app.appName} (preview ${app.previewId}, slug ${app.slug}, organization ${app.organizationId})`,
+                `missing app: ${app.appName} (deployment ${app.deploymentId}, organization ${app.organizationId})`,
             );
         }
         console.log(
             `${report.missingFiles.length} archive(s) missing; ` +
                 (report.dokkuChecked
-                    ? `${report.missingApps.length} of ${report.appsChecked} deployed preview(s) have no app`
+                    ? `${report.missingApps.length} of ${report.appsChecked} deployment(s) have no app`
                     : "Dokku was not checked"),
         );
         process.exitCode = report.missingFiles.length + report.missingApps.length > 0 ? 1 : 0;
         if (report.expired.length > 0) {
-            console.log(`${report.expired.length} live preview(s) have already expired.`);
+            console.log(`${report.expired.length} deployment preview deadline(s) have passed.`);
         }
-    });
-
-program
-    .command("inventory-previews")
-    .description(
-        "Read-only: list the preview-era apps the database recorded and whether they are ready to retire",
-    )
-    .option("--all", "also list previews that are already deleted")
-    .action(async (options) => {
-        const inventory = await withDatabase((db) => inventoryPreviews(db));
-        for (const item of options.all ? inventory.items : inventory.blocking) {
-            const notes = [
-                `state ${item.state}`,
-                item.deletion ? `deletion ${item.deletion}` : null,
-                item.unfinishedDeployments
-                    ? `${item.unfinishedDeployments} unfinished deployment(s)`
-                    : null,
-                item.heldDeployments ? `${item.heldDeployments} held deployment(s)` : null,
-                item.unsettledDeployments
-                    ? `${item.unsettledDeployments} deployment(s) with pending intent or lease fields`
-                    : null,
-                item.unsettledDeletions
-                    ? `${item.unsettledDeletions} deletion(s) with pending intent or lease fields`
-                    : null,
-                item.imageTags.length ? `images ${item.imageTags.join(", ")}` : null,
-            ].filter(Boolean);
-            console.log(`${item.appName} ${item.hostname} (${notes.join("; ")})`);
-        }
-        console.log(
-            inventory.readyToRetire
-                ? `All ${inventory.items.length} recorded preview(s) are deleted and their jobs are settled in the database. Remote settling and process fencing must still be verified before retirement.`
-                : `${inventory.blocking.length} of ${inventory.items.length} recorded preview(s) must be reviewed and settled first. Nothing was changed; use guarded deletion/reconciliation workflows by exact recorded identity. Pending intent and lease fields are never cleared by this inventory.`,
-        );
-        process.exitCode = inventory.readyToRetire ? 0 : 1;
     });
 
 program

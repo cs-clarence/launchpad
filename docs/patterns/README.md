@@ -51,15 +51,16 @@ fixture and built-artifact upgrade drill live in
 [restore](../restore.md), [private routing](../access.md), and
 [onboarding](../onboarding.md).
 
-The read-only legacy inventory is `apps/controller/src/admin/inventory.ts`.
-It blocks retirement for unfinished jobs or any pending-step/lease field,
-including on terminal jobs; lease expiry is not proof of settling. Its dedicated
-`test:inventory` task uses an isolated PostgreSQL database per case, never Dokku.
-The immutable-model SQL under the controller admin test fixtures is an executable
-P1 specification only. `test:cutover:retirement` and `test:cutover:model` exercise
-it on disposable PostgreSQL; it is not in migration discovery, database runtime
-types or the active worker queue. Production cutover/grants/recovery gates remain
-separate reviewed work.
+The model SQL has moved
+to the real migration `packages/database/src/migrations/20261119_018_immutable_deployment_model.ts`;
+`immutable-model.spec.ts` and `immutable-cutover.spec.ts` exercise it using
+`test:immutable-schema` on disposable PostgreSQL. P1 fixtures, old-process tests
+and inventory are removed. `Database` describes the new physical tables;
+artifact collection pins `immutable_deployment`, and `check-restore` reports
+immutable deployment identities. The recovery gate is
+`packages/services/src/immutable-recovery.ts`: shared/exclusive advisory locks,
+fsynced external marker/writer record and the P2b empty-model clear rule.
+Only model mutations use that gate; organization/auth/key administration stays available.
 
 Operator login, organizations, members and projects exist, but
 the controller is not yet hardened or packaged for exposure to the internet (see the production

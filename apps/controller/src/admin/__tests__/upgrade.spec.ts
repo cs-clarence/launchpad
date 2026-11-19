@@ -73,6 +73,8 @@ function pgClient(name: "pg_dump" | "pg_restore") {
 }
 
 async function admin(url: string, data: string, work: string, command: string, ...args: string[]) {
+    // Stand-in for the required mounted data volume; the runtime must not silently create one.
+    await fs.mkdir(data, { recursive: true, mode: 0o700 });
     // The standalone drill supplies a freshly built controller image. Use its migrations for
     // status and migrate; the integration suite still runs the built admin artifact on its own.
     if (command === "migrate" && process.env.LAUNCHPAD_UPGRADE_IMAGE) {
@@ -243,6 +245,7 @@ it(
         const work = await fs.mkdtemp(path.join(os.tmpdir(), "launchpad-upgrade-"));
         let source: Awaited<ReturnType<typeof createTestDatabase>> | undefined;
         let target: Awaited<ReturnType<typeof createTestDatabase>> | undefined;
+        let modelTarget: Awaited<ReturnType<typeof createTestDatabase>> | undefined;
         let server: Awaited<ReturnType<typeof start>> | undefined;
         let drillError: unknown;
         const cleanupErrors: unknown[] = [];
@@ -300,6 +303,19 @@ it(
             expect((await admin(source.url, data, work, "backup", backup)).status).toBe(0);
             expect((await admin(source.url, data, work, "verify-backup", backup)).status).toBe(0);
             expect((await admin(source.url, data, work, "migrate")).status).toBe(0);
+            const gone = await sql<{ name: string | null }>`
+                select to_regclass(name)::text as name from unnest(array[
+                    'public.preview', 'public.deployment', 'public.deployment_event',
+                    'public.deletion_operation', 'public.worker_heartbeat'
+                ]) as name`.execute(source.db);
+            expect(gone.rows).toEqual(Array.from({ length: 5 }, () => ({ name: null })));
+            expect(
+                (
+                    await sql`select value from instance_state where key = 'immutable_recovery'`.execute(
+                        source.db,
+                    )
+                ).rows,
+            ).toEqual([{ value: "ready" }]);
             const auth = createAuth({
                 db: source.db,
                 config: loadAuthConfig({
@@ -381,6 +397,48 @@ it(
             ).toContain("pending: 0");
             const rows = await target.db.selectFrom("user").select("email").execute();
             expect(rows.map((row) => row.email)).toContain(oldUser);
+            const recoveryMarker = path.join(
+                work,
+                "restored-data/maintenance/immutable-recovery-blocked",
+            );
+            expect((await fs.stat(recoveryMarker)).isFile()).toBe(true);
+            const cleared = await admin(
+                target.url,
+                path.join(work, "restored-data"),
+                work,
+                "recovery-clear",
+            );
+            expect(cleared.status, cleared.stderr).toBe(0);
+            await expect(fs.stat(recoveryMarker)).rejects.toMatchObject({ code: "ENOENT" });
+
+            // A backup made after 018 also restores blocked, even though it dumped ready.
+            const modelBackup = path.join(work, "model-backup");
+            expect((await admin(source.url, data, work, "backup", modelBackup)).status).toBe(0);
+            modelTarget = await createTestDatabase();
+            const modelData = path.join(work, "model-restored-data");
+            const modelRestore = await admin(
+                modelTarget.url,
+                modelData,
+                work,
+                "restore",
+                modelBackup,
+                "--i-have-stopped-the-workers",
+            );
+            expect(modelRestore.status, modelRestore.stderr).toBe(0);
+            expect(
+                (
+                    await modelTarget.db
+                        .selectFrom("instance_state")
+                        .select("value")
+                        .where("key", "=", "immutable_recovery")
+                        .executeTakeFirstOrThrow()
+                ).value,
+            ).toBe("blocked");
+            expect(
+                (
+                    await fs.stat(path.join(modelData, "maintenance/immutable-recovery-blocked"))
+                ).isFile(),
+            ).toBe(true);
         } catch (error) {
             drillError = error;
         } finally {
@@ -390,6 +448,7 @@ it(
                 cleanupErrors.push(new Error(`Containers remain: ${[...containers].join(", ")}`));
             const settled = await Promise.allSettled([
                 target?.destroy(),
+                modelTarget?.destroy(),
                 source?.destroy(),
                 fs.rm(work, { recursive: true, force: true }),
             ]);

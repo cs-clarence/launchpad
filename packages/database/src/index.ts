@@ -126,17 +126,12 @@ export interface ArtifactTable {
     collected_at: Date | null;
 }
 
-export interface PreviewTable {
+export interface AppTable {
     id: Generated<string>;
     organization_id: string;
     project_id: string;
     slug: string;
-    app_name: string;
-    hostname: string;
-    desired_state: Generated<"active" | "deleting" | "deleted">;
-    active_deployment_id: string | null;
-    // null: never expires. deleted_at is set exactly when desired_state is "deleted".
-    expires_at: Date | null;
+    state: Generated<"active" | "shutting-down" | "deleted">;
     deleted_at: Date | null;
     created_by: string;
     created_at: Generated<Date>;
@@ -155,15 +150,23 @@ export type DeploymentStatus =
 
 export type DeploymentStep = "app" | "build" | "configure" | "load" | "verify";
 
-export interface DeploymentTable {
+export interface ImmutableDeploymentTable {
     id: Generated<string>;
     organization_id: string;
-    preview_id: string;
+    app_id: string;
+    app_name: string;
+    hostname: string;
     artifact_id: string;
     spa: Generated<boolean>;
     status: Generated<DeploymentStatus>;
     attempt: Generated<number>;
+    fence: Generated<string>;
     image_tag: string | null;
+    image_id: string | null;
+    preview_expires_at: Date;
+    last_unpinned_at: Date | null;
+    desired_state: Generated<"active" | "deleting" | "deleted">;
+    deleted_at: Date | null;
     failure_code: string | null;
     failure_message: string | null;
     requested_by: string;
@@ -173,11 +176,10 @@ export interface DeploymentTable {
     lease_owner: string | null;
     lease_expires_at: Date | null;
     step_done: DeploymentStep | null;
-    // A rollback is only ever an intent, never a completed step.
-    step_pending: DeploymentStep | "rollback" | null;
+    step_pending: DeploymentStep | null;
 }
 
-export interface DeploymentEventTable {
+export interface AppDeploymentEventTable {
     id: Generated<string>;
     organization_id: string;
     deployment_id: string;
@@ -191,15 +193,16 @@ export interface DeploymentEventTable {
 export type DeletionStatus = "queued" | "running" | "succeeded" | "reconciliation-needed";
 export type DeletionStep = "destroy" | "images";
 
-export interface DeletionOperationTable {
+export interface DeploymentDeletionOperationTable {
     id: Generated<string>;
     organization_id: string;
-    preview_id: string;
-    reason: "manual" | "expired";
+    app_id: string;
+    deployment_id: string;
+    reason: "manual" | "expired" | "shutdown";
     status: Generated<DeletionStatus>;
     attempt: Generated<number>;
     // Only ever goes up, one per claim; `attempt` is the retry budget and can be reset.
-    fence: Generated<number>;
+    fence: Generated<string>;
     // null: the system (scheduled expiry)
     requested_by: string | null;
     failure_code: string | null;
@@ -219,12 +222,86 @@ export interface InstanceStateTable {
     set_at: Generated<Date>;
 }
 
-export interface WorkerHeartbeatTable {
-    worker_id: string;
-    version: string;
-    lifecycle_enabled: Generated<boolean>;
-    started_at: Generated<Date>;
-    last_seen_at: Generated<Date>;
+export type AliasState =
+    | "unbound"
+    | "bound"
+    | "binding"
+    | "binding-uncertain"
+    | "withdrawing"
+    | "withdrawal-uncertain"
+    | "withdrawn";
+
+export interface AppAliasTable {
+    id: Generated<string>;
+    organization_id: string;
+    app_id: string;
+    slug: string;
+    hostname: string;
+    state: Generated<AliasState>;
+    target_deployment_id: string | null;
+    reserved_generation: Generated<string>;
+    committed_generation: Generated<string>;
+    created_by: string;
+    created_at: Generated<Date>;
+    updated_at: Generated<Date>;
+}
+
+export interface PromotionOperationTable {
+    id: Generated<string>;
+    organization_id: string;
+    app_id: string;
+    alias_id: string;
+    action: "bind" | "withdraw";
+    idempotency_key: string;
+    previous_target_deployment_id: string | null;
+    desired_target_deployment_id: string | null;
+    expected_generation: string;
+    generation: string;
+    status: Generated<
+        | "queued"
+        | "applying"
+        | "verifying"
+        | "succeeded"
+        | "failed"
+        | "reconciliation-needed"
+        | "superseded"
+    >;
+    attempt: Generated<number>;
+    fence: Generated<string>;
+    lease_owner: string | null;
+    lease_expires_at: Date | null;
+    step_pending: "dispatch" | "verify" | null;
+    step_done: "dispatch" | "verify" | null;
+    supersedes_operation_id: string | null;
+    superseded_by_operation_id: string | null;
+    failure_code: string | null;
+    failure_message: string | null;
+    observed_epoch: string | null;
+    observed_generation: string | null;
+    observed_operation_id: string | null;
+    observed_target_deployment_id: string | null;
+    requested_by: string;
+    created_at: Generated<Date>;
+    updated_at: Generated<Date>;
+    finished_at: Date | null;
+}
+
+export interface HostnameReservationTable {
+    hostname: string;
+    owner_kind: "deployment" | "alias";
+    owner_id: string;
+    organization_id: string;
+    created_at: Generated<Date>;
+    released_at: Date | null;
+}
+
+export interface DokkuNameReservationTable {
+    app_name: string;
+    owner_kind: "deployment";
+    owner_id: string;
+    organization_id: string;
+    created_at: Generated<Date>;
+    released_at: Date | null;
 }
 
 export interface IdempotencyKeyTable {
@@ -250,11 +327,14 @@ export interface Database {
     organization_invitation: InvitationTable;
     api_key: ApiKeyTable;
     artifact: ArtifactTable;
-    preview: PreviewTable;
-    deployment: DeploymentTable;
-    deployment_event: DeploymentEventTable;
-    deletion_operation: DeletionOperationTable;
-    worker_heartbeat: WorkerHeartbeatTable;
+    app: AppTable;
+    immutable_deployment: ImmutableDeploymentTable;
+    app_deployment_event: AppDeploymentEventTable;
+    deployment_deletion_operation: DeploymentDeletionOperationTable;
+    app_alias: AppAliasTable;
+    promotion_operation: PromotionOperationTable;
+    hostname_reservation: HostnameReservationTable;
+    dokku_name_reservation: DokkuNameReservationTable;
     instance_state: InstanceStateTable;
     idempotency_key: IdempotencyKeyTable;
     organization: OrganizationTable;

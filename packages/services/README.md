@@ -44,3 +44,11 @@ The preview, deployment, deletion, expiry and lifecycle services were removed (s
 [the P2 plan](../../docs/plans/immutable-p2-cutover.md)). `status.ts` is the operator-only status
 (database readiness and stored artifacts). `artifact-gc.ts` and `deadline.ts` are kept for the app
 model; nothing calls the collection now.
+
+`immutable-recovery.ts` owns the model-mutation gate. `withModelMutation` holds a shared
+recovery lock, checks the filesystem/database gate and fsyncs `model-writer-seen` before
+the callback can mutate or dispatch. Restore/clear use the exclusive lock. All artifact
+collection paths use this gate; none is called by the idle runtime. The P2b admin clear
+rule is intentionally limited to an empty, never-used model and must be replaced when
+P3 adds the first live model writer. Auth/organization/key administration does not use
+this gate. See [recovery design](../../docs/design/immutable-cutover-schema.md#restore-and-the-recovery-gate).

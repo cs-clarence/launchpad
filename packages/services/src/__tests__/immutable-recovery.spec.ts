@@ -1,0 +1,244 @@
+import { randomUUID } from "node:crypto";
+import { promises as fs } from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { createTestDatabase } from "@launchpad-kit/database/testing";
+import { sql } from "kysely";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import {
+    assertModelMutationsReady,
+    blockRestoredModel,
+    clearImmutableRecovery,
+    markImmutableRecoveryBlocked,
+    recordModelWriterSeen,
+    withModelMutation,
+    withImmutableRecoveryMaintenance,
+} from "../immutable-recovery";
+import { getStatus } from "../status";
+
+let source: Awaited<ReturnType<typeof createTestDatabase>>;
+let dataDir: string;
+const marker = () => path.join(dataDir, "maintenance/immutable-recovery-blocked");
+const seen = () => path.join(dataDir, "maintenance/model-writer-seen");
+beforeEach(async () => {
+    source = await createTestDatabase();
+    await source.migrate();
+    dataDir = await fs.mkdtemp(path.join(os.tmpdir(), "lp-recovery-"));
+});
+afterEach(async () => {
+    await source?.destroy();
+    if (dataDir) await fs.rm(dataDir, { recursive: true, force: true });
+});
+
+describe("immutable model recovery gate", () => {
+    it("allows a fresh 018 instance and refuses a missing or invalid gate row", async () => {
+        await assertModelMutationsReady(source.db, dataDir);
+        await source.db
+            .deleteFrom("instance_state")
+            .where("key", "=", "immutable_recovery")
+            .execute();
+        await expect(assertModelMutationsReady(source.db, dataDir)).rejects.toThrow(/gate/);
+        await source.db
+            .insertInto("instance_state")
+            .values({ key: "immutable_recovery", value: "unknown" })
+            .execute();
+        await expect(assertModelMutationsReady(source.db, dataDir)).rejects.toThrow(/gate/);
+    });
+
+    it("allows a missing gate only before 018 is recorded", async () => {
+        const old = await createTestDatabase();
+        try {
+            await old.migrateTo("20261116_017_worker_heartbeat_lifecycle");
+            await assertModelMutationsReady(old.db, dataDir);
+            await markImmutableRecoveryBlocked(dataDir);
+            await expect(assertModelMutationsReady(old.db, dataDir)).rejects.toThrow(/blocked/);
+        } finally {
+            await old.destroy();
+        }
+    });
+
+    it("keeps an external marker authoritative over a restored ready row", async () => {
+        await markImmutableRecoveryBlocked(dataDir);
+        expect((await fs.stat(marker())).mode & 0o777).toBe(0o600);
+        expect(JSON.parse(await fs.readFile(marker(), "utf8"))).toMatchObject({ version: 1 });
+        await expect(assertModelMutationsReady(source.db, dataDir)).rejects.toThrow(/blocked/);
+        // Read-only operator administration remains usable during recovery.
+        expect(
+            (await getStatus(source.db, { userId: "operator", instanceRole: "operator" }))
+                .dependencies.database,
+        ).toBe("ok");
+        let called = false;
+        await expect(
+            withModelMutation(source.db, dataDir, async () => {
+                called = true;
+            }),
+        ).rejects.toThrow(/blocked/);
+        expect(called).toBe(false);
+        await expect(fs.stat(seen())).rejects.toMatchObject({ code: "ENOENT" });
+    });
+
+    it("blocks on the database gate even without the external marker", async () => {
+        await blockRestoredModel(source.db);
+        await expect(assertModelMutationsReady(source.db, dataDir)).rejects.toThrow(/gate/);
+    });
+
+    it("clears only a never-used empty model and audits the explicit operation", async () => {
+        await markImmutableRecoveryBlocked(dataDir);
+        await blockRestoredModel(source.db);
+        await clearImmutableRecovery(source.db, dataDir);
+        await expect(fs.stat(marker())).rejects.toMatchObject({ code: "ENOENT" });
+        await assertModelMutationsReady(source.db, dataDir);
+        const audit = await source.db
+            .selectFrom("audit_event")
+            .select(["action", "detail"])
+            .where("action", "=", "immutable.recovery-cleared")
+            .execute();
+        expect(audit).toEqual([
+            { action: "immutable.recovery-cleared", detail: "model_rows=0;writer_seen=0" },
+        ]);
+    });
+
+    it("refuses to clear empty tables once a durable writer record exists", async () => {
+        await recordModelWriterSeen(dataDir);
+        await markImmutableRecoveryBlocked(dataDir);
+        await blockRestoredModel(source.db);
+        await expect(clearImmutableRecovery(source.db, dataDir)).rejects.toThrow(/writer/);
+        expect((await fs.stat(marker())).isFile()).toBe(true);
+        await expect(assertModelMutationsReady(source.db, dataDir)).rejects.toThrow(/blocked/);
+    });
+
+    it("refuses any populated model even if the writer record is absent", async () => {
+        const user = randomUUID();
+        const org = randomUUID();
+        await source.db
+            .insertInto("user")
+            .values({
+                id: user,
+                name: "Fixture",
+                email: "fixture@example.invalid",
+                emailVerified: false,
+                role: "user",
+            })
+            .execute();
+        await source.db
+            .insertInto("organization")
+            .values({
+                id: org,
+                name: "Fixture",
+                slug: "fixture",
+                createdAt: new Date(),
+            })
+            .execute();
+        const project = await source.db
+            .insertInto("project")
+            .values({
+                organization_id: org,
+                name: "Site",
+                slug: "site",
+                created_by: user,
+            })
+            .returning("id")
+            .executeTakeFirstOrThrow();
+        await source.db
+            .insertInto("app")
+            .values({
+                organization_id: org,
+                project_id: project.id,
+                slug: "site",
+                created_by: user,
+            })
+            .execute();
+        await markImmutableRecoveryBlocked(dataDir);
+        await expect(clearImmutableRecovery(source.db, dataDir)).rejects.toThrow(/not empty/);
+        expect((await fs.stat(marker())).isFile()).toBe(true);
+    });
+
+    it("records the writer before its first effect and retains that fact after a rollback", async () => {
+        await expect(
+            withModelMutation(source.db, dataDir, async (trx) => {
+                expect((await fs.stat(seen())).isFile()).toBe(true);
+                expect((await fs.stat(seen())).mode & 0o777).toBe(0o600);
+                await trx
+                    .insertInto("audit_event")
+                    .values({
+                        actor: "test",
+                        action: "test.effect",
+                        target_type: "instance",
+                        target_id: "self",
+                        organization_id: null,
+                        detail: null,
+                    })
+                    .execute();
+                throw new Error("simulated crash");
+            }),
+        ).rejects.toThrow("simulated crash");
+        expect(
+            await source.db
+                .selectFrom("audit_event")
+                .selectAll()
+                .where("action", "=", "test.effect")
+                .execute(),
+        ).toEqual([]);
+        expect((await fs.stat(seen())).isFile()).toBe(true);
+        await expect(clearImmutableRecovery(source.db, dataDir)).rejects.toThrow(/writer/);
+    });
+
+    it("aborts before the effect when writer-seen cannot be created safely", async () => {
+        await fs.mkdir(path.join(dataDir, "maintenance"), { mode: 0o700 });
+        await fs.symlink(path.join(dataDir, "not-a-writer-record"), seen());
+        let called = false;
+        await expect(
+            withModelMutation(source.db, dataDir, async () => {
+                called = true;
+            }),
+        ).rejects.toThrow();
+        expect(called).toBe(false);
+        await expect(fs.stat(path.join(dataDir, "not-a-writer-record"))).rejects.toMatchObject({
+            code: "ENOENT",
+        });
+    });
+
+    it("fails closed on a missing data mount or unsafe maintenance directory", async () => {
+        await expect(
+            assertModelMutationsReady(source.db, path.join(dataDir, "missing-mount")),
+        ).rejects.toThrow();
+        const outside = path.join(dataDir, "outside");
+        await fs.mkdir(outside);
+        await fs.symlink(outside, path.join(dataDir, "maintenance"));
+        await expect(assertModelMutationsReady(source.db, dataDir)).rejects.toThrow(
+            /plain directory/,
+        );
+        await expect(markImmutableRecoveryBlocked(dataDir)).rejects.toThrow(/plain directory/);
+    });
+
+    it("serializes restore maintenance against a running model transaction", async () => {
+        let release!: () => void;
+        const held = new Promise<void>((resolve) => {
+            release = resolve;
+        });
+        let entered!: () => void;
+        const ready = new Promise<void>((resolve) => {
+            entered = resolve;
+        });
+        const writer = withModelMutation(source.db, dataDir, async () => {
+            entered();
+            await held;
+        });
+        try {
+            await ready;
+            await source.db.connection().execute(async (connection) => {
+                await sql`set lock_timeout = '250ms'`.execute(connection);
+                try {
+                    await expect(
+                        withImmutableRecoveryMaintenance(connection, async () => {}),
+                    ).rejects.toThrow(/lock timeout/);
+                } finally {
+                    await sql`reset lock_timeout`.execute(connection);
+                }
+            });
+        } finally {
+            release();
+            await writer;
+        }
+    });
+});
