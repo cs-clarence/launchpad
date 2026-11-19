@@ -452,10 +452,12 @@ restore drill must use a post-model backup and additionally assert the old
 backup refusal. Do not weaken the floor merely to keep the old test unchanged.
 
 Aliases need separate remote reconciliation after every restore: ingress stays
-closed, promotions/deletions off, compare saved intentions with the router's
-durable state. A database restore must not reset the router's epoch/generation
-or replay an older route over a newer one. A fresh router needs an explicit
-offline bootstrap into a new epoch with old control credentials fenced out.
+closed, promotions/deletions off. First fence every pre-restore writer: establish a
+new router epoch and rotate control credentials, because a write issued after the
+backup may still be delayed and the restored database cannot know it. Then compare
+saved intentions with the router's durable state, keeping acknowledged generations
+and tombstones and never replaying an older route over a newer one. A fresh router
+needs an explicit offline bootstrap into a new epoch with old credentials fenced out.
 The concrete bootstrap/recovery procedure must pass the routing experiment.
 
 ## Delivery and acceptance

@@ -79,12 +79,22 @@ Normal restart reloads the durable mapping/tombstone store before accepting
 traffic. Unavailable/unreadable routing state produces a controlled error, not
 cross-app fallback.
 
-The router epoch and route generation are not reset by a controller database
-restore. During restore close ingress and disable mutations/GC, inspect saved
-operations against observed router state, and reconcile them before reopening.
-If routing state is lost, require a new operator-controlled epoch and rotated
-control credentials, fencing all old writes. Rebuild routes offline from a
-reviewed inventory; do not replay restored low generations blindly.
+A controller database restore forgets every route write issued after its backup,
+including one still in flight or delayed. Under an unchanged epoch that write stays
+valid and could later route traffic to a deployment the restored database neither
+knows nor pins. A per-host generation barrier cannot cover it: the router has not
+seen that write, so no barrier can safely exceed its unknown generation.
+
+**After every database restore, fence all pre-restore writers before reopening
+ingress or any mutation.** Establish a new router epoch and rotate the control
+credentials together, then verify the router rejects the old epoch/credential pair.
+Only then inspect the router's authoritative routes and reconcile them with the
+restored database. Routes absent from it are not trusted: pin their deployments,
+withdraw them or record them for operator review; never replay restored low
+generations blindly. Route generations themselves are not reset: a new epoch fences
+the old senders while keeping acknowledged generations and tombstones. If routing
+state is lost, establish the new epoch and credentials and rebuild routes offline
+from a reviewed inventory. Close ingress and disable mutations and GC throughout.
 
 ## Disposable experiment specification
 
@@ -118,8 +128,11 @@ Cloudflare/Playit connectors. No real DNS or public routing changes.
 8. Check the upstream Host header and HTTPS/SNI validation using isolated
    certificates. Verify alias routing works behind an ordinary configurable
    proxy without depending on a Tailscale/Cloudflare account.
-9. Load an older driver-journal snapshot while router state is newer.
-   Old writes must fail; demonstrate closed-ingress observed-state recovery. Simulate
+9. Load an older driver-journal snapshot while router state is newer, with a
+   delayed pre-snapshot write still held by the old driver. After the restore
+   procedure's new epoch and rotated credentials, that held write must fail even
+   if its generation exceeds anything the router has seen. Demonstrate
+   closed-ingress observed-state recovery. Simulate
    router-state loss and establish a new epoch that rejects every old credential/
    epoch combination.
 10. Remove only recorded experiment resources, report leftovers, and retain
