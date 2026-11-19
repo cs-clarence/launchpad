@@ -154,7 +154,8 @@ Undo: disable dispatch and GC, keep pins; reconcile under a new fenced operation
 ### P5 — restore reconciliation and operator drift
 
 Complete recovery for the persisted post-restore mutation gate installed in P2
-and enforced by P3/P4, not a status/report convention. Provide
+and enforced by P3/P4, not a status/report convention. P3 ships an interim
+operator attestation for `recovery-clear`; P5 replaces it with verified reconciliation. Provide
 an operator-only procedure/command that uses rotated epoch/credentials, compares
 complete durable router state including tombstones, raises reserved counters and
 protects unknown routed targets. Never silently discard unknown routes or enable

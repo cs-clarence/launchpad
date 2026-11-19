@@ -154,9 +154,15 @@ back an empty registry and stale generations while the router and Dokku keep the
       writer-seen file does not exist; it **refuses** in every other case, including an empty
       database after any writer has run. Rolling back to a P2b binary after P3 has written is not
       supported, and this record is what makes the P2b command refuse if someone does.
-    - **P3 replacement.** The P3 PR that adds the first writer must also replace the rule with
-      verified router and Dokku reconciliation (P5) in the same PR, and a test must assert the
-      empty-tables rule is gone. If that replacement is not ready, P3 cannot merge a writer.
+    - **Interim rule (P3 to P4).** Reconciliation itself is P5, so P3 cannot depend on it. The
+      P3 PR that adds the first writer replaces the empty-tables rule with an **interim
+      fail-closed rule**: once `model-writer-seen` exists, `recovery-clear` refuses unless the
+      operator passes the explicit attestation `--i-have-reconciled-router-and-dokku`, which is
+      recorded in an audit event (count-only, no secrets). A test asserts the empty-tables rule is
+      gone and that the command refuses without the flag. This follows the restore command's
+      existing confirmation flags and is weaker than verification, so it is **interim**.
+    - **P5 replacement.** P5 replaces the attestation with verified router and Dokku
+      reconciliation, and the flag is removed in the same PR.
 - **Older dumps.** There is no backup floor. An older dump restores, is migrated forward, and
   018 drops its preview tables again; the marker is written like any restore.
 
