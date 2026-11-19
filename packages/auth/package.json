@@ -1,5 +1,5 @@
 {
-    "name": "@launchpad/auth",
+    "name": "@launchpad-kit/auth",
     "version": "0.0.0",
     "private": true,
     "description": "Better Auth configuration and environment parsing",
@@ -35,16 +35,16 @@
         "test:integration": "bun --bun vitest run --config vitest.config.integration.ts"
     },
     "dependencies": {
-        "@launchpad/database": "workspace:^",
+        "@launchpad-kit/database": "workspace:^",
         "better-auth": "catalog:",
         "kysely": "catalog:",
         "nodemailer": "catalog:",
         "zod": "catalog:"
     },
     "devDependencies": {
-        "@launchpad/tsconfig": "workspace:^",
-        "@launchpad/vite-config": "workspace:^",
-        "@launchpad/vitest-config": "workspace:^",
+        "@launchpad-kit/tsconfig": "workspace:^",
+        "@launchpad-kit/vite-config": "workspace:^",
+        "@launchpad-kit/vitest-config": "workspace:^",
         "@types/nodemailer": "catalog:",
         "typescript": "catalog:",
         "vite": "catalog:",

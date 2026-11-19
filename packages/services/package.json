@@ -1,5 +1,5 @@
 {
-    "name": "@launchpad/services",
+    "name": "@launchpad-kit/services",
     "version": "0.0.0",
     "private": true,
     "description": "Framework-independent controller services",
@@ -35,16 +35,17 @@
         "test:integration": "bun --bun vitest run --config vitest.config.integration.ts"
     },
     "dependencies": {
-        "@launchpad/contracts": "workspace:^",
-        "@launchpad/database": "workspace:^",
+        "@launchpad-kit/contracts": "workspace:^",
+        "@launchpad-kit/database": "workspace:^",
         "kysely": "catalog:",
         "tar": "catalog:",
+        "tldts": "catalog:",
         "zod": "catalog:"
     },
     "devDependencies": {
-        "@launchpad/tsconfig": "workspace:^",
-        "@launchpad/vite-config": "workspace:^",
-        "@launchpad/vitest-config": "workspace:^",
+        "@launchpad-kit/tsconfig": "workspace:^",
+        "@launchpad-kit/vite-config": "workspace:^",
+        "@launchpad-kit/vitest-config": "workspace:^",
         "@types/bun": "catalog:",
         "typescript": "catalog:",
         "vite": "catalog:",

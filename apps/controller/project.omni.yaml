@@ -1,22 +1,22 @@
 # yaml-language-server: $schema=https://raw.githubusercontent.com/omni-oss/json-schemas/refs/heads/main/project.json
-name: "@launchpad/controller"
+name: "@launchpad-kit/controller"
 
 extends:
   - "@workspace/omni/presets/ts-vite-app.omni.yaml"
 
 dependencies:
   append:
-    - "@launchpad/tsconfig"
-    - "@launchpad/vite-config"
-    - "@launchpad/vitest-config"
-    - "@launchpad/services"
-    - "@launchpad/auth"
-    - "@launchpad/database"
-    - "@launchpad/dokku"
-    - "@launchpad/contracts"
-    - "@launchpad/client-core"
-    - "@launchpad/cli"
-    - "@launchpad/mcp"
+    - "@launchpad-kit/tsconfig"
+    - "@launchpad-kit/vite-config"
+    - "@launchpad-kit/vitest-config"
+    - "@launchpad-kit/services"
+    - "@launchpad-kit/auth"
+    - "@launchpad-kit/database"
+    - "@launchpad-kit/dokku"
+    - "@launchpad-kit/contracts"
+    - "@launchpad-kit/client-core"
+    - "@launchpad-kit/cli"
+    - "@launchpad-kit/mcp"
 
 tasks:
   test:unit:
@@ -81,8 +81,8 @@ tasks:
 
   # Operator commands. Omni's --arg is KEY=value, so the command and its options
   # are named arguments:
-  #   omni -i run admin -p @launchpad/controller -a command=migrate
-  #   printf '%s' "$PASSWORD" | omni -i run admin -p @launchpad/controller \
+  #   omni -i run admin -p @launchpad-kit/controller -a command=migrate
+  #   printf '%s' "$PASSWORD" | omni -i run admin -p @launchpad-kit/controller \
   #     -a command=setup -a "options=--email you@example.com"
   # Needs DATABASE_URL (and the LAUNCHPAD_* settings for setup / reset-password).
   admin:

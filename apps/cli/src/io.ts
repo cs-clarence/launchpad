@@ -1,5 +1,5 @@
 import { promises as fs } from "node:fs";
-import { createContext, type Context } from "@launchpad/client-core";
+import { createContext, type Context } from "@launchpad-kit/client-core";
 
 // Everything the commands need from the outside world, so tests can replace it.
 export interface Io {

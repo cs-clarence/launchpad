@@ -3,8 +3,8 @@ import { createHash } from "node:crypto";
 import { createReadStream, createWriteStream, promises as fs } from "node:fs";
 import path from "node:path";
 import { pipeline } from "node:stream/promises";
-import { type Database, migrationStatus } from "@launchpad/database";
-import { resolveArtifactPath, WORKER_LIVE_SECONDS } from "@launchpad/services";
+import { type Database, migrationStatus } from "@launchpad-kit/database";
+import { resolveArtifactPath, WORKER_LIVE_SECONDS } from "@launchpad-kit/services";
 import { type Kysely, sql } from "kysely";
 
 export const BACKUP_FORMAT = 1;

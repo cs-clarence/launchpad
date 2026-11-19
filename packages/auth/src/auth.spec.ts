@@ -1,4 +1,4 @@
-import { createDatabase } from "@launchpad/database";
+import { createDatabase } from "@launchpad-kit/database";
 import { describe, expect, it } from "vitest";
 import { bareHostname, createAuth, loadAuthConfig } from "./index";
 

@@ -1,5 +1,5 @@
 import { startDeadline } from "./deadline";
-import type { Database, DeploymentStatus, DeploymentStep } from "@launchpad/database";
+import type { Database, DeploymentStatus, DeploymentStep } from "@launchpad-kit/database";
 import { type Kysely, sql, type Transaction } from "kysely";
 import { z } from "zod";
 import type { Principal } from "./authorization";
@@ -56,7 +56,7 @@ export interface DeployContext {
     storageKey: string;
 }
 
-// What the worker can do. `dokku` is structurally the @launchpad/dokku client.
+// What the worker can do. `dokku` is structurally the @launchpad-kit/dokku client.
 export interface DeployPorts {
     dokku: {
         apps: {

@@ -2,7 +2,7 @@ import { readdirSync } from "node:fs";
 import path from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { sql } from "kysely";
-import { createTestDatabase } from "@launchpad/database/testing";
+import { createTestDatabase } from "@launchpad-kit/database/testing";
 
 const migrationFolder = path.join(import.meta.dirname, "../../../database/src/migrations");
 let testDb: Awaited<ReturnType<typeof createTestDatabase>>;

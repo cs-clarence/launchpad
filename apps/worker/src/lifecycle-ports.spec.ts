@@ -1,7 +1,7 @@
 import { promises as fs } from "node:fs";
 import path from "node:path";
-import type { DokkuClient } from "@launchpad/dokku";
-import type { Database } from "@launchpad/database";
+import type { DokkuClient } from "@launchpad-kit/dokku";
+import type { Database } from "@launchpad-kit/database";
 import type { Kysely } from "kysely";
 import { describe, expect, it } from "vitest";
 import type { Docker } from "./docker";

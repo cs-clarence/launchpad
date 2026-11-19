@@ -1,9 +1,9 @@
-# @launchpad/sdk
+# @launchpad-kit/sdk
 
 Browser-safe HTTP SDK for the controller API, authenticated with an organization API key.
 
 ```ts
-import { createClient } from "@launchpad/sdk";
+import { createClient } from "@launchpad-kit/sdk";
 
 const client = createClient({
     baseUrl: "https://control.example.com",
@@ -14,10 +14,10 @@ const projects = await client.projects.list(key.organizationId);
 ```
 
 - Only `https` (or `http` to loopback) base URLs; the key is sent as a bearer token, never with cookies, and redirects are refused so it cannot be forwarded.
-- Responses are checked against `@launchpad/contracts` but tolerate fields a newer controller adds. Errors are `LaunchpadApiError` (the controller answered with an error status; `code` may be a code this version does not know), `LaunchpadTransportError` (unreachable, timeout, redirect, unexpected answer) or `LaunchpadConfigError`. None contains the key or a response body.
+- Responses are checked against `@launchpad-kit/contracts` but tolerate fields a newer controller adds. Errors are `LaunchpadApiError` (the controller answered with an error status; `code` may be a code this version does not know), `LaunchpadTransportError` (unreachable, timeout, redirect, unexpected answer) or `LaunchpadConfigError`. None contains the key or a response body.
 - Covers what a key may do: key info, own organization, members (read), projects (list, create), uploads, previews, deployments and deletion status. Key, member and invitation management and reconciliation are session-only in the API and are not in the SDK.
 
-Depends on `zod` and `@launchpad/contracts` only; no filesystem or credential storage (see `@launchpad/client-core`).
+Depends on `zod` and `@launchpad-kit/contracts` only; no filesystem or credential storage (see `@launchpad-kit/client-core`).
 
 ## Preview lifecycles
 
@@ -41,7 +41,7 @@ errors and [what deletion keeps](../../apps/controller/README.md#what-deletion-k
 
 ## Transport verification
 
-`omni -i run test:integration -p @launchpad/sdk` exercises real fetch with temporary
+`omni -i run test:integration -p @launchpad-kit/sdk` exercises real fetch with temporary
 HTTP fixtures on `127.0.0.1` and OS-assigned ports. It verifies that 302/307/308
 redirects are rejected without reaching another origin or forwarding its bearer
 key, and that a body stalled after response headers is aborted by the SDK timeout.

@@ -1,7 +1,7 @@
 # Worker
 
 The privileged half of deployments. It polls the database for deployments
-(`claimNext`), runs each through the state machine in `@launchpad/services`, and is the
+(`claimNext`), runs each through the state machine in `@launchpad-kit/services`, and is the
 only process that holds Dokku SSH credentials and Docker access. The HTTP controller
 has neither. Keep this page current when settings or steps change.
 
@@ -55,7 +55,7 @@ is given twice the usual lease, since it builds, loads and probes in one go.
 
 ## Live tests
 
-`omni -i run test:live -p @launchpad/worker` runs the worker's real steps against a real
+`omni -i run test:live -p @launchpad-kit/worker` runs the worker's real steps against a real
 Dokku and Docker: the fixture site, a real 404, SPA deep links, replacing a release and
 rolling back, and destroying one app with the worker's real destroy port while a neighbour
 app is left alone (the ports are called directly; `runDeletion` itself is tested against fakes).

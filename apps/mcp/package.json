@@ -1,5 +1,5 @@
 {
-    "name": "@launchpad/mcp",
+    "name": "@launchpad-kit/mcp",
     "version": "0.0.0",
     "private": true,
     "description": "Local stdio MCP adapter for Launchpad",
@@ -14,16 +14,16 @@
     },
     "dependencies": {
         "@commander-js/extra-typings": "catalog:",
-        "@launchpad/client-core": "workspace:^",
-        "@launchpad/sdk": "workspace:^",
+        "@launchpad-kit/client-core": "workspace:^",
+        "@launchpad-kit/sdk": "workspace:^",
         "@modelcontextprotocol/sdk": "catalog:",
         "commander": "catalog:",
         "zod": "catalog:"
     },
     "devDependencies": {
-        "@launchpad/tsconfig": "workspace:^",
-        "@launchpad/vite-config": "workspace:^",
-        "@launchpad/vitest-config": "workspace:^",
+        "@launchpad-kit/tsconfig": "workspace:^",
+        "@launchpad-kit/vite-config": "workspace:^",
+        "@launchpad-kit/vitest-config": "workspace:^",
         "@types/bun": "catalog:",
         "tar": "catalog:",
         "typescript": "catalog:",

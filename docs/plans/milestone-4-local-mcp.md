@@ -25,7 +25,7 @@ redaction, idempotency and exit-free structured results.
 
 ## Decisions
 
-1. **Package:** `apps/mcp` (`@launchpad/mcp`, binary `launchpad-mcp`), generated with
+1. **Package:** `apps/mcp` (`@launchpad-kit/mcp`, binary `launchpad-mcp`), generated with
    the Omni generator, built on the official `@modelcontextprotocol/sdk` (pinned in
    the catalog) with zod schemas. Separate executable only, no CLI subcommand:
    the CLI has no MCP dependency.

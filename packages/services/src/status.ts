@@ -1,5 +1,5 @@
 import { promises as fs } from "node:fs";
-import type { Database } from "@launchpad/database";
+import type { Database } from "@launchpad-kit/database";
 import { type Kysely, sql } from "kysely";
 import type { Principal } from "./authorization";
 import { ServiceError } from "./errors";

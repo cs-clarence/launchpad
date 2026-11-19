@@ -28,7 +28,7 @@ jobs:
             integration
 
       - name: Rehearse the release
-        run: omni -i run release:dry-run -p '@launchpad/tooling'
+        run: omni -i run release:dry-run -p '@launchpad-kit/tooling'
 
       - name: Keep the result for inspection
         uses: actions/upload-artifact@v4

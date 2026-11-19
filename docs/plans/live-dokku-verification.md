@@ -14,7 +14,7 @@ Escalate if verification requires changing the existing Dokku, demo, or host con
 1. Start `launchpad-live-dokku` from the existing Dokku image, with a fresh data directory
    under `/tmp/opencode`, loopback-only nonstandard ports and a new test-only SSH key.
    Verify SSH host identity against the container's own host key, not a network scan.
-2. Run `omni -i run test:live -p @launchpad/worker`, using only the suite's guarded
+2. Run `omni -i run test:live -p @launchpad-kit/worker`, using only the suite's guarded
    `lp-test-` names. Do not adopt or destroy existing apps; never touch `view-demo`.
 3. Record the outcome, stop the named container, and confirm the suite removed its apps.
    On failure, report the residual test resources by name; never prune the Docker host.
@@ -37,7 +37,7 @@ The suite left no apps in that Dokku. `launchpad-live-dokku` is stopped; its sep
 test data and keys remain under `/tmp/opencode/live-dokku-20261117` for the later
 authorized cleanup. The existing `view-demo.web.1` container was not changed.
 
-Invocation used `omni -i -e .env.live-disposable-only run test:live -p @launchpad/worker`
+Invocation used `omni -i -e .env.live-disposable-only run test:live -p @launchpad-kit/worker`
 with explicit test environment variables: selecting a nonexistent env filename prevents
 the root `.env.local` from overriding the disposable SSH port. Host key pinning came
 directly from the disposable container. Logs: `/tmp/opencode/live-dokku-20261117/results.log`.

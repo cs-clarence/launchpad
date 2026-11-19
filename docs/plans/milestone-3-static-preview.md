@@ -70,7 +70,7 @@ preview serving.
    domain must be a separate registrable domain from the controller (existing
    decision) and defaults to `example.com` in docs and examples.
 6. **Live engine tests.** They need a running Dokku. Proposed: an opt-in task,
-   `omni -i run test:live -p @launchpad/worker`, that talks only to a disposable
+   `omni -i run test:live -p @launchpad-kit/worker`, that talks only to a disposable
    Dokku the developer started, creates apps with a `lp-test-` prefix, and removes
    only apps it recorded. It never runs in CI and never touches `view-demo`. You
    have authorized removing your existing Dokku and demo later; I will not start
@@ -192,7 +192,7 @@ TTL, expiry, deletion and cleanup (milestone 5), packaging and publishing
       artifact, same path as a deploy) and ends `failed`; with nothing to restore it just
       fails; a failed or interrupted rollback holds the preview (migration `…_012`
       records `rollback` as an intent). The opt-in
-      `omni -i run test:live -p @launchpad/worker` runs the real steps against a
+      `omni -i run test:live -p @launchpad-kit/worker` runs the real steps against a
       disposable Dokku and Docker you start; **it has not been run yet** (needs your
       Dokku). Everything else is unit- and PostgreSQL-tested with fakes and stand-ins.
 - [~] Slice 6 (in three PRs). **6a, the API:** previews and deployments under

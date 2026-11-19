@@ -1,5 +1,5 @@
 {
-    "name": "@launchpad/contracts",
+    "name": "@launchpad-kit/contracts",
     "version": "0.0.0",
     "private": true,
     "description": "Versioned zod contracts shared by the controller, SDK and clients",
@@ -26,9 +26,9 @@
         "zod": "catalog:"
     },
     "devDependencies": {
-        "@launchpad/tsconfig": "workspace:^",
-        "@launchpad/vite-config": "workspace:^",
-        "@launchpad/vitest-config": "workspace:^",
+        "@launchpad-kit/tsconfig": "workspace:^",
+        "@launchpad-kit/vite-config": "workspace:^",
+        "@launchpad-kit/vitest-config": "workspace:^",
         "@types/bun": "catalog:",
         "typescript": "catalog:",
         "vite": "catalog:",

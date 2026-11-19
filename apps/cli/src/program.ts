@@ -21,7 +21,7 @@ import {
     workspaceContext,
     ClientCoreError,
     checkLifetime,
-} from "@launchpad/client-core";
+} from "@launchpad-kit/client-core";
 import { describe, EXIT, ExitWith } from "./errors";
 import type { Io } from "./io";
 import { safeOutput } from "./output";

@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { createTestDatabase } from "@launchpad/database/testing";
+import { createTestDatabase } from "@launchpad-kit/database/testing";
 import { sql } from "kysely";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {

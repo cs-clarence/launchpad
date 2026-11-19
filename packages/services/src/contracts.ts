@@ -1,4 +1,4 @@
-// The public API's shapes live in @launchpad/contracts (browser-safe). This module
+// The public API's shapes live in @launchpad-kit/contracts (browser-safe). This module
 // re-exports them for the controller, next to the input schemas that services own.
 export { addMemberSchema, createOrganizationSchema } from "./organizations";
 export { acceptInvitationSchema, createInvitationSchema } from "./invitations";
@@ -41,4 +41,4 @@ export {
     previewSchema,
     previewStateSchema,
     artifactSchema,
-} from "@launchpad/contracts";
+} from "@launchpad-kit/contracts";

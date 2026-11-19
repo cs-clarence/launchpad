@@ -1,8 +1,8 @@
 import { randomUUID } from "node:crypto";
 import { promises as fs } from "node:fs";
 import path from "node:path";
-import { migrateToLatest } from "@launchpad/database";
-import { createTestDatabase } from "@launchpad/database/testing";
+import { migrateToLatest } from "@launchpad-kit/database";
+import { createTestDatabase } from "@launchpad-kit/database/testing";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createOrganization, createPreview, createProject, type Principal } from "../index";
 

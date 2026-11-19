@@ -8,7 +8,7 @@ separate, explicit authorization and a workflow that does not exist yet.
 
 One version covers everything that ships together: the root manifest, every package under
 `packages/` and `apps/` (including the controller and worker images, which carry the same
-number), except the shared tooling packages (`@launchpad/tsconfig`, `vite-config`,
+number), except the shared tooling packages (`@launchpad-kit/tsconfig`, `vite-config`,
 `vitest-config`), which are versioned on their own. `cog.toml` is the source of truth: the
 `core` group lists what ships together, and every package registered by name is independent.
 
@@ -31,21 +31,22 @@ number), except the shared tooling packages (`@launchpad/tsconfig`, `vite-config
 
 ## What a release contains
 
-| Artifact                                                  | Built by                              | Checked by                         |
-| --------------------------------------------------------- | ------------------------------------- | ---------------------------------- |
-| `@launchpad/contracts`, `sdk`, `cli`, `mcp` tarballs      | `tooling/package-clients.ts`          | `test:packages`, the dry run       |
-| Controller and worker images                              | `apps/{controller,worker}/Dockerfile` | `test:images`, the dry run (build) |
-| Database migrations (forward-only, bundled in the images) | `packages/database/src/migrations`    | `test:integration`, `test:upgrade` |
-| Operator documentation                                    | `docs/`                               | review                             |
+| Artifact                                                  | Built by                                     | Checked by                         |
+| --------------------------------------------------------- | -------------------------------------------- | ---------------------------------- |
+| `@launchpad-kit/contracts`, `sdk`, `cli`, `mcp` tarballs  | `tooling/package-clients.ts`                 | `test:packages`, the dry run       |
+| Controller, worker, operator (admin) and router images    | `apps/{controller,worker,router}/Dockerfile` | `test:images`, the dry run (build) |
+| Database migrations (forward-only, bundled in the images) | `packages/database/src/migrations`           | `test:integration`, `test:upgrade` |
+| Operator documentation                                    | `docs/`                                      | review                             |
 
-The `@launchpad/*` package names are placeholders until the npm scope and product name are
-decided; renaming them is one change. Packed READMEs are still developer documentation and
-the manifests have no `license` or `repository`; both wait on those decisions.
+The workspace scope is `@launchpad-kit`, selected on 2026-11-19. Registry ownership
+and availability have **not** been verified, and no package has been published.
+Packed READMEs are still developer documentation and the manifests have no
+`license` or `repository`; the licence and final product naming remain release gates.
 
 ## Rehearse a release
 
 ```sh
-omni -i run release:dry-run -p @launchpad/tooling
+omni -i run release:dry-run -p @launchpad-kit/tooling
 ```
 
 or run the manual **Release dry run** workflow. It checks that versions agree, packs the
@@ -72,7 +73,7 @@ previously valid request fails; changing the meaning of a role or key scope, or
 authenticating a route more strictly. A breaking change ships under a new path prefix
 (`/api/v2`) with `v1` kept for one major version.
 
-**SDK and contracts** (`@launchpad/sdk`, `@launchpad/contracts`). The exported names, their
+**SDK and contracts** (`@launchpad-kit/sdk`, `@launchpad-kit/contracts`). The exported names, their
 types and the schemas' accepted and produced shapes are the interface. Breaking: removing
 or renaming an export, narrowing a parameter type, widening a returned type a caller
 narrows on, changing an error class a caller catches. Adding exports and optional fields is
@@ -105,15 +106,16 @@ A release is a person's decision. Work through this in order and stop at the fir
 
 1. `main` is green: `CI Passed`, and the full local gate
    `omni -i run check test build check:compose test:integration --force all`
-   plus `omni -i run test:upgrade -p @launchpad/controller` on Linux.
+   plus `omni -i run test:upgrade -p @launchpad-kit/controller` on Linux.
 2. The previous release's database schema is in the upgrade fixture and `test:upgrade`
    passes from it; `docs/upgrade.md` and `docs/restore.md` match the commands.
 3. Every breaking change since the last release is listed against the rules above, and the
    version increment fits them. Security-relevant changes have a release note.
 4. Licence, npm scope and product name are decided and recorded; the packed READMEs and
    manifests carry `license` and `repository`; **registry ownership of the name is verified
-   with an authenticated account**. (Not done: all three are open decisions.)
-5. Base images in `apps/{controller,worker}/Dockerfile` are pinned by digest, not tag.
+   with an authenticated account**. (The source scope is selected; ownership,
+   licence and final product naming are not yet settled.)
+5. Base images in `apps/{controller,worker,router}/Dockerfile` are pinned by digest, not tag.
 6. Run the [dry run](#rehearse-a-release); inspect the tarball listings, `SHA256SUMS` and the
    image notes. No `.env`, key, source map or workspace specifier in any tarball.
 7. `cog bump` on a clean checkout, then review the bump commit, changelog and tag locally.

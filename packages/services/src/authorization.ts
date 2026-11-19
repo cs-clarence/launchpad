@@ -1,5 +1,8 @@
-import { API_KEY_SCOPES as KEY_SCOPES, ORGANIZATION_ROLES as ROLES } from "@launchpad/contracts";
-import type { OrganizationRole } from "@launchpad/database";
+import {
+    API_KEY_SCOPES as KEY_SCOPES,
+    ORGANIZATION_ROLES as ROLES,
+} from "@launchpad-kit/contracts";
+import type { OrganizationRole } from "@launchpad-kit/database";
 
 export const ORGANIZATION_ROLES = ROLES;
 

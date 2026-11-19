@@ -1,6 +1,10 @@
 import { promises as fs } from "node:fs";
 import path from "node:path";
-import { resolveArtifactPath, type ArchiveLimits, type DeployContext } from "@launchpad/services";
+import {
+    resolveArtifactPath,
+    type ArchiveLimits,
+    type DeployContext,
+} from "@launchpad-kit/services";
 import type { Docker } from "./docker";
 import { extractSite } from "./extract";
 import { dockerfile, imageTagFor, nginxConf } from "./template";

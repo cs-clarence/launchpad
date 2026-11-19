@@ -1,0 +1,25 @@
+{
+    "name": "@launchpad-kit/router",
+    "version": "0.0.0",
+    "private": true,
+    "description": "The alias router: private control plane, public data plane and operator commands (R2b)",
+    "type": "module",
+    "scripts": {
+        "build": "bun build src/index.ts --target=bun --outdir=dist",
+        "check:types": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.node.json",
+        "test:unit": "bun --bun vitest run --config vitest.config.unit.ts",
+        "test:integration": "bun --bun vitest run --config vitest.config.integration.ts"
+    },
+    "dependencies": {
+        "@launchpad-kit/alias-router": "workspace:^"
+    },
+    "devDependencies": {
+        "@launchpad-kit/tsconfig": "workspace:^",
+        "@launchpad-kit/vite-config": "workspace:^",
+        "@launchpad-kit/vitest-config": "workspace:^",
+        "@types/bun": "catalog:",
+        "typescript": "catalog:",
+        "vite": "catalog:",
+        "vitest": "catalog:"
+    }
+}

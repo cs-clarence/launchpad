@@ -1,7 +1,7 @@
 import { randomBytes } from "node:crypto";
 import { promises as fs } from "node:fs";
 import path from "node:path";
-import type { ArtifactTable, Database } from "@launchpad/database";
+import type { ArtifactTable, Database } from "@launchpad-kit/database";
 import { type Kysely, type SelectQueryBuilder, sql } from "kysely";
 import { resolveArtifactPath } from "./artifacts";
 import { LIFECYCLE_AUDIT } from "./lifecycle";

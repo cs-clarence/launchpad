@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { createTestDatabase } from "@launchpad/database/testing";
+import { createTestDatabase } from "@launchpad-kit/database/testing";
 import { sql } from "kysely";
 import { createAuth, createMailer, loadAuthConfig } from "../index";
 import { type FakeSmtp, mailText, startFakeSmtp } from "../testing";

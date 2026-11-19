@@ -4,7 +4,7 @@ For contributors to the TanStack Start dashboard and Elysia HTTP adapter.
 Keep this page current when the entry points or runtime change.
 
 - `src/routes/api.$.ts` mounts `src/server/api.ts` without starting another server.
-- Services live in `@launchpad/services`, outside HTTP and UI frameworks.
+- Services live in `@launchpad-kit/services`, outside HTTP and UI frameworks.
 - `src/styles.css` installs Skeleton 5, Tailwind 4, and the Cerberus theme.
 - `Dockerfile` (built from the repository root with `-f apps/controller/Dockerfile`) produces a non-root Bun runtime from Nitro's build output, with the operator commands (`bun .output/admin.mjs ...`).
 - `src/server/runtime.ts` composes configuration, the shared Kysely database,
@@ -67,11 +67,11 @@ Passwords come from a file only you can read (mode 600) or from piped stdin, nev
 an argument or the environment. Omni does not forward piped stdin, so use a file:
 
 ```sh
-omni -i run admin -p @launchpad/controller -a command=migrate           # forward-only, explicit
-omni -i run admin -p @launchpad/controller -a command=migrate -a options=--status  # read-only
-omni -i run admin -p @launchpad/controller -a command=setup \
+omni -i run admin -p @launchpad-kit/controller -a command=migrate           # forward-only, explicit
+omni -i run admin -p @launchpad-kit/controller -a command=migrate -a options=--status  # read-only
+omni -i run admin -p @launchpad-kit/controller -a command=setup \
   -a "options=--email you@example.com --password-file /run/secrets/launchpad-operator"
-omni -i run dev -p @launchpad/controller                                 # dev server
+omni -i run dev -p @launchpad-kit/controller                                 # dev server
 ```
 
 Run directly, from this directory, the same commands are `bun run admin migrate` and
@@ -89,7 +89,7 @@ The controller never migrates on startup. There is no default password.
 Provision people and organizations offline:
 
 ```sh
-omni -i run admin -p @launchpad/controller -a command=create-user \
+omni -i run admin -p @launchpad-kit/controller -a command=create-user \
   -a "options=--email ann@example.com --name Ann --password-file /run/secrets/ann"
 ```
 
@@ -131,8 +131,8 @@ command and behavior reference.
 ## Backup
 
 ```sh
-omni -i run admin -p @launchpad/controller -a command=backup -a options=/var/backups/launchpad/2026-11-18
-omni -i run admin -p @launchpad/controller -a command=verify-backup -a options=/var/backups/launchpad/2026-11-18
+omni -i run admin -p @launchpad-kit/controller -a command=backup -a options=/var/backups/launchpad/2026-11-18
+omni -i run admin -p @launchpad-kit/controller -a command=verify-backup -a options=/var/backups/launchpad/2026-11-18
 ```
 
 `backup` needs `DATABASE_URL`, the same `LAUNCHPAD_DATA_DIR` as the controller and the
@@ -204,9 +204,9 @@ Restoring is a procedure, not one command. The current step-by-step
    previews you chose to end.
 
 ```sh
-omni -i run admin -p @launchpad/controller -a command=restore \
+omni -i run admin -p @launchpad-kit/controller -a command=restore \
   -a "options=/var/backups/launchpad/2026-11-18 --i-have-stopped-the-workers"
-omni -i run admin -p @launchpad/controller -a command=check-restore
+omni -i run admin -p @launchpad-kit/controller -a command=check-restore
 ```
 
 `restore` runs `pg_restore` (override with `LAUNCHPAD_PG_RESTORE`; its version must be at least

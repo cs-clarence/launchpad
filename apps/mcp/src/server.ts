@@ -17,13 +17,13 @@ import {
     effectiveProfile,
     previewDeletion,
     resolveProject,
-} from "@launchpad/client-core";
+} from "@launchpad-kit/client-core";
 import { promises as fs } from "node:fs";
 import path from "node:path";
 import type { DeletePolicy, DeployPolicy } from "./program";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { safeOutput } from "@launchpad/client-core";
+import { safeOutput } from "@launchpad-kit/client-core";
 import { toolError, toolResult } from "./output";
 
 export interface ServerOptions {

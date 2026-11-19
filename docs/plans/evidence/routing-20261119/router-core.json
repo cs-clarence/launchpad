@@ -1,0 +1,101 @@
+[
+    {
+        "host": "one.live.example.com",
+        "status": 404,
+        "body": "Not found\n"
+    },
+    {
+        "host": "two.live.example.com",
+        "status": 404,
+        "body": "Not found\n"
+    },
+    {
+        "host": "unbound.live.example.com",
+        "status": 404,
+        "body": "Not found\n"
+    },
+    {
+        "host": "unknown.live.example.com",
+        "status": 404,
+        "body": "Not found\n"
+    },
+    {
+        "host": "one.live.example.com",
+        "status": 200,
+        "body": "fixture:f0baa354-11f8-4b26-b913-876b415c3469"
+    },
+    {
+        "host": "two.live.example.com",
+        "status": 200,
+        "body": "fixture:f0baa354-11f8-4b26-b913-876b415c3469"
+    },
+    {
+        "host": "one.live.example.com",
+        "status": 200,
+        "body": "fixture:d1986ce3-a2dd-447f-86d4-e31e97f22492"
+    },
+    {
+        "host": "two.live.example.com",
+        "status": 200,
+        "body": "fixture:f0baa354-11f8-4b26-b913-876b415c3469"
+    },
+    {
+        "host": "one.live.example.com",
+        "status": 200,
+        "body": "fixture:f0baa354-11f8-4b26-b913-876b415c3469"
+    },
+    {
+        "host": "one.live.example.com",
+        "status": 200,
+        "body": "fixture:f0baa354-11f8-4b26-b913-876b415c3469"
+    },
+    {
+        "host": "one.live.example.com",
+        "status": 200,
+        "body": "fixture:f0baa354-11f8-4b26-b913-876b415c3469"
+    },
+    {
+        "host": "one.live.example.com",
+        "status": 200,
+        "body": "fixture:d1986ce3-a2dd-447f-86d4-e31e97f22492"
+    },
+    {
+        "host": "unbound.live.example.com",
+        "status": 404,
+        "body": "Not found\n"
+    },
+    {
+        "host": "two.live.example.com",
+        "status": 404,
+        "body": "Not found\n"
+    },
+    {
+        "host": "one.live.example.com",
+        "status": 200,
+        "body": "{\"host\":\"tls.live.example.com\",\"sni\":\"tls.live.example.com\"}"
+    },
+    {
+        "host": "one.live.example.com",
+        "status": 502,
+        "body": "Upstream unavailable\n"
+    },
+    {
+        "host": "one.live.example.com",
+        "status": 503,
+        "body": "Ingress closed\n"
+    },
+    {
+        "host": "one.live.example.com",
+        "status": 503,
+        "body": "Ingress closed\n"
+    },
+    {
+        "host": "one.live.example.com",
+        "status": 200,
+        "body": "fixture:f0baa354-11f8-4b26-b913-876b415c3469"
+    },
+    {
+        "assertion": "authenticated-old-epoch-write-rejected-at-commit",
+        "status": 401
+    }
+]

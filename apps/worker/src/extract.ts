@@ -1,6 +1,6 @@
 import { promises as fs } from "node:fs";
 import path from "node:path";
-import { validateArchive, type ArchiveLimits } from "@launchpad/services";
+import { validateArchive, type ArchiveLimits } from "@launchpad-kit/services";
 import { extract } from "tar";
 
 // The archive was validated at upload, but what is on disk is not trusted again just

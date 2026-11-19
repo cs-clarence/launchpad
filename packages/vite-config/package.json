@@ -1,5 +1,5 @@
 {
-    "name": "@launchpad/vite-config",
+    "name": "@launchpad-kit/vite-config",
     "version": "0.0.0",
     "private": true,
     "type": "module",

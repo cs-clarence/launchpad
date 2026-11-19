@@ -1,4 +1,4 @@
-import { parseDuration } from "@launchpad/contracts";
+import { parseDuration } from "@launchpad-kit/contracts";
 
 // The audit actions of the preview lifecycle. Expiry and cleanup act as the system, so
 // their events carry no user.

@@ -1,11 +1,11 @@
-# @launchpad/dokku
+# @launchpad-kit/dokku
 
 Typed, allowlisted Dokku operations over SSH with a pinned host key. For
 contributors extending what the controller's worker may ask Dokku to do. Keep this
 page current when operations or trust rules change.
 
 ```ts
-import { createDokkuClient } from "@launchpad/dokku";
+import { createDokkuClient } from "@launchpad-kit/dokku";
 
 const dokku = createDokkuClient({
     host: "dokku",
@@ -67,5 +67,5 @@ for operator logs only; do not return it to API clients.
 Unit tests need no Dokku or network. The real transport is exercised with stand-in
 `ssh` executables that record their arguments and environment, hang, flood output, read
 or ignore standard input; the client with a fake transport. The live-engine tests are the worker's opt-in suite
-(`omni -i run test:live -p @launchpad/worker`, see `apps/worker/README.md`); it touches only a
+(`omni -i run test:live -p @launchpad-kit/worker`, see `apps/worker/README.md`); it touches only a
 disposable Dokku the developer started.

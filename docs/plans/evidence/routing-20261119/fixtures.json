@@ -1,0 +1,20 @@
+[
+    {
+        "deploymentId": "f0baa354-11f8-4b26-b913-876b415c3469",
+        "appName": "lp-test-e75828",
+        "hostname": "lp-test-e75828.live.example.com",
+        "spa": false,
+        "storageKey": "artifacts/a935ae8c0e30b21d56df0ea10b1a742f/21f52cedb70dec232381e52f7aeab58ef9038ce3dde54404accb6ae5e1ca3ce5.tar.gz",
+        "imageId": "sha256:5dc62be7a91b7d89a6ec7eee23c85d3aea1bffc8fc6761f038600695462c4679",
+        "imageTag": "launchpad/site:f0baa35411f84b26b913876b415c3469"
+    },
+    {
+        "deploymentId": "d1986ce3-a2dd-447f-86d4-e31e97f22492",
+        "appName": "lp-test-26a1fa",
+        "hostname": "lp-test-26a1fa.live.example.com",
+        "spa": false,
+        "storageKey": "artifacts/a935ae8c0e30b21d56df0ea10b1a742f/31110ec8e3ae692a5d0f5c161ac24fe39813ba2a20158e0cdf3fb9f243e12302.tar.gz",
+        "imageId": "sha256:3850351a0cd70defaffd1f1a0656c1598906843341b139bc913d96cbd94cd205",
+        "imageTag": "launchpad/site:d1986ce3a2dd447f86d4e31e97f22492"
+    }
+]

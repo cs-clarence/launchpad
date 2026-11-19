@@ -1,4 +1,4 @@
-import type { Database } from "@launchpad/database";
+import type { Database } from "@launchpad-kit/database";
 import {
     claimNext,
     runDeployment,
@@ -10,7 +10,7 @@ import {
     type LifecyclePorts,
     type LifecycleState,
     type RunOutcome,
-} from "@launchpad/services";
+} from "@launchpad-kit/services";
 import type { Kysely } from "kysely";
 
 export interface WorkerOptions {
@@ -25,6 +25,8 @@ export interface WorkerOptions {
     lifecycle?: { ports: LifecyclePorts; config: LifecycleConfig; dataDir: string };
     // Says to the operator that this worker is alive. Absent, none is written.
     heartbeat?: { version: string; everyMs?: number };
+    // Called each time a heartbeat was recorded: the container healthcheck's signal of life.
+    onHealthy?: () => void;
 }
 
 export const DEFAULT_HEARTBEAT_MS = 10_000;
@@ -85,6 +87,7 @@ export async function runWorker(
                 started: !beaten,
             });
             beaten = true;
+            options.onHealthy?.();
         } catch {
             options.log?.({ event: "heartbeat-error" });
         } finally {

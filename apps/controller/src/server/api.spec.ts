@@ -1,5 +1,5 @@
-import { createAuth, loadAuthConfig } from "@launchpad/auth";
-import { createDatabase } from "@launchpad/database";
+import { createAuth, loadAuthConfig } from "@launchpad-kit/auth";
+import { createDatabase } from "@launchpad-kit/database";
 import { describe, expect, it } from "vitest";
 import { createApi } from "./api";
 import { resolveClientIp } from "./client-ip";

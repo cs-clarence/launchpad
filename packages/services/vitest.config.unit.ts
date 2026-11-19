@@ -1,6 +1,6 @@
 import { mergeConfig, type UserWorkspaceConfig } from "vitest/config";
 import baseConfig from "./vite.config.ts";
-import unitTestConfig from "@launchpad/vitest-config/unit";
+import unitTestConfig from "@launchpad-kit/vitest-config/unit";
 
 export default mergeConfig(mergeConfig(baseConfig, unitTestConfig), {
     test: {

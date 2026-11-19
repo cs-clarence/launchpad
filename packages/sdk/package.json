@@ -1,5 +1,5 @@
 {
-    "name": "@launchpad/sdk",
+    "name": "@launchpad-kit/sdk",
     "version": "0.0.0",
     "private": true,
     "description": "Browser-safe HTTP SDK for the Launchpad controller API",
@@ -24,13 +24,13 @@
         "test:integration": "vitest run --config vitest.config.integration.ts"
     },
     "dependencies": {
-        "@launchpad/contracts": "workspace:^",
+        "@launchpad-kit/contracts": "workspace:^",
         "zod": "catalog:"
     },
     "devDependencies": {
-        "@launchpad/tsconfig": "workspace:^",
-        "@launchpad/vite-config": "workspace:^",
-        "@launchpad/vitest-config": "workspace:^",
+        "@launchpad-kit/tsconfig": "workspace:^",
+        "@launchpad-kit/vite-config": "workspace:^",
+        "@launchpad-kit/vitest-config": "workspace:^",
         "@types/bun": "catalog:",
         "typescript": "catalog:",
         "vite": "catalog:",

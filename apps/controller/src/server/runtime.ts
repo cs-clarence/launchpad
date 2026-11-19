@@ -1,6 +1,6 @@
-import { createAuth, createMailer, loadAuthConfig } from "@launchpad/auth";
-import { assertSchemaCurrent, createDatabase } from "@launchpad/database";
-import type { InvitationDeps } from "@launchpad/services";
+import { createAuth, createMailer, loadAuthConfig } from "@launchpad-kit/auth";
+import { assertSchemaCurrent, createDatabase } from "@launchpad-kit/database";
+import type { InvitationDeps } from "@launchpad-kit/services";
 import { mkdirSync } from "node:fs";
 import path from "node:path";
 import {
@@ -8,7 +8,7 @@ import {
     lifecycleConfigFromEnv,
     PREVIEW_DOMAIN_PATTERN,
     sweepStaleUploads,
-} from "@launchpad/services";
+} from "@launchpad-kit/services";
 import { getDomain } from "tldts";
 import { createApi } from "./api";
 import { artifactLimitsFromEnv } from "./artifact-config";

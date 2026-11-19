@@ -1,7 +1,7 @@
 services:
   dokku:
     build:
-      context: .
+      context: ./containers/dokku
       dockerfile: Dockerfile
       args:
         DOKKU_VERSION: ${DOKKU_VERSION:-0.38.34}

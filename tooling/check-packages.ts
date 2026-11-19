@@ -61,7 +61,7 @@ async function main() {
         }
         if (problems.length > 0) return;
 
-        // A user's project, outside the workspace. The registry has no @launchpad packages of
+        // A user's project, outside the workspace. The registry has no @launchpad-kit packages of
         // ours, so every one of them is pinned to its tarball (an override also covers the
         // dependency of one package on another, which would otherwise be looked up by name).
         const consumer = path.join(work, "consumer");
@@ -87,7 +87,7 @@ async function main() {
         // instead of being answered by someone else's package.
         writeFileSync(
             path.join(consumer, "bunfig.toml"),
-            '[install.scopes]\n"@launchpad" = "http://127.0.0.1:9/"\n',
+            '[install.scopes]\n"@launchpad-kit" = "http://127.0.0.1:9/"\n',
         );
         const install = await exec(["bun", "install", "--no-save", "--ignore-scripts"], consumer);
         if (install.code !== 0) return fail(`install failed:\n${install.out}\n${install.err}`);
@@ -127,8 +127,8 @@ async function main() {
         });
         writeFileSync(
             path.join(consumer, "smoke.mjs"),
-            `import { createClient } from "@launchpad/sdk";
-import { parseDuration } from "@launchpad/contracts";
+            `import { createClient } from "@launchpad-kit/sdk";
+import { parseDuration } from "@launchpad-kit/contracts";
 const client = createClient({ baseUrl: "http://127.0.0.1:${server.port}", apiKey: "lp_" + "a".repeat(30) });
 const organizations = await client.organizations.list();
 if (!Array.isArray(organizations) || organizations.length !== 0) throw new Error("unexpected answer");
@@ -165,12 +165,12 @@ console.log("mcp ok: " + message.result.serverInfo.name);
         );
         for (const runtime of runtimes) {
             for (const [label, args] of [
-                ["cli --help", [runtime, bin("@launchpad/cli/cli.mjs"), "--help"]],
-                ["mcp --help", [runtime, bin("@launchpad/mcp/mcp.mjs"), "--help"]],
+                ["cli --help", [runtime, bin("@launchpad-kit/cli/cli.mjs"), "--help"]],
+                ["mcp --help", [runtime, bin("@launchpad-kit/mcp/mcp.mjs"), "--help"]],
                 ["sdk", [runtime, "smoke.mjs"]],
                 [
                     "mcp handshake",
-                    [runtime, "mcp-handshake.mjs", runtime, bin("@launchpad/mcp/mcp.mjs")],
+                    [runtime, "mcp-handshake.mjs", runtime, bin("@launchpad-kit/mcp/mcp.mjs")],
                 ],
             ] as const) {
                 const result = await exec([...args], consumer);
@@ -203,8 +203,8 @@ console.log("mcp ok: " + message.result.serverInfo.name);
         // The declarations as a TypeScript user sees them: strict, and not skipping library files.
         writeFileSync(
             path.join(consumer, "types.ts"),
-            `import { createClient, type ClientOptions } from "@launchpad/sdk";
-import { parseDuration } from "@launchpad/contracts";
+            `import { createClient, type ClientOptions } from "@launchpad-kit/sdk";
+import { parseDuration } from "@launchpad-kit/contracts";
 const options: ClientOptions = { baseUrl: "https://launchpad.example.com", apiKey: "lp_x" };
 const client = createClient(options);
 const organizations: ReturnType<typeof client.organizations.list> = client.organizations.list();

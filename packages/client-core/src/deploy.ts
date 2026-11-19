@@ -6,7 +6,7 @@ import {
     LaunchpadTransportError,
     type Deployment,
     type Preview,
-} from "@launchpad/sdk";
+} from "@launchpad-kit/sdk";
 import { ClientCoreError } from "./errors";
 import { clientFor, type Context, resolve } from "./operations";
 import { type FileSelection, packDirectory, readArchive } from "./pack";

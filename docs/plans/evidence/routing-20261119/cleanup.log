@@ -1,0 +1,19 @@
+app lp-test-e75828: destroyed
+app lp-test-26a1fa: destroyed
+fixture lp-test-e75828: containers and image tags absent
+fixture lp-test-26a1fa: containers and image tags absent
+container lp-routing-ndukoy-ingress: absent
+container lp-routing-ndukoy-upstream: absent
+container lp-routing-ndukoy-router: absent
+container lp-routing-ndukoy-worker: absent
+container lp-routing-ndukoy-dokku: absent
+network lp-routing-ndukoy-net: absent
+image lp-routing-ndukoy/worker:test: absent
+helper lp-routing-ndukoy-helper-1: absent
+helper lp-routing-ndukoy-helper-2: absent
+helper lp-routing-ndukoy-helper-3: absent
+helper lp-routing-ndukoy-helper-4: absent
+helper lp-routing-ndukoy-helper-5: absent
+helper lp-routing-ndukoy-helper-6: absent
+helper lp-routing-ndukoy-helper-7: absent
+helper lp-routing-ndukoy-helper-8: absent

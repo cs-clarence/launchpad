@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
-import { nameSchema, slugSchema } from "@launchpad/contracts";
-import type { Database, OrganizationRole } from "@launchpad/database";
+import { nameSchema, slugSchema } from "@launchpad-kit/contracts";
+import type { Database, OrganizationRole } from "@launchpad-kit/database";
 import { type Kysely, sql } from "kysely";
 import { z } from "zod";
 import {

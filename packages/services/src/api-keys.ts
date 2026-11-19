@@ -1,6 +1,6 @@
 import { createHash, randomBytes } from "node:crypto";
-import { createApiKeySchema, type ApiKeyStatus } from "@launchpad/contracts";
-import type { Database } from "@launchpad/database";
+import { createApiKeySchema, type ApiKeyStatus } from "@launchpad-kit/contracts";
+import type { Database } from "@launchpad-kit/database";
 import { sql, type Kysely } from "kysely";
 import { z } from "zod";
 import { API_KEY_SCOPES, can, type ApiKeyScope, type Principal } from "./authorization";
