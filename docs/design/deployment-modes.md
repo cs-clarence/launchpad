@@ -623,6 +623,15 @@ The concrete bootstrap/recovery procedure must pass the routing experiment.
     - Old preview keys cannot promote/manage aliases; MCP without its promotion
       opt-in/confirmation cannot mutate aliases.
 
+### Implementation status
+
+Slice 0 so far (pure TypeScript, unit tests only, not wired into any runtime):
+`packages/services/src/hostname-template.ts` (template parsing, rendering and
+bounded collision allocation), `app-routing-config.ts` (the canonical settings,
+refusing the preview-era names) and `drift/` (the comparison, race filter and exit
+code). Not yet done in Slice 0: the read-only legacy-preview inventory. Slice 1
+(routing experiment) has not been approved or run; Slices 2 to 4 are not started.
+
 ### Implementation slices and gates
 
 | Slice                                                                                      | Check                                                                                                                                                                        | Undo / stop condition                                                                                                                                                                                                                                                                         |
