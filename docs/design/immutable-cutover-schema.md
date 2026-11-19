@@ -184,9 +184,27 @@ back an empty registry and stale generations while the router and Dokku keep the
            `recovery-clear` verifies the router's epoch now differs from it. The anchor is the
            moment the restore started, **not** the backup manifest: a router that rotated after the
            backup but before the restore would otherwise look like a rotation made during recovery.
-           P5 keeps the Dokku settling condition: its verified reconciliation runs only after a
-           settling wait, and the operator procedure still requires it, because nothing can prove
-           from the database that no dispatched Dokku operation is still running.
+           P5 keeps the Dokku settling condition (below): its verified reconciliation runs only after
+           the settling rule is met, and the operator procedure still requires it, because nothing
+           can prove from the restored database that no dispatched Dokku operation is still running.
+    - **Settling rule (what "settled" means).** The set of dispatched operations **cannot come from
+      the restored database**: it is exactly the post-backup state the restore lost. So the
+      procedure does not try to enumerate it from there.
+        1. **Time bound.** Every worker call to Dokku or Docker is bounded by a lease-derived
+           deadline, and the worker's documented stop grace is 25 minutes (`docker stop --time 1500`,
+           `stop_grace_period: 25m`; a load can take about 24). After the last writer has stopped,
+           wait at least that long. Past it, every dispatched call has either finished or hit its
+           deadline.
+        2. **Host check.** On the Dokku host, confirm that nothing started by the worker's SSH key is
+           still running: no `docker build`, `docker load` or `dokku apps:destroy` process for the
+           worker's user (for example `pgrep -u <dokku user> -af 'docker|dokku'`).
+        3. **Known set (before the restore).** Keep the pre-restore database, which still holds the
+           operation rows. List every deployment or deletion operation with a pending step or an
+           unexpired lease at stop time, and after steps 1 and 2 read each target app with the
+           allowlisted exact-name Dokku read (`apps:exists`). A target whose state disagrees with that
+           row is a reconciliation input, never silently ignored.
+           The settling wait of a rule-1 duration is all that P5 can automate (it has no host access);
+           P5's reconciliation report includes the step-3 list, and steps 2 and 3 stay in the runbook.
     - **Counter repair (P4).** P3 has no routes, so no counters exist. The P4 PR that adds aliases
       also adds, using its read-only router client, a check inside `recovery-clear` that refuses
       while any alias `reserved_generation` is below the router's generation for that route or the

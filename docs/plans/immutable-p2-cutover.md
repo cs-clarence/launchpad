@@ -106,7 +106,7 @@ and scope string across `apps`, `packages`, `tooling` and `docs`.
 
 ### P2b: migration 018 and what must move with it
 
-- **Runbook first.** Stop every old controller, worker and admin job and wait for dispatched Dokku operations to settle. With the **pre-P2b** binary, take a backup and run `inventory-previews`
+- **Runbook first.** Stop every old controller, worker and admin job and wait for dispatched Dokku operations to settle (at least the 25-minute worker stop grace, then confirm no worker-started `docker`/`dokku` process remains on the host; see the settling rule in the schema map). With the **pre-P2b** binary, take a backup and run `inventory-previews`
   (it lists deleted previews too, which catches failed destroys), then remove any Dokku apps you
   do not want left behind. After 018 the database no longer records them.
 - **Migration** exactly as in the schema map: one Kysely migration in the migrator's own
