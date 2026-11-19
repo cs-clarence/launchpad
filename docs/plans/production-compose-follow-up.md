@@ -53,6 +53,25 @@ ownership remains unverified; publishing or claiming registry namespaces needs
 separate verification and explicit authorization.
 Requirements this work must meet that the application milestones surfaced:
 
+- Selected product-model direction: one immutable deployment pipeline, with
+  unique preview URLs and a stable production alias moved by promotion.
+  See `docs/design/deployment-modes.md` for the revised database, routing and API
+  proposal. This supersedes separate preview/persistent app paths.
+  Aliases are many per app and independently promotable; custom-domain/DNS/TLS
+  automation is out of scope, with hostname admission kept separate from routing
+  so future external domains can reuse the alias model. Existing
+  previews may be retired rather than converted; teardown still requires exact
+  identified targets. Routing cutover and reconciliation must be proven before
+  this feature is considered ready.
+
+    Readiness review (Opus 5.5): the whole feature is not ready to implement.
+    The chosen next step is docs and a separately authorized disposable routing
+    experiment, specified in `docs/decisions/immutable-deployment-alias-routing.md`.
+    The immutable-model slices/checks/undo in `docs/design/deployment-modes.md`
+    are prerequisites of the final installation rehearsal below. A router-control
+    contract, alias state machine, permission matrix, quotas and restore boundary
+    are now specified; their feasibility is not yet proven.
+
 - The controller and the worker share one data directory and must run as **one user** with read
   and write access; the worker also needs the Docker engine it builds on and SSH to Dokku.
 - The worker's stop timeout must outlast a load or rollback (about 24 minutes at the default
@@ -112,10 +131,13 @@ These are proposals for approval, not assumptions already authorized.
 1. **One host, one Docker engine for worker builds and Dokku apps.**
    Reuse the existing Dokku socket-based model. Both Dokku and the worker have
    host-root-equivalent engine access; the controller and database never do.
-   A separate engine/VM gives stronger isolation but changes image transfer,
-   mount visibility and garbage collection. Defer that topology; for genuinely
-   hostile workloads, require a dedicated VM/host rather than claiming a Compose
-   network or socket proxy provides isolation. Do not expose the Docker API on TCP.
+   The worker already accepts `DOCKER_HOST`; using an engine in a VM should
+   generally be configuration, not a new application engine abstraction. Both
+   same-host and VM-hosted engines must be documented with their mount visibility,
+   SSH/proxy connectivity and image-cleanup implications. A VM provides stronger
+   host isolation only when its Docker engine is inside the VM: mounting the main
+   host's socket still grants main-host control. Do not expose an unauthenticated
+   Docker API on TCP. The operator chooses the topology and its security boundary.
 2. **Separate production configuration:** add `compose.production.yaml`, keeping
    the existing Dokku-only file usable until cleanup/cutover. Move only the external
    Dokku recipe to `containers/dokku/Dockerfile`; keep application recipes beside
@@ -134,17 +156,33 @@ These are proposals for approval, not assumptions already authorized.
    created, explicitly identified directory/volume—not recursively on existing
    user paths. Backups live outside all cleanup targets.
 5. **Networking:** a private database network, app-to-Dokku SSH/proxy reachability,
-   and no published PostgreSQL or worker port. Proposed host bindings, all
+   and no published PostgreSQL or worker port. User-approved default host bindings, all
    **loopback-only**: controller 32180, Dokku SSH 32222, preview HTTP 32181 and
    optional preview HTTPS 32443. Internal service ports remain 3000/22/80/443/5432.
    Check availability before writing local settings; conflicts require a revised
    allocation, never stopping the process that owns a port.
-6. **Ingress:** private HTTPS management through Tailscale or an equivalent
-   identity-aware gateway; public preview ingress through a separately routed
-   HTTPS tunnel/proxy. Management and previews require different registrable
-   domains, not merely different subdomains. Existing Cloudflare/Playit connectors
+6. **Ingress is configurable, not a mandatory provider or access policy.**
+   The operator independently chooses public HTTPS or private access (Tailscale,
+   another VPN, a tunnel or a reverse proxy) for management and previews. Keep the
+   management origin (`LAUNCHPAD_BASE_URL`), preview domain
+   (planned `LAUNCHPAD_APPS_DOMAIN`) and worker's internal proxy/probe address
+   (planned `LAUNCHPAD_APPS_PROXY_URL`) separate. Alias control and probes use
+   separate `LAUNCHPAD_ALIAS_CONTROL_URL` and `LAUNCHPAD_ALIAS_PROBE_URL`.
+   These new names belong to the proposed immutable-model change; the current
+   binary still uses `LAUNCHPAD_PREVIEW_DOMAIN` and `LAUNCHPAD_PREVIEW_PROXY_URL`.
+   Do not put the planned names into live settings until that change ships.
+   Public browser/client URLs must not
+   accidentally use Docker service DNS names; the internal probe need not use the
+   public preview route. Loopback bindings remain safe defaults, with an explicit
+   operator-controlled bind/ingress override and documented exposure consequences.
+   Public management must retain authentication, HTTPS and origin/proxy safeguards;
+   Tailscale is optional, not an application dependency.
+   Management and previews still require different registrable
+   domains, not merely different subdomains: that is the existing untrusted-content
+   security boundary, independent of public versus private access.
+   Existing Cloudflare/Playit connectors
    are not adopted, reconfigured or stopped without identifying their owner and
-   obtaining approval for that change. No public controller listener. Set trusted
+   obtaining approval for that change. Set trusted
    proxy mode only after verifying the exact forwarded-IP chain.
 7. **Safe defaults:** deployments and lifecycle off in both apps; public signup
    off; API docs private/disabled as appropriate. Controller and worker share
@@ -161,17 +199,19 @@ These are proposals for approval, not assumptions already authorized.
 
 ### Choices still needing the user
 
-- Approve the same-engine security boundary and loopback port proposal.
-- Choose management ingress (Tailscale recommended) and the preview HTTPS route
-  (Cloudflare Tunnel or an existing trusted reverse proxy), plus the two actual
-  domains. No routing integration or local endpoint customization until chosen.
+- Loopback port defaults are approved. The operator chooses whether the engine
+  runs on the same host or inside a dedicated VM; retain configuration flexibility.
+- Public/private management and preview access are independent operator choices.
+  Implement configurable endpoints and provider-neutral documentation without
+  requiring a Tailscale or Cloudflare account. Actual domains and routing are
+  still required before any local routing integration or endpoint customization.
 - Confirm production storage/backup locations and retention. Proposed defaults
   are separate named app/database volumes and a new Dokku bind, not adoption of
   the old demo state.
-- Final deletion checkpoint: inspect the exact inventory and choose whether to
-  retain an offline archive first. Earlier permission includes deleting the old
-  Dokku/demo data, but any ambiguous or newly discovered target is excluded until
-  identified and confirmed.
+- The user requested deletion of the old demo data without retaining an archive.
+  Identify the exact old demo/Dokku targets before deleting them. Ambiguous or
+  newly discovered targets remain excluded until identified and confirmed; this
+  is not permission to delete unrelated data or begin the eventual production stack.
 
 ## Slices, checks and undo
 

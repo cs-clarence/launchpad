@@ -182,6 +182,15 @@ rehearses a release into `.release-dry-run/` (also a manual, read-only GitHub wo
 
 ## Configuration and containers
 
+**Planned, not implemented:** the immutable-deployment design replaces the
+preview-specific domain/proxy settings with `LAUNCHPAD_APPS_DOMAIN` and
+`LAUNCHPAD_APPS_PROXY_URL`, plus private alias control/probe settings. It introduces
+a strict pre-model backup compatibility floor and new app/alias permissions.
+See [the design](design/deployment-modes.md) and
+[routing experiment](decisions/immutable-deployment-alias-routing.md).
+Do not configure these names against the current binary; implementation must
+update examples, tasks and this reference together after the experiment passes.
+
 Root `.env.local.example` configures the existing Dokku Compose setup. The
 controller's settings (PostgreSQL, authentication, email, API docs) are documented
 in `apps/controller/README.md` and `apps/controller/.env.local.example`; the worker's SSH settings to Dokku are in `apps/worker/README.md`. Do not bake
