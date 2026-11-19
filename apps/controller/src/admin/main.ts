@@ -251,14 +251,20 @@ program
                     ? `${item.unfinishedDeployments} unfinished deployment(s)`
                     : null,
                 item.heldDeployments ? `${item.heldDeployments} held deployment(s)` : null,
+                item.unsettledDeployments
+                    ? `${item.unsettledDeployments} deployment(s) with pending intent or lease fields`
+                    : null,
+                item.unsettledDeletions
+                    ? `${item.unsettledDeletions} deletion(s) with pending intent or lease fields`
+                    : null,
                 item.imageTags.length ? `images ${item.imageTags.join(", ")}` : null,
             ].filter(Boolean);
             console.log(`${item.appName} ${item.hostname} (${notes.join("; ")})`);
         }
         console.log(
             inventory.readyToRetire
-                ? `All ${inventory.items.length} recorded preview(s) are deleted: ready to retire.`
-                : `${inventory.blocking.length} of ${inventory.items.length} recorded preview(s) must be deleted or finished first. Nothing was changed; delete each by exact name through the guarded deletion path.`,
+                ? `All ${inventory.items.length} recorded preview(s) are deleted and their jobs are settled in the database. Remote settling and process fencing must still be verified before retirement.`
+                : `${inventory.blocking.length} of ${inventory.items.length} recorded preview(s) must be reviewed and settled first. Nothing was changed; use guarded deletion/reconciliation workflows by exact recorded identity. Pending intent and lease fields are never cleared by this inventory.`,
         );
         process.exitCode = inventory.readyToRetire ? 0 : 1;
     });

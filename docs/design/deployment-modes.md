@@ -61,6 +61,16 @@ modify resources outside it. Do not describe this as protection against that ope
 
 ## Database proposal
 
+Physical-name safety refinement from the implementation-plan review: new
+deployment, event and deletion tables are `immutable_deployment`,
+`app_deployment_event` and `deployment_deletion_operation`. The resource names
+`deployment`, `deployment_event` and `deletion_operation` below are logical
+shorthand, not permission to reuse legacy SQL names. Retire the old tables into
+`legacy_*` history without compatibility views. Cutover also fences old database
+logins/connections and stops/settles old remote work; names alone cannot fence a
+surviving controller or artifact collector. See the
+[implementation plan](../plans/immutable-deployment-model.md) for ordered gates.
+
 Add new forward-only migrations; never rewrite frozen migrations.
 
 | Table                 | Responsibility                                                                                                                                                                |
@@ -550,6 +560,9 @@ rows/events as read-only `legacy_*` history, outside the new worker/GC selection
 Migration refuses active/held legacy work; it never destroys remote apps or
 implicitly marks an unknown remote outcome resolved. Legacy `rollback_*` fields
 stay in historical records only; new deployments have no in-place rollback intent.
+Any non-null pending-step or lease field blocks retirement, even on a terminal
+row or when the lease timestamp is expired. The read-only inventory must apply
+the same predicates; it never clears these fields or proves remote settling.
 
 **New binaries refuse pre-model backups before restoring any files or schema.**
 Add the immutable-model migration to the backup compatibility floor. Older dumps
@@ -638,7 +651,8 @@ database before and after, and `compareDrift` applies the stuck-operation rule: 
 dispatched operation with a missing or expired lease is stuck. Not yet done in
 Slice 0: nothing. The read-only legacy-preview inventory is
 `launchpad-admin inventory-previews` (it lists what the database recorded and whether
-every preview is terminally deleted; exit 1 while not), and the parser now requires
+every preview is terminally deleted with no unfinished job, pending intent or
+leftover lease field; exit 1 while not), and the parser now requires
 the apps domain to be a different registrable domain from `LAUNCHPAD_BASE_URL`
 (enforced once the parser is wired in; nothing calls it at runtime yet). Slice 1
 (the router-only experiment) is complete: it was approved, run on disposable infrastructure, and its
