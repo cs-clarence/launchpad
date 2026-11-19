@@ -20,5 +20,19 @@
         "body": {
             "error": "unavailable"
         }
+    },
+    {
+        "control": "POST /v1/routes",
+        "status": 503,
+        "body": {
+            "error": "unavailable"
+        }
+    },
+    {
+        "control": "POST /v1/deployments",
+        "status": 503,
+        "body": {
+            "error": "unavailable"
+        }
     }
 ]

@@ -18,6 +18,7 @@ interface Resources {
     routerImage: string;
     apps: string[];
     volumes: string[];
+    helpers: string[];
 }
 
 // The same scenarios the accepted prototype experiment proved (docs/plans/routing-experiment-
@@ -37,6 +38,12 @@ export async function verifyProduction({
     command: (args: string[], allowFailure?: boolean) => Promise<Result>;
 }) {
     const appsDomain = "live.example.com";
+    // What the orchestrator (not the driver) observes, written beside the other evidence.
+    const notes: Record<string, unknown>[] = [];
+    const note = async (entry: Record<string, unknown>) => {
+        notes.push(entry);
+        await writeFile(`${dir}/orchestrator-trace.json`, JSON.stringify(notes, null, 2));
+    };
     const instanceId = randomUUID();
     const source = `${process.cwd()}/tooling/experiments/routing`;
     const aliasIds = Object.fromEntries(
@@ -208,6 +215,20 @@ export async function verifyProduction({
     const volume = await newVolume(`${r.router}-state`);
     current = { epoch: await init(volume, tokens[0]!), token: tokens[0]! };
     history.push(current);
+    // Initializing the same state again must fail and change nothing: the epoch below still works.
+    const again = await oneOff(
+        volume,
+        ["init", "--token-stdin"],
+        `${randomBytes(32).toString("hex")}\n`,
+    );
+    assert.notEqual(again.code, 0, "init must refuse to reinitialize existing state");
+    assert.ok(!/[0-9a-f]{64}/.test(`${again.out}${again.err}`), "init echoed a secret");
+    await note({
+        step: "init-twice",
+        firstEpoch: current.epoch,
+        secondExitCode: again.code,
+        secondStdout: again.out,
+    });
     await saveConfig();
     await startRouter(r.router, "router", volume);
     await phase("core");
@@ -237,11 +258,44 @@ export async function verifyProduction({
         0,
     );
     await docker(["rm", "-f", r.router]);
-    const stateless = await docker(
-        ["run", "--rm", "-v", `${volume}:/state`, ...env(), r.routerImage],
-        true,
+    // Detached and bounded: a router that wrongly started would run forever, so "still running after
+    // 15 seconds" is the failure, not a hang. The helper is named by the wrapper and removed below.
+    const statelessName = `${r.router}-stateless`;
+    r.helpers.push(statelessName);
+    await writeFile(`${dir}/resources.json`, JSON.stringify(r, null, 2));
+    await docker([
+        "run",
+        "-d",
+        "--name",
+        statelessName,
+        "-v",
+        `${volume}:/state`,
+        ...env(),
+        r.routerImage,
+    ]);
+    let stillRunning = true;
+    for (let i = 0; i < 30 && stillRunning; i++) {
+        stillRunning =
+            (await docker(["inspect", "--format", "{{.State.Running}}", statelessName])).out ===
+            "true";
+        if (stillRunning) await Bun.sleep(500);
+    }
+    const statelessLogs = await docker(["logs", statelessName], true);
+    const statelessCode = (
+        await docker(["inspect", "--format", "{{.State.ExitCode}}", statelessName])
+    ).out;
+    await docker(["rm", "-f", "-v", statelessName]);
+    assert.ok(!stillRunning, "a router without its state was still running: nothing refused it");
+    assert.notEqual(statelessCode, "0", "a router must not start without its state");
+    assert.ok(
+        `${statelessLogs.out}${statelessLogs.err}`.includes("unavailable"),
+        "it must say why",
     );
-    assert.notEqual(stateless.code, 0, "a router must not start without its state");
+    await note({
+        step: "start-without-state",
+        exitCode: Number(statelessCode),
+        diagnostic: `${statelessLogs.out}${statelessLogs.err}`.trim(),
+    });
     const listing = await docker([
         "run",
         "--rm",
@@ -350,7 +404,12 @@ export async function verifyProduction({
     await chmod(`${dir}/tls/server.key`, 0o600);
     await chmod(`${dir}/tls/ca.key`, 0o600);
     await own("tls/server.key");
-    await support(r.upstream, "tls-upstream", "tls-upstream", ["-v", `${dir}/tls:/tls:ro`]);
+    await support(r.upstream, "tls-upstream", "tls-upstream", [
+        "-v",
+        `${dir}/tls/server.key:/tls/server.key:ro`,
+        "-v",
+        `${dir}/tls/server.crt:/tls/server.crt:ro`,
+    ]);
     const volume3 = await newVolume(`${r.router}-state-3`);
     const tlsEnvUrl = "https://tls-upstream:8443";
     const tlsEpoch = await init(volume3, tokens[3]!, tlsEnvUrl);
@@ -364,7 +423,7 @@ export async function verifyProduction({
         volume3,
         tlsEnvUrl,
         ["-e", "LAUNCHPAD_ROUTER_UPSTREAM_CA_FILE=/tls/ca.crt"],
-        ["-v", `${dir}/tls:/tls:ro`],
+        ["-v", `${dir}/tls/ca.crt:/tls/ca.crt:ro`],
     );
     await phase("tls");
     current = afterLost;

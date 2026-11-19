@@ -3,8 +3,8 @@
         "control": "GET /v1/routes",
         "status": 200,
         "body": {
-            "instanceId": "ee9d589f-edc3-4420-b2bd-06de4de2acc3",
-            "epoch": "91c11e34-b896-4c56-a7eb-7a71ddcc47db",
+            "instanceId": "e7341207-daf0-4909-9b49-c8d6d4a73b98",
+            "epoch": "5de87b75-1262-4804-b946-02941fc52a78",
             "routes": [],
             "nextCursor": null
         }

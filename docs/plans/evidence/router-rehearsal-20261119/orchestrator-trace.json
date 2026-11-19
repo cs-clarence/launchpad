@@ -1,0 +1,13 @@
+[
+    {
+        "step": "init-twice",
+        "firstEpoch": "1d52cc5a-08fe-41b9-9aab-c8c8d5076849",
+        "secondExitCode": 1,
+        "secondStdout": ""
+    },
+    {
+        "step": "start-without-state",
+        "exitCode": 1,
+        "diagnostic": "error: Router state is unavailable; operator intervention is required."
+    }
+]

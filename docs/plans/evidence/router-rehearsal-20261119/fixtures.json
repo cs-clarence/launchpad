@@ -1,20 +1,20 @@
 [
     {
-        "deploymentId": "eb4c6cfc-87be-432a-8af4-4600d1d6422e",
-        "appName": "lp-test-76cf3c",
-        "hostname": "lp-test-76cf3c.live.example.com",
+        "deploymentId": "0414ad14-4ee6-462d-b064-25e96aeac9cd",
+        "appName": "lp-test-9da96b",
+        "hostname": "lp-test-9da96b.live.example.com",
         "spa": false,
-        "storageKey": "artifacts/a935ae8c0e30b21d56df0ea10b1a742f/d6d76097f7aef0f2cfe9119f408ba04b635a9b4356d87d8b744704e351d96e64.tar.gz",
-        "imageId": "sha256:29c886b4e2307c7479b1b863c84eff3a9b9f81cdf514a6149a220f7f52432197",
-        "imageTag": "launchpad/site:eb4c6cfc87be432a8af44600d1d6422e"
+        "storageKey": "artifacts/a935ae8c0e30b21d56df0ea10b1a742f/a5adbc3ff1679e9a3f7dd6ed90d2806b37e9c7bda24138cae684f147d8e932a3.tar.gz",
+        "imageId": "sha256:611bd95ae5349d520d53f5d047427db82c509e39926a5a862b6a6fe6ff85e661",
+        "imageTag": "launchpad/site:0414ad144ee6462db06425e96aeac9cd"
     },
     {
-        "deploymentId": "6abb53f1-55fd-4c34-a3ea-a80aa2967fcf",
-        "appName": "lp-test-b950aa",
-        "hostname": "lp-test-b950aa.live.example.com",
+        "deploymentId": "b97ea4a1-35e3-4665-9f43-b621aaa97e3a",
+        "appName": "lp-test-ec0464",
+        "hostname": "lp-test-ec0464.live.example.com",
         "spa": false,
-        "storageKey": "artifacts/a935ae8c0e30b21d56df0ea10b1a742f/8bc6f91f46012db2d9afe4917d75df94d76d6352488e3515b70544c998a96d26.tar.gz",
-        "imageId": "sha256:cf056e13632704f2ae7333cd313504203f5b91baf9f34292311a4a86e89b4121",
-        "imageTag": "launchpad/site:6abb53f155fd4c34a3eaa80aa2967fcf"
+        "storageKey": "artifacts/a935ae8c0e30b21d56df0ea10b1a742f/0fb3c91885abb2327424faa433aebb567b7a53bedbc175a980e4090b8194338b.tar.gz",
+        "imageId": "sha256:edfd8249be2ebbd92681c74ab3f5e074957ffd73cb045f7255d3cc827228d5a4",
+        "imageTag": "launchpad/site:b97ea4a135e346659f43b621aaa97e3a"
     }
 ]

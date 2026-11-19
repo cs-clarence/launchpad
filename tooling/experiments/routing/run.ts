@@ -381,6 +381,8 @@ try {
         if (!absent) failure ??= new Error("Network/image cleanup incomplete.");
     }
     for (const name of resources.helpers) {
+        // Named helpers started detached are removed here too (exact recorded names only).
+        await docker(["rm", "-f", "-v", name], true);
         const absent = confirmedAbsent(await docker(["inspect", name], true));
         cleanup.push(`helper ${name}: ${absent ? "absent" : "LEFTOVER OR UNVERIFIED"}`);
         if (!absent) failure ??= new Error("Helper cleanup incomplete.");

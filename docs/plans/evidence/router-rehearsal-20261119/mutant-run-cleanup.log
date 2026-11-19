@@ -1,0 +1,28 @@
+app lp-test-1cef5a: destroyed
+app lp-test-675dcb: destroyed
+fixture lp-test-1cef5a: containers and image tags absent
+fixture lp-test-675dcb: containers and image tags absent
+container lp-rehearsal-j6y4og-fault-proxy: absent
+container lp-rehearsal-j6y4og-router-tls: absent
+container lp-rehearsal-j6y4og-ingress: absent
+container lp-rehearsal-j6y4og-upstream: absent
+container lp-rehearsal-j6y4og-router: absent
+container lp-rehearsal-j6y4og-worker: absent
+container lp-rehearsal-j6y4og-dokku: absent
+volume lp-rehearsal-j6y4og-router-state: absent
+secret/state path credentials: absent
+secret/state path dokku: absent
+secret/state path router-state: absent
+secret/state path old-router-state: absent
+secret/state path tls: absent
+secret/state path router-config.json: absent
+secret/state path router-config.next: absent
+secret/state path rehearsal-config.json: absent
+secret/state path rehearsal-config.next: absent
+network lp-rehearsal-j6y4og-net: absent
+image lp-rehearsal-j6y4og/worker:test: absent
+image lp-rehearsal-j6y4og/router:test: absent
+helper lp-rehearsal-j6y4og-helper-1: absent
+helper lp-rehearsal-j6y4og-helper-2: absent
+helper lp-rehearsal-j6y4og-helper-3: absent
+helper lp-rehearsal-j6y4og-helper-4: absent

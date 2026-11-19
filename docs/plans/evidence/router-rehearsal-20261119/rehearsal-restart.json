@@ -3,30 +3,30 @@
         "control": "GET /v1/routes",
         "status": 200,
         "body": {
-            "instanceId": "ee9d589f-edc3-4420-b2bd-06de4de2acc3",
-            "epoch": "03ee3167-b866-46de-a3df-0cd25f9e099e",
+            "instanceId": "e7341207-daf0-4909-9b49-c8d6d4a73b98",
+            "epoch": "1d52cc5a-08fe-41b9-9aab-c8c8d5076849",
             "routes": [
                 {
-                    "aliasId": "6b680f54-3ba4-4e4b-83a0-45e36c0ab28c",
+                    "aliasId": "ee4a2697-1240-4aff-b1dd-55eb2e5bc342",
                     "hostname": "view-one.live.example.com",
-                    "operationId": "d850ac7c-926c-463c-89d1-744db6a91ee8",
+                    "operationId": "d0aff746-97e9-4d84-b6b9-6eb30d241ba2",
                     "generation": "9007199254740995",
                     "target": {
-                        "deploymentId": "6abb53f1-55fd-4c34-a3ea-a80aa2967fcf",
-                        "hostname": "lp-test-b950aa.live.example.com"
+                        "deploymentId": "b97ea4a1-35e3-4665-9f43-b621aaa97e3a",
+                        "hostname": "lp-test-ec0464.live.example.com"
                     }
                 },
                 {
-                    "aliasId": "b3c57720-d85b-4226-9023-fa5a49f562ff",
+                    "aliasId": "30d88f8e-70c5-48f5-b23f-1e299dab7e82",
                     "hostname": "view-two.live.example.com",
-                    "operationId": "f9ce69a2-138d-47ab-93ef-5f1c21508f98",
+                    "operationId": "d395b883-5214-4925-b9dd-c25c2e4f0499",
                     "generation": "2",
                     "target": null
                 },
                 {
-                    "aliasId": "b9ef60ce-7bf2-44da-98bb-dc3beff6b423",
+                    "aliasId": "4e352536-f30e-4517-a3a6-0154a71b7966",
                     "hostname": "view-unbound.live.example.com",
-                    "operationId": "be9dd3f1-2fa0-4beb-ab64-39a505de339b",
+                    "operationId": "cb02f8b7-d7d0-4812-9298-40f847374730",
                     "generation": "8",
                     "target": null
                 }
@@ -37,7 +37,7 @@
     {
         "probe": "view-one.live.example.com",
         "status": 200,
-        "body": "fixture:6abb53f1-55fd-4c34-a3ea-a80aa2967fcf"
+        "body": "fixture:b97ea4a1-35e3-4665-9f43-b621aaa97e3a"
     },
     {
         "probe": "view-two.live.example.com",

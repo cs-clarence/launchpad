@@ -1,0 +1,24 @@
+AssertionError [ERR_ASSERTION]: core: 119 |         "stale epoch": headersFor({ ...current, epoch: randomUUID() }),
+120 |     };
+121 |     const bodies = new Set<string>();
+122 |     for (const headers of Object.values(bad)) {
+123 |         const response = await fetch(`${ROUTER}/v1/routes`, { headers });
+124 |         assert.equal(response.status, 401);
+                     ^
+AssertionError: Expected values to be strictly equal:
+
+200 !== 401
+
+ generatedMessage: true,
+     actual: 200,
+   expected: 401,
+   operator: "strictEqual",
+       diff: "simple",
+       code: "ERR_ASSERTION"
+
+      at /experiment/rehearsal-driver.ts:124:16
+
+Bun v1.4.4 (Linux x64)
+
+
+1 !== 0

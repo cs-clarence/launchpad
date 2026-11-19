@@ -119,10 +119,12 @@ if (phase === "core") {
         "stale epoch": headersFor({ ...current, epoch: randomUUID() }),
     };
     const bodies = new Set<string>();
-    for (const headers of Object.values(bad)) {
+    for (const [name, headers] of Object.entries(bad)) {
         const response = await fetch(`${ROUTER}/v1/routes`, { headers });
+        const text = await response.text();
+        await trace({ control: `GET /v1/routes (${name})`, status: response.status, body: text });
         assert.equal(response.status, 401);
-        bodies.add(await response.text());
+        bodies.add(text);
     }
     assert.deepEqual([...bodies], ['{"error":"unauthorized"}']);
 
@@ -214,13 +216,16 @@ if (phase === "core") {
         headers: { ...headersFor(current), "content-type": "text/plain" },
         body: "{}",
     });
+    await trace({ control: "POST /v1/routes (content-type text/plain)", status: wrongType.status });
     assert.equal(wrongType.status, 400);
     for (const path of ["/v1/rotate", "/v1/init", "/v1/held", "/v1/release", "/v1/write"]) {
         await control("POST", path, {}, 404);
     }
     await control("DELETE", "/v1/routes", undefined, 405);
     assert.deepEqual(await routes(), await routes());
-    assert.equal(await fetch("http://router:8080/healthz").then((r) => r.status), 404);
+    const dataHealthz = await fetch("http://router:8080/healthz").then((r) => r.status);
+    await trace({ probe: "data plane /healthz (no such route)", status: dataHealthz });
+    assert.equal(dataHealthz, 404);
 
     // Hostile request forms straight at the data plane never reach another app.
     const host = (value: string, extra = "") =>
@@ -228,22 +233,22 @@ if (phase === "core") {
     const hostile: Record<string, [string, number[]]> = {
         "duplicate Host": [
             `GET / HTTP/1.1\r\nHost: ${ONE}\r\nHost: evil.example.org\r\nConnection: close\r\n\r\n`,
-            [0, 400, 404],
+            [400, 404],
         ],
         "absolute-form to another host": [
             `GET http://evil.example.org/ HTTP/1.1\r\nHost: ${UNKNOWN}\r\nConnection: close\r\n\r\n`,
-            [0, 400, 404],
+            [400, 404],
         ],
-        "bracketed IPv6": [host("[::1]"), [0, 400, 404]],
-        userinfo: [host(`user@${ONE}`), [0, 400, 404]],
-        "trailing dot": [host(`${ONE}.`), [0, 400, 404]],
+        "bracketed IPv6": [host("[::1]"), [400, 404]],
+        userinfo: [host(`user@${ONE}`), [400, 404]],
+        "trailing dot": [host(`${ONE}.`), [400, 404]],
         POST: [
             `POST / HTTP/1.1\r\nHost: ${ONE}\r\nContent-Length: 2\r\nConnection: close\r\n\r\nhi`,
-            [0, 400, 405, 411, 413],
+            [400, 405, 411, 413],
         ],
         "chunked GET": [
             `GET / HTTP/1.1\r\nHost: ${ONE}\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n0\r\n\r\n`,
-            [0, 400, 501],
+            [400, 501],
         ],
     };
     for (const [name, [request, allowed]] of Object.entries(hostile)) {
@@ -253,6 +258,8 @@ if (phase === "core") {
         if (name !== "duplicate Host")
             assert.ok(!result.body.includes("fixture:"), `${name} served content`);
     }
+    // None of that disturbed the data plane.
+    await probe(ONE, 200, `fixture:${B}`);
     await saveRoutes("routes-core", await routes());
 } else if (phase === "restart") {
     // Acknowledged routes, tombstones, counters and the epoch are exactly what they were.
@@ -280,6 +287,8 @@ if (phase === "core") {
         assert.ok(!text.includes("fixture:"));
     }
     await control("GET", "/v1/routes", undefined, 503);
+    await control("POST", "/v1/routes", write(ONE, "999999999999999990", A), 503);
+    await control("POST", "/v1/deployments", { deploymentId: A, hostname: DA }, 503);
     const health = await fetch(`${ROUTER}/healthz`);
     assert.equal(health.status, 503);
     assert.deepEqual(await health.json(), { status: "unavailable" });
