@@ -126,10 +126,8 @@
       "name": "@launchpad-kit/worker",
       "version": "0.0.0",
       "dependencies": {
-        "@launchpad-kit/database": "workspace:^",
         "@launchpad-kit/dokku": "workspace:^",
         "@launchpad-kit/services": "workspace:^",
-        "kysely": "catalog:",
         "tar": "catalog:",
       },
       "devDependencies": {

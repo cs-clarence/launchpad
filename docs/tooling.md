@@ -72,12 +72,8 @@ Rules that keep the graph correct:
   synthetic user), on disposable PostgreSQL only. It backs up, migrates,
   restarts, checks schema status and restores a fresh database. It is also in
   `test:integration`; no Dokku is touched. The complete operator procedure and
-  isolated-host rehearsal are in [restore](restore.md), with
+  restore procedure are in [restore](restore.md), with
   [installation](install.md), [upgrade](upgrade.md) and [routing](access.md).
-  The separate `omni -i run test:restore:live -p @launchpad-kit/controller`
-  uses only the approved disposable Dokku and PostgreSQL, guarded `lp-test-`
-  names, and a test-only database constraint; see [the restore drill](restore.md).
-  It is opt-in and is not a CI job.
 - **Retirement inventory.** `omni -i run test:inventory -p @launchpad-kit/controller`
   runs only the read-only legacy inventory integration suite on the disposable
   PostgreSQL, with an isolated database per case. It starts no controller or
@@ -264,7 +260,7 @@ carry: mount one and set `LAUNCHPAD_PG_DUMP` / `LAUNCHPAD_PG_RESTORE`.
 `omni -i run test:images -p @launchpad-kit/tooling` builds both, checks them (non-root, no secret in a
 layer, no `.env`, `.git`, key or source file, the expected files present), runs `migrate` from the
 controller image against the disposable PostgreSQL, starts the controller and waits for `/api/health`
-and a healthy healthcheck, and starts the worker (deployments off). It also builds the router image and
+and a healthy healthcheck, and starts the idle worker (it logs `legacy-runtime-removed`). It also builds the router image and
 checks it end to end: unprivileged, no secret, no published port, `init` from stdin (printing only the
 epoch and refusing to reinitialize), healthy, 401 on the control plane and a fixed 404 on the data plane,
 a second router refused by the lock, a graceful stop, and `rotate` after it. `init`, `rotate` and

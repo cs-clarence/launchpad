@@ -82,8 +82,7 @@ compatible. A change to a schema that the REST API uses follows the REST rule to
 **MCP tool list** (`apps/mcp/src/server.ts`). Tool names, their input schemas and the shape
 of their results are the interface an agent depends on. Breaking: renaming or removing a
 tool, removing or retyping an input or a result field, making an input required, or changing
-what a tool is allowed to do (the read-only set and the two mutating tools, `deploy` and
-`delete_preview`, stay opt-in). New tools and new optional inputs are compatible. Any new
+what a tool is allowed to do (the tool set is read-only; any mutating tool stays opt-in). New tools and new optional inputs are compatible. Any new
 mutating tool is a **security-relevant** change: it needs its own review and release note.
 
 **CLI** (`launchpad`). Command names, flags, exit codes and the documented output of

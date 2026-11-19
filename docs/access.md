@@ -1,4 +1,4 @@
-# Keep management private while routing previews
+# Keep management private from deployed sites
 
 For an instance operator deciding which network can reach management versus
 previews. Launchpad does not configure a tunnel, reverse proxy, DNS or TLS.
@@ -9,7 +9,8 @@ ingress and threat review are [follow-up work](plans/production-compose-follow-u
    `https://control.example.internal`, and a preview domain on a **different
    registrable domain** from management,
    e.g. `previews.example.net`. Set `LAUNCHPAD_BASE_URL` to the exact management
-   origin and `LAUNCHPAD_PREVIEW_DOMAIN` to the preview domain. The controller
+   origin. (The preview domain setting was removed with the preview runtime; the app
+   domain, `LAUNCHPAD_APPS_DOMAIN`, arrives with the immutable model.) The controller
    must not share a cookie origin with untrusted preview content.
 2. Bind the controller on a private address. Terminate HTTPS at a trusted
    ingress and restrict access with a VPN or equivalent identity-aware gateway.
@@ -32,13 +33,7 @@ ingress and threat review are [follow-up work](plans/production-compose-follow-u
    Launchpad authentication, and a tunnel alone is not an authorization
    boundary. This is architecture guidance, not an implemented template.
 5. Check from an allowed device that management sign-in works over HTTPS and
-   from a disallowed device that it cannot reach the controller. Check a test
-   preview resolves through the preview hostname, not the management origin.
-   Verify the worker can reach the Dokku SSH endpoint and its preview proxy
-   (`LAUNCHPAD_PREVIEW_PROXY_URL`) _privately_. Do not put SSH credentials in
-   the controller or client.
+   from a disallowed device that it cannot reach the controller. Do not put SSH credentials in the controller or client.
 
 If sign-in rejects an origin, correct the browser origin and
-`LAUNCHPAD_BASE_URL` instead of loosening the origin guard. If the status
-reports worker/controller switches disagree, return both to off while
-diagnosing. See [installation](install.md) and [onboarding](onboarding.md).
+`LAUNCHPAD_BASE_URL` instead of loosening the origin guard. See [installation](install.md) and [onboarding](onboarding.md).

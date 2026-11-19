@@ -1,7 +1,8 @@
-import type { ArchiveLimits, DeployPorts } from "@launchpad-kit/services";
+import type { ArchiveLimits } from "@launchpad-kit/services";
 import type { DokkuClient } from "@launchpad-kit/dokku";
 import { buildImage } from "./build";
 import type { Docker } from "./docker";
+import type { DeployPorts } from "./types";
 import { probe, type ProbeConfig } from "./verify";
 
 export interface PortsDeps {

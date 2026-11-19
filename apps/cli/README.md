@@ -10,13 +10,6 @@ launchpad whoami
 launchpad profile list | use <name>
 launchpad org list | use <slug-or-id>
 launchpad projects list
-launchpad deploy <directory|archive.tar.gz> [--project <slug|id>] [--name <name>] [--spa] [--ttl <duration>] [--no-wait] [--timeout <seconds>]
-launchpad previews list [--project <slug|id>] | get <previewId>
-launchpad previews extend <previewId> --ttl <duration>
-launchpad previews delete <previewId> --yes
-launchpad previews deletion <previewId>
-launchpad deployments status <deploymentId> [--organization <slug|id>]
-launchpad deployments events <deploymentId> [--after <seq>] [--organization <slug|id>]
 ```
 
 Global options: `--json` (machine-readable output; errors become `{"error":{"code","message"}}` on stderr)
@@ -36,56 +29,21 @@ and `--profile <name>`.
   the key's organization.
 - **Exit codes:** 0 success, 1 other failure, 2 usage, 3 not logged in or the key is rejected (401/403),
   4 not found, 5 controller unreachable, timed out or unexpected answer, 6 credential file or profile unusable,
-  7 the deployment failed, was cancelled or needs an administrator, 8 `deploy` was still running when `--timeout`
-  ran out (it is not cancelled).
+  7 and 8 are reserved for the app deploy command (not yet present).
 
-## Deploying
+## Workspace file
 
-`deploy`, `previews` and `deployments` read the nearest `launchpad.json` from their
-working directory upward.
-The file requires `organization` (id or slug) and `project` (id or slug), with
-optional `profile` and preview `name`. `--profile`, `--project` and `--name` override
-file values; without file defaults, project and name must be supplied as flags. The
-file's `name` goes with the file's project: naming another with `--project` needs `--name`.
-A file owned by another user is ignored.
-Files are strictly validated, bounded to 16 KiB and must not be symlinks.
-Organization selection from the file requires `organization:read`; it is checked
-against the key's organizations and never saved. With no file, existing
-profile/environment behavior is unchanged. This resolver is shared with the
-[separate MCP app](../mcp/README.md).
-Deployment status/events accept `--organization` to override the file selection.
-Queued/timeout follow-up commands include the workspace organization and selected
-profile when present, so they do not depend on the original working directory.
+`launchpad.json`, found by walking up from the working directory, selects the organization and project.
+It requires `organization` (id or slug) and `project` (id or slug), with an optional `profile`.
+`--profile` and `--project` override file values. A file owned by another user is ignored. Files are strictly
+validated, bounded to 16 KiB and must not be symlinks. Organization selection from the file requires
+`organization:read`; it is checked against the key's organizations and never saved. This resolver is shared
+with the [separate MCP app](../mcp/README.md).
 
-`launchpad deploy ./dist --project site --name review` packs the directory, uploads it, finds or creates the
-preview named `review` in that project, queues a deployment and follows it until it is live (`--no-wait`
-returns once it is queued). Progress goes to stderr; stdout is the result, a single JSON document with `--json`.
+Preview deployment was removed (`deploy`, `previews` and `deployments` no longer exist, and the controller
+has no such endpoints); the app deploy command arrives with the immutable deployment model. The old
+`name` field of `launchpad.json` is no longer accepted.
 
-- **The directory is checked before anything is sent:** it must have an `index.html` at its top level, and
-  links, special files, `.env*`, `.git`, private keys and similar are refused (remove them; nothing is skipped
-  silently). The controller validates the archive again and is the authority. An existing `.tar.gz` is sent as
-  it is. The limits (50 MiB, 5000 files, 16 levels) match the controller's defaults.
-- **Safe to repeat:** a request that got no answer is retried (up to three times) with the same idempotency key,
-  so the controller returns the first result instead of deploying twice. A preview takes one deployment at a
-  time: deploying while one is unfinished is a conflict (exit 1, code `conflict`).
-- **The key needs** `preview:read`, `preview:create` and `preview:deploy` (a project-limited key reaches only its
-  projects), plus `project:read` only to name a project by slug (a project id needs no lookup). Previews and deployments are available only when
-  the controller has deployments turned on.
-- **Failures** carry fixed, safe text (for example, the new release did not become ready and the previous one
-  was restored). `reconciliation-needed` means an administrator must check the host, then record the outcome in the dashboard (the preview page) or with `POST …/deployments/{id}/resolution`; until then the preview takes no new deployment.
-- **Lifetimes.** A new preview expires after the server's default (7 days unless set), or after
-  `deploy --ttl 24h` (refused if longer than the server's maximum; `none` where the operator allows
-  previews that never expire); `--ttl` is not applied to a preview that already exists (`--json` reports
-  `ttlApplied: false`), and a value that is not a duration is refused before anything is uploaded. `previews list` and `get` show when each expires (`never`, or its state if it is going away).
-  `previews extend <id> --ttl 7d` gives more time, never less (a longer request is capped at the
-  maximum from now), and a preview that never expired gets an expiry; `--ttl none` removes it where
-  allowed. It needs `preview:deploy`. Running it again after a timeout adds the time again. A deployment to a preview that is being deleted stops before
-  uploading, because its name is free again only once it is gone.
-- **Deleting** needs `preview:delete` and the controller and worker to have deployments and the lifecycle on. `previews delete
-  <id> --yes` cannot be undone; it only queues the deletion (the worker carries it out), so follow it with
-  `previews deletion <id>`, which also shows a deletion expiry started. A deletion in
-  `reconciliation-needed` needs an administrator (a session, never a key).
-- **Stored archives** are removed by the worker's lifecycle after the retention (off by default), and each organization may hold `LAUNCHPAD_MAX_ARTIFACTS` (20 by default); `deploy` settles the preview before it uploads so a deploy that cannot start does not spend one. Uploads are refused while deployments are off, and at most 2 per organization run at once.
 - Output and errors hide anything shaped like a key and strip terminal escape
   sequences/control bytes. Serialized JSON stays valid.
 - If the credential store reports `store-busy` (exit 6), wait for other commands

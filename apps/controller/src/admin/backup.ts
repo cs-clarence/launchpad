@@ -4,7 +4,7 @@ import { createReadStream, createWriteStream, promises as fs } from "node:fs";
 import path from "node:path";
 import { pipeline } from "node:stream/promises";
 import { type Database, migrationStatus } from "@launchpad-kit/database";
-import { resolveArtifactPath, WORKER_LIVE_SECONDS } from "@launchpad-kit/services";
+import { resolveArtifactPath } from "@launchpad-kit/services";
 import { type Kysely, sql } from "kysely";
 
 export const BACKUP_FORMAT = 1;
@@ -34,9 +34,6 @@ export interface BackupOptions {
     databaseUrl: string;
     dataDir: string;
     dest: string;
-    // The operator's confirmation that every worker is stopped and the lifecycle is not running.
-    workersStopped: boolean;
-    lifecycleEnabled: boolean;
     version: string;
     // The dump program: `pg_dump` unless named (the version must not be older than the server).
     pgDump?: string;
@@ -132,33 +129,10 @@ async function dumpDatabase(options: BackupOptions, snapshot: string, file: stri
 //
 // One consistent view of both halves: the live artifact rows are read inside the same exported
 // snapshot the dump uses, and the files are copied for exactly those rows. An upload made
-// meanwhile is only an extra file that is not copied; the only thing that removes an archive is
-// the lifecycle's collection, which is why this refuses to run beside it.
+// meanwhile is only an extra file that is not copied. Nothing collects archives while the previews
+// are removed; the app model's collection will have to be stopped before a backup.
 export async function createBackup(options: BackupOptions): Promise<BackupManifest> {
     const { db } = options;
-    if (!options.workersStopped) {
-        // Before the lifecycle existed no worker collected anything, but one that is running
-        // still counts: only a column that exists is used to narrow the question.
-        let live = 0;
-        if (await columnExists(db, "worker_heartbeat", "last_seen_at")) {
-            const onlyLifecycle = (await columnExists(db, "worker_heartbeat", "lifecycle_enabled"))
-                ? sql`and lifecycle_enabled`
-                : sql``;
-            const { rows } = await sql<{ n: string }>`
-                select count(*) as n from worker_heartbeat
-                where last_seen_at > now() - ${WORKER_LIVE_SECONDS} * interval '1 second' ${onlyLifecycle}`.execute(
-                db,
-            );
-            live = Number(rows[0]?.n ?? 0);
-        }
-        if (options.lifecycleEnabled || live > 0) {
-            throw new BackupError(
-                "The lifecycle is on (or a worker with it on is running): its collection can remove an archive " +
-                    "while the backup copies. Stop the workers and the lifecycle, then confirm with " +
-                    "--i-have-stopped-the-workers.",
-            );
-        }
-    }
     // A database that is BEHIND this build can be backed up (that is what comes before migrating);
     // one a newer build already migrated cannot: this build would not know what it dumped.
     const known = await migrationStatus(db);

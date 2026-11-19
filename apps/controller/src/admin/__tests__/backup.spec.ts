@@ -6,7 +6,6 @@ import { migrateToLatest } from "@launchpad-kit/database";
 import { createTestDatabase } from "@launchpad-kit/database/testing";
 import {
     createOrganization,
-    recordHeartbeat,
     resolveArtifactPath,
     uploadArtifact,
     type Principal,
@@ -105,8 +104,6 @@ const options = (dest: string, extra: Partial<Parameters<typeof createBackup>[0]
     databaseUrl: testDb.url,
     dataDir,
     dest,
-    workersStopped: false,
-    lifecycleEnabled: false,
     version: "0.0.0-test",
     pgDump: plainDump,
     ...extra,
@@ -218,26 +215,6 @@ describe("createBackup", () => {
         await createBackup(options(dest));
         await expect(createBackup(options(dest))).rejects.toThrow(/already exists/);
         expect(await verifyBackup(dest)).toEqual([]);
-    });
-
-    it("refuses beside the lifecycle or a live lifecycle worker unless the workers are confirmed stopped", async () => {
-        await expect(createBackup(options(fresh(), { lifecycleEnabled: true }))).rejects.toThrow(
-            /lifecycle is on/,
-        );
-        await recordHeartbeat(testDb.db, {
-            workerId: "w1",
-            version: "t",
-            lifecycleEnabled: true,
-            started: true,
-        });
-        try {
-            await expect(createBackup(options(fresh()))).rejects.toThrow(BackupError);
-            await expect(
-                createBackup(options(fresh(), { workersStopped: true, lifecycleEnabled: true })),
-            ).resolves.toBeTruthy();
-        } finally {
-            await testDb.db.deleteFrom("worker_heartbeat").execute();
-        }
     });
 
     it("fails and leaves nothing when a live archive's file is missing or altered", async () => {

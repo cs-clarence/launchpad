@@ -9,7 +9,6 @@ dependencies:
     - "@launchpad-kit/tsconfig"
     - "@launchpad-kit/vite-config"
     - "@launchpad-kit/vitest-config"
-    - "@launchpad-kit/database"
     - "@launchpad-kit/dokku"
     - "@launchpad-kit/services"
 
@@ -35,12 +34,6 @@ tasks:
 
   build:
     enabled: true
-    cache:
-      key:
-        files:
-          append:
-            - "@workspace/packages/database/scripts/**/*"
-            - "@workspace/packages/database/src/migrations/**/*"
 
   publish:
     enabled: false

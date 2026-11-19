@@ -1,13 +1,12 @@
 # Launchpad
 
-Custom Dokku image with the `http-auth` plugin for local preview deployments.
+Custom Dokku image with the `http-auth` plugin for local deployments.
 
 The controller has operator login, organizations, members, projects, optional
-email invitations and recovery, and an OpenAPI reference. With deployments on, a worker
-deploys built static sites (uploaded as archives from the CLI, the dashboard or the MCP
-server) to previews on Dokku; with the lifecycle on, previews expire, are deleted and
-cleaned up (they can be extended and deleted by hand either way, deletion needing the lifecycle). Both are **off by default**, and nothing is published or
-deployed from this repository's CI. Backup and restore, quotas and a production Compose
+email invitations and recovery, and an OpenAPI reference. The earlier preview deployment runtime was
+removed; the worker idles until the immutable app model arrives (see
+[the plan](docs/plans/immutable-deployment-model.md)). Nothing is published or deployed from this
+repository's CI. Backup and restore, quotas and a production Compose
 setup are still to come (see [the plan](docs/plans/application.md)). See
 [Controller](#controller) below, [the controller README](apps/controller/README.md) and
 [the worker README](apps/worker/README.md). The Docker commands in the earlier sections
@@ -115,9 +114,9 @@ that talks to the controller. The workspace follows Pureform's Bun/Omni layout:
 ```text
 apps/
   controller/      TanStack Start + React, mounted Elysia 2 RC API, Skeleton 5
-  worker/          Deployment worker: builds and loads previews, expiry, deletion and cleanup
-  cli/             Bun CLI: login, deploy, previews (extend, delete), deployments, profiles, orgs, projects
-  mcp/             Local stdio MCP server (read tools; deploy and delete only when enabled at startup)
+  worker/          Idle worker (the preview runtime was removed; the app worker returns later)
+  cli/             Bun CLI: login, profiles, orgs, projects
+  mcp/             Local stdio MCP server (read-only tools)
 packages/
   auth/            Better Auth configuration, operator setup and recovery, mailer
   contracts/       Versioned API shapes (zod only, browser-safe)
@@ -151,8 +150,7 @@ Build generates the ignored TanStack route tree and production Bun output; it
 does not start the app. The controller Dockerfile is in
 `apps/controller/Dockerfile` (and the worker's in `apps/worker/`), separate from the Dokku image in `containers/dokku/` (`containers/` holds images of external software).
 
-Authentication, organizations, projects, email flows, uploads, deployments, expiry and
-deletion are implemented and tested against a disposable PostgreSQL (and, opt-in, a disposable
+Authentication, organizations, projects and email flows are implemented and tested against a disposable PostgreSQL (and, opt-in, a disposable
 Dokku); see the controller and worker READMEs for configuration and first run. No controller,
 worker or PostgreSQL service has been added to Compose yet.
 

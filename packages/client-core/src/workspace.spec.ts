@@ -18,7 +18,7 @@ beforeEach(async () => {
 afterEach(async () => {
     await fs.rm(dir, { recursive: true, force: true });
 });
-const config = { organization: "one", project: "site", name: "review" };
+const config = { organization: "one", project: "site" };
 const save = (where: string, value: unknown) =>
     fs.writeFile(path.join(where, "launchpad.json"), JSON.stringify(value));
 
@@ -29,7 +29,7 @@ describe("workspace context rules", () => {
         expect(ownedByCurrentUser(1000, undefined)).toBe(true);
     });
 
-    it("orders the profile: the call, then the file, then the startup default; and keeps the file's name to its own project", async () => {
+    it("orders the profile: the call, then the file, then the startup default; and lets a project named in the call win over the file's", async () => {
         const ctx = createContext(
             { LAUNCHPAD_CONFIG_DIR: path.join(dir, "credentials") },
             { fetch: orgsFetch },
@@ -49,18 +49,16 @@ describe("workspace context rules", () => {
             project: "site",
             organization: "one",
             profile: "from-file",
-            name: "review",
         });
         expect((await workspaceContext(ctx, { ...at, profile: "from-call" })).profile).toBe(
             "from-call",
         );
         expect((await workspaceContext(ctx, at)).profile).toBe("from-file");
-        await save(dir, { project: "site", organization: "one", name: "review" });
+        await save(dir, { project: "site", organization: "one" });
         expect((await workspaceContext(ctx, at)).profile).toBe("startup");
-        // Naming another project drops the file's preview name; the same project keeps it.
-        expect((await workspaceContext(ctx, at)).name).toBe("review");
-        expect((await workspaceContext(ctx, { ...at, project: "site" })).name).toBe("review");
-        expect((await workspaceContext(ctx, { ...at, project: "other" })).name).toBeUndefined();
+        // A project named in the call wins over the file's.
+        expect((await workspaceContext(ctx, at)).project).toBe("site");
+        expect((await workspaceContext(ctx, { ...at, project: "other" })).project).toBe("other");
     });
 });
 
@@ -158,7 +156,7 @@ describe("workspace context", () => {
         expect(one.context.env.LAUNCHPAD_ORG).toBe("org-one");
         expect(two.context.env.LAUNCHPAD_ORG).toBe("org-two");
         expect(two.project).toBe("other");
-        expect(one.name).toBe("review");
+        expect(one.project).toBe("site");
         expect(ctx.env).toEqual(env);
         await expect(
             workspaceContext(ctx, { workingDir: dir, organization: "hidden" }),

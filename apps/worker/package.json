@@ -5,16 +5,14 @@
     "description": "The privileged deployment worker: builds images and talks to Dokku",
     "type": "module",
     "scripts": {
-        "build": "bun build src/index.ts --target=bun --outdir=dist && bun ../../packages/database/scripts/bundle-migrations.mjs dist/migrations",
+        "build": "bun build src/index.ts --target=bun --outdir=dist",
         "check:types": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.node.json",
         "test:unit": "bun --bun vitest run --config vitest.config.unit.ts",
         "test:live": "bun --bun vitest run --config vitest.config.live.ts"
     },
     "dependencies": {
-        "@launchpad-kit/database": "workspace:^",
         "@launchpad-kit/dokku": "workspace:^",
         "@launchpad-kit/services": "workspace:^",
-        "kysely": "catalog:",
         "tar": "catalog:"
     },
     "devDependencies": {

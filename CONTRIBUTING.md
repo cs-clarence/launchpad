@@ -71,8 +71,7 @@ exercise the image. The image and packaged-client checks are `omni -i run test:i
 -p @launchpad-kit/tooling` (Docker, disposable database) and `omni -i run
 test:packages -p @launchpad-kit/tooling` (network, Node and Bun). These build,
 inspect and exercise local artifacts, never publish them. The operator
-[restore drill](docs/restore.md) separates the no-Dokku automated checks from
-the opt-in isolated-host rehearsal (`test:restore:live`, guarded and never in CI).
+[restore drill](docs/restore.md) is the no-Dokku automated check.
 
 The alias router's integration suite likewise opens loopback listeners (and needs `openssl`) but no
 database: `omni -i run test:integration -p @launchpad-kit/alias-router`.

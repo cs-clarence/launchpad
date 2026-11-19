@@ -7,7 +7,6 @@ import {
     setupFirstOperator,
 } from "@launchpad-kit/auth";
 import { createDatabase, migrateToLatest, migrationStatus } from "@launchpad-kit/database";
-import { lifecycleConfigFromEnv } from "@launchpad-kit/services";
 import { readFileSync, statSync } from "node:fs";
 import path from "node:path";
 import { createDokkuClient } from "@launchpad-kit/dokku";
@@ -110,19 +109,13 @@ program
         "Write a backup (database dump, stored archives, manifest with checksums) to a new directory",
     )
     .argument("<dir>", "a directory that does not exist yet")
-    .option(
-        "--i-have-stopped-the-workers",
-        "confirm every worker and the lifecycle are stopped (required while the lifecycle is on)",
-    )
-    .action(async (dir, options) => {
+    .action(async (dir) => {
         const manifest = await withDatabase((db) =>
             createBackup({
                 db,
                 databaseUrl: process.env.DATABASE_URL!,
                 dataDir: path.resolve(process.env.LAUNCHPAD_DATA_DIR ?? ".data/controller"),
                 dest: dir,
-                workersStopped: options.iHaveStoppedTheWorkers === true,
-                lifecycleEnabled: lifecycleConfigFromEnv(process.env).enabled,
                 version:
                     process.env.LAUNCHPAD_VERSION || process.env.npm_package_version || "unknown",
                 pgDump: process.env.LAUNCHPAD_PG_DUMP,
@@ -155,7 +148,7 @@ program
     .argument("<dir>", "the backup directory")
     .option(
         "--i-have-stopped-the-workers",
-        "confirm the lifecycle and deployments are off and every worker has stopped (required)",
+        "confirm every writer is stopped and the Dokku operations they dispatched have settled (required)",
     )
     .option(
         "--replace <host:port/database>",
@@ -182,8 +175,8 @@ program
             );
         }
         console.log(
-            "Next: if migrations are pending run migrate, then run check-restore and follow docs/restore.md: " +
-                "bring deployments back on first, with the lifecycle still off.",
+            "Next: if migrations are pending run migrate, then run check-restore and follow docs/restore.md, " +
+                "then start the controller.",
         );
     });
 

@@ -23,7 +23,6 @@ const api = createApi({
     db,
     origin: config.origin,
     invitations,
-    artifacts: { dataDir: "/nonexistent-launchpad-test" },
 });
 
 describe("controller HTTP adapter", () => {

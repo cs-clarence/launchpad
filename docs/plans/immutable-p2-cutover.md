@@ -174,3 +174,22 @@ Each PR: `omni -i run check test build`; integration, image, upgrade and package
 touched; independent read-only review before each push; CodeRabbit and CI before merge. Undo for
 P2a and P2c is a revert. Undo for P2b after it has run anywhere real is the matched backup and
 previous binary. No step starts production services, publishes, or touches DNS or connectors.
+
+## P2a as built
+
+Deviations from the plan above, and the client-facing breaks for release notes.
+
+- The status contract is reduced to `generatedAt`, `dependencies.database`, `artifacts` and
+  `warnings`; it carries no migration state.
+- `apps/worker/src/config.ts` is deleted, and the worker no longer depends on the database package.
+  The worker's port types moved to `apps/worker/src/types.ts`.
+- Backup lost its worker/lifecycle refusal and the `--i-have-stopped-the-workers` flag; restore keeps
+  the flag with new wording and no longer checks worker heartbeats.
+- `launchpad.json` no longer accepts `name`. CLI exit codes 7 and 8 are reserved for the app deploy
+  command.
+
+Breaking, for the release notes: the `preview:*` key scopes, the `/previews`, `/deployments`,
+`/deletions` and `/artifacts` endpoints, the SDK `artifacts`, `previews`, `deletions` and
+`deployments` clients and `uploadTimeoutMs`, the CLI `deploy`, `previews` and `deployments` commands,
+and the MCP `list_previews`, `get_preview`, `list_deployments`, `get_deployment`,
+`deployment_events`, `preview_deletion`, `deploy` and `delete_preview` tools and `--allow-*` options.

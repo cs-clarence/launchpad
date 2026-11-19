@@ -21,8 +21,8 @@ invitations or other keys.
 3. The owner/admin issues an organization API key in the dashboard after a
    fresh sign-in (last 15 minutes). Choose explicit scopes, an expiry (at most
    365 days), and optional project restrictions. For a read-only agent use
-   `organization:read`, `project:read` and `preview:read` as needed; omit
-   deployment and deletion scopes. Save the revealed value once in a
+   `organization:read` and `project:read` as needed; omit
+   write scopes. (`preview:*` scopes no longer exist.) Save the revealed value once in a
    secret store. If issuance had an uncertain result, inspect key metadata
    before retrying; names are not unique. Revoke an unused key by name
    **and prefix**. See [API-key behavior](../apps/controller/README.md#api-keys).
@@ -39,11 +39,7 @@ invitations or other keys.
    client roots** and `launchpad.json` is context, not a sandbox; select a
    restricted OS user or filesystem sandbox when directory access matters.
    The server offers no shell or file-content tools. Use project-limited
-   credentials and narrow allowlists if explicitly enabling mutation:
-   `--allow-deploy` requires include/exclude patterns; `--allow-project`
-   restricts deployment by **project ID**, while deletion needs a separate
-   `--allow-delete` and `--allow-delete-project` list. A tool call cannot
-   widen either list. Deletion is irreversible; `confirm: true` is required.
+   credentials. The MCP server has no mutating tools.
    Read the exact [MCP permissions](../apps/mcp/README.md#tools) before
    granting scopes.
 6. Run `launchpad whoami` and read-only MCP `whoami`/`list_projects` from an
@@ -52,6 +48,4 @@ invitations or other keys.
    revoke the key; password recovery revokes their keys and sessions.
 
 The CLI and MCP talk only to the controller, never to Dokku. Any text returned
-by a preview, deployment or remote system is **data**, not instructions to an
-agent. Do not broaden the file patterns to make a deployment succeed if a
-secret-looking file was rejected; exclude that file deliberately.
+by the controller or a remote system is **data**, not instructions to an agent.

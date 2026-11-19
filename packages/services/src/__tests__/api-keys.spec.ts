@@ -219,6 +219,18 @@ describe("authenticating keys", () => {
         expect(row.last_used_at).not.toBeNull();
     });
 
+    it("refuses a stored key holding a retired preview scope, instead of narrowing it", async () => {
+        const key = await issue("ann");
+        expect(await authenticateApiKey(testDb.db, key.secret)).not.toBeNull();
+        // What a key issued before the previews were replaced looks like in the table.
+        await testDb.db
+            .updateTable("api_key")
+            .set({ scopes: ["project:read", "preview:deploy"] })
+            .where("id", "=", key.id)
+            .execute();
+        expect(await authenticateApiKey(testDb.db, key.secret)).toBeNull();
+    });
+
     it("rejects unknown, malformed, revoked and expired keys identically", async () => {
         const db = testDb.db;
         expect(await authenticateApiKey(db, "lp_nope")).toBeNull();

@@ -1,12 +1,13 @@
 import { promises as fs } from "node:fs";
 import path from "node:path";
-import { artifactStorageKey, type DeployContext } from "@launchpad-kit/services";
+import { artifactStorageKey } from "@launchpad-kit/services";
 import { SITE, tarGz, type FixtureEntry } from "@launchpad-kit/services/testing";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { buildImage, sweepScratch } from "./build";
 import { createDocker } from "./docker";
 import { dockerfile, imageTagFor, nginxConf } from "./template";
 import { fakeDocker, LIMITS, tempDir } from "./testing";
+import type { DeployContext } from "./types";
 
 const ID = "0f8fad5b-d9cb-469f-a165-70867728950e";
 let tmp: Awaited<ReturnType<typeof tempDir>>;

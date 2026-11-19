@@ -79,17 +79,6 @@ function Organization() {
 
             <fieldset className="min-w-0 space-y-10" disabled={keysLocked}>
                 <section className="space-y-4">
-                    <h2 className="h3">Previews</h2>
-                    <Link
-                        className="anchor"
-                        to="/orgs/$orgId/previews"
-                        params={{ orgId: view.organization.id }}
-                    >
-                        View previews
-                    </Link>
-                </section>
-
-                <section className="space-y-4">
                     <h2 className="h3">Projects</h2>
                     {view.projects.length === 0 ? (
                         <p>No projects yet.</p>

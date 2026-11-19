@@ -24,7 +24,7 @@ Keep this page current when the entry points or runtime change.
 | `LAUNCHPAD_SMTP_URL`              | Optional; set with `LAUNCHPAD_EMAIL_FROM` to enable email recovery and invitations. `smtps://` or `smtp://` (STARTTLS required unless loopback); no query options                                                                                                                                                              |
 | `HOST` / `PORT`                   | Listen address and port of the built server (default `127.0.0.1`-style host, port `3000`)                                                                                                                                                                                                                                      |
 | `LAUNCHPAD_DATA_DIR`              | Directory shared with the worker, readable and writable by **one user** (the controller's and the worker's alike: the worker builds in `build/` and collects and restores archives); uploaded archives are staged in `tmp/` and kept under `artifacts/` (default `.data/controller`). Mount durable storage here in production |
-| `LAUNCHPAD_MAX_UPLOAD_BYTES` etc. | Optional upload limits, all positive integers; a set but invalid value stops startup. See [Artifact uploads](#artifact-uploads)                                                                                                                                                                                                |
+| `LAUNCHPAD_MAX_UPLOAD_BYTES` etc. | Reserved for uploads, which are removed until the app model; ignored now                                                                                                                                                                                                                                                       |
 | `LAUNCHPAD_API_DOCS`              | `true` (default) serves the OpenAPI document and Scalar reference; `false` removes them                                                                                                                                                                                                                                        |
 | `LAUNCHPAD_TRUSTED_PROXY`         | `false` (default): the TCP peer address is the client address. `true`: exactly one trusted proxy that appends to `X-Forwarded-For`; its rightmost entry is used. Never set `true` without such a proxy                                                                                                                         |
 
@@ -149,9 +149,8 @@ checksums. A database whose migrations are still pending can be backed up (do th
   made meanwhile is just not in this backup. If a live row's file is missing or altered, the backup
   fails rather than record a restore that cannot work (a file that a worker moved aside during an
   interrupted collection is put back when a worker starts).
-- **Run it with the lifecycle stopped.** Only the lifecycle's collection removes archives, so with
-  `LAUNCHPAD_LIFECYCLE` on (or a worker with it on running) `backup` refuses unless you add
-  `--i-have-stopped-the-workers` to the command, confirming every worker is stopped.
+- **No stop flag.** Nothing collects archives now, so `backup` has no worker check and no
+  `--i-have-stopped-the-workers` option.
 - **Keep the directory private** (it is created mode 0700). The dump holds password and API-key
   hashes **and live session tokens**: with the authentication secret they would let someone sign
   cookies, so never store the secret beside the backup. Environment files, the secret and
@@ -163,10 +162,9 @@ checksums. A database whose migrations are still pending can be backed up (do th
 
 Restoring is a procedure, not one command. The current step-by-step
 [restore how-to](../../docs/restore.md) includes the safety and recovery checks
-(the rationale is in `docs/plans/application.md`, "Restore order and the lifecycle"):
+(the rationale is in `docs/plans/application.md`, "Restore order"):
 
-1. Switch the lifecycle **and deployments off** (controller and worker), **stop every worker and
-   the controller** (it keeps its database connections and only checks the schema when it starts,
+1. **Stop every worker and the controller** (it keeps its database connections and only checks the schema when it starts,
    so restart it after the restore), wait until each has exited, and then wait longer than the
    longest Dokku command and the deletion lease (five minutes by default). A worker's exit does not
    prove a Dokku destroy it started has finished, and a missing app is not proof either.
@@ -175,9 +173,7 @@ Restoring is a procedure, not one command. The current step-by-step
    refusal message prints it (naming only the database would not tell a scratch copy from the live
    one). Back the database up first.
     - It checks the backup against its manifest, and that `pg_restore` can read the dump, before it
-      changes anything; it refuses a backup that holds migrations this version does not know, and a
-      database a worker has reported in during the last minute (checked again just before the
-      swap).
+      changes anything; it refuses a backup that holds migrations this version does not know.
     - It never overwrites a stored archive that has other content, and it never touches Dokku. The
       archives are copied first (each is checked against its checksum as it is copied) and the
       database second.
@@ -197,11 +193,7 @@ Restoring is a procedure, not one command. The current step-by-step
    Dokku app is gone (it asks Dokku with `apps:exists` over the worker's `DOKKU_SSH_*` settings, or
    pass `--no-dokku` to skip that; an unreachable Dokku is an error, not "missing"), and previews
    whose expiry has already passed. It exits 1 if an archive or an app is missing.
-4. Switch **deployments on** and start the workers (and the controller), with the lifecycle
-   **still off**.
-5. For each preview you want to keep: redeploy it (a deployment recreates a missing app), and
-   **extend** any whose expiry has already passed. Then switch the lifecycle on, and delete the
-   previews you chose to end.
+4. Start the workers and the controller. Restored preview data is inert until the schema cutover.
 
 ```sh
 omni -i run admin -p @launchpad-kit/controller -a command=restore \
@@ -253,7 +245,7 @@ Authenticated organization pages and server-function responses are `no-store`.
 An owner or admin issues organization API keys from the API (`POST
 /api/v1/organizations/{orgId}/api-keys`, signed in). The secret is shown once. Automation
 sends `Authorization: Bearer lp_…`. A key is limited to its organization, to the scopes it
-was given (`project:read`, `project:create`, `preview:read`, `preview:create`, `preview:deploy` (upload, deploy and extend) and `preview:delete`), optionally to named projects, and never exceeds
+was given (`organization:read`, `member:read`, `project:read`, `project:create` and the reserved `project:delete`), optionally to named projects, and never exceeds
 its creator's current role; it stops working when it expires, is revoked, or its creator
 leaves the organization. Keys cannot manage keys, members, invitations or organizations.
 
@@ -265,168 +257,18 @@ If the callback fails, the response reports failure but the password/token chang
 may already have committed. Key revocation precedes its audit insert, so audit
 failure does not restore keys. Use operator recovery if necessary.
 
-## Artifact uploads
+## Instance status
 
-`POST /api/v1/organizations/{orgId}/artifacts` (signed in, or an API key with
-`preview:deploy`; deployers and above) stores a static site. The body is the archive itself, a
-`.tar.gz`, sent with `Content-Type: application/gzip` and a `Content-Length`. It is
-not multipart: the caller is authorized first, then the body streams to a private
-staging file (never buffered in memory), is hashed, validated and finalized.
+`GET /api/v1/status` is for the instance operator and needs a session (an API key cannot read it,
+whatever its scopes; an organization owner who is not the operator gets 403). It returns counts only:
+`dependencies.database` (`ok` if the request got an answer), `artifacts` (stored count and bytes) and
+`warnings` (empty for now). Workers, queues and deployments return with the immutable app model, which
+defines their own status. There is no dashboard panel for it.
 
-Accepted: regular files and directories, with `index.html` at the root. Refused
-with 422: links of any kind, devices, absolute or `..` paths, backslashes and control
-characters, duplicates (including names that differ only by case), a file used as a
-directory, more than the allowed entries or nesting, secrets (`.env*`, `.git`,
-`.ssh`, `.aws`, `.npmrc`, `.htpasswd`, `id_rsa`-style keys, `*.pem`, `*.key`,
-`*.p12`), a nested compressed layer, and an archive that expands beyond the limit
-(counted while decompressing, so a bomb is stopped early). The CLI should leave
-secrets out before uploading; the server refuses rather than silently dropping them.
+## Removed: preview deployment
 
-| Variable                           | Default             | Limit                                                          |
-| ---------------------------------- | ------------------- | -------------------------------------------------------------- |
-| `LAUNCHPAD_MAX_UPLOAD_BYTES`       | 52428800 (50 MiB)   | Upload size; a larger declared length is a 413 before any read |
-| `LAUNCHPAD_MAX_EXPANDED_BYTES`     | 209715200 (200 MiB) | Decompressed size                                              |
-| `LAUNCHPAD_MAX_ARCHIVE_ENTRIES`    | 5000                | Files and directories                                          |
-| `LAUNCHPAD_MAX_ARCHIVE_DEPTH`      | 16                  | Path depth                                                     |
-| `LAUNCHPAD_UPLOAD_TIMEOUT_SECONDS` | 300                 | Total upload time; 408                                         |
-| `LAUNCHPAD_MAX_ARTIFACTS`          | 20                  | Stored artifacts per organization                              |
-| `LAUNCHPAD_MAX_CONCURRENT_UPLOADS` | 2                   | Uploads in flight per organization (8 in total)                |
-
-### Preview lifetimes
-
-Every new preview gets an expiry (`expiresAt` in the API; `null` means never):
-`LAUNCHPAD_DEFAULT_TTL` (default `7d`) unless the request gives a `ttl` such as `24h`, which
-may be at most `LAUNCHPAD_MAX_TTL` (default `30d`). `"ttl": "none"` is refused unless
-`LAUNCHPAD_ALLOW_NO_EXPIRY=on`. Durations are a whole number and `s`, `m`, `h` or `d`; a set
-but invalid value stops the controller at startup, as does a default longer than the maximum.
-Previews created before lifetimes existed have no expiry until given one. **Nothing is
-deleted unless the worker runs the lifecycle** (`LAUNCHPAD_LIFECYCLE=on` on the worker,
-default off): then expired previews are deleted, and stored archives are collected after
-`LAUNCHPAD_ARTIFACT_RETENTION` (default `7d`); see `apps/worker/README.md`.
-Retention must be at least `1h`. The first time the worker enables lifecycle for this
-database, every preview that would expire within 24 h (overdue or about to be) is given 24 h from
-then, once; switching it off and on again later gives no grace, and what expired in between is
-deleted, as after any downtime.
-
-### What deletion keeps, and what is not here yet
-
-- The preview's row, deployments, events and audit records stay for the record. Its app name and
-  hostname are never reused; its **name** (slug) is free again in the project once it is deleted.
-- The Dokku app is destroyed. Images the worker built on its own Docker engine are removed by exact
-  tag; images loaded onto a **separate** Dokku host with `git:load-image` are not removed (disk
-  there grows with each deployment until you clear them). If an image cannot be removed the deletion
-  still finishes and records `images-left-behind`.
-- A stored archive is collected by the worker (a collection runs every ten minutes) only when
-  **nothing live needs it**: no preview that still exists, and no unfinished deployment, refers
-  to it, and `LAUNCHPAD_ARTIFACT_RETENTION` (default 7 days, at least 1 hour) has passed since the
-  last preview that used it was deleted (or since an upload nobody deployed was stored). Until
-  then it counts toward `LAUNCHPAD_MAX_ARTIFACTS`: **deleting a preview does not free the
-  artifact ceiling at once**, and if another live preview shares the same archive (identical
-  uploads are deduplicated within an organization) deleting one preview does not start any
-  collection deadline for it. Within the window a deleted preview's content could be
-  re-published by hand from storage.
-- Not built: runtime logs (a static site writes none worth keeping, and deployment progress is in
-  the events), restoring a deleted preview, backup and restore, quotas set per organization (the limits that exist
-  are instance-wide), and a
-  report of Dokku apps that Launchpad did not create. The follow-ups are tracked in
-  `docs/plans/milestone-5-lifecycle.md`.
-
-### Instance status
-
-`GET /api/v1/status` is for the instance operator and needs a session (an API key cannot read
-it, whatever its scopes; an organization owner who is not the operator gets 403). It returns
-what an operator needs to know whether the instance is healthy, as counts and ages only (no
-ids of previews, names, or text that came from a remote system):
-
-- `dependencies`: the database (`ok` if the request got an answer) and the data directory (`ok`,
-  `missing`, `not-writable`, `not-a-directory`, or `not-checked` while deployments are off). The
-  controller creates the directory (on its first request after starting) with deployments on.
-- `controller`: whether deployments and the lifecycle are on here, and `deletionsAccepted` (both
-  are: the controller takes new deletions).
-- `workers`: each worker that has reported, with its version, whether it runs the lifecycle, when it
-  started, how many seconds ago it reported and whether that is `live` (within the last minute).
-  A worker reports when it starts and at least every 10 s, on a timer of its own, so one that is
-  busy building still shows as live; rows of workers silent for a day are forgotten.
-- `deployments` (queued, running, held for an administrator, age of the oldest queued and of the
-  longest-unmoved running one), `expiry`
-  (previews past their expiry and not yet claimed), `deletions` (waiting, held) and `artifacts`
-  (stored count and bytes).
-- `warnings`, in plain words: work waiting with no live worker (expiry and deletion only count where
-  the lifecycle is on); the controller accepts deletions but no live worker has the lifecycle on (a
-  deletion would be accepted and never run), or the other way round; the lifecycle on without
-  deployments; a deployment that has not moved for an hour (a stuck worker still beats, so this is
-  how it shows); deployments or deletions that need an administrator; a data directory that is
-  missing, read-only or not a directory.
-
-There is no dashboard panel for it yet.
-
-### Deploying from the dashboard
-
-The previews page has a **Deploy a site** form (a preview's own page has **Deploy a new
-version**) for deployers and above, when deployments are on. It takes the built site as a
-`.tar.gz` (`tar -czf site.tar.gz -C dist .`), not a directory: unlike the CLI, a browser does
-not pack a directory, so link and secret-looking-file refusals are the server's (the upload is
-validated while it streams). It makes the CLI's three calls with your session: create the
-preview (name, project, optional lifetime), upload the archive, queue the deployment, then opens
-the preview page, which follows it. Each call carries an idempotency key that stays the same on a
-retry, and a retry after a failure resumes from the step that failed (a created preview or a
-stored archive is not made twice). The browser's checks of name, file type and size only save a
-round trip; the server's limits (`LAUNCHPAD_MAX_UPLOAD_BYTES`, the artifact ceiling) decide.
-
-### Dashboard preview page
-
-`/orgs/:orgId/previews` lists previews with when each expires; a preview's page
-(`/orgs/:orgId/previews/:previewId`) shows its lifetime and the controls its role may use:
-**Extend** (deployer and above), **Delete this preview** (deployer and above, with a
-confirmation; hidden, with a note, when deleting is not turned on), and for a deletion
-that needs a person, **Try the deletion again** / **The app is already gone** (administrators
-and owners, with a confirmation; the API also needs a sign-in from the last 15 minutes). A
-deletion in progress refreshes itself, and a preview deleted while its page is open
-shows the finished deletion (a page watching a deletion in progress looks again by itself; one that was not must be reloaded). The expiry is always shown and can always be extended: where the lifecycle is off on
-the controller nothing is deleted from here, and the page says so, but every preview carries an
-expiry that applies as soon as the lifecycle is turned on (and already applies if a worker has it
-on while the controller does not). The lifetime choices are limited to the server's maximum. Buttons are hidden for roles that could not use them,
-but only the API enforces permissions. A preview that is being deleted shows its deletion, even
-when expiry started it.
-
-### Preview lifecycle API
-
-All paths below are under `/api/v1/organizations/:orgId`. Mutations require deployer
-or higher unless noted; API keys also need the named scope and access to the owning
-project. Cookie mutations keep the same-origin requirement.
-
-| Method and path                                                                                       | Result                                                                                  | Key scope                                              |
-| ----------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------- | ------------------------------------------------------ |
-| `POST /previews/:previewId/extend` with `{ "ttl": "24h" }`                                            | 200 preview with resulting `expiresAt`                                                  | `preview:deploy`                                       |
-| `DELETE /previews/:previewId`                                                                         | 202 `{ operationId, state: "deleting" }`                                                | `preview:delete`                                       |
-| `GET /previews/:previewId/deletion`                                                                   | 200 the preview's latest deletion, whoever started it (a person or expiry); 404 if none | `preview:read`                                         |
-| `GET /deletions/:operationId`                                                                         | 200 deletion status, reason, fixed failure text, creation/finish times                  | `preview:read`                                         |
-| `POST /deletions/:operationId/resolution` with `{ "outcome": "retry" }` or `{ "outcome": "deleted" }` | 200 `{ ok: true }`                                                                      | Session only: admin/owner, signed in within 15 minutes |
-
-Extension accepts `Idempotency-Key`: repeating it does not extend again and returns
-the current preview, not a snapshot of the original response; a different request
-with that key is 409. Extension never shortens an expiry and is capped at the
-instance maximum from now. Extending a never-expiring preview with a duration **gives it
-an expiry**. Once deleting, extension is 409 (a replay of an earlier key returns the current
-preview).
-
-A deleted preview is 404 for extension, like the other preview routes. A deletion's `failure` is a
-note from the last attempt, not necessarily a failure: read it with `status` (the codes are
-listed in the OpenAPI schema); only `reconciliation-needed` needs a person.
-
-Deletion cannot be undone. It only queues work; it does not wait for Dokku. Set
-`LAUNCHPAD_LIFECYCLE=on` and `LAUNCHPAD_DEPLOYMENTS=on` in both controller and worker (the
-worker does nothing without deployments);
-the controller refuses a new deletion with 409 unless both are on. Repeated DELETE
-returns the same operation while deleting, without needing an idempotency key; after
-deletion it is 404. Poll the operation: `queued`, `running`, `succeeded`, or
-`reconciliation-needed`. For reconciliation, check the host first: `retry` queues
-another attempt; `deleted` trusts the administrator and does not remove images.
-
-A length-less (chunked) upload is a 411. An identical archive already stored for the
-organization is reused (`reused: true`); archives are deduplicated within an
-organization only. Stored archives stay until the worker's lifecycle collects them (off by default; after
-`LAUNCHPAD_ARTIFACT_RETENTION` and only when no live preview needs them), so until then an
-organization at its ceiling is refused even for an identical archive (redeploy an
-existing artifact by id instead); collected archives no longer count toward the ceiling. A stale staging file from a crash is swept at the
-next start. `/_serverFn/**` request bodies are bounded to 64 KiB like the rest of the API.
+The preview runtime (previews, deployments, deletion and expiry, the artifact upload endpoint, the
+dashboard preview pages and the `preview:*` key scopes) was removed. The database tables are untouched
+until the schema cutover migration. A stored key that still holds a `preview:*` scope is refused at
+authentication. The upload endpoint returns with the app model under a new scope; see
+[the plan](../../docs/plans/immutable-p2-cutover.md).

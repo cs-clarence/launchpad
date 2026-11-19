@@ -12,10 +12,6 @@ const workspaceSchema = z.strictObject({
         .optional(),
     organization: text,
     project: text,
-    name: z
-        .string()
-        .regex(/^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$/)
-        .optional(),
 });
 export type WorkspaceConfig = z.infer<typeof workspaceSchema>;
 export const MAX_WORKSPACE_CONFIG_BYTES = 16 * 1024;
@@ -29,7 +25,7 @@ function badConfig(): never {
     // Do not include the file's contents, parsing error, or arbitrary path in output.
     throw new ClientCoreError(
         "bad-input",
-        "launchpad.json must be a regular, non-symlink JSON file (16 KiB at most) with organization, project, and optional profile/name.",
+        "launchpad.json must be a regular, non-symlink JSON file (16 KiB at most) with organization, project, and optional profile.",
     );
 }
 
@@ -145,11 +141,6 @@ export async function workspaceContext(
         context: scoped,
         profile,
         project: input.project ?? workspace.config?.project,
-        // The file's preview name belongs to the file's project, not to one named instead.
-        name:
-            input.project === undefined || input.project === workspace.config?.project
-                ? workspace.config?.name
-                : undefined,
         directory: workspace.directory,
         // Only what an argument or launchpad.json selected, not the inherited environment.
         organization,
