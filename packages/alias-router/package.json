@@ -20,7 +20,8 @@
     "scripts": {
         "build": "vite build",
         "check:types": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.node.json",
-        "test:unit": "bun --bun vitest run --config vitest.config.unit.ts"
+        "test:unit": "bun --bun vitest run --config vitest.config.unit.ts",
+        "test:integration": "bun --bun vitest run --config vitest.config.integration.ts"
     },
     "dependencies": {
         "zod": "catalog:"

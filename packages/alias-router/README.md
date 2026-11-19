@@ -2,9 +2,9 @@
 
 The durable, generation-checked routing authority for immutable-deployment aliases
 (R1 of [the production router plan](../../docs/plans/production-alias-router.md)).
-For contributors building the router host (R2) and the worker client. **Private, Bun-only,
-not wired into the controller or worker, and not a production service on its own:** it has
-no listener, no network surface and no startup path.
+For contributors building the router app (R2b) and the worker client. **Private, Bun-only,
+not wired into the controller or worker, and not a production service on its own:** nothing in
+this package binds a port, reads the environment or starts anything; the app that does is R2b.
 
 ## What it guarantees
 
@@ -29,6 +29,17 @@ no listener, no network surface and no startup path.
 - **Retryable initialization.** A failed `initializeRouterState` removes the file it created; a stale
   `-wal`, `-shm` or `-journal` next to a new path is refused rather than adopted.
 
+## Request handlers (R2a)
+
+`createControlHandler(store)` (private control plane) and `createDataHandler(store, { upstream })`
+(public data plane) are `(Request) => Promise<Response>` functions over one open store, and
+`parseRouterHostConfig(env)` validates the settings. The rules (authentication before routing, fixed
+bodies, Host canonicalization, header lists, timeouts, no rotation endpoint) are in the
+[plan](../../docs/plans/production-alias-router.md#r2-design-host-split-in-two-increments); the tests
+are their specification. `createHttpUpstream` is the real Node HTTP/HTTPS transport: `Host`, TLS server
+name and certificate verification use the immutable deployment hostname, and verification is never
+disabled. HTTP/1.1 only.
+
 ## Limits
 
 Single-process by design (R2 must hold an exclusive process lock); SQLite durability relies on the
@@ -39,3 +50,5 @@ restore procedure must establish a new epoch first). The error type never carrie
 
 `omni -i run check test build -p @launchpad-kit/alias-router`. Tests run under Bun
 (`bun:sqlite`) against real SQLite files in temporary private directories; no Docker or network.
+`omni -i run test:integration -p @launchpad-kit/alias-router` opens loopback listeners to exercise the
+real HTTP/HTTPS transport and needs `openssl` on the PATH to generate throwaway test certificates.

@@ -121,6 +121,109 @@ enforce one process. An older restored copy of router state can resurrect an old
 epoch/credential; R4 must establish a fresh epoch/credential and fence ingress
 before opening mutations, not rely on R1 to detect an offline rollback.
 
+## R2 design: host (split in two increments)
+
+The host must not move the commit-time guarantees out of R1: it adds transport only. It is
+delivered as **R2a** (listener-free handlers and settings in `@launchpad-kit/alias-router`, tested
+with injected requests) and **R2b** (`apps/router`: operator commands, listeners, process lock).
+
+### R2a: handlers and settings
+
+- Both handlers are `(Request) => Promise<Response>` closed over one open `RouterStore`; neither
+  opens a file, binds a port or reads the environment. Settings come from a pure
+  `parseRouterHostConfig(env)`: state file, instance ID, apps domain, control and data listen
+  addresses (`host:port`, no default exposure), upstream proxy URL (http/https, no credentials,
+  query or fragment) and an optional upstream CA file path. No secret is ever a setting value.
+- **Control handler (private listener).** `GET /healthz` (no authentication, no data, 200 only when
+  the store answers a bounded read, else 503). Everything under `/v1` requires
+  `Authorization: Bearer <64 hex>`, `X-Launchpad-Instance` and `X-Launchpad-Epoch`; each request
+  calls `store.authenticate` and the mutation rechecks at commit (R1). Endpoints: `POST
+  /v1/deployments`, `POST /v1/routes`, `GET /v1/routes/{hostname}`, `GET /v1/routes?after&limit`.
+  Reads are authenticated too: the inventory is not public. **No rotation, initialization, hold,
+  release, drop-response or generic proxy endpoint exists.** Bodies: `application/json` only, at
+  most 8 KiB, bounded while streaming, strict parse and the R1 strict schemas. Status mapping:
+  invalid 400, unauthorized 401, conflict 409, unavailable 503, unknown path 404, wrong method 405.
+  Responses are `application/json` with `Cache-Control: no-store` and fixed error bodies that never
+  echo input, paths, SQLite text or credentials.
+- **Data handler (public listener).** Only `GET`, `HEAD` and `OPTIONS` (others 405), so no request
+  body is ever forwarded. The `Host` header is lowercased and its port removed, must be a canonical
+  hostname, and is looked up with `store.readRoute`. Unknown, unbound, withdrawn or malformed hosts
+  return the same fixed `404` text with no upstream call, and an unavailable store returns a fixed
+  `503`: neither falls back to Dokku or another app. A bound host is forwarded to the configured
+  upstream proxy with `Host` set to the **target deployment's immutable hostname**; for an https
+  upstream, SNI and certificate verification use that same hostname (optional private CA), and
+  verification is never disabled. Hop-by-hop and forwarding headers from the client are dropped and
+  upstream redirects are returned, not followed. Connect and header timeouts are bounded; an
+  unreachable or slow upstream is a fixed `502`/`504`.
+- The upstream call is injectable so unit tests need no listener; a loopback integration suite
+  (`test:integration`) exercises the real Node HTTP/HTTPS transport, including Host/SNI with
+  OpenSSL-generated test certificates, a wrong-name certificate (must fail), redirects, HEAD and
+  timeouts.
+
+### R2b: app, process lock and operator commands
+
+`apps/router` binds the two listeners from the settings and owns the **single-process lock**, held by
+the kernel rather than inferred from a PID: a dedicated SQLite lock file next to the state, opened
+with `locking_mode=EXCLUSIVE` and an open `BEGIN EXCLUSIVE` for the life of the process. A second
+process fails immediately; a crash releases it; PIDs are written only for diagnostics and corrupt
+file contents are ignored. Operator commands `init` and `rotate` read the token from an
+owner-only file (others refused) or standard input without echo, never an argument or the
+environment, call the R1 functions directly and print only the epoch. `rotate` takes the same lock
+and so refuses to run while `serve` is running. `serve` refuses to start without complete state.
+Shutdown order: stop accepting, drain with a deadline, abort in-flight upstream calls, close the
+store, release the lock. The listeners set a header-size limit, header-read and keep-alive idle
+timeouts and a connection cap (values recorded in the app). A health check, image and Compose
+wiring are R3.
+
+### R2 amendments from the design review (binding)
+
+- **Host canonicalization (data plane).** HTTP/1.1 only: no h2 and no `:authority`. The host comes
+  from the single raw `Host` header and must match the host of the request URL. The fixed 404 is
+  returned for a missing or duplicate Host (a comma or whitespace), an IPv6 or bracketed host,
+  userinfo (`@`), percent-encoding or non-ASCII, a non-numeric or out-of-range port, a trailing
+  dot, or a host that is not a canonical lowercase hostname. The host is lowercased and the port
+  stripped before `readRoute`. **Decision:** the apps domain is _not_ re-checked on the data plane.
+  The registry is the authority for which hosts serve, and R1 guarantees every registered hostname
+  was admitted under the apps domain when registered and keeps serving after a domain change; a
+  second filter would silently drop existing routes. The management origin can never be registered
+  because admission requires a label under the apps domain.
+- **Request target.** Only origin-form paths starting with `/` are forwarded, onto the fixed
+  upstream origin (the upstream URL path must be empty). Absolute-form, `*` and CONNECT are handled by
+  the HTTP server and cannot reach the handler as such; the handler also refuses a non-`/` path. A
+  request with `Transfer-Encoding` or a non-zero `Content-Length` gets 400, as no body is forwarded.
+- **Request headers dropped:** `Connection` and every header it names, `Keep-Alive`, `TE`,
+  `Trailer`, `Transfer-Encoding`, `Upgrade`, `Proxy-*`, `Forwarded`, `X-Forwarded-*`, `X-Real-IP`,
+  `Via`, `Content-Length`, `Authorization`, and every `X-Launchpad-*`; `Host` is replaced. `Cookie`
+  passes through. **The router sets no forwarding headers**, because the immutable static sites do
+  not use them and the trust boundary in front of the data listener is the operator's. **Response:**
+  hop-by-hop headers (and those `Connection` names) are stripped; `Location` and `Set-Cookie` pass
+  through unchanged. _Record for R4:_ an upstream `Location` or cookie `Domain` that names the
+  immutable hostname leaks it and moves the user off the alias.
+- **Timeouts.** Connect plus response headers 10 s (`504` on timeout; `502` for connect, TLS,
+  verification or protocol failure); response-body idle 30 s and a 5 minute total deadline; the
+  upstream call is aborted when the client disconnects; after headers are sent a failure aborts the
+  stream (the status can no longer change).
+- **Control plane.** Authentication runs before route matching for everything under `/v1`, so
+  unknown paths and wrong methods reveal nothing without credentials; every authentication failure
+  (missing header, wrong instance, stale epoch, bad token) is the same fixed `401`. The path
+  `{hostname}`, `after` and `limit` use the R1 canonical rules. `Content-Type` must be
+  `application/json`, optionally `; charset=utf-8`. `/healthz` exists only on the control handler,
+  unauthenticated, and its `503` body is fixed text.
+- **Settings.** The control address must be loopback unless an explicit
+  `LAUNCHPAD_ROUTER_CONTROL_PRIVATE_NETWORK=1` is set (the bearer token travels over plain HTTP, so
+  a non-loopback bind is an operator decision on a private network); control and data addresses
+  must differ and must not overlap through a wildcard on the same port.
+- _Record for R3/R4:_ the private CA is read at startup (rotating it needs a restart); the
+  forwarding-header policy above; no HTTP/2.
+
+### R2 acceptance and undo
+
+R2a: strict-schema/status-mapping tests for every endpoint; authentication failures reveal nothing;
+oversized, non-JSON and malformed bodies rejected before parsing; each data-plane 404/503/502 case;
+mutation checks for the Host rewrite, the fixed 404 and the 405 rules. R2b: lock tests (live, stale,
+corrupt), CLI tests with secrets never on argv, and a restart/shutdown test. Undo: remove the
+additive package code or the unreferenced app; nothing else depends on them until R4.
+
 ## Open questions and exclusions
 
 - Production ingress domains, storage provisioning and deployment networking remain
@@ -144,3 +247,13 @@ before opening mutations, not rely on R1 to detect an offline rollback.
   removes only what it created (5 tests added; 44 total). Left as optional: opening sidecars with
   `O_NOFOLLOW` before `fchmod` (the directory is owner-only 0700 and re-checked). Nothing is wired
   into the controller or worker.
+- R2 design reviewed by Opus: ready to build R2a once the amendments above were recorded (done). R2b needs the kernel-held lock design above.
+- R2a implemented: `src/host/` (control and data handlers, header policy, settings, Node HTTP/HTTPS
+  upstream) with 41 unit tests (80 in the package) and 9 loopback integration tests. Mutation checks
+  caught: a client-chosen or unrewritten Host, a non-404 for unbound hosts, extra methods, forwarding
+  headers, authentication after routing, the body bound, disabled TLS verification and a wrong SNI. A
+  first TLS test passed vacuously because a shared cleanup closed its server; fixed, and a control
+  request now proves the server is reachable before each failure case. Opus implementation review: no blockers; its
+  hardening findings are fixed (abort listener and timer released on every failure path, a body that
+  fails mid-read is 400, IPv6 listen hosts are bare, one Connection-header helper, canonical ports, no
+  unreachable 101 case). Status 413 was added for oversized bodies.

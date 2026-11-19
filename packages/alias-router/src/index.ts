@@ -19,3 +19,13 @@ export {
     RouterStore,
     type AuthenticatedWriter,
 } from "./store";
+export { createControlHandler, MAX_CONTROL_BODY_BYTES } from "./host/control";
+export { canonicalHost, createDataHandler, type DataHandlerOptions } from "./host/data";
+export { parseRouterHostConfig, type Listen, type RouterHostConfig } from "./host/config";
+export {
+    createHttpUpstream,
+    UpstreamError,
+    type HttpUpstreamOptions,
+    type Upstream,
+    type UpstreamRequest,
+} from "./host/upstream";

@@ -57,6 +57,9 @@ inspect and exercise local artifacts, never publish them. The operator
 [restore drill](docs/restore.md) separates the no-Dokku automated checks from
 the opt-in isolated-host rehearsal (`test:restore:live`, guarded and never in CI).
 
+The alias router's integration suite likewise opens loopback listeners (and needs `openssl`) but no
+database: `omni -i run test:integration -p @launchpad-kit/alias-router`.
+
 The SDK's transport suite uses ephemeral loopback HTTP fixtures instead of the
 database: `omni -i run test:integration -p @launchpad-kit/sdk` runs it alone. Fixtures
 close after each test; default `test` remains unit-only and opens no listeners.
