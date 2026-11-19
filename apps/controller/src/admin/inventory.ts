@@ -35,29 +35,36 @@ export interface PreviewInventory {
 const UNFINISHED = ["queued", "preparing", "building", "deploying", "verifying"] as const;
 
 export async function inventoryPreviews(db: Kysely<Database>): Promise<PreviewInventory> {
-    const previews = await db
-        .selectFrom("preview")
-        .select([
-            "id",
-            "organization_id",
-            "slug",
-            "app_name",
-            "hostname",
-            "desired_state",
-            "expires_at",
-        ])
-        .orderBy("created_at")
-        .orderBy("id")
-        .execute();
-    const deployments = await db
-        .selectFrom("deployment")
-        .select(["preview_id", "status", "image_tag"])
-        .execute();
-    const deletions = await db
-        .selectFrom("deletion_operation")
-        .select(["preview_id", "status"])
-        .where("status", "<>", "succeeded")
-        .execute();
+    // One snapshot for the three reads: a deletion that finishes between them must not give a
+    // "deleting" preview with no open deletion.
+    const { previews, deployments, deletions } = await db
+        .transaction()
+        .setIsolationLevel("repeatable read")
+        .execute(async (trx) => ({
+            previews: await trx
+                .selectFrom("preview")
+                .select([
+                    "id",
+                    "organization_id",
+                    "slug",
+                    "app_name",
+                    "hostname",
+                    "desired_state",
+                    "expires_at",
+                ])
+                .orderBy("created_at")
+                .orderBy("id")
+                .execute(),
+            deployments: await trx
+                .selectFrom("deployment")
+                .select(["preview_id", "status", "image_tag"])
+                .execute(),
+            deletions: await trx
+                .selectFrom("deletion_operation")
+                .select(["preview_id", "status"])
+                .where("status", "<>", "succeeded")
+                .execute(),
+        }));
 
     const items = previews.map((p): PreviewInventoryItem => {
         const mine = deployments.filter((d) => d.preview_id === p.id);

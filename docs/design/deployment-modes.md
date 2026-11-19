@@ -637,7 +637,8 @@ dispatched operation with a missing or expired lease is stuck. Not yet done in
 Slice 0: nothing. The read-only legacy-preview inventory is
 `launchpad-admin inventory-previews` (it lists what the database recorded and whether
 every preview is terminally deleted; exit 1 while not), and the parser now requires
-the apps domain to be a different registrable domain from `LAUNCHPAD_BASE_URL`. Slice 1
+the apps domain to be a different registrable domain from `LAUNCHPAD_BASE_URL`
+(enforced once the parser is wired in; nothing calls it at runtime yet). Slice 1
 (routing experiment) has not been approved or run; Slices 2 to 4 are not started.
 
 ### Implementation slices and gates

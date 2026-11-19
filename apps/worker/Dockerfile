@@ -50,5 +50,5 @@ VOLUME /data
 # while idle with deployments off), so a stale file means it is stuck or cannot reach the database.
 # It does not prove that Dokku or Docker work. Needs a writable /tmp (a tmpfs on a read-only root).
 HEALTHCHECK --interval=15s --timeout=5s --start-period=30s --retries=3 \
-    CMD test -n "$(find /tmp/launchpad-worker-health -mmin -1 2>/dev/null)"
+    CMD test -n "$(find "$LAUNCHPAD_WORKER_HEALTH_FILE" -mmin -1 2>/dev/null)"
 CMD ["bun", "dist/index.js"]
