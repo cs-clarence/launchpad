@@ -3,8 +3,8 @@ import { randomUUID } from "node:crypto";
 import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { createTestDatabase, testDatabaseUrl } from "@launchpad/database/testing";
-import { createAuth, loadAuthConfig, setupFirstOperator } from "@launchpad/auth";
+import { createTestDatabase, testDatabaseUrl } from "@launchpad-kit/database/testing";
+import { createAuth, loadAuthConfig, setupFirstOperator } from "@launchpad-kit/auth";
 import { sql } from "kysely";
 import { expect, it } from "vitest";
 

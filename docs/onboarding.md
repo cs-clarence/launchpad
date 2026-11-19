@@ -27,7 +27,7 @@ invitations or other keys.
    before retrying; names are not unique. Revoke an unused key by name
    **and prefix**. See [API-key behavior](../apps/controller/README.md#api-keys).
 4. Install the **packed** CLI and MCP tarballs from your trusted build once
-   the product name is chosen; `@launchpad/*` is a placeholder and nothing
+   the product name is chosen; `@launchpad-kit/*` is a placeholder and nothing
    has been published. For a checkout-built client, follow
    [CLI commands](../apps/cli/README.md) and
    [MCP setup](../apps/mcp/README.md). Log in with

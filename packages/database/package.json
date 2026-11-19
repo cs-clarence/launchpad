@@ -1,5 +1,5 @@
 {
-    "name": "@launchpad/database",
+    "name": "@launchpad-kit/database",
     "version": "0.0.0",
     "private": true,
     "description": "Kysely PostgreSQL access on Bun SQL, and migrations",
@@ -36,9 +36,9 @@
         "kysely": "catalog:"
     },
     "devDependencies": {
-        "@launchpad/tsconfig": "workspace:^",
-        "@launchpad/vite-config": "workspace:^",
-        "@launchpad/vitest-config": "workspace:^",
+        "@launchpad-kit/tsconfig": "workspace:^",
+        "@launchpad-kit/vite-config": "workspace:^",
+        "@launchpad-kit/vitest-config": "workspace:^",
         "@types/bun": "catalog:",
         "typescript": "catalog:",
         "vite": "catalog:",

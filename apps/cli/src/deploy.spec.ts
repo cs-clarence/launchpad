@@ -1,7 +1,7 @@
 import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { createContext } from "@launchpad/client-core";
+import { createContext } from "@launchpad-kit/client-core";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { EXIT } from "./errors";
 import type { Io } from "./io";

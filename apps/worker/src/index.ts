@@ -1,8 +1,9 @@
-import { assertSchemaCurrent, createDatabase } from "@launchpad/database";
-import { createDokkuClient } from "@launchpad/dokku";
-import { recoverInterruptedCollections } from "@launchpad/services";
+import { assertSchemaCurrent, createDatabase } from "@launchpad-kit/database";
+import { createDokkuClient } from "@launchpad-kit/dokku";
+import { recoverInterruptedCollections } from "@launchpad-kit/services";
 import { sweepScratch } from "./build";
 import { loadConfig } from "./config";
+import { DEFAULT_HEALTH_TOUCH_MS, createHealthMarker, healthFileFromEnv } from "./health";
 import { createDocker } from "./docker";
 import { createLifecyclePorts } from "./lifecycle-ports";
 import { createDeployPorts } from "./ports";
@@ -19,6 +20,7 @@ const log = (line: Record<string, unknown>) => console.log(JSON.stringify(line))
 
 async function main() {
     const loaded = loadConfig(process.env);
+    const markHealthy = createHealthMarker(healthFileFromEnv(process.env));
     const shutdown = new AbortController();
     for (const name of ["SIGINT", "SIGTERM"] as const) {
         process.on(name, () => shutdown.abort());
@@ -28,7 +30,9 @@ async function main() {
         log({ event: "disabled", message: "LAUNCHPAD_DEPLOYMENTS is off; the worker is idle." });
         // A pending promise does not keep the process alive on its own (Bun exits, and a supervisor
         // would restart it in a loop): a timer does, and ends with the shutdown signal.
-        const keepAlive = setInterval(() => {}, 2 ** 30);
+        // It also marks the container healthy: idle is a healthy state, not a stuck one.
+        markHealthy();
+        const keepAlive = setInterval(markHealthy, DEFAULT_HEALTH_TOUCH_MS);
         await new Promise<void>((resolve) =>
             shutdown.signal.addEventListener("abort", () => resolve(), { once: true }),
         );
@@ -65,6 +69,7 @@ async function main() {
             signal: shutdown.signal,
             log,
             heartbeat: { version: WORKER_VERSION },
+            onHealthy: markHealthy,
             lifecycle: {
                 ports: createLifecyclePorts({ dokku, docker }),
                 config: config.lifecycle,

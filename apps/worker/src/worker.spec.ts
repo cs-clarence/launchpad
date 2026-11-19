@@ -1,5 +1,5 @@
-import type { Database } from "@launchpad/database";
-import type { DeployPorts } from "@launchpad/services";
+import type { Database } from "@launchpad-kit/database";
+import type { DeployPorts } from "@launchpad-kit/services";
 import {
     Kysely,
     PostgresAdapter,
@@ -10,7 +10,7 @@ import {
 } from "kysely";
 import { describe, expect, it } from "vitest";
 import { getEventListeners } from "node:events";
-import { DEFAULT_LIFECYCLE } from "@launchpad/services";
+import { DEFAULT_LIFECYCLE } from "@launchpad-kit/services";
 import { runOnce, runWorker, sleep } from "./worker";
 
 const ports = {} as DeployPorts;

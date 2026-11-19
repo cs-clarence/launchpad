@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { createTestDatabase } from "@launchpad/database/testing";
+import { createTestDatabase } from "@launchpad-kit/database/testing";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
     addMember,

@@ -119,19 +119,19 @@ jobs:
             check
 
       - name: Start disposable PostgreSQL
-        run: omni -i run test:db:up -p '@launchpad/tooling'
+        run: omni -i run test:db:up -p '@launchpad-kit/tooling'
 
       - name: Integration tests
         run: omni -i run -f=failed test:integration
 
       # The controller and worker images, built and run against the same disposable database.
       - name: Images
-        run: omni -i run test:images -p '@launchpad/tooling'
+        run: omni -i run test:images -p '@launchpad-kit/tooling'
 
       # The frozen earlier-schema dump is restored, backed up, migrated from the freshly built
       # controller image, checked after restart, then restored into another disposable database.
       - name: Upgrade drill
-        run: omni -i run test:upgrade -p '@launchpad/controller'
+        run: omni -i run test:upgrade -p '@launchpad-kit/controller'
 
       - name: Prune stale caches
         run: omni -i cache prune -sy -o="7d"
@@ -158,7 +158,7 @@ jobs:
             check
 
       - name: Packages
-        run: omni -i run test:packages -p '@launchpad/tooling'
+        run: omni -i run test:packages -p '@launchpad-kit/tooling'
 
       - name: Prune stale caches
         run: omni -i cache prune -sy -o="7d"

@@ -3,8 +3,8 @@ import { spawnSync } from "node:child_process";
 import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { createTestDatabase, testDatabaseUrl } from "@launchpad/database/testing";
-import { createDokkuClient } from "@launchpad/dokku";
+import { createTestDatabase, testDatabaseUrl } from "@launchpad-kit/database/testing";
+import { createDokkuClient } from "@launchpad-kit/dokku";
 import {
     beginLifecycle,
     claimDeletion,
@@ -18,8 +18,8 @@ import {
     uploadArtifact,
     type DeployContext,
     type Principal,
-} from "@launchpad/services";
-import { SITE, tarGz } from "@launchpad/services/testing";
+} from "@launchpad-kit/services";
+import { SITE, tarGz } from "@launchpad-kit/services/testing";
 import { sql } from "kysely";
 import { expect, it } from "vitest";
 import { createBackup } from "../backup";

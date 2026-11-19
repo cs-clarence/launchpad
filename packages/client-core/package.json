@@ -1,5 +1,5 @@
 {
-    "name": "@launchpad/client-core",
+    "name": "@launchpad-kit/client-core",
     "version": "0.0.0",
     "private": true,
     "description": "Profiles, credentials and workflows shared by the CLI and MCP server",
@@ -23,15 +23,15 @@
         "test:unit": "vitest run --config vitest.config.unit.ts"
     },
     "dependencies": {
-        "@launchpad/sdk": "workspace:^",
+        "@launchpad-kit/sdk": "workspace:^",
         "picomatch": "catalog:",
         "tar": "catalog:",
         "zod": "catalog:"
     },
     "devDependencies": {
-        "@launchpad/tsconfig": "workspace:^",
-        "@launchpad/vite-config": "workspace:^",
-        "@launchpad/vitest-config": "workspace:^",
+        "@launchpad-kit/tsconfig": "workspace:^",
+        "@launchpad-kit/vite-config": "workspace:^",
+        "@launchpad-kit/vitest-config": "workspace:^",
         "@types/bun": "catalog:",
         "@types/picomatch": "catalog:",
         "typescript": "catalog:",

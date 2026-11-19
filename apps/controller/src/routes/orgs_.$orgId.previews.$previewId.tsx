@@ -1,6 +1,6 @@
 import { createFileRoute, Link, redirect, useRouter } from "@tanstack/react-router";
 import type { z } from "zod";
-import type { deploymentSchema } from "@launchpad/contracts";
+import type { deploymentSchema } from "@launchpad-kit/contracts";
 import { useEffect, useRef, useState } from "react";
 import { DeployPanel } from "../components/deploy-panel";
 import { apiRequest } from "../lib/api";

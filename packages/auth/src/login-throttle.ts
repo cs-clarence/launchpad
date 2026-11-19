@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import type { Database } from "@launchpad/database";
+import type { Database } from "@launchpad-kit/database";
 import { type Kysely, sql } from "kysely";
 
 export interface ThrottleRule {

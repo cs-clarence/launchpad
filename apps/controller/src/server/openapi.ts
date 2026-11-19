@@ -39,7 +39,7 @@ import {
     deploymentSchema,
     deploymentListSchema,
     deploymentEventsSchema,
-} from "@launchpad/services";
+} from "@launchpad-kit/services";
 import { z } from "zod";
 
 const schema = (value: z.ZodType, io: "input" | "output" = "output") =>

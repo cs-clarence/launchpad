@@ -1,7 +1,7 @@
 import { promises as fs } from "node:fs";
 import path from "node:path";
-import { artifactStorageKey, type DeployContext } from "@launchpad/services";
-import { SITE, tarGz, type FixtureEntry } from "@launchpad/services/testing";
+import { artifactStorageKey, type DeployContext } from "@launchpad-kit/services";
+import { SITE, tarGz, type FixtureEntry } from "@launchpad-kit/services/testing";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { buildImage, sweepScratch } from "./build";
 import { createDocker } from "./docker";

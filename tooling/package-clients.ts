@@ -46,7 +46,7 @@ const readJson = (file: string) => JSON.parse(readFileSync(file, "utf8")) as Man
 const catalog = () =>
     (readJson(path.join(root, "package.json")) as unknown as { catalog: Record<string, string> })
         .catalog;
-const WORKSPACE = /^@launchpad\//;
+const WORKSPACE = /^@launchpad-kit\//;
 
 // What a package needs at run time from outside this repository, following workspace packages
 // that get bundled into it. Versions come from the root catalog.

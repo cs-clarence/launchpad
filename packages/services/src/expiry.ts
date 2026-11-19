@@ -1,4 +1,4 @@
-import type { Database } from "@launchpad/database";
+import type { Database } from "@launchpad-kit/database";
 import { type Kysely, sql } from "kysely";
 import { queueDeletion } from "./deletions";
 import { LIFECYCLE_AUDIT } from "./lifecycle";

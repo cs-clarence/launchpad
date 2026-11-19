@@ -1,5 +1,5 @@
-import type { ArchiveLimits, DeployPorts } from "@launchpad/services";
-import type { DokkuClient } from "@launchpad/dokku";
+import type { ArchiveLimits, DeployPorts } from "@launchpad-kit/services";
+import type { DokkuClient } from "@launchpad-kit/dokku";
 import { buildImage } from "./build";
 import type { Docker } from "./docker";
 import { probe, type ProbeConfig } from "./verify";

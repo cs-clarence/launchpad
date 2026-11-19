@@ -78,8 +78,8 @@ describe("dependencies of a bundle", () => {
     it("lists the third-party dependencies of the app and of the workspace packages it bundles", () => {
         const found = thirdPartyDependencies("apps/cli", (name) => {
             const dependencies: Record<string, string> =
-                name === "@launchpad/client-core"
-                    ? { tar: "catalog:", "@launchpad/sdk": "workspace:^" }
+                name === "@launchpad-kit/client-core"
+                    ? { tar: "catalog:", "@launchpad-kit/sdk": "workspace:^" }
                     : { zod: "catalog:" };
             return { name, version: "0.0.0", dependencies };
         });

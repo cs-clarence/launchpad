@@ -4,7 +4,7 @@ import { createAuth, loadAuthConfig } from "../index";
 import { provisionUser } from "../provision";
 import { resetPassword, UnknownUserError } from "../recovery";
 import { InvalidSetupInputError, OperatorExistsError, setupFirstOperator } from "../setup";
-import { createTestDatabase } from "@launchpad/database/testing";
+import { createTestDatabase } from "@launchpad-kit/database/testing";
 
 let testDb: Awaited<ReturnType<typeof createTestDatabase>>;
 const config = loadAuthConfig({

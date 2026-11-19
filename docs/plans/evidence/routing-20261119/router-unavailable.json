@@ -1,0 +1,7 @@
+[
+    {
+        "host": "one.live.example.com",
+        "status": 503,
+        "body": "Routing state unavailable\n"
+    }
+]

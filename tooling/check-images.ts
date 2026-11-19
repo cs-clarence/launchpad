@@ -1,4 +1,4 @@
-// Builds the controller and worker images and checks them as an operator would meet them:
+// Builds the controller, worker and router images and checks them as an operator would meet them:
 // unprivileged, holding no secret and no source, able to run `migrate` and to start. The only
 // services it touches are the disposable PostgreSQL named by TEST_DATABASE_URL and Docker itself;
 // it never contacts Dokku. Every container, image and database it creates is removed by exact
@@ -16,8 +16,11 @@ const version: string = JSON.parse(readFileSync(path.join(root, "package.json"),
 const images = {
     controller: `launchpad-image-check-${run}/controller:test`,
     worker: `launchpad-image-check-${run}/worker:test`,
+    admin: `launchpad-image-check-${run}/admin:test`,
+    router: `launchpad-image-check-${run}/router:test`,
 };
 const containers: string[] = [];
+const volumes: string[] = [];
 const problems: string[] = [];
 const fail = (message: string) => problems.push(message);
 
@@ -26,7 +29,10 @@ const fail = (message: string) => problems.push(message);
 let stopping = false;
 const inflight = new Set<Promise<unknown>>();
 
-function docker(args: string[], options: { allowFailure?: boolean; cleanup?: boolean } = {}) {
+function docker(
+    args: string[],
+    options: { allowFailure?: boolean; cleanup?: boolean; input?: string } = {},
+) {
     if (stopping && !options.cleanup) return Promise.reject(new Error("interrupted"));
     const running = dockerNow(args, options);
     inflight.add(running);
@@ -37,9 +43,10 @@ function docker(args: string[], options: { allowFailure?: boolean; cleanup?: boo
     return running;
 }
 
-async function dockerNow(args: string[], options: { allowFailure?: boolean }) {
+async function dockerNow(args: string[], options: { allowFailure?: boolean; input?: string }) {
     const proc = Bun.spawn(["docker", ...args], {
         cwd: root,
+        stdin: options.input === undefined ? "ignore" : new Blob([options.input]),
         stdout: "pipe",
         stderr: "pipe",
         timeout: 15 * 60_000,
@@ -68,6 +75,7 @@ const FORBIDDEN_IN_IMAGE = [
     /(^|\/)\.npmrc$/,
     /^app\/(apps|packages|docs|tooling)\//,
 ];
+const EPOCH = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const SECRET_IN_HISTORY = /(PASSWORD|SECRET|TOKEN|API_?KEY|PRIVATE_?KEY)\s*=\s*\S/i;
 
 async function logs(name: string) {
@@ -193,6 +201,17 @@ async function main() {
             for (const container of containers) {
                 await docker(["rm", "-fv", container], { allowFailure: true, cleanup: true });
             }
+            for (const volume of volumes) {
+                // `-f` ignores a volume that is already gone, so a non-zero exit is a real failure
+                // (for example one still in use): report it, and carry on with the rest.
+                const removed = await docker(["volume", "rm", "-f", volume], {
+                    allowFailure: true,
+                    cleanup: true,
+                });
+                if (removed.code !== 0) {
+                    fail(`could not remove the volume ${volume}: ${removed.err}`);
+                }
+            }
             for (const image of Object.values(images)) {
                 await docker(["image", "rm", image], { allowFailure: true, cleanup: true });
             }
@@ -203,6 +222,7 @@ async function main() {
         for (const [name, file] of Object.entries({
             controller: "apps/controller/Dockerfile",
             worker: "apps/worker/Dockerfile",
+            router: "apps/router/Dockerfile",
         })) {
             await docker([
                 "build",
@@ -224,6 +244,9 @@ async function main() {
             "app/.output/migrations/20261114_001_auth_schema.mjs",
         ]);
         if (!controller.Healthcheck) fail("the controller image has no healthcheck");
+        const workerConfig = JSON.parse((await docker(["image", "inspect", images.worker])).out)[0]
+            .Config;
+        if (!workerConfig.Healthcheck) fail("the worker image has no healthcheck");
         await inspectImage(images.worker, [
             "app/dist/index.js",
             "app/dist/migrations/20261114_001_auth_schema.mjs",
@@ -363,6 +386,15 @@ async function main() {
             if (!idle) await Bun.sleep(500);
         }
         if (!idle) fail("the worker did not report that deployments are off");
+        // Idle with deployments off is healthy, not stuck: the healthcheck must say so.
+        let workerHealth = "";
+        for (let i = 0; i < 60 && workerHealth !== "healthy"; i++) {
+            workerHealth = (
+                await docker(["inspect", "--format", "{{.State.Health.Status}}", workerName])
+            ).out;
+            if (workerHealth !== "healthy") await Bun.sleep(1000);
+        }
+        if (workerHealth !== "healthy") fail(`the worker's healthcheck says "${workerHealth}"`);
         for (const command of [
             ["docker", "--version"],
             ["ssh", "-V"],
@@ -384,6 +416,209 @@ async function main() {
             fail(`the worker did not stop gracefully (exit ${workerStopped})`);
         }
         console.log("the worker starts and stops");
+
+        // The router: unprivileged, no secret, owns a fresh 0700 state volume, takes its token on
+        // stdin, runs, reports healthy, answers the planes as designed and stops gracefully.
+        const router = await inspectImage(images.router, ["app/dist/index.js"]);
+        if (!router.Healthcheck) fail("the router image has no healthcheck");
+        if (Object.keys(router.ExposedPorts ?? {}).length > 0) {
+            fail("the router image EXPOSEs ports: binding is the operator's choice");
+        }
+        const routerName = `launchpad-image-check-${run}-router`;
+        const routerVolume = `launchpad-image-check-${run}-router-state`;
+        containers.push(routerName);
+        volumes.push(routerVolume);
+        await docker(["volume", "create", routerVolume]);
+        const instance = crypto.randomUUID();
+        const routerEnv = [
+            "-e",
+            `LAUNCHPAD_ROUTER_INSTANCE_ID=${instance}`,
+            "-e",
+            "LAUNCHPAD_APPS_DOMAIN=sites.example.net",
+            "-e",
+            "LAUNCHPAD_ROUTER_CONTROL_LISTEN=0.0.0.0:8081",
+            "-e",
+            "LAUNCHPAD_ROUTER_CONTROL_PRIVATE_NETWORK=1",
+            "-e",
+            "LAUNCHPAD_ROUTER_DATA_LISTEN=0.0.0.0:8080",
+            "-e",
+            "LAUNCHPAD_APPS_PROXY_URL=http://127.0.0.1:9",
+        ];
+        const routerToken = randomBytes(32).toString("hex");
+        const oneOff = (args: string[], input?: string) =>
+            docker(
+                [
+                    "run",
+                    "--rm",
+                    "-i",
+                    "-v",
+                    `${routerVolume}:/state`,
+                    ...routerEnv,
+                    images.router,
+                    ...args,
+                ],
+                { allowFailure: true, ...(input === undefined ? {} : { input }) },
+            );
+        // A router that wrongly starts would run forever, so these two are named (cleanup can
+        // remove them) and bounded, and still running after a few seconds is the failure.
+        const expectRefusal = async (name: string, label: string, contains?: string) => {
+            containers.push(name);
+            await docker([
+                "run",
+                "-d",
+                "--name",
+                name,
+                "-v",
+                `${routerVolume}:/state`,
+                ...routerEnv,
+                images.router,
+            ]);
+            let running = true;
+            for (let i = 0; i < 20 && running; i++) {
+                running =
+                    (await docker(["inspect", "--format", "{{.State.Running}}", name])).out ===
+                    "true";
+                if (running) await Bun.sleep(500);
+            }
+            const output = await logs(name);
+            const code = (await docker(["inspect", "--format", "{{.State.ExitCode}}", name])).out;
+            await docker(["rm", "-fv", name]);
+            if (running) fail(`${label}: it was still running, so nothing refused it`);
+            else if (code === "0") fail(`${label}: it exited 0`);
+            else if (contains && !output.includes(contains)) fail(`${label}: it did not say why`);
+        };
+        await expectRefusal(
+            `${routerName}-nostate`,
+            "a router started without any state",
+            "unavailable",
+        );
+        const init = await oneOff(["init", "--token-stdin"], `${routerToken}\n`);
+        const epoch = init.out.trim();
+        if (init.code !== 0 || !EPOCH.test(epoch)) {
+            fail(`router init failed or printed more than an epoch: ${init.out} ${init.err}`);
+        }
+        if (init.out.includes(routerToken) || init.err.includes(routerToken)) {
+            fail("router init echoed the token");
+        }
+        if ((await oneOff(["init", "--token-stdin"], `${routerToken}\n`)).code === 0) {
+            fail("router init reinitialized existing state");
+        }
+        await docker([
+            "run",
+            "-d",
+            "--name",
+            routerName,
+            "-v",
+            `${routerVolume}:/state`,
+            ...routerEnv,
+            images.router,
+        ]);
+        let routerHealth = "";
+        for (let i = 0; i < 60 && routerHealth !== "healthy"; i++) {
+            const state = (
+                await docker(
+                    [
+                        "inspect",
+                        "--format",
+                        "{{.State.Running}} {{.State.Health.Status}}",
+                        routerName,
+                    ],
+                    { allowFailure: true },
+                )
+            ).out.split(" ");
+            routerHealth = state[1] ?? "";
+            // A container that already exited will never become healthy: stop waiting.
+            if (state[0] !== "true") break;
+            if (routerHealth !== "healthy") await Bun.sleep(1000);
+        }
+        if (routerHealth !== "healthy") {
+            fail(
+                `the router's healthcheck says "${routerHealth}": ${(await logs(routerName)).slice(-400)}`,
+            );
+        }
+        const routerUid = (await docker(["exec", routerName, "id", "-u"])).out;
+        if (routerUid !== "10001") fail(`the router runs as uid ${routerUid}`);
+        // From inside the container: the control plane wants credentials, the data plane serves
+        // nothing for an unknown host, and a second router on the same state is refused.
+        const probe = await docker([
+            "exec",
+            routerName,
+            "bun",
+            "-e",
+            `const c = await fetch("http://127.0.0.1:8081/v1/routes");
+             const http = await import("node:http");
+             const d = await new Promise((resolve, reject) => {
+                 const r = http.request({ host: "127.0.0.1", port: 8080, path: "/", headers: { host: "unknown.sites.example.net" } },
+                     (res) => { let b = ""; res.on("data", (x) => (b += x)); res.on("end", () => resolve([res.statusCode, b])); });
+                 r.on("error", reject); r.end();
+             });
+             console.log(JSON.stringify([c.status, d[0], d[1]]));`,
+        ]);
+        if (probe.out !== '[401,404,"Not found\\n"]')
+            fail(`the router's planes answered ${probe.out}`);
+        await expectRefusal(
+            `${routerName}-second`,
+            "a second router on the same state",
+            "holds the state lock",
+        );
+        const routerAsked = Date.now();
+        await docker(["stop", "--time", "20", routerName], { allowFailure: true });
+        const routerStopped = (
+            await docker(["inspect", "--format", "{{.State.ExitCode}}", routerName])
+        ).out;
+        if (routerStopped !== "0" || Date.now() - routerAsked > 15_000) {
+            fail(`the router did not stop gracefully (exit ${routerStopped})`);
+        }
+        // Once stopped the lock is free (a stop releases it), so rotation can run and starts a new epoch.
+        const rotated = await oneOff(
+            ["rotate", "--token-stdin"],
+            `${randomBytes(32).toString("hex")}\n`,
+        );
+        const rotatedEpoch = rotated.out.trim();
+        if (rotated.code !== 0 || !EPOCH.test(rotatedEpoch) || rotatedEpoch === epoch) {
+            fail(`router rotate did not print a new, valid epoch: ${rotated.out} ${rotated.err}`);
+        }
+        await docker(["rm", "-fv", routerName]);
+        console.log("the router initializes, runs, serves both planes and stops");
+
+        // The operator image: the controller's program and user plus PostgreSQL client tools of
+        // at least the disposable server's major version, and the admin command as its entry point.
+        await docker([
+            "build",
+            "-q",
+            "--target",
+            "admin",
+            "--build-arg",
+            `LAUNCHPAD_VERSION=${version}`,
+            "-f",
+            "apps/controller/Dockerfile",
+            "-t",
+            images.admin,
+            ".",
+        ]);
+        const adminConfig = JSON.parse((await docker(["image", "inspect", images.admin])).out)[0]
+            .Config;
+        if (adminConfig.User !== "10001:10001")
+            fail(`the admin image runs as "${adminConfig.User}"`);
+        if (adminConfig.Healthcheck)
+            fail("the admin image has a healthcheck: it is a one-off, not a service");
+        const dump = await docker(
+            ["run", "--rm", "--entrypoint", "pg_dump", images.admin, "--version"],
+            {
+                allowFailure: true,
+            },
+        );
+        const major = Number(/\(PostgreSQL\) (\d+)/.exec(dump.out)?.[1]);
+        if (!(major >= 17)) fail(`the admin image's pg_dump is "${dump.out}", not 17 or newer`);
+        const restore = await docker(
+            ["run", "--rm", "--entrypoint", "pg_restore", images.admin, "--version"],
+            { allowFailure: true },
+        );
+        if (restore.code !== 0) fail("the admin image has no pg_restore");
+        const help = await docker(["run", "--rm", images.admin, "--help"], { allowFailure: true });
+        if (help.code !== 0 || !help.out.includes("backup"))
+            fail("the admin image does not run the admin command");
+        console.log("the admin image has the client tools and runs the admin command");
     } finally {
         await cleanup();
     }

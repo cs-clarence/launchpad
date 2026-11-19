@@ -1,0 +1,25 @@
+[
+    {
+        "host": "one.live.example.com",
+        "status": 503,
+        "body": "Ingress closed\n"
+    },
+    {
+        "host": "one.live.example.com",
+        "status": 404,
+        "body": "Not found\n"
+    },
+    {
+        "host": "two.live.example.com",
+        "status": 404,
+        "body": "Not found\n"
+    },
+    {
+        "host": "unbound.live.example.com",
+        "status": 404,
+        "body": "Not found\n"
+    },
+    {
+        "assertion": "state-loss-new-epoch-rejects-all-old-pairs"
+    }
+]

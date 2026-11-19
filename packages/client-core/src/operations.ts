@@ -1,4 +1,4 @@
-import { createClient, type LaunchpadClient, normalizeBaseUrl } from "@launchpad/sdk";
+import { createClient, type LaunchpadClient, normalizeBaseUrl } from "@launchpad-kit/sdk";
 import { ClientCoreError } from "./errors";
 import { configDirectory, CredentialStore } from "./store";
 

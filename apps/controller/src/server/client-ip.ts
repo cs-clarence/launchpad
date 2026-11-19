@@ -1,4 +1,4 @@
-import { CLIENT_IP_HEADER } from "@launchpad/auth";
+import { CLIENT_IP_HEADER } from "@launchpad-kit/auth";
 
 // Determines the client address Launchpad trusts. Any client-supplied value of
 // our own header is discarded. Behind exactly one trusted proxy, the address

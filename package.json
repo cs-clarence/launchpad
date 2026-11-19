@@ -1,5 +1,5 @@
 {
-    "name": "@launchpad/root",
+    "name": "@launchpad-kit/root",
     "version": "0.0.0",
     "private": true,
     "workspaces": [

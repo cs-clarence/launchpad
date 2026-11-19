@@ -1,5 +1,5 @@
 import { type ChildProcess, spawn } from "node:child_process";
-import { mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
@@ -13,11 +13,16 @@ describe("the worker with deployments off", () => {
         const cwd = mkdtempSync(path.join(tmpdir(), "launchpad-idle-"));
         const child = spawn("bun", [path.join(import.meta.dirname, "index.ts")], {
             cwd,
-            env: { PATH: process.env.PATH, HOME: cwd, LAUNCHPAD_DEPLOYMENTS: "off" },
+            env: {
+                PATH: process.env.PATH,
+                HOME: cwd,
+                LAUNCHPAD_DEPLOYMENTS: "off",
+                LAUNCHPAD_WORKER_HEALTH_FILE: path.join(cwd, "healthy"),
+            },
             stdio: ["ignore", "pipe", "pipe"],
         });
         try {
-            await check(child);
+            await check(child, path.join(cwd, "healthy"));
         } finally {
             child.kill("SIGKILL");
             rmSync(cwd, { recursive: true, force: true });
@@ -25,7 +30,7 @@ describe("the worker with deployments off", () => {
     });
 });
 
-async function check(child: ChildProcess) {
+async function check(child: ChildProcess, healthFile: string) {
     let output = "";
     child.stdout?.on("data", (chunk) => (output += chunk));
     let exited: number | null | undefined;
@@ -34,6 +39,8 @@ async function check(child: ChildProcess) {
         await new Promise((r) => setTimeout(r, 100));
     }
     expect(output).toContain('"event":"disabled"');
+    // Idle counts as healthy: the file the container healthcheck reads exists.
+    expect(existsSync(healthFile)).toBe(true);
     await new Promise((r) => setTimeout(r, 1500));
     expect(exited).toBeUndefined();
     child.kill("SIGTERM");

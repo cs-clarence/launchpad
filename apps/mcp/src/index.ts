@@ -1,5 +1,10 @@
 #!/usr/bin/env bun
-import { ClientCoreError, createContext, readWorkspace, safeOutput } from "@launchpad/client-core";
+import {
+    ClientCoreError,
+    createContext,
+    readWorkspace,
+    safeOutput,
+} from "@launchpad-kit/client-core";
 import { CommanderError } from "@commander-js/extra-typings";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { createMcpServer } from "./server";

@@ -19,7 +19,7 @@ import {
     memberSchema,
     organizationSummarySchema,
     projectSchema,
-} from "@launchpad/contracts";
+} from "@launchpad-kit/contracts";
 import { z } from "zod";
 import { LaunchpadApiError, LaunchpadConfigError, LaunchpadTransportError } from "./errors";
 

@@ -7,7 +7,7 @@ import {
     resolveLimits,
     type LifecycleConfig,
     type ArchiveLimits,
-} from "@launchpad/services";
+} from "@launchpad-kit/services";
 import { DEFAULT_BASE_IMAGE, checkBaseImage } from "./template";
 import { parseProxyUrl } from "./verify";
 

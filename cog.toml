@@ -57,19 +57,20 @@ include = [
     "packages/contracts/**",
     "packages/sdk/**",
     "apps/**",
+    "packages/alias-router/**",
     # @anchor:new-core-package
 ]
 
 # Tooling is versioned independently.
-[monorepo.packages."@launchpad/tsconfig"]
+[monorepo.packages."@launchpad-kit/tsconfig"]
 path = "packages/tsconfig"
 include = ["packages/tsconfig/**"]
 
-[monorepo.packages."@launchpad/vite-config"]
+[monorepo.packages."@launchpad-kit/vite-config"]
 path = "packages/vite-config"
 include = ["packages/vite-config/**"]
 
-[monorepo.packages."@launchpad/vitest-config"]
+[monorepo.packages."@launchpad-kit/vitest-config"]
 path = "packages/vitest-config"
 include = ["packages/vitest-config/**"]
 

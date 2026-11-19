@@ -1,5 +1,10 @@
 # Milestone 6: install, back up, upgrade, package
 
+Naming update (2026-11-19): the user selected the workspace/public npm scope
+`@launchpad-kit`; registry ownership remains unverified. References below to an
+undecided scope describe the milestone's original release gates, not a claim
+that this source rename registers or publishes anything.
+
 Status: **approved by the user (2026-11-18), all nine decisions as proposed; decision 3 was then amended to extend the existing admin command instead of a new package (a smaller change; flagged in the summary to the user).** Extends
 `docs/plans/application.md` milestone 6. High risk: it changes how data is migrated,
 restored and shipped, and it produces artifacts that are hard to take back.
@@ -66,8 +71,8 @@ live infrastructure, plus a drill an operator can repeat.
    an older or newer one. Forward-only stays; rollback means restore of the pre-upgrade
    backup. The upgrade procedure requires a backup first and the command prints a warning
    if none is recorded. Proposed: yes.
-6. **Packaging.** Publishable, compiled, versioned packages: `@launchpad/cli`, `@launchpad/mcp`,
-   `@launchpad/sdk` (with `contracts` and `client-core` bundled or published as
+6. **Packaging.** Publishable, compiled, versioned packages: `@launchpad-kit/cli`, `@launchpad-kit/mcp`,
+   `@launchpad-kit/sdk` (with `contracts` and `client-core` bundled or published as
    dependencies; the choice is made in slice 4 by what keeps the allowlist smallest).
    Compiled JS plus declarations, `exports` map, `bin` entries with a shebang for Node and
    Bun, a `files` allowlist, dependency ranges, no workspace `workspace:` specifiers. The
@@ -160,7 +165,7 @@ expired restored preview, and a preview whose app is gone.
 ## Open questions for the user
 
 - Approve or change decisions 1 to 9 (in particular 2: a backup format versus documented `pg_dump` plus `tar`).
-- The npm scope and product name remain undecided; slice 4 uses the current `@launchpad/*`
+- The npm scope and product name remain undecided; slice 4 uses the current `@launchpad-kit/*`
   placeholders, to be renamed in one change when decided.
 
 ## Progress
@@ -179,7 +184,7 @@ expired restored preview, and a preview whose app is gone.
   current Node LTS (the Node run was first done in a container here; CI is the check that counts).
   `engines` is Node 22.12 or newer, which `commander` 15 requires. The libraries are ESM
   (a `default` export condition lets `require(esm)` work on Node versions that support it). The
-  install step runs without lifecycle scripts, with a cache of its own and the `@launchpad` scope
+  install step runs without lifecycle scripts, with a cache of its own and the `@launchpad-kit` scope
   pointed at nothing, so nothing resolved by name can stand in for a packed tarball. Before
   publishing: the packed READMEs are still developer docs (links into the repository), and the
   manifests have no `license` or `repository`, which wait for the licence and name decisions.

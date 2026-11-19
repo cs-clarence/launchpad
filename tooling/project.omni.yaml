@@ -1,5 +1,5 @@
 # yaml-language-server: $schema=https://raw.githubusercontent.com/omni-oss/json-schemas/refs/heads/main/project.json
-name: "@launchpad/tooling"
+name: "@launchpad-kit/tooling"
 description: Repository-wide tasks that belong to no single package.
 
 # These tasks read the whole repository and finish in well under a second, so they
@@ -8,6 +8,10 @@ cache:
   enabled: false
 
 tasks:
+  test:routing:experiment:
+    description: Opt-in disposable Dokku topology and alias-router experiment (Docker, no production settings)
+    exec: sh -c 'cd "$(git rev-parse --show-toplevel)" && bun tooling/experiments/routing/run.ts'
+
   check:format:
     description: Format check of the whole repository, including docs and root files
     exec: sh -c 'cd "$(git rev-parse --show-toplevel)" && bun x oxfmt --check'

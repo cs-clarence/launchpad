@@ -2,16 +2,16 @@ import { randomUUID } from "node:crypto";
 import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { migrateToLatest } from "@launchpad/database";
-import { createTestDatabase } from "@launchpad/database/testing";
+import { migrateToLatest } from "@launchpad-kit/database";
+import { createTestDatabase } from "@launchpad-kit/database/testing";
 import {
     createOrganization,
     recordHeartbeat,
     resolveArtifactPath,
     uploadArtifact,
     type Principal,
-} from "@launchpad/services";
-import { SITE, tarGz } from "@launchpad/services/testing";
+} from "@launchpad-kit/services";
+import { SITE, tarGz } from "@launchpad-kit/services/testing";
 import { spawnSync } from "node:child_process";
 import { sql } from "kysely";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";

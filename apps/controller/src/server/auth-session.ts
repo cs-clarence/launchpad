@@ -1,4 +1,4 @@
-import type { Auth } from "@launchpad/auth";
+import type { Auth } from "@launchpad-kit/auth";
 import { appendResponseHeader, getRequest } from "@tanstack/react-start/server";
 
 // Reads the session for the current request and forwards any cookies Better Auth

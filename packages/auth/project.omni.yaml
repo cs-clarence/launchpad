@@ -1,15 +1,15 @@
 # yaml-language-server: $schema=https://raw.githubusercontent.com/omni-oss/json-schemas/refs/heads/main/project.json
-name: "@launchpad/auth"
+name: "@launchpad-kit/auth"
 
 extends:
   - "@workspace/omni/presets/ts-vite-lib.omni.yaml"
 
 dependencies:
   append:
-    - "@launchpad/database"
-    - "@launchpad/tsconfig"
-    - "@launchpad/vite-config"
-    - "@launchpad/vitest-config"
+    - "@launchpad-kit/database"
+    - "@launchpad-kit/tsconfig"
+    - "@launchpad-kit/vite-config"
+    - "@launchpad-kit/vitest-config"
 
 tasks:
   test:unit:

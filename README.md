@@ -23,7 +23,7 @@ cp .env.local.example .env.local
 
 `.env.local.example` documents all supported settings. `.env.local` is ignored
 by Git and excluded from the Docker build context. Keep plugins and other image
-customizations in `Dockerfile`.
+customizations in `containers/dokku/Dockerfile`.
 
 Compose does not automatically load `.env.local`. Pass `--env-file .env.local`
 on every command. Exported shell variables override values in that file.
@@ -149,7 +149,7 @@ commands, the disposable test database); see [CONTRIBUTING.md](CONTRIBUTING.md#t
 
 Build generates the ignored TanStack route tree and production Bun output; it
 does not start the app. The controller Dockerfile is in
-`apps/controller/Dockerfile` (and the worker's in `apps/worker/`), separate from the root Dokku image.
+`apps/controller/Dockerfile` (and the worker's in `apps/worker/`), separate from the Dokku image in `containers/dokku/` (`containers/` holds images of external software).
 
 Authentication, organizations, projects, email flows, uploads, deployments, expiry and
 deletion are implemented and tested against a disposable PostgreSQL (and, opt-in, a disposable

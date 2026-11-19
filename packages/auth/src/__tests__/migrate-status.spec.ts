@@ -6,8 +6,8 @@ import {
     migrateToLatest,
     migrationStatus,
     SchemaMismatchError,
-} from "@launchpad/database";
-import { createTestDatabase } from "@launchpad/database/testing";
+} from "@launchpad-kit/database";
+import { createTestDatabase } from "@launchpad-kit/database/testing";
 import { sql } from "kysely";
 import { afterAll, afterEach, beforeEach, describe, expect, it } from "vitest";
 

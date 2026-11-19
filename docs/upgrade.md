@@ -3,7 +3,7 @@
 For an instance operator upgrading from a previous schema. Migrations are
 forward-only: **rollback means restoring the pre-upgrade backup**, not running a
 down migration. Rehearse on disposable infrastructure first: the checked-in
-14-migration fixture is exercised by `omni -i run test:upgrade -p @launchpad/controller`.
+14-migration fixture is exercised by `omni -i run test:upgrade -p @launchpad-kit/controller`.
 
 1. Record the current image versions and runtime settings, and arrange an
    outage. Turn deployments and lifecycle **off** in controller and workers;

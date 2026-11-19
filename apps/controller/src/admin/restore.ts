@@ -4,8 +4,8 @@ import { Transform } from "node:stream";
 import { createReadStream, createWriteStream, promises as fs } from "node:fs";
 import path from "node:path";
 import { pipeline } from "node:stream/promises";
-import { createDatabase, type Database, migrationStatus } from "@launchpad/database";
-import { resolveArtifactPath, WORKER_LIVE_SECONDS } from "@launchpad/services";
+import { createDatabase, type Database, migrationStatus } from "@launchpad-kit/database";
+import { resolveArtifactPath, WORKER_LIVE_SECONDS } from "@launchpad-kit/services";
 import { type Kysely, sql } from "kysely";
 import { type BackupManifest, columnExists, pgEnvironment, verifyBackup } from "./backup";
 

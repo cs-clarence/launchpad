@@ -4,7 +4,7 @@ import path from "node:path";
 import { PassThrough } from "node:stream";
 import { spawn } from "node:child_process";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { createContext } from "@launchpad/client-core";
+import { createContext } from "@launchpad-kit/client-core";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";

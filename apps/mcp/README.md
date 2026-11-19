@@ -24,7 +24,7 @@ Point your MCP client's stdio configuration at the built executable:
 }
 ```
 
-Build from the repository with `omni -i run build -p @launchpad/mcp`. The built file is
+Build from the repository with `omni -i run build -p @launchpad-kit/mcp`. The built file is
 self-contained: it runs from an empty directory with only Bun installed (tested).
 This internal Bun build is not a published npm package.
 

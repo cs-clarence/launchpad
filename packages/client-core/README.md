@@ -1,4 +1,4 @@
-# @launchpad/client-core
+# @launchpad-kit/client-core
 
 Profiles, credentials and operations shared by the CLI and the local MCP server. Node/Bun only.
 
@@ -7,7 +7,7 @@ Profiles, credentials and operations shared by the CLI and the local MCP server.
 - Credential resolution: explicit profile, then `LAUNCHPAD_PROFILE`, then the current profile. Without an explicit profile, `LAUNCHPAD_CONTROLLER` plus `LAUNCHPAD_API_KEY` (and optional `LAUNCHPAD_ORG`, an org ID, not a slug) bypass the file for CI. A partial pair is an error, never a fallback to saved credentials. Project listing discovers the key's org if none is selected.
 - `redact` hides anything shaped like a key, for text that reaches a terminal, a log or an MCP response.
 
-Depends on `@launchpad/sdk` and `zod`.
+Depends on `@launchpad-kit/sdk` and `zod`.
 
 ## Lock recovery
 

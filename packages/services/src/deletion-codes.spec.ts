@@ -1,6 +1,6 @@
 import { promises as fs } from "node:fs";
 import path from "node:path";
-import { DELETION_NOTE_CODES, deletionSchema } from "@launchpad/contracts";
+import { DELETION_NOTE_CODES, deletionSchema } from "@launchpad-kit/contracts";
 import { describe, expect, it } from "vitest";
 
 // The codes a deletion can carry are documented in the contract; this keeps that list

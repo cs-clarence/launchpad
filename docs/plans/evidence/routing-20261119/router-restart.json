@@ -1,0 +1,22 @@
+[
+    {
+        "host": "one.live.example.com",
+        "status": 200,
+        "body": "fixture:f0baa354-11f8-4b26-b913-876b415c3469"
+    },
+    {
+        "host": "two.live.example.com",
+        "status": 404,
+        "body": "Not found\n"
+    },
+    {
+        "host": "unbound.live.example.com",
+        "status": 404,
+        "body": "Not found\n"
+    },
+    {
+        "host": "unknown.live.example.com",
+        "status": 404,
+        "body": "Not found\n"
+    }
+]

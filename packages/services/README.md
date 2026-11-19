@@ -49,7 +49,7 @@ and time limits, validates it, and finalizes it atomically under a per-organizat
 lock. The caller is authorized before the first byte is read and re-checked under
 the lock. Storage keys are exactly `artifacts/<32 hex>/<64 hex>.tar.gz` (a hash of
 the organization, then the archive digest); `resolveArtifactPath` refuses anything
-else. Test archives (including hostile ones) are built by `@launchpad/services/testing`.
+else. Test archives (including hostile ones) are built by `@launchpad-kit/services/testing`.
 
 ## Deployments, lifecycle and status (milestones 3 to 5)
 
