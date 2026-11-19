@@ -66,8 +66,11 @@ const docker = async (args: string[], allowFailure = false, stdin?: string) => {
 };
 const cleanup: string[] = [];
 // "Absent" only when Docker says so. A failed inspection (the engine unreachable, say) proves nothing.
+// Matched on the resource-specific diagnostics: a lost daemon socket also says "no such file or
+// directory", which must never read as "the resource is gone".
+const NOT_FOUND = /\bno such (container|image|network|volume|object)\b|\bnetwork \S+ not found\b/i;
 const confirmedAbsent = (result: { code: number; err: string }) =>
-    result.code !== 0 && /no such|not found/i.test(result.err);
+    result.code !== 0 && NOT_FOUND.test(result.err);
 let failure: unknown;
 try {
     for (const app of resources.apps) {
@@ -229,6 +232,9 @@ try {
             if (resources.apps.includes(entry.app) && entry.imageTag === expectedTag) {
                 created.push(entry);
             } else {
+                // Not usable, and not to be trusted: fall back to the names recorded before
+                // creation, without ever passing the rejected tag to Docker.
+                journalTrusted = false;
                 failure ??= new Error("Cleanup journal contains an entry this run did not make.");
             }
         }
