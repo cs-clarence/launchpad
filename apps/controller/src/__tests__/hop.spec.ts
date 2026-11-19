@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { type ChildProcess, spawn, spawnSync } from "node:child_process";
 import { promises as fs } from "node:fs";
+import { createServer } from "node:http";
 import net from "node:net";
 import os from "node:os";
 import path from "node:path";
@@ -66,10 +67,11 @@ let nextPort = 43100 + Math.floor(Math.random() * 600) * 3;
 async function start(
     trustedProxy: boolean,
     extraEnv: Record<string, string> = {},
+    expectedStatus = 200,
 ): Promise<Instance> {
     for (let attempt = 1; ; attempt++) {
         try {
-            return await startOnce(trustedProxy, extraEnv);
+            return await startOnce(trustedProxy, extraEnv, expectedStatus);
         } catch (error) {
             const inUse = error instanceof Error && error.message.includes("EADDRINUSE");
             if (!inUse || attempt >= 5) throw error;
@@ -81,6 +83,7 @@ async function start(
 async function startOnce(
     trustedProxy: boolean,
     extraEnv: Record<string, string> = {},
+    expectedStatus = 200,
 ): Promise<Instance> {
     // Distinct per instance: three servers start in one run, and two random ports can collide.
     const port = nextPort++;
@@ -108,17 +111,25 @@ async function startOnce(
     const instance: Instance = { base, proc, logs: "" };
     proc.stdout?.on("data", (d) => (instance.logs += d));
     proc.stderr?.on("data", (d) => (instance.logs += d));
-    for (let i = 0; i < 100; i++) {
+    const deadline = Date.now() + 20_000;
+    let lastStatus: number | undefined;
+    while (Date.now() < deadline) {
         // A child that has already exited will never answer: fail now, with its output.
         if (proc.exitCode !== null) break;
         try {
-            if ((await fetch(`${base}/api/health`)).ok) return instance;
+            const response = await fetch(`${base}/api/health`, {
+                signal: AbortSignal.timeout(1000),
+            });
+            lastStatus = response.status;
+            if (response.status === expectedStatus) return instance;
         } catch {}
         await new Promise((r) => setTimeout(r, 200));
     }
     // Do not leave the child running when startup fails: afterAll may never see it.
     proc.kill("SIGTERM");
-    throw new Error(`controller did not start:\n${instance.logs}`);
+    throw new Error(
+        `controller did not start at ${base}: expected ${expectedStatus}, last status ${lastStatus ?? "no response"}\n${instance.logs}`,
+    );
 }
 
 const post = (
@@ -1295,10 +1306,18 @@ describe("sign-in throttling", () => {
 });
 
 describe("a controller on a schema it was not built for", () => {
-    it("answers 503 instead of serving", async () => {
+    it("answers 503 instead of serving even when the first startup port is occupied", async () => {
         const behind = await createTestDatabase();
-        let proc: ChildProcess | undefined;
+        let instance: Instance | undefined;
         let folder = "";
+        // Reproduce the bind race deterministically. This is not the controller: a
+        // distinct status ensures its response cannot satisfy the schema assertion.
+        const occupied = createServer((_request, response) => {
+            response.writeHead(418, { connection: "close" });
+            response.end();
+        });
+        await new Promise<void>((resolve) => occupied.listen(0, "127.0.0.1", resolve));
+        nextPort = (occupied.address() as net.AddressInfo).port;
         try {
             await behind.migrate();
             // A folder with one migration this database has not seen: names only for the
@@ -1315,47 +1334,37 @@ describe("a controller on a schema it was not built for", () => {
                 path.join(folder, "20991231_900_pending_check.mjs"),
                 "export async function up() {}",
             );
-            const port = nextPort++;
-            proc = spawn("bun", [".output/server/index.mjs"], {
-                env: {
-                    PATH: process.env.PATH,
-                    HOME: process.env.HOME,
-                    NODE_ENV: "production",
+            instance = await start(
+                false,
+                {
                     DATABASE_URL: behind.url,
                     LAUNCHPAD_MIGRATIONS_DIR: folder,
-                    LAUNCHPAD_AUTH_SECRET: "integration-secret-".repeat(3),
-                    LAUNCHPAD_BASE_URL: `http://127.0.0.1:${port}`,
-                    HOST: "127.0.0.1",
-                    PORT: String(port),
                 },
-                stdio: ["ignore", "pipe", "pipe"],
-            });
-            let logs = "";
-            proc.stdout?.on("data", (d) => (logs += d));
-            proc.stderr?.on("data", (d) => (logs += d));
-            let response: Response | undefined;
-            for (let i = 0; i < 100 && !response; i++) {
-                response = await fetch(`http://127.0.0.1:${port}/api/health`).catch(
-                    () => undefined,
-                );
-                if (!response) await new Promise((r) => setTimeout(r, 200));
-            }
-            expect(response?.status).toBe(503);
-            expect(await response?.json()).toMatchObject({ code: "schema-mismatch" });
+                503,
+            );
+            // The occupied listener must not be mistaken for the test controller.
+            expect(new URL(instance.base).port).not.toBe(
+                String((occupied.address() as net.AddressInfo).port),
+            );
+            const response = await fetch(`${instance.base}/api/health`);
+            expect(response.status).toBe(503);
+            expect(await response.json()).toMatchObject({ code: "schema-mismatch" });
             // The cause is the pending migration, not a missing folder or broken settings.
-            expect(logs).toContain("schema is behind");
-            expect(logs).toContain("20991231_900_pending_check");
+            expect(instance.logs).toContain("schema is behind");
+            expect(instance.logs).toContain("20991231_900_pending_check");
 
             // Migrating while it runs recovers it without a restart.
             await migrateToLatest(behind.db, folder);
             let recovered = 503;
             for (let i = 0; i < 30 && recovered === 503; i++) {
                 await new Promise((r) => setTimeout(r, 500));
-                recovered = (await fetch(`http://127.0.0.1:${port}/api/health`)).status;
+                recovered = (await fetch(`${instance.base}/api/health`)).status;
             }
             expect(recovered).toBe(200);
         } finally {
-            proc?.kill("SIGTERM");
+            instance?.proc.kill("SIGTERM");
+            occupied.closeAllConnections();
+            await new Promise<void>((resolve) => occupied.close(() => resolve()));
             await behind.destroy();
             if (folder) await fs.rm(folder, { recursive: true, force: true });
         }
