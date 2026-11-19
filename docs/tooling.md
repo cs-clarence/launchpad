@@ -216,6 +216,8 @@ docker build --build-arg LAUNCHPAD_VERSION="$version" -f apps/controller/Dockerf
 docker build --build-arg LAUNCHPAD_VERSION="$version" -f apps/worker/Dockerfile -t launchpad/worker:dev .
 # The one-off operator image: the controller's program and user plus PostgreSQL 17 client tools.
 docker build --target admin --build-arg LAUNCHPAD_VERSION="$version" -f apps/controller/Dockerfile -t launchpad/admin:dev .
+# The alias router (not used by the current stack yet; see apps/router/README.md).
+docker build --build-arg LAUNCHPAD_VERSION="$version" -f apps/router/Dockerfile -t launchpad/router:dev .
 ```
 
 Both run as the fixed unprivileged uid 10001 (they share one data directory), hold no secret (every
@@ -235,7 +237,11 @@ carry: mount one and set `LAUNCHPAD_PG_DUMP` / `LAUNCHPAD_PG_RESTORE`.
 `omni -i run test:images -p @launchpad-kit/tooling` builds both, checks them (non-root, no secret in a
 layer, no `.env`, `.git`, key or source file, the expected files present), runs `migrate` from the
 controller image against the disposable PostgreSQL, starts the controller and waits for `/api/health`
-and a healthy healthcheck, and starts the worker (deployments off). It needs Docker and
+and a healthy healthcheck, and starts the worker (deployments off). It also builds the router image and
+checks it end to end: unprivileged, no secret, no published port, `init` from stdin (printing only the
+epoch and refusing to reinitialize), healthy, 401 on the control plane and a fixed 404 on the data plane,
+a second router refused by the lock, a graceful stop, and `rotate` after it. `init`, `rotate` and
+`healthcheck` need the same environment as `serve`, because the settings are validated before any command runs. It needs Docker and
 `TEST_DATABASE_URL` (defaults to the disposable fixture), removes its named containers, volumes,
 images and database, never pushes, and never touches
 Dokku. CI runs it in the integration job. Its containers, anonymous volumes, images and database are

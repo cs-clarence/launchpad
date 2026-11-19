@@ -99,6 +99,7 @@ describe("launchpad-router commands", () => {
             ],
             [["init", "--bogus"], settings(), undefined, /exactly one of/],
             [["serve", "--token-file", "x"], settings(), undefined, /takes no arguments/],
+            [["healthcheck", "x"], settings(), undefined, /takes no arguments/],
             [
                 ["serve"],
                 settings({ LAUNCHPAD_ROUTER_CONTROL_LISTEN: "0.0.0.0:9" }),
@@ -208,8 +209,10 @@ describe("launchpad-router serve", () => {
         const exited = new Promise<void>((resolve) => child.on("close", () => resolve()));
         await expect.poll(() => out.includes('"listening"'), { timeout: 10_000 }).toBe(true);
         expect((await run(["serve"], env)).err).toContain("holds the state lock");
+        expect(await run(["healthcheck"], env)).toMatchObject({ code: 0, out: "ok\n" });
         child.kill("SIGKILL");
         await exited;
+        expect(await run(["healthcheck"], env)).toMatchObject({ code: 1, out: "unhealthy\n" });
         // No shutdown code ran: the kernel released the lock, so there is no stale lock to clear.
         acquireProcessLock(state.stateFile).release();
         expect((await run(["rotate", "--token-stdin"], env, newToken())).code).toBe(0);

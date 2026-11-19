@@ -271,3 +271,8 @@ additive package code or the unreferenced app; nothing else depends on them unti
   path identity is re-checked once the lock is held. Added a two-process regression test (fails against
   the old code), a SIGKILL test (the kernel releases the lock, no stale lock), strict `serve` arguments
   and the NFS caveat.
+- R3a implemented: `apps/router/Dockerfile` (uid 10001, `/state` volume at 0700, no EXPOSE, a
+  `healthcheck` command that asks the control listener's `/healthz`), checked by `test:images` end to end
+  (init from stdin, refusal to reinitialize, healthy, 401/404 planes, second router refused by the lock,
+  graceful stop, rotate after stop; no leftovers) and built by the release dry run. R3b, the repeat of the
+  accepted experiment scenarios against this image on a disposable Dokku, is next.

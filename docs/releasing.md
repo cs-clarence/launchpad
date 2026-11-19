@@ -31,12 +31,12 @@ number), except the shared tooling packages (`@launchpad-kit/tsconfig`, `vite-co
 
 ## What a release contains
 
-| Artifact                                                  | Built by                              | Checked by                         |
-| --------------------------------------------------------- | ------------------------------------- | ---------------------------------- |
-| `@launchpad-kit/contracts`, `sdk`, `cli`, `mcp` tarballs  | `tooling/package-clients.ts`          | `test:packages`, the dry run       |
-| Controller, worker and operator (admin) images            | `apps/{controller,worker}/Dockerfile` | `test:images`, the dry run (build) |
-| Database migrations (forward-only, bundled in the images) | `packages/database/src/migrations`    | `test:integration`, `test:upgrade` |
-| Operator documentation                                    | `docs/`                               | review                             |
+| Artifact                                                  | Built by                                     | Checked by                         |
+| --------------------------------------------------------- | -------------------------------------------- | ---------------------------------- |
+| `@launchpad-kit/contracts`, `sdk`, `cli`, `mcp` tarballs  | `tooling/package-clients.ts`                 | `test:packages`, the dry run       |
+| Controller, worker, operator (admin) and router images    | `apps/{controller,worker,router}/Dockerfile` | `test:images`, the dry run (build) |
+| Database migrations (forward-only, bundled in the images) | `packages/database/src/migrations`           | `test:integration`, `test:upgrade` |
+| Operator documentation                                    | `docs/`                                      | review                             |
 
 The workspace scope is `@launchpad-kit`, selected on 2026-11-19. Registry ownership
 and availability have **not** been verified, and no package has been published.
@@ -115,7 +115,7 @@ A release is a person's decision. Work through this in order and stop at the fir
    manifests carry `license` and `repository`; **registry ownership of the name is verified
    with an authenticated account**. (The source scope is selected; ownership,
    licence and final product naming are not yet settled.)
-5. Base images in `apps/{controller,worker}/Dockerfile` are pinned by digest, not tag.
+5. Base images in `apps/{controller,worker,router}/Dockerfile` are pinned by digest, not tag.
 6. Run the [dry run](#rehearse-a-release); inspect the tarball listings, `SHA256SUMS` and the
    image notes. No `.env`, key, source map or workspace specifier in any tarball.
 7. `cog bump` on a clean checkout, then review the bump commit, changelog and tag locally.

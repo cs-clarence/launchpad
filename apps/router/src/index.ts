@@ -1,6 +1,7 @@
 import { RouterError, parseRouterHostConfig } from "@launchpad-kit/alias-router";
 import { parseArgs } from "node:util";
 import { initRouter, rotateRouter } from "./commands";
+import { checkHealth } from "./healthcheck";
 import { LockError } from "./lock";
 import { readSecretFile, readSecretStdin, SecretError } from "./secret";
 import { startRouter } from "./serve";
@@ -11,6 +12,7 @@ Commands:
   serve                                  Run the router (control and data listeners).
   init   (--token-file <path> | --token-stdin)   Create new routing state; prints the epoch.
   rotate (--token-file <path> | --token-stdin)   Start a new epoch and token; prints the epoch.
+  healthcheck                            Exit 0 when the control listener reports a healthy store.
 
 Settings come from LAUNCHPAD_ROUTER_* and LAUNCHPAD_APPS_* environment variables. The token is read
 from an owner-only file or from standard input, never from an argument or the environment.
@@ -40,7 +42,7 @@ async function main(): Promise<void> {
         process.stdout.write(USAGE);
         return;
     }
-    if (command !== "serve" && command !== "init" && command !== "rotate") {
+    if (!["serve", "init", "rotate", "healthcheck"].includes(command)) {
         fail(`unknown command "${command.slice(0, 40)}"; see --help`);
     }
     let config: ReturnType<typeof parseRouterHostConfig>;
@@ -50,11 +52,16 @@ async function main(): Promise<void> {
         return fail(describe(error));
     }
 
-    if (command === "serve") {
+    if (command === "healthcheck" || command === "serve") {
         try {
             parseArgs({ args: rest, options: {}, strict: true });
         } catch {
-            return fail("serve takes no arguments");
+            return fail(`${command} takes no arguments`);
+        }
+        if (command === "healthcheck") {
+            const healthy = await checkHealth(config.control);
+            process.stdout.write(healthy ? "ok\n" : "unhealthy\n");
+            process.exit(healthy ? 0 : 1);
         }
         let router: ReturnType<typeof startRouter>;
         try {

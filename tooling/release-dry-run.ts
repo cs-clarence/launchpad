@@ -156,7 +156,7 @@ async function rehearse(out: string, version: string, skipImages: boolean) {
         const built: string[] = [];
         let failure: unknown;
         try {
-            for (const name of ["controller", "worker", "admin"]) {
+            for (const name of ["controller", "worker", "admin", "router"]) {
                 const tag = `launchpad-release-dry-run-${run}/${name}:${IMAGE_TAG}`;
                 built.push(tag);
                 await exec([
