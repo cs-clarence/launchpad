@@ -3,7 +3,7 @@
         "control": "POST /v1/deployments",
         "status": 200,
         "body": {
-            "deploymentId": "95258e4e-cc76-4402-9bf8-6ebe550b9382",
+            "deploymentId": "67dee1b1-020a-4f3a-8364-1ae14b973a07",
             "hostname": "tls.live.example.com"
         }
     },
@@ -11,7 +11,7 @@
         "control": "POST /v1/deployments",
         "status": 200,
         "body": {
-            "deploymentId": "3c4a4ff8-2c10-43c2-a956-4ebc8c408e83",
+            "deploymentId": "fa515f8b-55b6-4ce9-a76d-1cb14fe677cc",
             "hostname": "wrong.live.example.com"
         }
     },
@@ -19,15 +19,15 @@
         "control": "POST /v1/routes",
         "status": 200,
         "body": {
-            "instanceId": "e7341207-daf0-4909-9b49-c8d6d4a73b98",
-            "epoch": "e5ba1d44-cf17-4edf-a967-531e11ab26dd",
+            "instanceId": "be4c37a5-b0d9-462a-8c74-ac6b26eab3c8",
+            "epoch": "4c8c0d55-73e1-4e47-81f7-30ec3dd0a058",
             "route": {
-                "aliasId": "bac6cb9e-96c9-4b62-b3d1-2bbfc7dd5ce4",
+                "aliasId": "1e17123c-9ec3-4915-9059-964e8bed96ba",
                 "hostname": "view-tls.live.example.com",
-                "operationId": "2dca33d3-eb72-4643-a775-066c7724cb4c",
+                "operationId": "fc078cb1-76e7-459f-8ed9-d01989c077f9",
                 "generation": "1",
                 "target": {
-                    "deploymentId": "95258e4e-cc76-4402-9bf8-6ebe550b9382",
+                    "deploymentId": "67dee1b1-020a-4f3a-8364-1ae14b973a07",
                     "hostname": "tls.live.example.com"
                 }
             }
@@ -37,15 +37,15 @@
         "control": "POST /v1/routes",
         "status": 200,
         "body": {
-            "instanceId": "e7341207-daf0-4909-9b49-c8d6d4a73b98",
-            "epoch": "e5ba1d44-cf17-4edf-a967-531e11ab26dd",
+            "instanceId": "be4c37a5-b0d9-462a-8c74-ac6b26eab3c8",
+            "epoch": "4c8c0d55-73e1-4e47-81f7-30ec3dd0a058",
             "route": {
-                "aliasId": "18b6014a-c541-41e8-ae52-e3a6098e09c5",
+                "aliasId": "d3f1eccd-d594-4be3-9515-4a0263281891",
                 "hostname": "view-wrong.live.example.com",
-                "operationId": "128f8ffe-6375-4bd7-9e91-741b2ae08d3c",
+                "operationId": "f72a0cc7-02de-42a4-9255-2abbce946e8b",
                 "generation": "1",
                 "target": {
-                    "deploymentId": "3c4a4ff8-2c10-43c2-a956-4ebc8c408e83",
+                    "deploymentId": "fa515f8b-55b6-4ce9-a76d-1cb14fe677cc",
                     "hostname": "wrong.live.example.com"
                 }
             }

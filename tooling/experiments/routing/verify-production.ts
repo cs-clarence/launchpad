@@ -160,8 +160,8 @@ export async function verifyProduction({
         assert.equal(result.code, expected, `${name}: ${result.err}\n${result.out}`);
         console.log(result.out || `rehearsal phase ${name}: expected exit ${expected}`);
     };
-    const support = (name: string, alias: string, mode: string, extra: string[] = []) =>
-        docker([
+    const support = async (name: string, alias: string, mode: string, extra: string[] = []) => {
+        await docker([
             "run",
             "-d",
             "--name",
@@ -181,6 +181,14 @@ export async function verifyProduction({
             "/source/proxies.ts",
             mode,
         ]);
+        // Started is not listening: wait (bounded) for the server to say it has bound its port.
+        for (let i = 0; i < 60; i++) {
+            const logs = await docker(["logs", name], true);
+            if (`${logs.out}\n${logs.err}`.includes(`${mode} ready`)) return;
+            await Bun.sleep(500);
+        }
+        throw new Error(`${mode} support server did not become ready`);
+    };
     const own = (file: string) =>
         docker([
             "run",

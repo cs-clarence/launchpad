@@ -159,14 +159,18 @@ if (phase === "core") {
     // an identical replay is idempotent, a changed one conflicts.
     const ambiguous = write(ONE, "9007199254740995", B);
     await Bun.write("/data/intended-write.json", JSON.stringify(ambiguous));
-    await assert.rejects(
-        fetch("http://fault-proxy:8082/v1/routes", {
-            method: "POST",
-            headers: headersFor(current, { "x-experiment-drop-response": "1" }),
-            body: JSON.stringify(ambiguous),
-            signal: AbortSignal.timeout(15_000),
-        }),
+    const lost = await fetch("http://fault-proxy:8082/v1/routes", {
+        method: "POST",
+        headers: headersFor(current, { "x-experiment-drop-response": "1" }),
+        body: JSON.stringify(ambiguous),
+        signal: AbortSignal.timeout(15_000),
+    }).then(
+        () => undefined,
+        (error: unknown) => error as Error,
     );
+    assert.ok(lost, "the response must be lost, not delivered");
+    // The 15-second deadline expiring is not a cut connection.
+    assert.notEqual(lost.name, "TimeoutError", "a timeout is not a dropped response");
     await trace({ lostResponse: "POST /v1/routes", operation: ambiguous.operationId });
     const applied = await one();
     assert.equal(applied.operationId, ambiguous.operationId);
@@ -185,7 +189,9 @@ if (phase === "core") {
     await control("POST", "/v1/routes", write(TWO, "2", null));
     await probe(TWO, 404, "Not found\n");
 
-    // Nothing a client sends can choose a host, a target or an upstream.
+    // Nothing a client sends can choose a host, a target or an upstream. The inventory is read first,
+    // so "rejected requests changed nothing" is compared against a snapshot from before them.
+    const inventoryBefore = await routes();
     const fresh = (host: string, target: string | null = A) => ({
         aliasId: randomUUID(),
         hostname: host,
@@ -211,10 +217,12 @@ if (phase === "core") {
         );
     }
     await control("POST", "/v1/routes", JSON.stringify({ pad: "x".repeat(9000) }), 413);
+    // A write that is valid in every way except its media type, so only Content-Type can reject it.
+    const typed = fresh("view-ct.live.example.com");
     const wrongType = await fetch(`${ROUTER}/v1/routes`, {
         method: "POST",
         headers: { ...headersFor(current), "content-type": "text/plain" },
-        body: "{}",
+        body: JSON.stringify(typed),
     });
     await trace({ control: "POST /v1/routes (content-type text/plain)", status: wrongType.status });
     assert.equal(wrongType.status, 400);
@@ -222,7 +230,10 @@ if (phase === "core") {
         await control("POST", path, {}, 404);
     }
     await control("DELETE", "/v1/routes", undefined, 405);
-    assert.deepEqual(await routes(), await routes());
+    assert.deepEqual(await routes(), inventoryBefore);
+    // Positive control: the same payload as application/json is accepted, so the 400 above was the
+    // media type. (It is the one deliberate change to the inventory in this block.)
+    await control("POST", "/v1/routes", typed);
     const dataHealthz = await fetch("http://router:8080/healthz").then((r) => r.status);
     await trace({ probe: "data plane /healthz (no such route)", status: dataHealthz });
     assert.equal(dataHealthz, 404);

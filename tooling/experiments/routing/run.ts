@@ -314,6 +314,8 @@ try {
         cleanup.push(`container ${name}: ${absent ? "absent" : "LEFTOVER OR UNVERIFIED"}`);
         if (!absent) failure ??= new Error("Container cleanup incomplete.");
     }
+    // Recorded helpers go first: a helper still holding a state volume would make its removal fail.
+    for (const name of resources.helpers) await docker(["rm", "-f", "-v", name], true);
     await docker(["network", "rm", resources.network], true);
     for (const volume of resources.volumes) {
         await docker(["volume", "rm", "-f", volume], true);

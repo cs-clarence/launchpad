@@ -1,17 +1,17 @@
-app lp-test-9da96b: destroyed
-app lp-test-ec0464: destroyed
-fixture lp-test-9da96b: containers and image tags absent
-fixture lp-test-ec0464: containers and image tags absent
-container lp-rehearsal-sx3jwn-fault-proxy: absent
-container lp-rehearsal-sx3jwn-router-tls: absent
-container lp-rehearsal-sx3jwn-ingress: absent
-container lp-rehearsal-sx3jwn-upstream: absent
-container lp-rehearsal-sx3jwn-router: absent
-container lp-rehearsal-sx3jwn-worker: absent
-container lp-rehearsal-sx3jwn-dokku: absent
-volume lp-rehearsal-sx3jwn-router-state: absent
-volume lp-rehearsal-sx3jwn-router-state-2: absent
-volume lp-rehearsal-sx3jwn-router-state-3: absent
+app lp-test-d7cbf2: destroyed
+app lp-test-fe70fe: destroyed
+fixture lp-test-d7cbf2: containers and image tags absent
+fixture lp-test-fe70fe: containers and image tags absent
+container lp-rehearsal-gq4qdw-fault-proxy: absent
+container lp-rehearsal-gq4qdw-router-tls: absent
+container lp-rehearsal-gq4qdw-ingress: absent
+container lp-rehearsal-gq4qdw-upstream: absent
+container lp-rehearsal-gq4qdw-router: absent
+container lp-rehearsal-gq4qdw-worker: absent
+container lp-rehearsal-gq4qdw-dokku: absent
+volume lp-rehearsal-gq4qdw-router-state: absent
+volume lp-rehearsal-gq4qdw-router-state-2: absent
+volume lp-rehearsal-gq4qdw-router-state-3: absent
 secret/state path credentials: absent
 secret/state path dokku: absent
 secret/state path router-state: absent
@@ -21,22 +21,22 @@ secret/state path router-config.json: absent
 secret/state path router-config.next: absent
 secret/state path rehearsal-config.json: absent
 secret/state path rehearsal-config.next: absent
-network lp-rehearsal-sx3jwn-net: absent
-image lp-rehearsal-sx3jwn/worker:test: absent
-image lp-rehearsal-sx3jwn/router:test: absent
-helper lp-rehearsal-sx3jwn-helper-1: absent
-helper lp-rehearsal-sx3jwn-helper-2: absent
-helper lp-rehearsal-sx3jwn-helper-3: absent
-helper lp-rehearsal-sx3jwn-helper-4: absent
-helper lp-rehearsal-sx3jwn-router-stateless: absent
-helper lp-rehearsal-sx3jwn-helper-6: absent
-helper lp-rehearsal-sx3jwn-helper-7: absent
-helper lp-rehearsal-sx3jwn-helper-8: absent
-helper lp-rehearsal-sx3jwn-helper-9: absent
-helper lp-rehearsal-sx3jwn-helper-10: absent
-helper lp-rehearsal-sx3jwn-helper-11: absent
-helper lp-rehearsal-sx3jwn-helper-12: absent
-helper lp-rehearsal-sx3jwn-helper-13: absent
-helper lp-rehearsal-sx3jwn-helper-14: absent
-helper lp-rehearsal-sx3jwn-helper-15: absent
-helper lp-rehearsal-sx3jwn-helper-16: absent
+network lp-rehearsal-gq4qdw-net: absent
+image lp-rehearsal-gq4qdw/worker:test: absent
+image lp-rehearsal-gq4qdw/router:test: absent
+helper lp-rehearsal-gq4qdw-helper-1: absent
+helper lp-rehearsal-gq4qdw-helper-2: absent
+helper lp-rehearsal-gq4qdw-helper-3: absent
+helper lp-rehearsal-gq4qdw-helper-4: absent
+helper lp-rehearsal-gq4qdw-router-stateless: absent
+helper lp-rehearsal-gq4qdw-helper-6: absent
+helper lp-rehearsal-gq4qdw-helper-7: absent
+helper lp-rehearsal-gq4qdw-helper-8: absent
+helper lp-rehearsal-gq4qdw-helper-9: absent
+helper lp-rehearsal-gq4qdw-helper-10: absent
+helper lp-rehearsal-gq4qdw-helper-11: absent
+helper lp-rehearsal-gq4qdw-helper-12: absent
+helper lp-rehearsal-gq4qdw-helper-13: absent
+helper lp-rehearsal-gq4qdw-helper-14: absent
+helper lp-rehearsal-gq4qdw-helper-15: absent
+helper lp-rehearsal-gq4qdw-helper-16: absent

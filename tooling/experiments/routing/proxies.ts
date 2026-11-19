@@ -10,6 +10,8 @@ import https from "node:https";
 import type { TLSSocket } from "node:tls";
 
 const mode = process.argv[2];
+// Logged from the listen callback, i.e. once the port is really bound, not when listen() was called.
+const ready = () => console.log(`${mode} ready`);
 const HOP = new Set(["connection", "keep-alive", "transfer-encoding", "te", "upgrade", "trailer"]);
 
 function forward(
@@ -54,7 +56,7 @@ if (mode === "ingress") {
             return;
         }
         forward({ hostname: "router", port: 8080 }, request, response);
-    }).listen(8080, "0.0.0.0");
+    }).listen(8080, "0.0.0.0", ready);
 } else if (mode === "control-proxy") {
     http.createServer((request, response) =>
         forward(
@@ -63,7 +65,7 @@ if (mode === "ingress") {
             response,
             request.headers["x-experiment-drop-response"] === "1",
         ),
-    ).listen(8082, "0.0.0.0");
+    ).listen(8082, "0.0.0.0", ready);
 } else if (mode === "tls-upstream") {
     https
         .createServer(
@@ -77,8 +79,7 @@ if (mode === "ingress") {
                 );
             },
         )
-        .listen(8443, "0.0.0.0");
+        .listen(8443, "0.0.0.0", ready);
 } else {
     throw new Error("Unknown mode.");
 }
-console.log(`${mode} ready`);
