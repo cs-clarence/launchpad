@@ -19,6 +19,10 @@ export interface PreviewInventoryItem {
     // Deployment jobs not yet finished, and those parked for an administrator.
     unfinishedDeployments: number;
     heldDeployments: number;
+    // Pending intent or any leftover lease field, even on a terminal job.
+    // Expiry is not proof that a remote operation finished.
+    unsettledDeployments: number;
+    unsettledDeletions: number;
     // The preview's deletion operation while it is not yet succeeded.
     deletion: Exclude<DeletionStatus, "succeeded"> | null;
 }
@@ -28,11 +32,18 @@ export interface PreviewInventory {
     items: PreviewInventoryItem[];
     // Previews that must be deleted, or whose work must finish, before the migration.
     blocking: PreviewInventoryItem[];
-    // True when every preview is terminally deleted and no deployment or deletion is unfinished.
+    // True when all previews are deleted and jobs have terminal status, no
+    // pending intent and no leftover lease fields. Not proof of remote settling.
     readyToRetire: boolean;
 }
 
 const UNFINISHED = ["queued", "preparing", "building", "deploying", "verifying"] as const;
+
+const unsettled = (row: {
+    step_pending: unknown;
+    lease_owner: unknown;
+    lease_expires_at: unknown;
+}) => row.step_pending !== null || row.lease_owner !== null || row.lease_expires_at !== null;
 
 export async function inventoryPreviews(db: Kysely<Database>): Promise<PreviewInventory> {
     // One snapshot for the three reads: a deletion that finishes between them must not give a
@@ -57,18 +68,25 @@ export async function inventoryPreviews(db: Kysely<Database>): Promise<PreviewIn
                 .execute(),
             deployments: await trx
                 .selectFrom("deployment")
-                .select(["preview_id", "status", "image_tag"])
+                .select([
+                    "preview_id",
+                    "status",
+                    "image_tag",
+                    "step_pending",
+                    "lease_owner",
+                    "lease_expires_at",
+                ])
                 .execute(),
             deletions: await trx
                 .selectFrom("deletion_operation")
-                .select(["preview_id", "status"])
-                .where("status", "<>", "succeeded")
+                .select(["preview_id", "status", "step_pending", "lease_owner", "lease_expires_at"])
                 .execute(),
         }));
 
     const items = previews.map((p): PreviewInventoryItem => {
         const mine = deployments.filter((d) => d.preview_id === p.id);
-        const open = deletions.find((d) => d.preview_id === p.id);
+        const myDeletions = deletions.filter((d) => d.preview_id === p.id);
+        const open = myDeletions.find((d) => d.status !== "succeeded");
         return {
             previewId: p.id,
             organizationId: p.organization_id,
@@ -84,6 +102,8 @@ export async function inventoryPreviews(db: Kysely<Database>): Promise<PreviewIn
                 (UNFINISHED as readonly string[]).includes(d.status),
             ).length,
             heldDeployments: mine.filter((d) => d.status === "reconciliation-needed").length,
+            unsettledDeployments: mine.filter(unsettled).length,
+            unsettledDeletions: myDeletions.filter(unsettled).length,
             deletion: open ? (open.status as Exclude<DeletionStatus, "succeeded">) : null,
         };
     });
@@ -92,6 +112,8 @@ export async function inventoryPreviews(db: Kysely<Database>): Promise<PreviewIn
             i.state !== "deleted" ||
             i.unfinishedDeployments > 0 ||
             i.heldDeployments > 0 ||
+            i.unsettledDeployments > 0 ||
+            i.unsettledDeletions > 0 ||
             i.deletion !== null,
     );
     return { items, blocking, readyToRetire: blocking.length === 0 };
