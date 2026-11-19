@@ -107,7 +107,11 @@ jobs:
     needs: [test]
     runs-on: ubuntu-latest
     steps:
+      # Full history: the old-process compatibility test extracts a historical commit
+      # (`git archive 39fbc29`), which a shallow clone does not contain.
       - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
 
       - name: Setup Workspace
         uses: ./.github/actions/setup-workspace

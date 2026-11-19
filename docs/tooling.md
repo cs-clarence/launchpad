@@ -78,6 +78,33 @@ Rules that keep the graph correct:
   uses only the approved disposable Dokku and PostgreSQL, guarded `lp-test-`
   names, and a test-only database constraint; see [the restore drill](restore.md).
   It is opt-in and is not a CI job.
+- **Retirement inventory.** `omni -i run test:inventory -p @launchpad-kit/controller`
+  runs only the read-only legacy inventory integration suite on the disposable
+  PostgreSQL, with an isolated database per case. It starts no controller or
+  Dokku and is uncached. These cases remain in the full controller
+  `test:integration` suite too.
+- **Cutover SQL candidate.** `omni -i run test:cutover:retirement -p @launchpad-kit/controller`
+  runs the P1 retirement-segment specification against isolated PostgreSQL
+  databases. Its SQL is under the controller admin test fixtures, guarded to
+  `lp_test_` databases, not in the discovered migrations directory. The task
+  is uncached, starts no controller/Dokku and requires the disposable PostgreSQL
+  fixture. These tests also run with the full controller integration suite.
+- **Old-process compatibility.** `omni -i run test:cutover:old-process -p @launchpad-kit/controller`
+  extracts commit `39fbc29` from git into a temporary tree (checking three source
+  hashes), relinks its workspace packages to that tree, and runs its real
+  `claimNext`, `claimDeletion`, `collectArtifacts` and `assertSchemaCurrent` in a
+  subprocess against a cut-over test database. It also exercises the `NOLOGIN` plus
+  session-termination mechanics with a test-only role. Disposable PostgreSQL only;
+  uncached; it starts no worker, controller or Dokku.
+- **Model/reservation SQL candidate.**
+  `omni -i run test:cutover:model -p @launchpad-kit/controller` applies retirement
+  and the new model/reservation SQL in one isolated test transaction. It tests
+  organization/app-qualified FKs, permanent identity registries, deferred
+  reciprocal ownership, immutable intents and concurrent cross-kind hostname
+  reservation. The model fixture requires the retirement locks still held by
+  that transaction. It installs no runtime migration, restore gate or production
+  grants. It shares the disposable PostgreSQL prerequisite and uncached behavior
+  of the retirement task and is also included in controller integration tests.
 - **Disposable routing experiment.** The opt-in `test:routing:experiment` tooling task
   builds a worker image, deploys two fixtures through pinned SSH to its own Dokku,
   and exercises the experimental generation-checked Bun/SQLite router. It has no
