@@ -1,0 +1,7 @@
+[
+    {
+        "probe": "view-one.live.example.com",
+        "status": 200,
+        "body": "fixture:6abb53f1-55fd-4c34-a3ea-a80aa2967fcf"
+    }
+]

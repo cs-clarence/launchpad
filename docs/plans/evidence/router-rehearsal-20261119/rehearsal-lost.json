@@ -1,0 +1,87 @@
+[
+    {
+        "control": "GET /v1/routes",
+        "status": 200,
+        "body": {
+            "instanceId": "ee9d589f-edc3-4420-b2bd-06de4de2acc3",
+            "epoch": "91c11e34-b896-4c56-a7eb-7a71ddcc47db",
+            "routes": [],
+            "nextCursor": null
+        }
+    },
+    {
+        "control": "POST /v1/routes",
+        "status": 401,
+        "body": {
+            "error": "unauthorized"
+        }
+    },
+    {
+        "control": "POST /v1/routes",
+        "status": 401,
+        "body": {
+            "error": "unauthorized"
+        }
+    },
+    {
+        "control": "POST /v1/routes",
+        "status": 401,
+        "body": {
+            "error": "unauthorized"
+        }
+    },
+    {
+        "control": "POST /v1/routes",
+        "status": 401,
+        "body": {
+            "error": "unauthorized"
+        }
+    },
+    {
+        "control": "POST /v1/routes",
+        "status": 401,
+        "body": {
+            "error": "unauthorized"
+        }
+    },
+    {
+        "control": "POST /v1/routes",
+        "status": 401,
+        "body": {
+            "error": "unauthorized"
+        }
+    },
+    {
+        "control": "POST /v1/routes",
+        "status": 401,
+        "body": {
+            "error": "unauthorized"
+        }
+    },
+    {
+        "control": "POST /v1/routes",
+        "status": 401,
+        "body": {
+            "error": "unauthorized"
+        }
+    },
+    {
+        "probe": "view-one.live.example.com",
+        "status": 404,
+        "body": "Not found\n"
+    },
+    {
+        "probe": "view-two.live.example.com",
+        "status": 404,
+        "body": "Not found\n"
+    },
+    {
+        "probe": "view-unbound.live.example.com",
+        "status": 404,
+        "body": "Not found\n"
+    },
+    {
+        "assertion": "state-loss-new-epoch-rejects-all-old-pairs",
+        "rejected": 8
+    }
+]

@@ -274,5 +274,7 @@ additive package code or the unreferenced app; nothing else depends on them unti
 - R3a implemented: `apps/router/Dockerfile` (uid 10001, `/state` volume at 0700, no EXPOSE, a
   `healthcheck` command that asks the control listener's `/healthz`), checked by `test:images` end to end
   (init from stdin, refusal to reinitialize, healthy, 401/404 planes, second router refused by the lock,
-  graceful stop, rotate after stop; no leftovers) and built by the release dry run. R3b, the repeat of the
-  accepted experiment scenarios against this image on a disposable Dokku, is next.
+  graceful stop, rotate after stop; no leftovers) and built by the release dry run. R3b is done: the accepted experiment
+  scenarios pass against this image on a disposable Dokku (see `routing-experiment-evidence.md`, "Production
+  router rehearsal"); a mutant router with its epoch check removed fails the run in its first phase. Independent
+  review of that evidence is pending. R4 (the immutable model) is next.

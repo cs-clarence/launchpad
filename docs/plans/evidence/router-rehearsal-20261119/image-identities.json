@@ -1,0 +1,18 @@
+{
+    "before": [
+        "sha256:bb15f2723ddf80dd4554c02438f16f91743f45e1aff6bf261562881577eb0cbf",
+        "sha256:e61ef572675cf814672792266a8cee1c82dc763f1d1da5d0989e274211061edf"
+    ],
+    "after": [
+        "sha256:bb15f2723ddf80dd4554c02438f16f91743f45e1aff6bf261562881577eb0cbf",
+        "sha256:e61ef572675cf814672792266a8cee1c82dc763f1d1da5d0989e274211061edf"
+    ],
+    "fixtureBuilds": 2,
+    "promotionBuilds": 0,
+    "routerImage": "sha256:b27c0159e6c9e976c619fd66498d70d258c8e1742cc2a357d1f97267a84b2a5b",
+    "workerImage": "sha256:6c66286de6c9eab32c257f90902632f55f75766aad022dfed4b5e0ab4d11ae88",
+    "dokkuImage": "sha256:8a9dff85047331e5dbbc743b4744e3a446ce80ab33f0cf827891917d20a692bb",
+    "bun": "1.4.4",
+    "sqlite": "3.53.4",
+    "epochsUsed": 4
+}

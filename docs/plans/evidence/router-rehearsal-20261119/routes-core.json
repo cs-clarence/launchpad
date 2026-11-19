@@ -1,0 +1,26 @@
+[
+    {
+        "aliasId": "6b680f54-3ba4-4e4b-83a0-45e36c0ab28c",
+        "hostname": "view-one.live.example.com",
+        "operationId": "d850ac7c-926c-463c-89d1-744db6a91ee8",
+        "generation": "9007199254740995",
+        "target": {
+            "deploymentId": "6abb53f1-55fd-4c34-a3ea-a80aa2967fcf",
+            "hostname": "lp-test-b950aa.live.example.com"
+        }
+    },
+    {
+        "aliasId": "b3c57720-d85b-4226-9023-fa5a49f562ff",
+        "hostname": "view-two.live.example.com",
+        "operationId": "f9ce69a2-138d-47ab-93ef-5f1c21508f98",
+        "generation": "2",
+        "target": null
+    },
+    {
+        "aliasId": "b9ef60ce-7bf2-44da-98bb-dc3beff6b423",
+        "hostname": "view-unbound.live.example.com",
+        "operationId": "be9dd3f1-2fa0-4beb-ab64-39a505de339b",
+        "generation": "8",
+        "target": null
+    }
+]

@@ -165,6 +165,7 @@ if (phase === "core") {
             signal: AbortSignal.timeout(15_000),
         }),
     );
+    await trace({ lostResponse: "POST /v1/routes", operation: ambiguous.operationId });
     const applied = await one();
     assert.equal(applied.operationId, ambiguous.operationId);
     assert.equal(applied.target.deploymentId, B);

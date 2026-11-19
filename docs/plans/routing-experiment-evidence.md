@@ -164,3 +164,45 @@ This does not verify application SQL pinning, retention races, worker leases,
 public APIs, hostile-tenant resource isolation, replicas, certificate automation,
 or power-loss/storage-hardware guarantees. It must not be wired into production
 or represented as a hardened published router.
+
+## Production router rehearsal
+
+The accepted experiment above used a **prototype** router. This section repeats its scenarios against
+the **production router image** (`apps/router`, built from the same commit as this record), on a new
+disposable Dokku, with the same real worker adapters. It is run with
+`LAUNCHPAD_ROUTING_REHEARSAL=1 omni -i run test:routing:experiment -p @launchpad-kit/tooling`, needs the
+same explicit approval to start disposable services, and is not in CI. Credential-free evidence is in
+[`evidence/router-rehearsal-20261119/`](evidence/router-rehearsal-20261119/) (the run directory was
+`/tmp/opencode/lp-rehearsal-OWrG0V/`). It passed in 240.6 seconds: Bun **1.4.4**, SQLite **3.53.4**,
+Dokku **0.38.34**; two fixture builds and zero promotion or rollback builds, and both deployed image
+IDs were identical before and after (`image-identities.json`).
+
+The production router has no fault hooks, so delays and response loss come from proxies around it
+(`proxies.ts`), and an ordinary reverse proxy sits in front of the data plane.
+
+| Scenario                         | Observed against the production router                                                                                                                                                                                                                          | Evidence                                                |
+| -------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------- |
+| Topology                         | The containerized worker built, loaded and verified both fixtures through pinned SSH                                                                                                                                                                            | `topology.log`, `fixtures.json`                         |
+| Initialization                   | `init` from stdin created new state, printed only an epoch and refused to reinitialize                                                                                                                                                                          | `resources.json`, trace                                 |
+| Fixed 404                        | Unbound, unknown and withdrawn aliases returned exactly `Not found`, never Dokku content                                                                                                                                                                        | trace, phases `core`, `lost`                            |
+| Promotion and rollback           | Two aliases on A; one moved to B and back to A; the other never moved; no rebuild                                                                                                                                                                               | trace, `image-identities.json`                          |
+| Delayed or lower generations     | Lower generations, equal generation with a different payload, and a bind below a withdrawal fence all returned 409 and changed nothing; generations above 2^53 are exact                                                                                        | trace                                                   |
+| Response loss and a dying driver | A proxy cut the response after the router committed: an authoritative read showed the outcome, an identical replay was idempotent, a changed one conflicted. A driver exited 73 after the acknowledgement and its replacement recovered from its intent journal | trace (`lostResponse`), phases `crash`, `crash-recover` |
+| Input and surface                | Out-of-domain, two-label, unknown-target, extra-field and malformed-generation writes were 400, an oversized body 413, no `rotate`, `init`, `held` or `release` endpoint existed (404), authentication failures were one fixed 401                              | trace                                                   |
+| Hostile request forms            | Duplicate Host, absolute-form, bracketed IPv6, userinfo, trailing dot, POST and chunked GET were never served (404, 405 or 400)                                                                                                                                 | trace                                                   |
+| Restart                          | Routes, tombstones, generations and the epoch were identical after `docker restart`                                                                                                                                                                             | `routes-core.json`, phase `restart`                     |
+| Unavailable state                | With the state file moved under the running router every data and control request was a fixed 503, the healthcheck failed, and a router started without state **refused to start and did not recreate it**                                                      | phase `unavailable`, `cleanup.log`                      |
+| Restore fencing                  | Ingress closed, router stopped, `rotate` ran, router restarted: every old epoch and credential combination was 401, routes were unchanged, an older journal entry was 409, and the next write raised the generation                                             | phase `restore`                                         |
+| State loss                       | A fresh state in a new epoch rejected all 8 other epoch and token pairs and served nothing from the lost routes                                                                                                                                                 | phase `lost`                                            |
+| Host, SNI, certificates          | Over https with a private CA the upstream received the registry hostname as both Host and SNI; a certificate for another name was a 502                                                                                                                         | phase `tls`                                             |
+| Cleanup                          | Both fixture apps and their images, all seven containers, the three state volumes, both images, the network, fifteen helpers and all credential and state files were verified absent                                                                            | `cleanup.log`                                           |
+
+**The harness can fail.** A second run against a router with its epoch check deliberately removed
+failed in the first phase (a stale-epoch request returned 200 instead of 401), and the failure path
+still removed everything by exact name. That mutant run is not part of the record.
+
+**Not repeated here:** a write held _after_ authentication and _before_ its commit (the experiment's
+step 10) needs a hook the production router rightly does not have. It is covered at the store level by
+`packages/alias-router` (an authenticated handle fails after rotation, with an unseen generation), not
+by this rehearsal. The stale-worker-claim case and application-database pinning remain gates of the
+worker integration.

@@ -1,0 +1,20 @@
+[
+    {
+        "deploymentId": "eb4c6cfc-87be-432a-8af4-4600d1d6422e",
+        "appName": "lp-test-76cf3c",
+        "hostname": "lp-test-76cf3c.live.example.com",
+        "spa": false,
+        "storageKey": "artifacts/a935ae8c0e30b21d56df0ea10b1a742f/d6d76097f7aef0f2cfe9119f408ba04b635a9b4356d87d8b744704e351d96e64.tar.gz",
+        "imageId": "sha256:29c886b4e2307c7479b1b863c84eff3a9b9f81cdf514a6149a220f7f52432197",
+        "imageTag": "launchpad/site:eb4c6cfc87be432a8af44600d1d6422e"
+    },
+    {
+        "deploymentId": "6abb53f1-55fd-4c34-a3ea-a80aa2967fcf",
+        "appName": "lp-test-b950aa",
+        "hostname": "lp-test-b950aa.live.example.com",
+        "spa": false,
+        "storageKey": "artifacts/a935ae8c0e30b21d56df0ea10b1a742f/8bc6f91f46012db2d9afe4917d75df94d76d6352488e3515b70544c998a96d26.tar.gz",
+        "imageId": "sha256:cf056e13632704f2ae7333cd313504203f5b91baf9f34292311a4a86e89b4121",
+        "imageTag": "launchpad/site:6abb53f155fd4c34a3eaa80aa2967fcf"
+    }
+]

@@ -1,0 +1,24 @@
+[
+    {
+        "probe": "view-one.live.example.com",
+        "status": 503,
+        "body": "Routing unavailable\n"
+    },
+    {
+        "probe": "view-two.live.example.com",
+        "status": 503,
+        "body": "Routing unavailable\n"
+    },
+    {
+        "probe": "unknown.live.example.com",
+        "status": 503,
+        "body": "Routing unavailable\n"
+    },
+    {
+        "control": "GET /v1/routes",
+        "status": 503,
+        "body": {
+            "error": "unavailable"
+        }
+    }
+]

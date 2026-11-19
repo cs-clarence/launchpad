@@ -1,0 +1,69 @@
+[
+    {
+        "control": "POST /v1/deployments",
+        "status": 200,
+        "body": {
+            "deploymentId": "eed8ee91-550e-491a-87e0-d5dee309182a",
+            "hostname": "tls.live.example.com"
+        }
+    },
+    {
+        "control": "POST /v1/deployments",
+        "status": 200,
+        "body": {
+            "deploymentId": "363c3d90-4939-48ca-bb9e-8dc7113ac35e",
+            "hostname": "wrong.live.example.com"
+        }
+    },
+    {
+        "control": "POST /v1/routes",
+        "status": 200,
+        "body": {
+            "instanceId": "ee9d589f-edc3-4420-b2bd-06de4de2acc3",
+            "epoch": "86d669ed-25ed-4a5b-9e64-4a729607ee76",
+            "route": {
+                "aliasId": "6551cb23-df88-44e1-a3df-b61727b45d91",
+                "hostname": "view-tls.live.example.com",
+                "operationId": "b15bb969-5a92-4d8c-8d81-3457268e56d6",
+                "generation": "1",
+                "target": {
+                    "deploymentId": "eed8ee91-550e-491a-87e0-d5dee309182a",
+                    "hostname": "tls.live.example.com"
+                }
+            }
+        }
+    },
+    {
+        "control": "POST /v1/routes",
+        "status": 200,
+        "body": {
+            "instanceId": "ee9d589f-edc3-4420-b2bd-06de4de2acc3",
+            "epoch": "86d669ed-25ed-4a5b-9e64-4a729607ee76",
+            "route": {
+                "aliasId": "7844d9d2-a8f1-4b1a-a353-85fbb98c4df7",
+                "hostname": "view-wrong.live.example.com",
+                "operationId": "31445e69-4cbd-44da-965b-657a1b5d399e",
+                "generation": "1",
+                "target": {
+                    "deploymentId": "363c3d90-4939-48ca-bb9e-8dc7113ac35e",
+                    "hostname": "wrong.live.example.com"
+                }
+            }
+        }
+    },
+    {
+        "probe": "view-tls.live.example.com",
+        "status": 200,
+        "body": "{\"host\":\"tls.live.example.com\",\"sni\":\"tls.live.example.com\"}"
+    },
+    {
+        "probe": "view-wrong.live.example.com",
+        "status": 502,
+        "body": "Bad gateway\n"
+    },
+    {
+        "probe": "view-unknown.live.example.com",
+        "status": 404,
+        "body": "Not found\n"
+    }
+]
