@@ -164,6 +164,20 @@ back an empty registry and stale generations while the router and Dokku keep the
       secrets). Tests assert the P2b rule is gone, that the command refuses without the flag on a
       database with rows, on an empty one, and with the file absent. This follows the restore
       command's confirmation flags and is weaker than verification, so it is **interim**.
+    - **What the attestation covers (the manual procedure until P5).** The flag attests that the
+      operator did all of the following, in this order, because nothing verifies it yet:
+        1. Closed ingress and stopped every pre-restore writer (controller, worker, admin jobs).
+        2. **Rotated the router epoch and control credentials offline**, so a delayed request from
+           a pre-restore writer is rejected. Without this, a higher-generation delayed write is
+           accepted by the router (`packages/alias-router/src/store.ts:352-353`) and the restored
+           database never records it. This is the fence required by `deployment-modes.md`.
+        3. Reconciled the router and Dokku against the restored database (P3: deployments and
+           Dokku apps; P4: aliases, with `recovery-raise-counters`).
+        4. Only then ran `recovery-clear`.
+           The unfenced window exists only if step 2 is skipped, and the consequence is a route change
+           the database cannot see. **P5 removes the reliance on memory**: the backup manifest records the
+           router epoch ID (not a secret), and `recovery-clear` verifies the router's current epoch
+           differs from it.
     - **Counter repair (P4).** P3 has no routes, so no counters exist. The P4 PR that adds aliases
       also adds, using its read-only router client, a check inside `recovery-clear` that refuses
       while any alias `reserved_generation` is below the router's generation for that route or the

@@ -159,7 +159,9 @@ Undo: disable dispatch and GC, keep pins; reconcile under a new fenced operation
 Complete recovery for the persisted post-restore mutation gate installed in P2
 and enforced by P3/P4, not a status/report convention. P3 ships an interim
 operator attestation for `recovery-clear` that is always required once a writer exists
-(not dependent on a file or on table contents); P4 adds a router-read counter check and a
+(not dependent on a file or on table contents) and that covers closing ingress, rotating
+the router epoch and credentials, and reconciling router and Dokku, as the schema map
+spells out; P5 verifies the epoch change from the backup manifest; P4 adds a router-read counter check and a
 monotonic `recovery-raise-counters` step; P5 replaces the attestation with verified
 reconciliation. Provide
 an operator-only procedure/command that uses rotated epoch/credentials, compares
