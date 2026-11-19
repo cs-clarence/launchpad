@@ -196,7 +196,10 @@ export const apiKeySummarySchema = z.strictObject({
     id: z.uuid(),
     name: z.string(),
     prefix: z.string(),
-    scopes: z.array(apiKeyScope),
+    scopes: z.array(z.string()).meta({
+        description:
+            "Scopes originally granted, including retired scope names. Metadata only: issuance and authentication accept current scopes only.",
+    }),
     projectIds: z.array(z.uuid()).nullable(),
     createdBy: z.string(),
     createdAt: timestamp,

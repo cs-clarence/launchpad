@@ -61,7 +61,11 @@ function fixture(options: ServerOptions = {}, failure = false) {
                     return Response.json([
                         {
                             id: PROJECT,
-                            slug: "site",
+                            slug: u.pathname.includes("/org-one/")
+                                ? "site-one"
+                                : u.pathname.includes("/org-two/")
+                                  ? "site-two"
+                                  : "site",
                             name: `untrusted \u001b[31m${KEY}`,
                             createdAt: NOW,
                         },
@@ -125,8 +129,8 @@ describe("read-only MCP protocol", () => {
         });
         expect(relative.isError).toBe(true);
         const invalid = await client.callTool({
-            name: "get_preview",
-            arguments: { working_dir: dir, preview_id: "bad" },
+            name: "list_projects",
+            arguments: { working_dir: dir, profile: 123 },
         });
         expect(invalid.isError).toBe(true);
         expect(calls).toEqual([]);
@@ -173,6 +177,11 @@ describe("read-only MCP protocol", () => {
         expect(results.every((r) => !r.isError)).toBe(true);
         for (const org of ["one", "two"]) {
             expect(calls).toContain(`/api/v1/organizations/org-${org}/projects`);
+        }
+        for (const [index, org] of ["one", "two"].entries()) {
+            expect(results[index]!.structuredContent).toMatchObject({
+                data: [{ slug: `site-${org}` }],
+            });
         }
         expect(process.cwd()).toBe(cwd);
     });

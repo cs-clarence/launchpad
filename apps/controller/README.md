@@ -208,8 +208,9 @@ omni -i run admin -p @launchpad-kit/controller -a command=check-restore
 the `pg_dump`'s that wrote the backup) with the dump on its standard input and the connection
 settings in `PG*` variables. The environment files, the authentication secret and Dokku's own state
 are not in a backup: put them back yourself. Archives the data directory holds that the backup
-does not are left alone; the worker's cleanup removes unreferenced ones after the retention. A
-restore killed halfway can leave `*.restore-*` temporary files beside the archives (delete them).
+does not are left alone. The idle worker does not collect them; do not rely on automatic cleanup
+in this release. A restore killed halfway can leave `*.restore-*` temporary files beside the archives
+(delete them).
 If it was killed after the old schema was moved aside, the database may have an empty, partly
 restored or missing `public` schema, with the old data in a `launchpad_replaced_*` schema: list
 them with `select nspname from pg_namespace where nspname like 'launchpad_replaced_%'`, then either
@@ -227,6 +228,9 @@ Owners and admins manage keys on the organization page. Choose explicit scopes,
 expiry (at most 365 days) and optional project restrictions. The default is
 organization/project read access. `member:read` includes all members' email
 addresses; the UI does not offer the reserved `project:delete` scope.
+Key lists retain historical scope names so keys issued before the cutover remain inspectable and
+revocable. This is metadata only: new keys cannot request retired scopes, and a bearer key with
+any retired or unknown scope is refused entirely.
 
 Issuing requires a sign-in from the last 15 minutes. Freshness uses the server's
 flag and remaining duration, not a comparison with the browser's clock. The page provides checked

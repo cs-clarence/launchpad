@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { apiKeySummarySchema } from "@launchpad-kit/contracts";
 import { createTestDatabase } from "@launchpad-kit/database/testing";
 import { sql } from "kysely";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -198,6 +199,30 @@ describe("issuing keys", () => {
 });
 
 describe("authenticating keys", () => {
+    it("keeps current and retired-scope keys listable before and after revocation", async () => {
+        const current = await issue("ann");
+        const legacy = await issue("ann");
+        await testDb.db
+            .updateTable("api_key")
+            .set({ scopes: ["project:read", "preview:read"] })
+            .where("id", "=", legacy.id)
+            .execute();
+        for (const revoked of [false, true]) {
+            if (revoked) await revokeApiKey(testDb.db, people.ann!, org, legacy.id);
+            // This is the JSON shape used by both HTTP and the organization-page loader.
+            const rows = apiKeySummarySchema
+                .array()
+                .parse(JSON.parse(JSON.stringify(await listApiKeys(testDb.db, people.ann!, org))));
+            expect(rows.find((row) => row.id === current.id)?.scopes).toEqual(["project:read"]);
+            expect(rows.find((row) => row.id === legacy.id)).toMatchObject({
+                scopes: ["project:read", "preview:read"],
+                status: revoked ? "revoked" : "active",
+            });
+            expect(await authenticateApiKey(testDb.db, legacy.secret)).toBeNull();
+            expect(await authenticateApiKey(testDb.db, current.secret)).not.toBeNull();
+        }
+    });
+
     it("resolves a valid key to its organization, creator, scopes and projects", async () => {
         const key = await issue("ann", {
             scopes: ["project:read"],

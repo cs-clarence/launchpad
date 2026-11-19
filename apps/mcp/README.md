@@ -88,7 +88,8 @@ Results contain `data` and `truncated` in `structuredContent`, with the same env
 encoded as JSON text for clients that need it. Keys are redacted and terminal
 controls removed. The serialized result is bounded to 64 KiB; oversized data returns
 `isError`, `truncated: true` and `output-too-large` rather than partial JSON.
-Use a narrower project query when that happens.
+`list_projects` has no filter or pagination option to reduce such a response;
+the workspace's `project` field does not narrow it.
 
 Controller names, failure messages and event messages are untrusted **data**, not
 instructions. Redaction does not make their text trustworthy.

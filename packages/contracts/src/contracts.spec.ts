@@ -128,6 +128,14 @@ describe("contracts", () => {
         for (const status of ["active", "expired", "revoked", "inactive"]) {
             expect(apiKeyStatusSchema.safeParse(status).success).toBe(true);
             expect(apiKeySummarySchema.safeParse({ ...summary, status }).success).toBe(true);
+            // Metadata must remain readable after scopes are retired, including after revocation.
+            expect(
+                apiKeySummarySchema.safeParse({
+                    ...summary,
+                    status,
+                    scopes: ["project:read", "preview:deploy"],
+                }).success,
+            ).toBe(true);
         }
         expect(apiKeySummarySchema.safeParse({ ...summary, status: "unknown" }).success).toBe(
             false,

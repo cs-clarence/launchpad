@@ -243,17 +243,16 @@ docker build --target admin --build-arg LAUNCHPAD_VERSION="$version" -f apps/con
 docker build --build-arg LAUNCHPAD_VERSION="$version" -f apps/router/Dockerfile -t launchpad/router:dev .
 ```
 
-Both run as the fixed unprivileged uid 10001 (they share one data directory), hold no secret (every
+Both run as the fixed unprivileged uid 10001, hold no secret (every
 setting arrives at run time), and contain no source, env file or key. The controller image has a
 healthcheck and carries the operator commands: `bun .output/admin.mjs migrate` (and `setup`,
-`backup`, ...). The worker image carries the `docker` client and `ssh`; at run time it still needs
-the data directory, a Dokku SSH key and pinned known_hosts file, and a Docker engine whose socket
-its user may use (give the container the socket's group: that access is root-equivalent on the host, so run the
-worker only where that is acceptable). Stop the worker with `docker stop --time 1500` (`stop_grace_period: 25m`
-in Compose): a load can take about 24 minutes. Mount the same volume at `/data` in both containers
+`backup`, ...). The worker image still carries the `docker` client and `ssh` for future use, but its
+current runtime only idles and writes a health marker. Do not provide database credentials, Dokku keys,
+known_hosts or a Docker socket; the idle worker does not need the archive data directory either.
+The controller still needs durable storage at `/data`
 (a named volume gets the image's ownership; a bind-mounted directory must be owned by 10001:10001).
 The base images are pinned by tag and must be pinned by digest before a release. A built artifact's migrations are
-bundled into `.output/migrations` (controller) and `dist/migrations` (worker). `backup` and
+bundled into `.output/migrations` (controller); the idle worker carries no migration bundle. `backup` and
 `restore` need a `pg_dump`/`pg_restore` at least as new as the server, which the image does not
 carry: mount one and set `LAUNCHPAD_PG_DUMP` / `LAUNCHPAD_PG_RESTORE`.
 
