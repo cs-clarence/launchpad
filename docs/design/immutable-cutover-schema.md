@@ -36,7 +36,9 @@ pending migrations in one transaction; 018 opens no transaction of its own):
 
 A failure in any step rolls everything back. The new tables do not reuse the dropped
 names, so an old process that survives fails with "relation does not exist" instead of
-operating on new rows; its startup check refuses once 018 is recorded.
+operating on new rows; its startup check refuses once 018 is recorded. That does not stop a
+process already running or a Dokku operation it already dispatched, so the runbook is to stop
+every old controller, worker and admin job, and let in-flight remote work settle, first.
 
 ## Physical table map
 
@@ -138,9 +140,15 @@ back an empty registry and stale generations while the router and Dokku keep the
   already require every process to share (one `LAUNCHPAD_DATA_DIR` volume); a missing mount is a
   startup error, never permission to assume readiness.
 - **Clearing.** `launchpad-admin recovery-clear` sets `ready` under the recovery locks, then
-  removes the marker and fsyncs the directory (a crash in between stays blocked). In P2b it
-  succeeds only when every model table is empty, since there is then nothing to reconcile; from
-  P3 it additionally requires verified router reconciliation (P5), and refuses otherwise.
+  removes the marker and fsyncs the directory (a crash in between stays blocked). **Empty model
+  tables prove nothing about remote state**: after an older dump is restored over an installation
+  that already used the model, the tables are empty while the router and Dokku still hold the old
+  routes and apps. So clearing is only ever valid while no code can create model state, which is
+  true only until the first model writer exists. P2b ships `recovery-clear` for that window
+  (every model table empty). **The P3 change that introduces the first writer must replace the
+  rule with verified router and Dokku reconciliation (P5) in the same PR**, and a test must
+  assert the empty-tables rule is gone; until then the command refuses. If that replacement is
+  not ready, P3 cannot merge a writer.
 - **Older dumps.** There is no backup floor. An older dump restores, is migrated forward, and
   018 drops its preview tables again; the marker is written like any restore.
 
@@ -168,7 +176,7 @@ On disposable PostgreSQL, from the frozen schema-014 fixture and from an empty d
 - An old binary against the migrated schema is refused at startup (018 recorded).
 - Restore: a post-018 backup round trip writes the marker and sets the gate; a crash after
   import before the gate write stays blocked after a fresh start; an older dump restores,
-  migrates, and writes no marker.
+  migrates, and writes the marker like any restore.
 - The upgrade drill and the built images run the new migration, and the drill asserts the
   four preview tables and `worker_heartbeat` are gone afterwards.
 - An old dump restored over a database that already holds model rows writes the marker.

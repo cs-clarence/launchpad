@@ -66,7 +66,9 @@ Physical table names: the new deployment, event and deletion tables are
 The resource names `deployment`, `deployment_event` and `deletion_operation` below
 are logical shorthand. The old preview-era tables are dropped, but the new tables
 deliberately do not reuse their names, so a surviving old process fails with
-"relation does not exist" instead of operating on new rows. See the
+"relation does not exist" instead of operating on new rows. That does not stop a
+process already running or a remote operation it already dispatched: the operator
+stops every old process and lets in-flight remote work settle first. See the
 [implementation plan](../plans/immutable-deployment-model.md) for ordered gates.
 
 Add new forward-only migrations; never rewrite frozen migrations.
@@ -618,8 +620,9 @@ The concrete bootstrap/recovery procedure must pass the routing experiment.
       one 409; GC racing that reservation cannot destroy the candidate.
     - Retention after the last pin release observes the later deadline; withdrawing
       an alias with an uncertain outcome retains all possible targets.
-    - A pre-model backup is rejected before mutation; post-model restore compares
-      router epochs/generations and does not replay stale routing.
+    - An older dump restores and migrates forward (018 drops its preview tables again);
+      any restore by an 018-aware binary writes the recovery marker, and reconciliation
+      compares router epochs/generations and does not replay stale routing.
     - Old preview keys cannot promote/manage aliases; MCP without its promotion
       opt-in/confirmation cannot mutate aliases.
 

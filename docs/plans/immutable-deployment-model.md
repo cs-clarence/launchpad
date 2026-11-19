@@ -63,8 +63,10 @@ retirement design and its test-only SQL (P1, merged in #55) are superseded and d
 P2. Remote alias state still needs separate fenced reconciliation after any restore.
 
 Delivery order is "retire first": `main` may be unable to deploy between P2 and P3. The new
-tables use names no old binary knows, so a surviving old process fails closed, and its
-startup check refuses once 018 is recorded. See the [P2 plan](immutable-p2-cutover.md) and
+tables use names no old binary knows, so a surviving old process cannot operate on new
+rows, and the startup check refuses new starts once 018 is recorded. Neither stops a process
+that is already running or a Dokku operation it already dispatched: the operator stops all old
+processes and settles in-flight remote work before upgrading. See the [P2 plan](immutable-p2-cutover.md) and
 the [replacement schema map](../design/immutable-cutover-schema.md).
 
 ## Worked acceptance example
@@ -88,8 +90,8 @@ does not unpin A. Verified final withdrawal releases the last pin and starts the
 rollback window; scheduled GC waits for the later deadline. Manual DELETE may
 waive time only, never pins. Restore an older post-model backup while the router
 has a newer acknowledged generation: close ingress, fence epoch/credentials,
-reconcile and raise counters before enabling mutations. Reject a pre-model
-backup without changing database or archive files.
+reconcile and raise counters before enabling mutations. An older dump restores and
+migrates forward, and the restore still writes the recovery marker.
 
 ## Ordered delivery
 
@@ -168,7 +170,7 @@ findings is a separate optional follow-up, not a prerequisite for safe routing.
 Checks: post-model restore with router ahead, unknown target/alias, missing
 tombstone, epoch mismatch, lost router state and repeated interrupted recovery.
 Mutation gate survives restart and refuses every mutation path until explicit
-verified reconciliation. An older dump restores, migrates and writes no marker.
+verified reconciliation. An older dump restores and migrates, and the restore still writes the marker.
 Undo: keep ingress closed and gate set; retry reconciliation, never lower counters.
 
 ### P6 — coordinated client and documentation cutover
