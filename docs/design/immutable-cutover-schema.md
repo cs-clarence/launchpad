@@ -175,9 +175,11 @@ back an empty registry and stale generations while the router and Dokku keep the
            Dokku apps; P4: aliases, with `recovery-raise-counters`).
         4. Only then ran `recovery-clear`.
            The unfenced window exists only if step 2 is skipped, and the consequence is a route change
-           the database cannot see. **P5 removes the reliance on memory**: the backup manifest records the
-           router epoch ID (not a secret), and `recovery-clear` verifies the router's current epoch
-           differs from it.
+           the database cannot see. **P5 removes the reliance on memory**: when the restore begins it
+           records the router's current epoch ID (not a secret) in the recovery marker, and
+           `recovery-clear` verifies the router's epoch now differs from it. The anchor is the
+           moment the restore started, **not** the backup manifest: a router that rotated after the
+           backup but before the restore would otherwise look like a rotation made during recovery.
     - **Counter repair (P4).** P3 has no routes, so no counters exist. The P4 PR that adds aliases
       also adds, using its read-only router client, a check inside `recovery-clear` that refuses
       while any alias `reserved_generation` is below the router's generation for that route or the
