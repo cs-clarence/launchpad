@@ -154,15 +154,25 @@ back an empty registry and stale generations while the router and Dokku keep the
       writer-seen file does not exist; it **refuses** in every other case, including an empty
       database after any writer has run. Rolling back to a P2b binary after P3 has written is not
       supported, and this record is what makes the P2b command refuse if someone does.
-    - **Interim rule (P3 to P4).** Reconciliation itself is P5, so P3 cannot depend on it. The
-      P3 PR that adds the first writer replaces the empty-tables rule with an **interim
-      fail-closed rule**: once `model-writer-seen` exists, `recovery-clear` refuses unless the
-      operator passes the explicit attestation `--i-have-reconciled-router-and-dokku`, which is
-      recorded in an audit event (count-only, no secrets). A test asserts the empty-tables rule is
-      gone and that the command refuses without the flag. This follows the restore command's
-      existing confirmation flags and is weaker than verification, so it is **interim**.
-    - **P5 replacement.** P5 replaces the attestation with verified router and Dokku
-      reconciliation, and the flag is removed in the same PR.
+    - **Interim rule (from P3).** Reconciliation itself is P5, so P3 cannot depend on it. The
+      P3 PR that adds the first writer replaces the P2b rule with an **interim fail-closed
+      rule** that does **not** consult `model-writer-seen` or the model tables: the file lives on
+      the data volume, so a replaced volume restored from an older dump loses it, and empty
+      tables cannot be told from a never-used installation. `recovery-clear` therefore **always**
+      refuses unless the operator passes the explicit attestation
+      `--i-have-reconciled-router-and-dokku`, recorded in an audit event (count-only, no
+      secrets). Tests assert the P2b rule is gone, that the command refuses without the flag on a
+      database with rows, on an empty one, and with the file absent. This follows the restore
+      command's confirmation flags and is weaker than verification, so it is **interim**.
+    - **Counter repair (P4).** P3 has no routes, so no counters exist. The P4 PR that adds aliases
+      also adds, using its read-only router client, a check inside `recovery-clear` that refuses
+      while any alias `reserved_generation` is below the router's generation for that route or the
+      router holds a route the database does not know, and a `recovery-raise-counters` step that
+      raises counters with `GREATEST` under the alias lock while the gate is set and never lowers
+      one. The attestation is still required.
+    - **P5 replacement.** P5 adds tombstone comparison, protection of unknown routed targets and
+      Dokku reconciliation, replaces the attestation with that verification, and removes the flag
+      in the same PR.
 - **Older dumps.** There is no backup floor. An older dump restores, is migrated forward, and
   018 drops its preview tables again; the marker is written like any restore.
 

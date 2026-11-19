@@ -149,13 +149,19 @@ cases on PostgreSQL plus production-router adapter integration. Verify retention
 boundary equality, alias recreation cannot reuse hostname, exhausted generations
 fail closed, idempotent retries do not allocate another generation, and request
 payload conflicts have no side effects.
+Recovery during P4: with aliases present, `recovery-clear` also refuses while any
+alias counter is below the router's generation or the router holds an unknown route, and
+`recovery-raise-counters` raises counters monotonically before it can pass.
 Undo: disable dispatch and GC, keep pins; reconcile under a new fenced operation.
 
 ### P5 — restore reconciliation and operator drift
 
 Complete recovery for the persisted post-restore mutation gate installed in P2
 and enforced by P3/P4, not a status/report convention. P3 ships an interim
-operator attestation for `recovery-clear`; P5 replaces it with verified reconciliation. Provide
+operator attestation for `recovery-clear` that is always required once a writer exists
+(not dependent on a file or on table contents); P4 adds a router-read counter check and a
+monotonic `recovery-raise-counters` step; P5 replaces the attestation with verified
+reconciliation. Provide
 an operator-only procedure/command that uses rotated epoch/credentials, compares
 complete durable router state including tombstones, raises reserved counters and
 protects unknown routed targets. Never silently discard unknown routes or enable
