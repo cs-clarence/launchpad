@@ -166,7 +166,11 @@ back an empty registry and stale generations while the router and Dokku keep the
       command's confirmation flags and is weaker than verification, so it is **interim**.
     - **What the attestation covers (the manual procedure until P5).** The flag attests that the
       operator did all of the following, in this order, because nothing verifies it yet:
-        1. Closed ingress and stopped every pre-restore writer (controller, worker, admin jobs).
+        1. Closed ingress and stopped every pre-restore writer (controller, worker, admin jobs),
+           **and waited for every Dokku operation those writers had already dispatched (build, load,
+           destroy) to settle.** Stopping a worker does not stop a dispatched operation, and rotating
+           router credentials does not fence Dokku, so a pending destroy could otherwise finish after
+           reconciliation and leave the restored database pointing at a missing app.
         2. **Rotated the router epoch and control credentials offline**, so a delayed request from
            a pre-restore writer is rejected. Without this, a higher-generation delayed write is
            accepted by the router (`packages/alias-router/src/store.ts:352-353`) and the restored
@@ -180,6 +184,9 @@ back an empty registry and stale generations while the router and Dokku keep the
            `recovery-clear` verifies the router's epoch now differs from it. The anchor is the
            moment the restore started, **not** the backup manifest: a router that rotated after the
            backup but before the restore would otherwise look like a rotation made during recovery.
+           P5 keeps the Dokku settling condition: its verified reconciliation runs only after a
+           settling wait, and the operator procedure still requires it, because nothing can prove
+           from the database that no dispatched Dokku operation is still running.
     - **Counter repair (P4).** P3 has no routes, so no counters exist. The P4 PR that adds aliases
       also adds, using its read-only router client, a check inside `recovery-clear` that refuses
       while any alias `reserved_generation` is below the router's generation for that route or the
