@@ -9,9 +9,9 @@ import { sql } from "kysely";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 
 // What an OLD (pre-model) process does after cutover. The code under test is the real
-// services/database source of commit 39fbc29, extracted from git into a temporary tree
+// services/database source of commit e03c542, extracted from git into a temporary tree
 // whose @launchpad-kit/* imports resolve to that tree, never to the current packages.
-const BASELINE = "39fbc29cc1549763564eafb0612da5a211a6e924";
+const BASELINE = "e03c54257ebe14926da4e50d2ba58fe324e5b4bb";
 const SOURCE_HASHES: Record<string, string> = {
     "packages/services/src/deployments.ts":
         "d130632341a6d1418bf028a3946c51a3d9ce9f913c0cb10a583d2e28387fed48",
@@ -225,7 +225,7 @@ const cutover = () =>
             await sql.raw(model).execute(trx);
         });
 
-describe("old (39fbc29) processes against the cut-over schema", () => {
+describe("old (e03c542) processes against the cut-over schema", () => {
     it("resolves its workspace packages inside the extracted baseline tree, never the current ones", async () => {
         const outcome = await oldProcess("resolve");
         expect(outcome.ok).toBe(true);

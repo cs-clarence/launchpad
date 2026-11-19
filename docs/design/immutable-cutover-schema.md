@@ -31,8 +31,14 @@ this filter alone does **not** establish PostgreSQL 18 support.
 
 ## Immutable input and old-process fixtures
 
+The baseline commit was first recorded as `39fbc29` (the original squash merge of
+#54). Restoring the dropped #50–#54 to `main` replaced that commit with the equivalent
+`e03c542`; the `packages` tree (`187c0045a1e8…`) and `package.json` are byte-identical,
+so the source and hashes below are unchanged. `39fbc29` is no longer reachable from the
+remote, which is why CI could not extract it. Use `e03c542`, which is on `main`.
+
 The historical source of truth is commit
-`39fbc29cc1549763564eafb0612da5a211a6e924`, not the rebased branch's new hashes.
+`e03c54257ebe14926da4e50d2ba58fe324e5b4bb`, not the rebased branch's new hashes.
 Preserve that object before building the P2 compatibility fixture. Build the old
 artifact from that tree with its own lockfile; do not import current services
 into an alleged old-worker test.
@@ -342,7 +348,7 @@ contracts, client-core, SDK/CLI/MCP and authorization callers.
 
 ## Old-process findings (executed, P1)
 
-`immutable-old-process.spec.ts` runs the real `39fbc29` code, extracted from git
+`immutable-old-process.spec.ts` runs the real `e03c542` code, extracted from git
 with its three source hashes checked, against a database cut over by both SQL
 segments. Seven cases pass on PostgreSQL 17:
 

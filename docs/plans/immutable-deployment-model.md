@@ -87,7 +87,7 @@ mandatory before accepting retirement preconditions.
 The migration takes explicit locks and refuses live previews or unfinished
 deployment/deletion/rollback work. Fresh heartbeats are an additional refusal
 signal, not proof of exclusion. Test old worker, controller and artifact-GC
-entrypoints from the actual `39fbc29` artifact against the migrated fixture, both
+entrypoints from the actual `e03c542` artifact against the migrated fixture, both
 with a held old connection and attempted reconnect. They must lose access under
 the role fence. Separately, with test-only access, actual old claim/write SQL
 must fail against absent old table names, never claim new work. Preserve the
@@ -203,7 +203,7 @@ are still P2 work, and old-artifact/login fencing and the restore floor and
 recovery gate remain outstanding.
 
 Old-process compatibility is **partially** executed (`test:cutover:old-process`, 8 cases
-on PostgreSQL 17). The real `39fbc29` claim, deletion claim and artifact GC were run
+on PostgreSQL 17). The real `e03c542` claim, deletion claim and artifact GC were run
 as the database owner against the cut-over schema and fail closed with the relation
 named, leaving the archive, its row and new-model rows untouched; a control shows the
 same code does act before cutover. The fence mechanics (`NOLOGIN`, then session
@@ -243,7 +243,7 @@ The third independent review accepted P1 as an inert PR after documentation fixe
 7. **`lock_timeout`** on the migration, so a straggling old session fails it rather than
    queueing an exclusive lock behind every reader; and the full dependency inventory
    (incoming FKs, views, grants, constraint definitions).
-8. CI must have full history for `git archive 39fbc29`: the integration job now uses
+8. CI must have full history for `git archive e03c542`: the integration job now uses
    `fetch-depth: 0`, and the spec fails with an explicit message in a shallow clone.
 
 Add regression fixtures for legacy retirement refusal, API-key revocation,
@@ -254,7 +254,7 @@ Do not add a migration that activates the new model in this preparation PR.
 Keep the baseline runnable; tests for future behavior belong with the implementing
 change rather than leaving failing tests on main.
 The old worker and GC source compatibility test is **active now**
-(`test:cutover:old-process`, extracting `39fbc29` from git). Old controller-handler and
+(`test:cutover:old-process`, extracting `e03c542` from git). Old controller-handler and
 fenced-role entrypoint tests are P2 work. The backup floor and recovery gate need
 migration 018 and are P2, not P1.
 

@@ -90,7 +90,7 @@ Rules that keep the graph correct:
   is uncached, starts no controller/Dokku and requires the disposable PostgreSQL
   fixture. These tests also run with the full controller integration suite.
 - **Old-process compatibility.** `omni -i run test:cutover:old-process -p @launchpad-kit/controller`
-  extracts commit `39fbc29` from git into a temporary tree (checking three source
+  extracts commit `e03c542` from git into a temporary tree (checking three source
   hashes), relinks its workspace packages to that tree, and runs its real
   `claimNext`, `claimDeletion`, `collectArtifacts` and `assertSchemaCurrent` in a
   subprocess against a cut-over test database. It also exercises the `NOLOGIN` plus

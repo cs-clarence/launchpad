@@ -57,7 +57,7 @@ same disposable PostgreSQL prerequisite. It executes a test-only SQL fixture,
 not a discovered migration; it does not enable the immutable deployment model.
 The old-process compatibility drill is
 `omni -i run test:cutover:old-process -p @launchpad-kit/controller`: it runs the real
-`39fbc29` worker and GC code (extracted from git) against the cut-over schema.
+`e03c542` worker and GC code (extracted from git) against the cut-over schema.
 The paired model/reservation candidate is
 `omni -i run test:cutover:model -p @launchpad-kit/controller`. It applies retirement
 and model SQL together inside each isolated test database. Neither candidate is
