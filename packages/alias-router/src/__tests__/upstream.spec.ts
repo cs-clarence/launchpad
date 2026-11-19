@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import http from "node:http";
 import https from "node:https";
+import net from "node:net";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -143,8 +144,11 @@ describe("plain HTTP upstream", () => {
         await expect.poll(() => closed).toBe(true);
     });
 
-    it("releases the abort listener when the request fails or the status is out of range", async () => {
-        const port = await listen(http.createServer((_req, res) => res.destroy()));
+    it.each([
+        ["the connection is destroyed", (res: http.ServerResponse) => res.destroy()],
+        ["the status is out of range", (res: http.ServerResponse) => res.writeHead(600).end()],
+    ])("releases the abort listener when %s", async (_name, respond) => {
+        const port = await listen(http.createServer((_req, res) => respond(res)));
         const upstream = createHttpUpstream({ origin: new URL(`http://127.0.0.1:${port}`) });
         const controller = new AbortController();
         const added: string[] = [];
@@ -160,9 +164,63 @@ describe("plain HTTP upstream", () => {
             removed.push(type);
             return (remove as (...a: unknown[]) => void)(type, ...rest);
         }) as typeof signal.removeEventListener;
-        await upstream(request("a.sites.example.net", { signal })).catch(() => undefined);
+        const error = await upstream(request("a.sites.example.net", { signal })).catch((e) => e);
+        // Both are protocol failures, not timeouts, and neither leaks the listener.
+        expect(error).toMatchObject({ failure: "bad-gateway" });
         expect(added).toEqual(["abort"]);
         expect(removed).toEqual(["abort"]);
+    });
+
+    it("answers a protocol switch (101) as a bad gateway at once, not as a timeout", async () => {
+        const server = net.createServer((socket) => {
+            socket.on("data", () => {
+                socket.write(
+                    "HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nUpgrade: websocket\r\n\r\n",
+                );
+            });
+            socket.on("error", () => undefined);
+        });
+        servers.push(server as unknown as (typeof servers)[number]);
+        await new Promise<void>((done) => server.listen(0, "127.0.0.1", done));
+        const port = (server.address() as AddressInfo).port;
+        const upstream = createHttpUpstream({
+            origin: new URL(`http://127.0.0.1:${port}`),
+            headersTimeoutMs: 5000,
+        });
+        const started = Date.now();
+        const error = await upstream(request("a.sites.example.net")).catch((e) => e);
+        expect(error).toMatchObject({ failure: "bad-gateway" });
+        expect(Date.now() - started).toBeLessThan(2500);
+    });
+
+    it("starts the total deadline with the call: a timeout before the headers, an abort after them", async () => {
+        const port = await listen(
+            http.createServer((req, res) => {
+                if (req.url === "/slow-headers") {
+                    setTimeout(() => res.end("late"), 600);
+                    return;
+                }
+                // Headers at once, then a trickle that never trips the idle timeout.
+                res.writeHead(200);
+                const timer = setInterval(() => res.write("x"), 40);
+                res.on("close", () => clearInterval(timer));
+            }),
+        );
+        const upstream = createHttpUpstream({
+            origin: new URL(`http://127.0.0.1:${port}`),
+            headersTimeoutMs: 5000,
+            idleTimeoutMs: 5000,
+            totalTimeoutMs: 250,
+        });
+        const early = await upstream(
+            request("a.sites.example.net", { path: "/slow-headers" }),
+        ).catch((e) => e);
+        expect(early).toMatchObject({ failure: "timeout" });
+        const response = await upstream(request("a.sites.example.net", { path: "/trickle" }));
+        expect(response.status).toBe(200);
+        const started = Date.now();
+        await expect(response.text()).rejects.toBeDefined();
+        expect(Date.now() - started).toBeLessThan(2000);
     });
 
     it("aborts the body stream when the upstream stalls after sending headers", async () => {

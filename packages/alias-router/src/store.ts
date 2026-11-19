@@ -18,7 +18,7 @@ import {
     type RouteWrite,
     type StoreOptions,
 } from "./protocol";
-import { APPLICATION_ID, SCHEMA, SCHEMA_VERSION } from "./schema";
+import { APPLICATION_ID, REQUIRED_TABLES, SCHEMA, SCHEMA_VERSION } from "./schema";
 import { StateFiles } from "./state-files";
 
 declare const authenticated: unique symbol;
@@ -158,6 +158,19 @@ export class RouterStore {
                 db.query("PRAGMA foreign_key_check").all().length !== 0 ||
                 authority(db).instance_id !== this.#options.instanceId
             ) {
+                throw new RouterError("unavailable");
+            }
+            // The stamps and checks above can all pass on a database that lost a table (an
+            // incomplete restore): require the routing tables before anything is served.
+            const tables = new Set(
+                db
+                    .query<{ name: string }, []>(
+                        "SELECT name FROM sqlite_master WHERE type='table'",
+                    )
+                    .all()
+                    .map((row) => row.name),
+            );
+            if (!REQUIRED_TABLES.every((name) => tables.has(name))) {
                 throw new RouterError("unavailable");
             }
             configure(db);

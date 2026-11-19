@@ -51,6 +51,8 @@ export class StateFiles {
     #sidecars = new Map<string, Identity>();
 
     constructor(file: string, create: boolean) {
+        // Set only by a successful exclusive create, so a pre-existing file is never removed.
+        let created = false;
         try {
             if (
                 !path.isAbsolute(file) ||
@@ -78,6 +80,7 @@ export class StateFiles {
                     constants.O_NONBLOCK,
                 0o600,
             );
+            created = create;
             try {
                 const stat = fstatSync(fd);
                 owned(stat, 0o600);
@@ -94,6 +97,8 @@ export class StateFiles {
             }
             this.check();
         } catch {
+            // A bad umask or mode must not leave a file that makes `init` impossible to retry.
+            if (created) this.discard();
             throw new RouterError("unavailable");
         }
     }

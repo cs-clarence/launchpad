@@ -71,6 +71,29 @@ describe("parseAppRoutingConfig", () => {
         );
     });
 
+    it("requires the management origin to be an https origin with no path", () => {
+        const base = (LAUNCHPAD_BASE_URL: string) =>
+            parseAppRoutingConfig({ ...valid, LAUNCHPAD_BASE_URL });
+        expect(base("https://control.example.com").enabled).toBe(true);
+        expect(base("https://control.example.com/").enabled).toBe(true);
+        for (const bad of [
+            "http://control.example.com",
+            "https://control.example.com/admin",
+            "https://control.example.com/?x=1",
+            "https://user:pw@control.example.com",
+        ]) {
+            expect(() => base(bad), bad).toThrow("LAUNCHPAD_BASE_URL");
+        }
+    });
+
+    it("gives the Dokku proxy address the same origin-only contract as the router", () => {
+        const proxy = (LAUNCHPAD_APPS_PROXY_URL: string) =>
+            parseAppRoutingConfig({ ...valid, LAUNCHPAD_APPS_PROXY_URL });
+        expect(proxy("http://dokku:80").enabled).toBe(true);
+        expect(proxy("https://dokku.internal").enabled).toBe(true);
+        expect(() => proxy("https://dokku.internal/proxy")).toThrow("no path");
+    });
+
     it("refuses the preview-era settings with a pointer to the new one", () => {
         expect(() =>
             parseAppRoutingConfig({ ...valid, LAUNCHPAD_PREVIEW_DOMAIN: "x.example.com" }),

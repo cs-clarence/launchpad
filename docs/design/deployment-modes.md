@@ -278,9 +278,10 @@ A **status** says how far the report can be trusted and is not a finding:
 
 - Per source: `ok`, `unavailable` (read failed) or `skipped` (not requested). Findings
   come only from sources that are `ok`; neither of the others is a clean result.
-- Per resource: `in-flight` when it has an unfinished operation, or its database
-  `reserved_generation` is above `committed_generation`. In-flight resources are not
-  compared. An expired lease on a dispatched operation makes it `stuck-operation`, not
+- Per resource: `in-flight` when it has an unfinished operation or is in a transitional
+  state. In-flight resources are not compared. A `reserved_generation` above
+  `committed_generation` is **not** in flight by itself: numbers are never reused, so a
+  failed operation leaves a permanent gap, and a settled alias must stay comparable. An expired lease on a dispatched operation makes it `stuck-operation`, not
   comparable: the outcome is uncertain.
 
 A **finding** has a stable code, a severity, the exact resources and a suggested
@@ -293,7 +294,7 @@ operator action, and never carries credentials or environment values.
 | `orphan-app`                 | A pattern-matching Dokku app is named by no deployment, history or legacy record.                               | medium   | Identify the owner; deletion is a separate, exact-name, authorized action.         |
 | `reservation-without-owner`  | A hostname reservation names an owner that does not exist.                                                      | high     | Integrity alarm; stop mutations and investigate.                                   |
 | `owner-without-reservation`  | A deployment or alias has no reservation for its hostname (the deferred trigger should make this impossible).   | high     | Integrity alarm; stop mutations and investigate.                                   |
-| `alias-route-missing`        | A bound alias has no route in the router.                                                                       | high     | Reconcile through a promotion operation.                                           |
+| `alias-route-missing`        | A bound alias has no route, or a withdrawn alias has no tombstone, in the router.                               | high     | Reconcile through a promotion operation.                                           |
 | `alias-router-ahead`         | The router's generation is above the database's committed one. Expected during verification or after a restore. | medium   | Keep it; raise `reserved_generation` as the restore rule says.                     |
 | `alias-router-behind`        | The router's generation is below the database's committed one.                                                  | high     | Reconcile; the route may have been lost.                                           |
 | `alias-target-conflict`      | Same generation, different target or operation ID.                                                              | high     | Stop promotions for the alias; investigate before correcting.                      |
@@ -316,8 +317,9 @@ step and never treats a pattern match as proof of ownership.
   finding whose resource's generation, operation ID or state changed between them.
 - It runs as `launchpad-admin drift`, beside `check-restore`, with `--no-dokku`
   and `--no-router` to skip a source (reported as `skipped`). Exit 2 when any
-  requested source was unavailable, even with findings; exit 1 for findings when
-  every source was read; exit 0 otherwise. A later, opt-in worker schedule stores
+  requested source was unavailable, even with findings; exit 1 for findings (also
+  when a source was skipped); exit 3 when nothing was found but a source was skipped (not a
+  clean result); exit 0 only when every source was read and nothing was found. A later, opt-in worker schedule stores
   findings in an additive table (its own migration, in Slice 3) with an audit event.
   The operator status will report the count and age of the last successful check and
   computes `drift-check-stale` itself, against a configured threshold.
@@ -639,7 +641,11 @@ Slice 0: nothing. The read-only legacy-preview inventory is
 every preview is terminally deleted; exit 1 while not), and the parser now requires
 the apps domain to be a different registrable domain from `LAUNCHPAD_BASE_URL`
 (enforced once the parser is wired in; nothing calls it at runtime yet). Slice 1
-(routing experiment) has not been approved or run; Slices 2 to 4 are not started.
+(the router-only experiment) is complete: it was approved, run on disposable infrastructure, and its
+evidence was accepted after independent review (`docs/plans/routing-experiment-evidence.md`). The
+production router that replaces the prototype is built and unwired (`docs/plans/production-alias-router.md`).
+Still pending: the real stale-worker-claim test (a gate of the worker integration), the repeat of the
+scenarios against the production router image, and Slices 2 to 4.
 
 ### Implementation slices and gates
 

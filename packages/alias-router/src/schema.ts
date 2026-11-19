@@ -1,5 +1,13 @@
 // Router-local state only. These are not Launchpad application database migrations.
 export const SCHEMA_VERSION = 1;
+export const REQUIRED_TABLES = [
+    "epoch",
+    "metadata",
+    "reservation",
+    "deployment",
+    "operation",
+    "route",
+] as const;
 export const APPLICATION_ID = 0x4c504152; // LPAR
 export const SCHEMA = `
 CREATE TABLE epoch (

@@ -1,6 +1,6 @@
 // Bundled and run inside the worker image, never imported by default tests.
 import { randomUUID } from "node:crypto";
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, rename, writeFile } from "node:fs/promises";
 import { createDokkuClient } from "../../../packages/dokku/src";
 import { artifactStorageKey } from "../../../packages/services/src";
 import { tarGz } from "../../../packages/services/src/testing/tar-fixtures";
@@ -53,7 +53,10 @@ for (const app of resources.apps as string[]) {
         deploymentId,
         imageTag: `launchpad/site:${deploymentId.replaceAll("-", "")}`,
     });
-    await Bun.write("/data/created-apps.json", JSON.stringify(created, null, 2));
+    // Written beside and renamed over the old journal, so a failed write cannot corrupt the
+    // record of what earlier fixtures created.
+    await Bun.write("/data/created-apps.json.next", JSON.stringify(created, null, 2));
+    await rename("/data/created-apps.json.next", "/data/created-apps.json");
     await dokku.apps.create(app, signal);
     const { imageTag } = await ports.build(context, signal);
     // Record the identity before loadImage removes the worker's temporary source tag.

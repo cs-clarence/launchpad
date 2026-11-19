@@ -46,10 +46,14 @@ describe("parseHostnameTemplate", () => {
         ]) {
             expect(() => parse(bad), bad).toThrow();
         }
-        expect(() => parse("{slug}--{id}")).toThrow("single hyphens");
         expect(() => parse("-{slug}-{id}")).toThrow("start with a hyphen");
         expect(() => parse("{slug}-{id}-")).toThrow("end with a hyphen");
-        expect(() => parse("xn-{slug}-{id}")).toThrow("reserved");
+        // Only the reserved form is refused, not ordinary labels that merely start with "xn".
+        expect(() => parse("xn--{slug}-{id}")).toThrow("reserved");
+        expect(() => parse("ab--{slug}-{id}")).toThrow("reserved");
+        expect(parse("xn-{slug}-{id}").source).toBe("xn-{slug}-{id}");
+        expect(parse("xnode-{slug}-{id}").source).toBe("xnode-{slug}-{id}");
+        expect(parse("{slug}--{id}").source).toBe("{slug}--{id}");
     });
 
     it("refuses a template whose worst case exceeds a DNS label, rather than truncating", () => {
@@ -68,6 +72,16 @@ describe("parseHostnameTemplate", () => {
         expect(() => parseHostnameTemplate("{slug}-{id}", "localhost")).toThrow("domain");
         const long = `${"a".repeat(60)}.${"b".repeat(60)}.${"c".repeat(60)}.${"d".repeat(60)}.com`;
         expect(() => parseHostnameTemplate("{slug}-{id}", long)).toThrow();
+        // The legacy 200-character preview cap does not apply: a 201-character domain is a valid
+        // name whose total the template then checks against 253, with that message.
+        const long201 = `${"a".repeat(60)}.${"b".repeat(60)}.${"c".repeat(60)}.com`.padEnd(
+            201,
+            "x",
+        );
+        expect(long201.length).toBe(201);
+        const template = "{slug}-{id}-preview";
+        expect(() => parseHostnameTemplate(template, long201)).toThrow("253");
+        expect(() => parseHostnameTemplate(template, long201)).not.toThrow("valid lowercase");
     });
 });
 
@@ -91,11 +105,15 @@ describe("renderHostname", () => {
         expect(() => renderHostname(parse("{slug}-{id}-preview"), { slug: "ab--cd", id })).toThrow(
             "cannot be used",
         );
-        expect(() => renderHostname(parse("view-{slug}-{id}"), { slug: "a--b", id })).toThrow(
-            "cannot be used",
+        // Consecutive hyphens elsewhere in a label are ordinary DNS and must keep working.
+        expect(renderHostname(parse("view-{slug}-{id}"), { slug: "a--b", id })).toBe(
+            "view-a--b-abcdefghij.sites.example.net",
         );
-        expect(() => renderHostname(parse("{id}-{slug}"), { slug: "a--b", id })).toThrow(
-            "cannot be used",
+        expect(renderHostname(parse("{id}-{slug}"), { slug: "a--b", id })).toBe(
+            "abcdefghij-a--b.sites.example.net",
+        );
+        expect(renderHostname(parse("{slug}-{id}-preview"), { slug: "team--blue", id })).toBe(
+            "team--blue-abcdefghij-preview.sites.example.net",
         );
         expect(renderHostname(parse("{slug}-{id}-preview"), { slug: "xnoise", id })).toBe(
             "xnoise-abcdefghij-preview.sites.example.net",

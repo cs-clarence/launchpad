@@ -1,5 +1,5 @@
 import { randomBytes, randomUUID } from "node:crypto";
-import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
@@ -13,7 +13,7 @@ export interface TempState {
 export const newToken = () => randomBytes(32).toString("hex");
 
 export function tempState(): TempState {
-    const directory = mkdtempSync(path.join(tmpdir(), "launchpad-router-app-"));
+    const directory = mkdtempSync(path.join(realpathSync(tmpdir()), "launchpad-router-app-"));
     chmodSync(directory, 0o700);
     const stateFile = path.join(directory, "routes.sqlite");
     return {

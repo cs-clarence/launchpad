@@ -75,6 +75,7 @@ const FORBIDDEN_IN_IMAGE = [
     /(^|\/)\.npmrc$/,
     /^app\/(apps|packages|docs|tooling)\//,
 ];
+const EPOCH = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const SECRET_IN_HISTORY = /(PASSWORD|SECRET|TOKEN|API_?KEY|PRIVATE_?KEY)\s*=\s*\S/i;
 
 async function logs(name: string) {
@@ -201,7 +202,15 @@ async function main() {
                 await docker(["rm", "-fv", container], { allowFailure: true, cleanup: true });
             }
             for (const volume of volumes) {
-                await docker(["volume", "rm", "-f", volume], { allowFailure: true, cleanup: true });
+                // `-f` ignores a volume that is already gone, so a non-zero exit is a real failure
+                // (for example one still in use): report it, and carry on with the rest.
+                const removed = await docker(["volume", "rm", "-f", volume], {
+                    allowFailure: true,
+                    cleanup: true,
+                });
+                if (removed.code !== 0) {
+                    fail(`could not remove the volume ${volume}: ${removed.err}`);
+                }
             }
             for (const image of Object.values(images)) {
                 await docker(["image", "rm", image], { allowFailure: true, cleanup: true });
@@ -478,10 +487,14 @@ async function main() {
             else if (code === "0") fail(`${label}: it exited 0`);
             else if (contains && !output.includes(contains)) fail(`${label}: it did not say why`);
         };
-        await expectRefusal(`${routerName}-nostate`, "a router started without any state");
+        await expectRefusal(
+            `${routerName}-nostate`,
+            "a router started without any state",
+            "unavailable",
+        );
         const init = await oneOff(["init", "--token-stdin"], `${routerToken}\n`);
         const epoch = init.out.trim();
-        if (init.code !== 0 || !/^[0-9a-f-]{36}$/.test(epoch)) {
+        if (init.code !== 0 || !EPOCH.test(epoch)) {
             fail(`router init failed or printed more than an epoch: ${init.out} ${init.err}`);
         }
         if (init.out.includes(routerToken) || init.err.includes(routerToken)) {
@@ -561,8 +574,10 @@ async function main() {
             ["rotate", "--token-stdin"],
             `${randomBytes(32).toString("hex")}\n`,
         );
-        if (rotated.code !== 0 || rotated.out.trim() === epoch)
-            fail("router rotate did not start a new epoch");
+        const rotatedEpoch = rotated.out.trim();
+        if (rotated.code !== 0 || !EPOCH.test(rotatedEpoch) || rotatedEpoch === epoch) {
+            fail(`router rotate did not print a new, valid epoch: ${rotated.out} ${rotated.err}`);
+        }
         await docker(["rm", "-fv", routerName]);
         console.log("the router initializes, runs, serves both planes and stops");
 

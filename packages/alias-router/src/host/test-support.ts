@@ -1,5 +1,5 @@
 import { randomBytes, randomUUID } from "node:crypto";
-import { chmodSync, mkdtempSync, rmSync } from "node:fs";
+import { chmodSync, mkdtempSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { initializeRouterState, openRouterState, type RouterStore } from "../store";
@@ -14,7 +14,7 @@ export interface HostFixture {
 
 // A real, private, temporary store: the same files and SQLite engine as production.
 export function hostFixture(): HostFixture {
-    const directory = mkdtempSync(path.join(tmpdir(), "launchpad-router-host-"));
+    const directory = mkdtempSync(path.join(realpathSync(tmpdir()), "launchpad-router-host-"));
     chmodSync(directory, 0o700);
     const file = path.join(directory, "routes.sqlite");
     const options = { instanceId: randomUUID(), appsDomain: "sites.example.net" };

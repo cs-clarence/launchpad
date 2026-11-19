@@ -37,13 +37,23 @@ export interface HttpUpstreamOptions {
 // 1xx never reaches here (rejected above); these statuses carry no body.
 const NO_BODY = new Set([204, 205, 304]);
 
+function readCaBundle(file: string): string {
+    const pem = readFileSync(file, "utf8");
+    if (!pem.includes("-----BEGIN CERTIFICATE-----")) {
+        throw new Error("The upstream CA file holds no certificate.");
+    }
+    return pem;
+}
+
 export function createHttpUpstream(options: HttpUpstreamOptions): Upstream {
     const { origin } = options;
     if (!["http:", "https:"].includes(origin.protocol) || origin.pathname !== "/") {
         throw new Error("The upstream must be an http(s) origin with no path.");
     }
     const secure = origin.protocol === "https:";
-    const ca = options.caFile ? readFileSync(options.caFile, "utf8") : undefined;
+    // A configured private CA bundle must hold a certificate: an empty file would silently fall
+    // back to the default trust store, which is not what "private CA only" means.
+    const ca = options.caFile ? readCaBundle(options.caFile) : undefined;
     const headersTimeout = options.headersTimeoutMs ?? 10_000;
     const idleTimeout = options.idleTimeoutMs ?? 30_000;
     const totalTimeout = options.totalTimeoutMs ?? 300_000;
@@ -71,9 +81,17 @@ export function createHttpUpstream(options: HttpUpstreamOptions): Upstream {
             });
             const abort = () => upstream.destroy();
             const headerTimer = setTimeout(() => fail("timeout"), headersTimeout);
-            // Every path that ends without a streamed body releases the timer and the listener.
+            // The total deadline starts with the call, not with the headers. Before them it is a
+            // timeout; after them it aborts the body.
+            let streaming: http.IncomingMessage | undefined;
+            const totalTimer = setTimeout(() => {
+                if (streaming) streaming.destroy(new Error("deadline"));
+                else fail("timeout");
+            }, totalTimeout);
+            // Every path that ends without a streamed body releases the timers and the listener.
             const cleanup = () => {
                 clearTimeout(headerTimer);
+                clearTimeout(totalTimer);
                 request.signal.removeEventListener("abort", abort);
             };
             const fail = (failure: UpstreamFailure) => {
@@ -85,6 +103,12 @@ export function createHttpUpstream(options: HttpUpstreamOptions): Upstream {
             };
             request.signal.addEventListener("abort", abort, { once: true });
             upstream.on("error", () => fail("bad-gateway"));
+            // A protocol switch is not something this proxy relays: some runtimes close the socket
+            // without a response or an error for it, which would otherwise read as a timeout.
+            upstream.on("upgrade", (_response, socket) => {
+                socket.destroy();
+                fail("bad-gateway");
+            });
             upstream.on("response", (incoming) => {
                 clearTimeout(headerTimer);
                 if (settled) return incoming.destroy();
@@ -107,12 +131,9 @@ export function createHttpUpstream(options: HttpUpstreamOptions): Upstream {
                 }
                 // After the headers a failure can only abort the stream, not change the status.
                 incoming.setTimeout(idleTimeout, () => incoming.destroy(new Error("idle")));
-                const deadline = setTimeout(
-                    () => incoming.destroy(new Error("deadline")),
-                    totalTimeout,
-                );
+                streaming = incoming;
                 incoming.on("close", () => {
-                    clearTimeout(deadline);
+                    clearTimeout(totalTimer);
                     request.signal.removeEventListener("abort", abort);
                 });
                 if (request.method === "HEAD" || NO_BODY.has(status)) {

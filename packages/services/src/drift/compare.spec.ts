@@ -308,11 +308,20 @@ describe("compareDrift", () => {
             dokku: { status: "unavailable", reason: "x" },
         });
         expect(driftExitCode(both)).toBe(2);
+        // A skipped source is not a clean result: nothing found there means "not looked at", so it
+        // has its own non-zero code, below findings (1) and unavailability (2).
         const skipped = compareDrift({
             ...agreeing(),
             probe: { status: "skipped", reason: "none" },
         });
-        expect(driftExitCode(skipped)).toBe(0);
+        expect(skipped.findings).toEqual([]);
+        expect(driftExitCode(skipped)).toBe(3);
+        const skippedWithFindings = compareDrift({
+            ...cases["alias-route-missing"](agreeing()),
+            probe: { status: "skipped", reason: "none" },
+        });
+        expect(driftExitCode(skippedWithFindings)).toBe(1);
+        expect(driftExitCode(compareDrift(agreeing()))).toBe(0);
     });
 
     it("treats an in-flight promotion as in flight, not as drift, and an expired dispatched lease as stuck", () => {
@@ -528,13 +537,26 @@ describe("source and edge handling", () => {
     ] as const)(
         "an unavailable %s source suppresses only its own findings (%s)",
         (source, code) => {
-            const broken = cases[code](agreeing());
+            const base = cases[code](agreeing());
+            // A database-only finding that no source can explain away: it must survive an outage.
+            const broken = withDb(base, {
+                reservations: [
+                    ...base.db.reservations,
+                    {
+                        hostname: "ghost.sites.example.net",
+                        ownerKind: "deployment",
+                        ownerId: "ghost",
+                    },
+                ],
+            });
             expect(codes(broken)).toContain(code);
+            expect(codes(broken)).toContain("reservation-without-owner");
             const down = {
                 ...broken,
                 [source]: { status: "unavailable", reason: "down" },
             } as DriftInput;
             expect(codes(down)).not.toContain(code);
+            expect(codes(down)).toContain("reservation-without-owner");
             expect(compareDrift(down).sources[source]).toBe("unavailable");
         },
     );
@@ -573,6 +595,143 @@ describe("source and edge handling", () => {
             config: { ...input.config, appNamePattern: /^lp-[a-z0-9]+$/g },
         });
         expect(found.findings.map((f) => f.code)).toEqual(["orphan-app", "orphan-app"]);
+    });
+
+    it("keeps a sticky app-name pattern anchored at the start of the name", () => {
+        const input = agreeing();
+        const apps = [
+            ...okApps(input),
+            { name: "other-lp-test", domains: [] as string[] },
+            { name: "lp-x1", domains: [] as string[] },
+        ];
+        const found = compareDrift({
+            ...input,
+            dokku: { status: "ok", data: { apps } },
+            config: { ...input.config, appNamePattern: /lp-[a-z0-9]+/y },
+        });
+        // Anchored: `other-lp-test` is not looked at, so it is not an orphan.
+        expect(found.findings.map((f) => f.resources[0]?.id)).toEqual(["lp-x1"]);
+    });
+
+    it("compares a settled alias even when failed operations left a generation gap", () => {
+        const gapped = withDb(agreeing(), {
+            aliases: [alias({ reservedGeneration: 9n, committedGeneration: 3n })],
+        });
+        const report = compareDrift(gapped);
+        expect(report.inFlight).toEqual([]);
+        expect(report.findings).toEqual([]);
+        // ...so a lost route is still found, instead of being hidden by the gap forever.
+        expect(codes(routerWith(gapped, []))).toContain("alias-route-missing");
+        const wrongProbe = {
+            ...gapped,
+            probe: {
+                status: "ok" as const,
+                data: { results: [{ hostname: "view-prod.sites.example.net", deploymentId: "b" }] },
+            },
+        };
+        expect(codes(wrongProbe)).toEqual(["probe-mismatch"]);
+    });
+
+    it("requires a withdrawn alias to keep its tombstone at the committed generation", () => {
+        const withdrawn = withDb(agreeing(), {
+            aliases: [
+                alias({
+                    state: "withdrawn",
+                    targetDeploymentId: null,
+                    committedGeneration: 4n,
+                    reservedGeneration: 4n,
+                    lastOperationId: "op4",
+                }),
+            ],
+            deployments: [
+                deployment("a", { everPinned: true, lastUnpinnedAt: PAST }),
+                deployment("b"),
+            ],
+        });
+        const probeNothing = (input: DriftInput): DriftInput => ({
+            ...input,
+            probe: { status: "ok", data: { results: [] } },
+        });
+        const tombstone = (generation: bigint, target: string | null = null) => ({
+            hostname: "view-prod.sites.example.net",
+            generation,
+            operationId: "op4",
+            targetDeploymentId: target,
+        });
+        expect(codes(probeNothing(routerWith(withdrawn, [tombstone(4n)])))).toEqual([]);
+        // The probe sees nothing served, which alone proves nothing about the fence.
+        expect(codes(probeNothing(routerWith(withdrawn, [])))).toEqual(["alias-route-missing"]);
+        expect(codes(probeNothing(routerWith(withdrawn, [tombstone(3n)])))).toEqual([
+            "alias-router-behind",
+        ]);
+        expect(codes(probeNothing(routerWith(withdrawn, [tombstone(5n)])))).toEqual([
+            "alias-router-ahead",
+        ]);
+        expect(codes(probeNothing(routerWith(withdrawn, [tombstone(4n, "a")])))).toEqual([
+            "alias-target-conflict",
+        ]);
+        // A never-bound alias may have no router row at all.
+        const unbound = withDb(withdrawn, {
+            aliases: [
+                alias({
+                    state: "unbound",
+                    targetDeploymentId: null,
+                    committedGeneration: 0n,
+                    reservedGeneration: 0n,
+                    lastOperationId: null,
+                }),
+            ],
+        });
+        expect(codes(probeNothing(routerWith(unbound, [])))).toEqual([]);
+    });
+
+    it("checks the archive of every retained deployment, including a failed one, but not retired history", () => {
+        const input = agreeing();
+        const failed = deployment("f", { status: "failed", artifactKey: "artifacts/f" });
+        const retired = deployment("r", { status: "retired", artifactKey: "artifacts/r" });
+        const base = withDb(input, {
+            deployments: [...input.db.deployments, failed, retired],
+            reservations: [
+                ...input.db.reservations,
+                { hostname: failed.hostname, ownerKind: "deployment", ownerId: "f" },
+                { hostname: retired.hostname, ownerKind: "deployment", ownerId: "r" },
+            ],
+        });
+        const found = compareDrift(base).findings.filter((f) => f.code === "archive-missing");
+        expect(found.map((f) => f.resources[1]?.id).toSorted()).toEqual(["artifacts/f"]);
+    });
+
+    it("names the database resource behind a probe expectation, so a move drops the finding", () => {
+        const input: DriftInput = {
+            ...agreeing(),
+            probe: {
+                status: "ok",
+                data: {
+                    results: [{ hostname: "view-prod.sites.example.net", deploymentId: null }],
+                },
+            },
+        };
+        const before = compareDrift(input).findings.filter((f) => f.code === "probe-mismatch");
+        expect(before).toHaveLength(1);
+        expect(before[0]!.resources).toContainEqual({ kind: "alias", id: "prod" });
+        // Unchanged owner: the mismatch is real and stays.
+        expect(stableDrift(input, input.db).findings.map((f) => f.code)).toContain(
+            "probe-mismatch",
+        );
+        // The alias moved between the snapshots: the observation may predate it, so it is dropped.
+        const moved = withDb(input, {
+            aliases: [
+                alias({
+                    targetDeploymentId: "b",
+                    committedGeneration: 4n,
+                    reservedGeneration: 4n,
+                    lastOperationId: "op2",
+                }),
+            ],
+        }).db;
+        expect(stableDrift(input, moved).findings.map((f) => f.code)).not.toContain(
+            "probe-mismatch",
+        );
     });
 
     it("expects an unbound or withdrawn alias to serve nothing when probed", () => {

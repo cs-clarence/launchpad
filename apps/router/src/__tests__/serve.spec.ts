@@ -18,6 +18,8 @@ let upstream: http.Server | undefined;
 const hosts: (string | undefined)[] = [];
 const paths: (string | undefined)[] = [];
 let delayMs = 0;
+// Called when a request reaches the stand-in upstream, so a test can wait for "in flight".
+let onArrival: (() => void) | undefined;
 
 afterEach(async () => {
     await router?.shutdown();
@@ -28,6 +30,7 @@ afterEach(async () => {
     hosts.length = 0;
     paths.length = 0;
     delayMs = 0;
+    onArrival = undefined;
     state?.cleanup();
 });
 
@@ -38,6 +41,7 @@ async function boot() {
     upstream = http.createServer((req, res) => {
         hosts.push(req.headers.host);
         paths.push(req.url);
+        onArrival?.();
         setTimeout(() => res.end(`served:${req.headers.host}`), delayMs);
     });
     await new Promise<void>((done) => upstream!.listen(0, "127.0.0.1", done));
@@ -147,7 +151,12 @@ describe("router over real listeners", () => {
         };
         const results: Record<string, number> = {};
         for (const [name, request] of Object.entries(attempts)) {
-            const response = await raw(port, request).catch(() => ({ status: 0 }));
+            // Only a connection the parser itself reset counts as "refused" (status 0). A timeout or
+            // any other error is a real failure and must not pass as one.
+            const response = await raw(port, request).catch((error: NodeJS.ErrnoException) => {
+                if (error.code === "ECONNRESET" || error.code === "EPIPE") return { status: 0 };
+                throw error;
+            });
             results[name] = response.status;
         }
         // No hostile form is ever served. Where Bun's HTTP parser itself refuses the request the
@@ -211,8 +220,10 @@ describe("router over real listeners", () => {
         await control.post("/v1/deployments", { deploymentId: A, hostname: "a.sites.example.net" });
         await control.post("/v1/routes", bind("1", A));
         delayMs = 400;
+        // Shutdown starts only once the request has reached the upstream: truly in flight.
+        const arrived = new Promise<void>((resolve) => (onArrival = resolve));
         const inflight = get(router!.data.port, ALIAS_HOST);
-        await new Promise((resolve) => setTimeout(resolve, 100));
+        await arrived;
         const port = router!.data.port;
         await router!.shutdown();
         const finished = await inflight;

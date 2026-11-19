@@ -6,6 +6,7 @@ import {
     existsSync,
     lstatSync,
     mkdtempSync,
+    realpathSync,
     readFileSync,
     renameSync,
     rmSync,
@@ -17,6 +18,7 @@ import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { StateFiles } from "./state-files";
 import {
+    hostnameSchema,
     initializeRouterState,
     MAX_GENERATION,
     openRouterState,
@@ -36,7 +38,7 @@ afterEach(() => {
     }
 });
 function temp() {
-    const directory = mkdtempSync(path.join(tmpdir(), "launchpad-router-"));
+    const directory = mkdtempSync(path.join(realpathSync(tmpdir()), "launchpad-router-"));
     directories.push(directory);
     return { directory, file: path.join(directory, "routes.sqlite") };
 }
@@ -67,14 +69,16 @@ function fixture() {
     });
     return { store, file, directory, options, initial, writer, a, b, hostname, aliasId, operation };
 }
-function fails(code: RouterErrorCode, action: () => unknown) {
+function fails(code: RouterErrorCode, action: () => unknown): RouterError {
+    let thrown: unknown;
     try {
         action();
-        throw new Error("Expected a RouterError.");
     } catch (error) {
-        expect(error).toBeInstanceOf(RouterError);
-        expect((error as RouterError).code).toBe(code);
+        thrown = error;
     }
+    expect(thrown, "the call was expected to throw").toBeInstanceOf(RouterError);
+    expect((thrown as RouterError).code).toBe(code);
+    return thrown as RouterError;
 }
 
 describe("durable routes and generations", () => {
@@ -298,16 +302,16 @@ describe("authority at the commit boundary", () => {
         });
         expect(output).not.toContain(f.initial.token);
         expect(output).not.toContain(row.credential_hash);
-        try {
+        // The call must reject, and that same error is what is inspected.
+        const error = fails("unauthorized", () =>
             f.store.authenticate({
                 ...f.initial,
                 token: "secret",
                 instanceId: f.options.instanceId,
-            });
-        } catch (error) {
-            expect(String(error)).not.toContain("secret");
-            expect(Object.keys(error as object)).not.toContain("cause");
-        }
+            }),
+        );
+        expect(String(error)).not.toContain("secret");
+        expect(Object.keys(error)).not.toContain("cause");
     });
 });
 
@@ -487,6 +491,60 @@ describe("explicit initialization and fail-closed durable files", () => {
         chmodSync(f.file, 0o400);
         fails("unavailable", () => reopened.listRoutes());
         chmodSync(f.file, 0o600);
+    });
+});
+
+describe("state that is incomplete or the wrong shape", () => {
+    it("rejects state that lost a routing table although its stamps and authority rows are intact", () => {
+        const f = fixture();
+        f.store.close();
+        const raw = new Database(f.file);
+        raw.exec("DROP TABLE route");
+        raw.close();
+        fails("unavailable", () => open(f.file, f.options));
+    });
+
+    it("removes a state file it created when the file's mode turns out wrong, so init can be retried", () => {
+        const { file } = temp();
+        const options = { instanceId: randomUUID(), appsDomain: "sites.example.net" };
+        const initial = { epoch: randomUUID(), token: randomBytes(32).toString("hex") };
+        // With this umask the exclusive create yields mode 0400, which the 0600 check refuses.
+        const previous = process.umask(0o277);
+        try {
+            fails("unavailable", () => initializeRouterState(file, options, initial));
+        } finally {
+            process.umask(previous);
+        }
+        expect(existsSync(file)).toBe(false);
+        initializeRouterState(file, options, initial);
+        expect(existsSync(file)).toBe(true);
+    });
+
+    it("never removes a pre-existing file when the exclusive create fails", () => {
+        const f = fixture();
+        f.store.close();
+        const before = readFileSync(f.file);
+        fails("unavailable", () => initializeRouterState(f.file, f.options, f.initial));
+        expect(readFileSync(f.file)).toEqual(before);
+    });
+
+    it("refuses a hostname or apps domain the URL parser would rewrite", () => {
+        for (const name of ["sites.0x1", "view.sites.0x1", "sites.1", "10.0.0.1"]) {
+            expect(hostnameSchema.safeParse(name).success, name).toBe(false);
+        }
+        for (const name of ["view.sites.example.net", "a1.b2.example.org", "x.xn--p1ai"]) {
+            expect(hostnameSchema.safeParse(name).success, name).toBe(true);
+        }
+        const { file } = temp();
+        const initial = { epoch: randomUUID(), token: randomBytes(32).toString("hex") };
+        fails("invalid", () =>
+            initializeRouterState(
+                file,
+                { instanceId: randomUUID(), appsDomain: "sites.0x1" },
+                initial,
+            ),
+        );
+        expect(existsSync(file)).toBe(false);
     });
 });
 

@@ -1,7 +1,7 @@
 import { parseDuration } from "@launchpad-kit/contracts";
 import { getDomain } from "tldts";
 import { parseHostnameTemplate, type HostnameTemplate } from "./hostname-template";
-import { PREVIEW_DOMAIN_PATTERN } from "./ids";
+import { APPS_DOMAIN_PATTERN } from "./ids";
 
 // Settings of the immutable-deployment and alias model (docs/design/deployment-modes.md,
 // "Canonical configuration"). Pure: it reads only the object it is given, touches no file and no
@@ -70,6 +70,23 @@ function url(name: string, value: string): URL {
     return parsed;
 }
 
+// The management origin is an exact HTTPS origin: the plain `url()` helper also accepts http and
+// `.origin` would silently drop a path, so both are checked here.
+function managementOrigin(value: string): string {
+    const parsed = url("LAUNCHPAD_BASE_URL", value);
+    if (parsed.protocol !== "https:" || parsed.pathname !== "/") {
+        throw new Error("LAUNCHPAD_BASE_URL must be an https origin with no path.");
+    }
+    return parsed.origin;
+}
+
+// The Dokku proxy address is an origin: the router refuses a path, so both must.
+function proxyOrigin(name: string, value: string): URL {
+    const parsed = url(name, value);
+    if (parsed.pathname !== "/") throw new Error(`${name} must be an origin with no path.`);
+    return parsed;
+}
+
 function absolutePath(name: string, value: string): string {
     if (!value.startsWith("/") || value.includes("\0") || value.split("/").includes("..")) {
         throw new Error(`${name} must be an absolute path without "..".`);
@@ -120,13 +137,10 @@ export function parseAppRoutingConfig(env: Env): AppRoutingSettings {
         return { enabled: false };
     }
     const appsDomain = env.LAUNCHPAD_APPS_DOMAIN;
-    if (!PREVIEW_DOMAIN_PATTERN.test(appsDomain)) {
+    if (!APPS_DOMAIN_PATTERN.test(appsDomain)) {
         throw new Error("LAUNCHPAD_APPS_DOMAIN is not a valid lowercase domain name.");
     }
-    assertSeparateDomains(
-        appsDomain,
-        url("LAUNCHPAD_BASE_URL", required(env, "LAUNCHPAD_BASE_URL")).origin,
-    );
+    assertSeparateDomains(appsDomain, managementOrigin(required(env, "LAUNCHPAD_BASE_URL")));
     const instanceId = required(env, "LAUNCHPAD_ALIAS_INSTANCE_ID");
     if (!UUID.test(instanceId))
         throw new Error("LAUNCHPAD_ALIAS_INSTANCE_ID must be a lowercase UUID.");
@@ -163,7 +177,10 @@ export function parseAppRoutingConfig(env: Env): AppRoutingSettings {
     return {
         enabled: true,
         appsDomain,
-        appsProxyUrl: url("LAUNCHPAD_APPS_PROXY_URL", required(env, "LAUNCHPAD_APPS_PROXY_URL")),
+        appsProxyUrl: proxyOrigin(
+            "LAUNCHPAD_APPS_PROXY_URL",
+            required(env, "LAUNCHPAD_APPS_PROXY_URL"),
+        ),
         aliasControlUrl: url(
             "LAUNCHPAD_ALIAS_CONTROL_URL",
             required(env, "LAUNCHPAD_ALIAS_CONTROL_URL"),

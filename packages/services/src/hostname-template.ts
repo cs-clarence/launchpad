@@ -1,5 +1,5 @@
 import { ServiceError } from "./errors";
-import { PREVIEW_DOMAIN_PATTERN, opaqueId } from "./ids";
+import { APPS_DOMAIN_PATTERN, opaqueId } from "./ids";
 
 // Generated hostnames for immutable deployments and their aliases (docs/design/deployment-modes.md,
 // "Configurable hostname templates"). A template names one DNS label with the tokens {slug} and
@@ -16,6 +16,8 @@ const SLUG = /^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$/;
 const ID = /^[a-z0-9]{10}$/;
 const LITERAL = /^[a-z0-9-]*$/;
 const TOKEN = /\{([^{}]*)\}/g;
+// Hyphens in the third and fourth positions are reserved for internationalised names (xn--).
+const RESERVED_LABEL = /^..--/;
 
 export interface HostnameTemplate {
     readonly source: string;
@@ -31,7 +33,7 @@ export class HostnameTemplateError extends Error {
 // A template that cannot produce a valid label for every slug and id, or whose worst case does
 // not fit, is refused here (at startup) rather than truncated at allocation time.
 export function parseHostnameTemplate(source: string, domain: string): HostnameTemplate {
-    if (!PREVIEW_DOMAIN_PATTERN.test(domain)) {
+    if (!APPS_DOMAIN_PATTERN.test(domain)) {
         throw new HostnameTemplateError("The apps domain is not a valid lowercase domain name.");
     }
     if (source === "") throw new HostnameTemplateError("The hostname template is empty.");
@@ -60,9 +62,9 @@ export function parseHostnameTemplate(source: string, domain: string): HostnameT
     }
     for (const part of parts) {
         if (typeof part === "string") continue;
-        if (!LITERAL.test(part.literal) || part.literal.includes("--")) {
+        if (!LITERAL.test(part.literal)) {
             throw new HostnameTemplateError(
-                "Literal text may hold only lowercase letters, digits and single hyphens.",
+                "Literal text may hold only lowercase letters, digits and hyphens.",
             );
         }
     }
@@ -74,8 +76,12 @@ export function parseHostnameTemplate(source: string, domain: string): HostnameT
     if (typeof final !== "string" && final.literal.endsWith("-")) {
         throw new HostnameTemplateError("The label cannot end with a hyphen.");
     }
-    if (typeof first !== "string" && first.literal.startsWith("xn")) {
-        throw new HostnameTemplateError("The label cannot start with xn (reserved).");
+    // Only the reserved forms are refused, not every label that starts with "xn": `xnode-...` is
+    // an ordinary label. A literal too short to decide is checked again when a name is rendered.
+    if (typeof first !== "string" && RESERVED_LABEL.test(first.literal)) {
+        throw new HostnameTemplateError(
+            "The label cannot have hyphens in its third and fourth positions (reserved, as in xn--).",
+        );
     }
     const worstLabel = literalLength + MAX_HOSTNAME_SLUG_LENGTH + HOSTNAME_ID_LENGTH;
     if (worstLabel > MAX_DNS_LABEL_LENGTH) {
@@ -98,9 +104,9 @@ export function renderHostname(
     const label = template.parts
         .map((part) => (part === "slug" ? input.slug : part === "id" ? input.id : part.literal))
         .join("");
-    // A slug may hold "--" (the contract allows it), which would make an ab-- label or the
-    // reserved xn-- prefix: the finished label must still be one a DNS name can carry.
-    if (label.includes("--") || label.length > MAX_DNS_LABEL_LENGTH) {
+    // A slug may hold "--" (the contract allows it): that is fine inside a label, but not as the
+    // reserved third-and-fourth-position form (ab--, xn--), so the finished label is checked.
+    if (RESERVED_LABEL.test(label) || label.length > MAX_DNS_LABEL_LENGTH) {
         throw new HostnameTemplateError(
             "This slug cannot be used in a hostname with this template.",
         );

@@ -81,11 +81,13 @@ export function compareDrift(input: DriftInput): DriftReport {
     const { db, config } = input;
     const findings: DriftFinding[] = [];
     const inFlight: ResourceRef[] = [];
-    // A /g or /y pattern remembers lastIndex between tests and would skip apps.
-    const appPattern = new RegExp(
-        config.appNamePattern.source,
-        config.appNamePattern.flags.replace(/[gy]/g, ""),
-    );
+    // A copy with the original flags, so a sticky pattern keeps meaning "at the start of the
+    // name"; lastIndex is reset before every test, because a /g or /y pattern remembers it.
+    const appPattern = new RegExp(config.appNamePattern.source, config.appNamePattern.flags);
+    const matchesApp = (name: string) => {
+        appPattern.lastIndex = 0;
+        return appPattern.test(name);
+    };
     const dokku = ok(input.dokku);
     const router = ok(input.router);
     const probe = ok(input.probe);
@@ -114,11 +116,13 @@ export function compareDrift(input: DriftInput): DriftReport {
             busyAliases.add(op.aliasId);
         }
     }
+    // An alias is in flight while it is in a transitional state or has an unfinished operation. A
+    // reserved generation above the committed one is NOT in flight by itself: numbers are never
+    // reused, so a failed operation leaves a permanent gap, and a settled alias must stay comparable.
     for (const alias of db.aliases) {
         const transitional =
             alias.state !== "bound" && alias.state !== "unbound" && alias.state !== "withdrawn";
-        if (transitional || alias.reservedGeneration > alias.committedGeneration)
-            busyAliases.add(alias.id);
+        if (transitional) busyAliases.add(alias.id);
     }
     for (const id of busyAliases) {
         if (aliases.has(id)) inFlight.push({ kind: "alias", id });
@@ -195,7 +199,7 @@ export function compareDrift(input: DriftInput): DriftReport {
         }
         const known = new Set([...db.deployments.map((d) => d.dokkuAppName), ...db.knownAppNames]);
         for (const app of dokku.apps) {
-            if (!appPattern.test(app.name)) {
+            if (!matchesApp(app.name)) {
                 ignoredAppCount++;
             } else if (!known.has(app.name)) {
                 findings.push(finding("orphan-app", [{ kind: "dokku-app", id: app.name }]));
@@ -215,7 +219,9 @@ export function compareDrift(input: DriftInput): DriftReport {
             if (busyAliases.has(a.id)) continue;
             const route = routes.get(a.hostname);
             const ref = [{ kind: "alias", id: a.id } as const];
-            if (a.state === "bound") {
+            // A bound alias needs its route and a withdrawn one its tombstone, which keeps the
+            // withdrawal fence; only a never-bound alias may have no router row at all.
+            if (a.state === "bound" || a.state === "withdrawn") {
                 if (!route) {
                     findings.push(finding("alias-route-missing", ref));
                 } else if (route.generation > a.committedGeneration) {
@@ -259,7 +265,10 @@ export function compareDrift(input: DriftInput): DriftReport {
     if (archives) {
         const stored = new Set(archives.keys);
         for (const d of db.deployments) {
-            if (d.artifactKey !== null && d.status === "succeeded" && !stored.has(d.artifactKey)) {
+            // Retained means not retired and not still being built: a failed deployment awaiting
+            // cleanup keeps its archive too. Retired history owes nobody an archive.
+            const retained = d.status !== "retired" && !busyDeployments.has(d.id);
+            if (retained && d.artifactKey !== null && !stored.has(d.artifactKey)) {
                 findings.push(
                     finding("archive-missing", [
                         { kind: "deployment", id: d.id },
@@ -271,24 +280,29 @@ export function compareDrift(input: DriftInput): DriftReport {
     }
 
     if (probe) {
-        const expected = new Map<string, string>();
+        // Each expectation remembers the database resource it came from, so a finding names it and
+        // `stableDrift` can drop the result when that resource moved between the two snapshots.
+        const expected = new Map<string, { id: string | null; owner: ResourceRef }>();
         for (const d of db.deployments)
-            if (expectsApp(d) && !busyDeployments.has(d.id)) expected.set(d.hostname, d.id);
+            if (expectsApp(d) && !busyDeployments.has(d.id))
+                expected.set(d.hostname, { id: d.id, owner: { kind: "deployment", id: d.id } });
         // A bound alias serves its target; an unbound or withdrawn one serves nothing (null).
-        const expectedNothing = new Set<string>();
         for (const a of db.aliases) {
             if (busyAliases.has(a.id)) continue;
+            const owner: ResourceRef = { kind: "alias", id: a.id };
             if (a.state === "bound" && a.targetDeploymentId !== null)
-                expected.set(a.hostname, a.targetDeploymentId);
-            if (a.state === "unbound" || a.state === "withdrawn") expectedNothing.add(a.hostname);
+                expected.set(a.hostname, { id: a.targetDeploymentId, owner });
+            if (a.state === "unbound" || a.state === "withdrawn")
+                expected.set(a.hostname, { id: null, owner });
         }
         for (const result of probe.results) {
-            const want = expectedNothing.has(result.hostname)
-                ? null
-                : expected.get(result.hostname);
-            if (want !== undefined && result.deploymentId !== want) {
+            const want = expected.get(result.hostname);
+            if (want !== undefined && result.deploymentId !== want.id) {
                 findings.push(
-                    finding("probe-mismatch", [{ kind: "router-route", id: result.hostname }]),
+                    finding("probe-mismatch", [
+                        { kind: "router-route", id: result.hostname },
+                        want.owner,
+                    ]),
                 );
             }
         }
@@ -364,9 +378,12 @@ export function stableDrift(before: DriftInput, afterDb: DriftDatabase): DriftRe
 }
 
 // Pass the report of `stableDrift` (not a single-snapshot one) when the database may have moved.
-// 2 when a requested source was unavailable (even with findings), 1 for findings when every
-// requested source was read, 0 otherwise. A skipped source is reported, not counted.
-export function driftExitCode(report: DriftReport): 0 | 1 | 2 {
-    if (Object.values(report.sources).includes("unavailable")) return 2;
-    return report.findings.length > 0 ? 1 : 0;
+// 2 when a requested source was unavailable (even with findings), 1 for findings, 3 when a source
+// was skipped and nothing was found (not a clean result: part of the system was not looked at), 0
+// only when every source was read and nothing was found.
+export function driftExitCode(report: DriftReport): 0 | 1 | 2 | 3 {
+    const sources = Object.values(report.sources);
+    if (sources.includes("unavailable")) return 2;
+    if (report.findings.length > 0) return 1;
+    return sources.includes("skipped") ? 3 : 0;
 }

@@ -1,5 +1,5 @@
 import { randomBytes } from "node:crypto";
-import { chmod, lstat, mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { chmod, lstat, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { verifyFaultTransport } from "./fault-proxy";
 
@@ -10,6 +10,7 @@ if (process.env.LAUNCHPAD_ROUTING_EXPERIMENT !== "1") {
 await verifyFaultTransport();
 if (process.env.LAUNCHPAD_ROUTING_TRANSPORT_ONLY === "1") process.exit(0);
 const root = process.cwd();
+await mkdir("/tmp/opencode", { recursive: true });
 const dir = await mkdtemp("/tmp/opencode/lp-routing-");
 // Containers need traversal to the explicitly mounted fixture files; secret files stay 0600.
 await chmod(dir, 0o755);
@@ -64,6 +65,9 @@ const docker = async (args: string[], allowFailure = false, stdin?: string) => {
     return command(["docker", ...args], allowFailure, stdin);
 };
 const cleanup: string[] = [];
+// "Absent" only when Docker says so. A failed inspection (the engine unreachable, say) proves nothing.
+const confirmedAbsent = (result: { code: number; err: string }) =>
+    result.code !== 0 && /no such|not found/i.test(result.err);
 let failure: unknown;
 try {
     for (const app of resources.apps) {
@@ -207,14 +211,32 @@ try {
 } finally {
     const dokkuLog = await docker(["logs", resources.dokku], true);
     await writeFile(`${dir}/dokku.log`, `${dokkuLog.out}\n${dokkuLog.err}`);
-    const created = await Bun.file(`${dir}/data/created-apps.json`)
-        .json()
-        .catch(() => []);
-    for (const { app } of created) {
-        if (!resources.apps.includes(app)) {
-            failure ??= new Error("Cleanup journal contains an unowned app.");
-            continue;
+    // The journal is read once and validated: only entries for apps this run recorded, with the
+    // image tag derived from their own deployment ID, are ever used. Only a missing journal is
+    // "nothing created"; an unreadable one is reported, and the apps recorded before creation
+    // (exact random names, safe to destroy when absent) are still cleaned up.
+    let journalTrusted = true;
+    const created: { app: string; deploymentId: string; imageTag: string }[] = [];
+    try {
+        const text = await readFile(`${dir}/data/created-apps.json`, "utf8").catch(
+            (error: NodeJS.ErrnoException) => {
+                if (error.code === "ENOENT") return "[]";
+                throw error;
+            },
+        );
+        for (const entry of JSON.parse(text) as typeof created) {
+            const expectedTag = `launchpad/site:${String(entry.deploymentId).replaceAll("-", "")}`;
+            if (resources.apps.includes(entry.app) && entry.imageTag === expectedTag) {
+                created.push(entry);
+            } else {
+                failure ??= new Error("Cleanup journal contains an entry this run did not make.");
+            }
         }
+    } catch (error) {
+        journalTrusted = false;
+        failure ??= new Error(`The cleanup journal is unreadable: ${String(error)}`);
+    }
+    for (const app of journalTrusted ? created.map((entry) => entry.app) : resources.apps) {
         // Only the random exact names recorded before this run; apps:destroy is safe if absent.
         const result = await docker(
             ["exec", resources.dokku, "dokku", "--force", "apps:destroy", app],
@@ -224,9 +246,12 @@ try {
         const inspect = await docker(["image", "inspect", `dokku/${app}:latest`], true);
         if (!inspect.code) await docker(["rmi", `dokku/${app}:latest`], true);
     }
-    // Source tags may survive a failed build/load; names come only from this run's fixture journal.
-    for (const fixture of created) {
-        await docker(["rmi", fixture.imageTag], true);
+    // Source tags may survive a failed build/load; names come only from this run's validated journal.
+    const verified: { app: string; imageTag?: string }[] = journalTrusted
+        ? created
+        : resources.apps.map((app) => ({ app }));
+    for (const fixture of verified) {
+        if (fixture.imageTag) await docker(["rmi", fixture.imageTag], true);
         const containers = await docker([
             "ps",
             "-aq",
@@ -234,10 +259,12 @@ try {
             `label=com.dokku.app-name=${fixture.app}`,
         ]);
         const image = await docker(["image", "inspect", `dokku/${fixture.app}:latest`], true);
-        const source = await docker(["image", "inspect", fixture.imageTag], true);
-        const absent = !containers.out && image.code !== 0 && source.code !== 0;
+        const source = fixture.imageTag
+            ? await docker(["image", "inspect", fixture.imageTag], true)
+            : { code: 1, err: "No such image" };
+        const absent = !containers.out && confirmedAbsent(image) && confirmedAbsent(source);
         cleanup.push(
-            `fixture ${fixture.app}: ${absent ? "containers and image tags absent" : "LEFTOVER"}`,
+            `fixture ${fixture.app}: ${absent ? "containers and image tags absent" : "LEFTOVER OR UNVERIFIED"}`,
         );
         if (!absent) failure ??= new Error("Fixture cleanup incomplete.");
     }
@@ -249,8 +276,8 @@ try {
         resources.dokku,
     ]) {
         await docker(["rm", "-f", "-v", name], true);
-        const absent = (await docker(["inspect", name], true)).code !== 0;
-        cleanup.push(`container ${name}: ${absent ? "absent" : "LEFTOVER"}`);
+        const absent = confirmedAbsent(await docker(["inspect", name], true));
+        cleanup.push(`container ${name}: ${absent ? "absent" : "LEFTOVER OR UNVERIFIED"}`);
         if (!absent) failure ??= new Error("Container cleanup incomplete.");
     }
     await docker(["network", "rm", resources.network], true);
@@ -265,6 +292,12 @@ try {
         "router-config.json",
         "router-config.next",
     ];
+    // Host-owned paths (an ssh key made before the image existed, say) are removed directly: the
+    // helper below needs the worker image, which may never have been built. Paths handed to the
+    // container user are left to it.
+    for (const name of secretPaths) {
+        await rm(`${dir}/${name}`, { recursive: true, force: true }).catch(() => undefined);
+    }
     const removed = await docker(
         [
             "run",
@@ -299,13 +332,13 @@ try {
         ["network", resources.network],
         ["image", resources.image],
     ]) {
-        const absent = (await docker([kind!, "inspect", name!], true)).code !== 0;
-        cleanup.push(`${kind} ${name}: ${absent ? "absent" : "LEFTOVER"}`);
+        const absent = confirmedAbsent(await docker([kind!, "inspect", name!], true));
+        cleanup.push(`${kind} ${name}: ${absent ? "absent" : "LEFTOVER OR UNVERIFIED"}`);
         if (!absent) failure ??= new Error("Network/image cleanup incomplete.");
     }
     for (const name of resources.helpers) {
-        const absent = (await docker(["inspect", name], true)).code !== 0;
-        cleanup.push(`helper ${name}: ${absent ? "absent" : "LEFTOVER"}`);
+        const absent = confirmedAbsent(await docker(["inspect", name], true));
+        cleanup.push(`helper ${name}: ${absent ? "absent" : "LEFTOVER OR UNVERIFIED"}`);
         if (!absent) failure ??= new Error("Helper cleanup incomplete.");
     }
     await writeFile(`${dir}/cleanup.log`, cleanup.join("\n"));

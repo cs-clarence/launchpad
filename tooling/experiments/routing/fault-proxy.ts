@@ -52,31 +52,42 @@ export async function verifyFaultTransport() {
         committed = true;
         response.end("committed");
     });
-    origin.listen(0, "127.0.0.1");
-    await once(origin, "listening");
-    const proxy = controlProxy("127.0.0.1", (origin.address() as AddressInfo).port);
-    proxy.listen(0, "127.0.0.1");
-    await once(proxy, "listening");
-    const url = `http://127.0.0.1:${(proxy.address() as AddressInfo).port}`;
+    // Startup is inside the cleanup scope: if the proxy fails to listen, the origin still closes.
+    let proxy: http.Server | undefined;
     try {
+        origin.listen(0, "127.0.0.1");
+        await once(origin, "listening");
+        proxy = controlProxy("127.0.0.1", (origin.address() as AddressInfo).port);
+        proxy.listen(0, "127.0.0.1");
+        await once(proxy, "listening");
+        const url = `http://127.0.0.1:${(proxy.address() as AddressInfo).port}`;
         const response = await fetch(url, { signal: AbortSignal.timeout(3000) });
         assert.equal(response.status, 200);
         assert.equal(await response.text(), "committed");
         committed = false;
-        await assert.rejects(
-            fetch(url, {
-                method: "POST",
-                body: '{"operation":"test"}',
-                headers: { "x-experiment-drop-response": "1" },
-                signal: AbortSignal.timeout(3000),
-            }),
+        const lost = await fetch(url, {
+            method: "POST",
+            body: '{"operation":"test"}',
+            headers: { "x-experiment-drop-response": "1" },
+            signal: AbortSignal.timeout(3000),
+        }).then(
+            () => undefined,
+            (error: unknown) => error as Error,
         );
+        assert.ok(lost, "The response must be lost, not delivered.");
+        // A deadline expiring is not a closed connection: the proxy must really cut the response.
+        assert.notEqual(lost.name, "TimeoutError", "A timeout is not a dropped response.");
         assert.equal(committed, true, "The origin must commit before its response is lost.");
         console.log("Response-loss transport preflight passed.");
     } finally {
-        proxy.closeAllConnections();
+        proxy?.closeAllConnections();
         origin.closeAllConnections();
-        proxy.close();
-        origin.close();
+        for (const server of [proxy, origin]) {
+            try {
+                server?.close();
+            } catch {
+                // It never started listening.
+            }
+        }
     }
 }

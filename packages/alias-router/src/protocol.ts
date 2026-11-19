@@ -24,11 +24,20 @@ export const hostnameSchema = z
     .max(253)
     .refine((value) => {
         const labels = value.split(".");
-        return (
-            labels.length >= 2 &&
-            labels.every((part) => label.test(part)) &&
-            /[a-z]/.test(labels.at(-1)!)
-        );
+        if (
+            labels.length < 2 ||
+            !labels.every((part) => label.test(part)) ||
+            !/[a-z]/.test(labels.at(-1)!)
+        ) {
+            return false;
+        }
+        // The data plane reads the Host through a URL: a name the HTTP URL parser would rewrite
+        // (`sites.0x1` is an IPv4 number) could be acknowledged here and never served.
+        try {
+            return new URL(`http://${value}`).hostname === value;
+        } catch {
+            return false;
+        }
     });
 export const MAX_GENERATION = "9223372036854775807";
 const generation = z
