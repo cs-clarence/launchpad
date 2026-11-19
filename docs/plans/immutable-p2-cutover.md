@@ -106,7 +106,7 @@ and scope string across `apps`, `packages`, `tooling` and `docs`.
 
 ### P2b: migration 018 and what must move with it
 
-- **Runbook first.** With the **pre-P2b** binary, take a backup and run `inventory-previews`
+- **Runbook first.** Stop every old controller, worker and admin job and wait for dispatched Dokku operations to settle. With the **pre-P2b** binary, take a backup and run `inventory-previews`
   (it lists deleted previews too, which catches failed destroys), then remove any Dokku apps you
   do not want left behind. After 018 the database no longer records them.
 - **Migration** exactly as in the schema map: one Kysely migration in the migrator's own
@@ -120,7 +120,7 @@ and scope string across `apps`, `packages`, `tooling` and `docs`.
 - **Recovery gate.** The marker (written after every refusal and the archive pre-check, before
   the first copy, and kept if a restore fails), the database gate, the fail-closed checks scoped
   to model mutations, a missing gate row allowed only while 018 is not recorded, and
-  `launchpad-admin recovery-clear`, which in P2b succeeds only when every model table is empty. Empty tables prove nothing about remote state once a writer exists, so the P3 PR that adds the first model writer must replace that rule with verified reconciliation in the same PR, with a test that the old rule is gone.
+  `launchpad-admin recovery-clear`, which in P2b succeeds only when every model table is empty **and** the durable `model-writer-seen` file (created by the first writer, outside the dump) does not exist. Empty tables prove nothing about remote state once a writer has run, so the P3 PR that adds the first writer must replace that rule with verified reconciliation in the same PR, with a test that the old rule is gone. Rolling back to a P2b binary after P3 has written is unsupported.
   Any restore by a binary that knows 018 writes the marker, whatever the manifest holds.
 - **Delete the P1 scaffolding:** `immutable-retirement.spec.ts`, `immutable-old-process.spec.ts`,
   `inventory.spec.ts`, the fixtures `immutable-retirement.sql` and `immutable-model.sql`, and the

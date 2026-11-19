@@ -143,12 +143,17 @@ back an empty registry and stale generations while the router and Dokku keep the
   removes the marker and fsyncs the directory (a crash in between stays blocked). **Empty model
   tables prove nothing about remote state**: after an older dump is restored over an installation
   that already used the model, the tables are empty while the router and Dokku still hold the old
-  routes and apps. So clearing is only ever valid while no code can create model state, which is
-  true only until the first model writer exists. P2b ships `recovery-clear` for that window
-  (every model table empty). **The P3 change that introduces the first writer must replace the
-  rule with verified router and Dokku reconciliation (P5) in the same PR**, and a test must
-  assert the empty-tables rule is gone; until then the command refuses. If that replacement is
-  not ready, P3 cannot merge a writer.
+  routes and apps. The rule therefore has two parts, and the outcome is unambiguous:
+    - **Writer-seen record.** The first model writer creates a durable file
+      `<data dir>/maintenance/model-writer-seen`, outside the dump, so a restore cannot erase it.
+      P2b has no writer, so on a P2b installation the file never exists.
+    - **P2b rule.** `recovery-clear` **succeeds** only if every model table is empty **and** the
+      writer-seen file does not exist; it **refuses** in every other case, including an empty
+      database after any writer has run. Rolling back to a P2b binary after P3 has written is not
+      supported, and this record is what makes the P2b command refuse if someone does.
+    - **P3 replacement.** The P3 PR that adds the first writer must also replace the rule with
+      verified router and Dokku reconciliation (P5) in the same PR, and a test must assert the
+      empty-tables rule is gone. If that replacement is not ready, P3 cannot merge a writer.
 - **Older dumps.** There is no backup floor. An older dump restores, is migrated forward, and
   018 drops its preview tables again; the marker is written like any restore.
 
@@ -180,4 +185,5 @@ On disposable PostgreSQL, from the frozen schema-014 fixture and from an empty d
 - The upgrade drill and the built images run the new migration, and the drill asserts the
   four preview tables and `worker_heartbeat` are gone afterwards.
 - An old dump restored over a database that already holds model rows writes the marker.
-- `recovery-clear` refuses while any model table has a row.
+- `recovery-clear` refuses while any model table has a row, and refuses on an empty database
+  once the `model-writer-seen` file exists (simulated by creating it).

@@ -593,9 +593,12 @@ The concrete bootstrap/recovery procedure must pass the routing experiment.
 1. Establish the routing mechanism with an independently
    reviewed disposable spike. No destructive migration until cutover/reconciliation
    and stale-writer behavior are demonstrated.
-2. Stop the workers and controller, then optionally list and remove any Dokku apps
-   the old previews owned. Migration 018 drops the preview tables and their data
-   unconditionally; it never converts an active mutable app.
+2. Stop the workers, the controller and every admin job, and wait for any dispatched
+   Dokku operation to settle. Then take a backup and **run the previous binary's
+   `inventory-previews`** (required, not optional), and remove any Dokku apps the old
+   previews owned that you do not want left behind. Only then run migration 018, which
+   drops the preview tables and their data unconditionally; it never converts an active
+   mutable app, and afterwards the database can no longer say which apps they owned.
 3. Implement schema/types/contracts, immutable worker path, promotion operation,
    retention guards and admin backup/restore checks.
 4. Update API/OpenAPI, dashboard, SDK, CLI, MCP, examples and docs together.
