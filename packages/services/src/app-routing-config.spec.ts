@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { parseAppRoutingConfig } from "./app-routing-config";
 
 const valid = {
+    LAUNCHPAD_BASE_URL: "https://control.example.com",
     LAUNCHPAD_APPS_DOMAIN: "sites.example.net",
     LAUNCHPAD_APPS_PROXY_URL: "http://dokku:80",
     LAUNCHPAD_ALIAS_CONTROL_URL: "https://router.internal:8443/control",
@@ -42,9 +43,32 @@ describe("parseAppRoutingConfig", () => {
         expect(config.enabled && config.aliasTemplate.source).toBe("{slug}-{id}-view");
     });
 
-    it.each(Object.keys(valid).slice(1))("requires %s once the domain is set", (name) => {
-        expect(() => parseAppRoutingConfig({ ...valid, [name]: undefined })).toThrow(name);
-        expect(() => parseAppRoutingConfig({ ...valid, [name]: "" })).toThrow(name);
+    it.each(Object.keys(valid).filter((name) => name !== "LAUNCHPAD_APPS_DOMAIN"))(
+        "requires %s once the domain is set",
+        (name) => {
+            expect(() => parseAppRoutingConfig({ ...valid, [name]: undefined })).toThrow(name);
+            expect(() => parseAppRoutingConfig({ ...valid, [name]: "" })).toThrow(name);
+        },
+    );
+
+    it("requires the apps domain to be a different registrable domain from the management origin", () => {
+        const base = (LAUNCHPAD_BASE_URL: string, LAUNCHPAD_APPS_DOMAIN: string) =>
+            parseAppRoutingConfig({ ...valid, LAUNCHPAD_BASE_URL, LAUNCHPAD_APPS_DOMAIN });
+        // Same registrable domain: a sibling subdomain is not enough.
+        expect(() => base("https://control.example.com", "sites.example.com")).toThrow(
+            "registrable",
+        );
+        expect(() => base("https://control.example.com", "example.com")).toThrow("registrable");
+        expect(() => base("https://example.com", "sites.example.com")).toThrow("registrable");
+        // The public suffix list is honoured: two names under co.uk are different sites.
+        expect(base("https://control.alpha.co.uk", "sites.beta.co.uk").enabled).toBe(true);
+        expect(() => base("https://control.alpha.co.uk", "sites.alpha.co.uk")).toThrow(
+            "registrable",
+        );
+        expect(base("https://control.example.com", "sites.example.net").enabled).toBe(true);
+        expect(() => parseAppRoutingConfig({ ...valid, LAUNCHPAD_BASE_URL: undefined })).toThrow(
+            "LAUNCHPAD_BASE_URL",
+        );
     });
 
     it("refuses the preview-era settings with a pointer to the new one", () => {

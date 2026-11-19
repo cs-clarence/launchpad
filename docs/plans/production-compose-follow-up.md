@@ -327,3 +327,26 @@ if ownership, dependencies or backup scope are unclear.
 - Report configuration prepared, disposable behavior verified, cleanup completed,
   and production **not started** as separate outcomes. Published-artifact install
   and actual production cutover remain unproven until separately authorized.
+
+## Cleanup record
+
+### Old demo data (2026-11-19, executed by explicit user instruction, no archive kept)
+
+Exact targets, identified before deletion by labels and creation time and deleted by exact name:
+
+- Container `view-demo.web.1` (Dokku app `view-demo`, exited, no mounts).
+- Images `dokku/view-demo:latest` and `launchpad/hello:v1` (the demo's source image; rebuildable from `examples/hello`).
+- Directory `.data/dokku` (the old repository-local Dokku state; root-owned, removed with a throwaway container mounting only `.data`).
+
+Verified afterwards: the container and both images are gone and `.data` is empty. The
+`cloudflare-connector` and `playit-connector` containers were not touched.
+
+### Left in place, with the reason
+
+- `launchpad-live-dokku` and its state under `/tmp/opencode/live-dokku-20261117/`, plus the
+  `launchpad/dokku:0.38.34` image: agent-created and still needed for the routing experiment.
+- Eight unnamed, unused Docker volumes created 2026-11-18 between 13:16 and 13:19 (+08:00), matching
+  test runs. No container references them, but nothing proves who made them, so they stay until
+  that is confirmed.
+- Images `launchpad-check/controller:dev` and `launchpad-check/worker:dev`: probably earlier agent builds; not confirmed.
+- Existing `postgres`, `node`, `alpine`, `oven/bun`, `docker` and linter images: shared base images, not Launchpad's.

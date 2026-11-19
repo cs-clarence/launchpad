@@ -236,6 +236,7 @@
         "@launchpad-kit/database": "workspace:^",
         "kysely": "catalog:",
         "tar": "catalog:",
+        "tldts": "catalog:",
         "zod": "catalog:",
       },
       "devDependencies": {

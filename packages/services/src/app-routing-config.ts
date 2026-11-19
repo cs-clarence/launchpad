@@ -1,4 +1,5 @@
 import { parseDuration } from "@launchpad-kit/contracts";
+import { getDomain } from "tldts";
 import { parseHostnameTemplate, type HostnameTemplate } from "./hostname-template";
 import { PREVIEW_DOMAIN_PATTERN } from "./ids";
 
@@ -76,6 +77,28 @@ function absolutePath(name: string, value: string): string {
     return value;
 }
 
+// Uploaded sites are untrusted, and hosts of one registrable domain share a site: cookies and
+// same-site requests cross between them. The apps domain must therefore be a different
+// registrable domain from the management origin's, by the public suffix list, not merely a
+// different name. A host with no registrable domain (localhost, an address) falls back to a
+// plain overlap check.
+export function assertSeparateDomains(appsDomain: string, managementOrigin: string): void {
+    const host = new URL(managementOrigin).hostname.toLowerCase();
+    const registrable = (name: string) => getDomain(name, { allowPrivateDomains: true });
+    const site = registrable(host);
+    const sameSite = site !== null && site === registrable(appsDomain);
+    if (
+        sameSite ||
+        host === appsDomain ||
+        host.endsWith(`.${appsDomain}`) ||
+        appsDomain.endsWith(`.${host}`)
+    ) {
+        throw new Error(
+            "LAUNCHPAD_APPS_DOMAIN must be a different registrable domain from LAUNCHPAD_BASE_URL.",
+        );
+    }
+}
+
 function integer(env: Env, name: string, fallback: number, max: number): number {
     const raw = env[name];
     if (raw === undefined || raw === "") return fallback;
@@ -100,6 +123,10 @@ export function parseAppRoutingConfig(env: Env): AppRoutingSettings {
     if (!PREVIEW_DOMAIN_PATTERN.test(appsDomain)) {
         throw new Error("LAUNCHPAD_APPS_DOMAIN is not a valid lowercase domain name.");
     }
+    assertSeparateDomains(
+        appsDomain,
+        url("LAUNCHPAD_BASE_URL", required(env, "LAUNCHPAD_BASE_URL")).origin,
+    );
     const instanceId = required(env, "LAUNCHPAD_ALIAS_INSTANCE_ID");
     if (!UUID.test(instanceId))
         throw new Error("LAUNCHPAD_ALIAS_INSTANCE_ID must be a lowercase UUID.");

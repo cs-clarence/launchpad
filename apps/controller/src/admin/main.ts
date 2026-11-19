@@ -12,6 +12,7 @@ import { readFileSync, statSync } from "node:fs";
 import path from "node:path";
 import { createDokkuClient } from "@launchpad-kit/dokku";
 import { createBackup, verifyBackup } from "./backup";
+import { inventoryPreviews } from "./inventory";
 import { checkRestore, restoreBackup } from "./restore";
 
 async function readStdin(): Promise<string> {
@@ -232,6 +233,34 @@ program
         if (report.expired.length > 0) {
             console.log(`${report.expired.length} live preview(s) have already expired.`);
         }
+    });
+
+program
+    .command("inventory-previews")
+    .description(
+        "Read-only: list the preview-era apps the database recorded and whether they are ready to retire",
+    )
+    .option("--all", "also list previews that are already deleted")
+    .action(async (options) => {
+        const inventory = await withDatabase((db) => inventoryPreviews(db));
+        for (const item of options.all ? inventory.items : inventory.blocking) {
+            const notes = [
+                `state ${item.state}`,
+                item.deletion ? `deletion ${item.deletion}` : null,
+                item.unfinishedDeployments
+                    ? `${item.unfinishedDeployments} unfinished deployment(s)`
+                    : null,
+                item.heldDeployments ? `${item.heldDeployments} held deployment(s)` : null,
+                item.imageTags.length ? `images ${item.imageTags.join(", ")}` : null,
+            ].filter(Boolean);
+            console.log(`${item.appName} ${item.hostname} (${notes.join("; ")})`);
+        }
+        console.log(
+            inventory.readyToRetire
+                ? `All ${inventory.items.length} recorded preview(s) are deleted: ready to retire.`
+                : `${inventory.blocking.length} of ${inventory.items.length} recorded preview(s) must be deleted or finished first. Nothing was changed; delete each by exact name through the guarded deletion path.`,
+        );
+        process.exitCode = inventory.readyToRetire ? 0 : 1;
     });
 
 program
