@@ -15,12 +15,10 @@ describe("parseAppRoutingConfig", () => {
     it("is off, and reads nothing else, while the apps domain is unset", () => {
         expect(parseAppRoutingConfig({})).toEqual({ enabled: false });
         expect(parseAppRoutingConfig({ LAUNCHPAD_APPS_DOMAIN: "" })).toEqual({ enabled: false });
-        // Old preview settings alone do not enable or break anything.
-        expect(parseAppRoutingConfig({ LAUNCHPAD_PREVIEW_DOMAIN: "previews.example.com" })).toEqual(
-            {
-                enabled: false,
-            },
-        );
+        // A preview-era name is the migration case: refused even before the new domain is set.
+        expect(() =>
+            parseAppRoutingConfig({ LAUNCHPAD_PREVIEW_DOMAIN: "previews.example.com" }),
+        ).toThrow("LAUNCHPAD_APPS_DOMAIN");
     });
 
     it("applies the documented defaults", () => {
@@ -128,6 +126,17 @@ describe("parseAppRoutingConfig", () => {
                 LAUNCHPAD_MAX_DEPLOYMENTS: "100",
             }),
         ).toThrow("cannot exceed");
+    });
+
+    it("does not rewrite a length error as a domain error", () => {
+        const long = `${"a".repeat(60)}.${"b".repeat(60)}.${"c".repeat(60)}.${"d".repeat(10)}.com`;
+        try {
+            parseAppRoutingConfig({ ...valid, LAUNCHPAD_APPS_DOMAIN: long });
+            throw new Error("expected a refusal");
+        } catch (error) {
+            expect((error as Error).message).toContain("LAUNCHPAD_DEPLOYMENT_HOSTNAME_TEMPLATE");
+            expect((error as Error).message).toContain("253");
+        }
     });
 
     it("names the setting whose template is invalid, and a bad domain", () => {

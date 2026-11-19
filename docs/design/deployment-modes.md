@@ -629,7 +629,13 @@ Slice 0 so far (pure TypeScript, unit tests only, not wired into any runtime):
 `packages/services/src/hostname-template.ts` (template parsing, rendering and
 bounded collision allocation), `app-routing-config.ts` (the canonical settings,
 refusing the preview-era names) and `drift/` (the comparison, race filter and exit
-code). Not yet done in Slice 0: the read-only legacy-preview inventory. Slice 1
+code). The configuration parser refuses a preview-era setting even while the new
+domain is unset (the migration case), so it must not be wired in before the runtime
+stops reading those names. `stableDrift` compares the fixed remote reads against the
+database before and after, and `compareDrift` applies the stuck-operation rule: a
+dispatched operation with a missing or expired lease is stuck. Not yet done in
+Slice 0: the read-only legacy-preview inventory, and a check that the apps domain
+differs from the management domain. Slice 1
 (routing experiment) has not been approved or run; Slices 2 to 4 are not started.
 
 ### Implementation slices and gates

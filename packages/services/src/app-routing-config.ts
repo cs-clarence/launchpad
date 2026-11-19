@@ -1,5 +1,6 @@
 import { parseDuration } from "@launchpad-kit/contracts";
 import { parseHostnameTemplate, type HostnameTemplate } from "./hostname-template";
+import { PREVIEW_DOMAIN_PATTERN } from "./ids";
 
 // Settings of the immutable-deployment and alias model (docs/design/deployment-modes.md,
 // "Canonical configuration"). Pure: it reads only the object it is given, touches no file and no
@@ -85,17 +86,23 @@ function integer(env: Env, name: string, fallback: number, max: number): number 
 }
 
 export function parseAppRoutingConfig(env: Env): AppRoutingSettings {
-    if (env.LAUNCHPAD_APPS_DOMAIN === undefined || env.LAUNCHPAD_APPS_DOMAIN === "") {
-        return { enabled: false };
-    }
+    // Refused whether or not the new model is configured: an environment that still carries
+    // a preview-era name is the migration case this error is for.
     for (const [old, replacement] of Object.entries(OLD_SETTINGS)) {
         if (env[old] !== undefined && env[old] !== "") {
             throw new Error(`${old} is no longer used; use ${replacement}.`);
         }
     }
+    if (env.LAUNCHPAD_APPS_DOMAIN === undefined || env.LAUNCHPAD_APPS_DOMAIN === "") {
+        return { enabled: false };
+    }
     const appsDomain = env.LAUNCHPAD_APPS_DOMAIN;
+    if (!PREVIEW_DOMAIN_PATTERN.test(appsDomain)) {
+        throw new Error("LAUNCHPAD_APPS_DOMAIN is not a valid lowercase domain name.");
+    }
     const instanceId = required(env, "LAUNCHPAD_ALIAS_INSTANCE_ID");
-    if (!UUID.test(instanceId)) throw new Error("LAUNCHPAD_ALIAS_INSTANCE_ID must be a UUID.");
+    if (!UUID.test(instanceId))
+        throw new Error("LAUNCHPAD_ALIAS_INSTANCE_ID must be a lowercase UUID.");
     const retention = env.LAUNCHPAD_ROLLBACK_RETENTION;
     let rollbackRetentionSeconds = 7 * DAY;
     if (retention !== undefined && retention !== "") {
@@ -126,18 +133,6 @@ export function parseAppRoutingConfig(env: Env): AppRoutingSettings {
             throw new Error(`${name}: ${(error as Error).message}`);
         }
     };
-    let deploymentTemplate: HostnameTemplate;
-    try {
-        deploymentTemplate = template(
-            "LAUNCHPAD_DEPLOYMENT_HOSTNAME_TEMPLATE",
-            DEFAULT_DEPLOYMENT_TEMPLATE,
-        );
-    } catch (error) {
-        if ((error as Error).message.includes("domain")) {
-            throw new Error("LAUNCHPAD_APPS_DOMAIN is not a valid lowercase domain name.");
-        }
-        throw error;
-    }
     return {
         enabled: true,
         appsDomain,
@@ -156,7 +151,10 @@ export function parseAppRoutingConfig(env: Env): AppRoutingSettings {
             "LAUNCHPAD_ALIAS_ROUTER_EPOCH_FILE",
             required(env, "LAUNCHPAD_ALIAS_ROUTER_EPOCH_FILE"),
         ),
-        deploymentTemplate,
+        deploymentTemplate: template(
+            "LAUNCHPAD_DEPLOYMENT_HOSTNAME_TEMPLATE",
+            DEFAULT_DEPLOYMENT_TEMPLATE,
+        ),
         aliasTemplate: template("LAUNCHPAD_ALIAS_HOSTNAME_TEMPLATE", DEFAULT_ALIAS_TEMPLATE),
         rollbackRetentionSeconds,
         maxApps: integer(env, "LAUNCHPAD_MAX_APPS", 10, 10_000),

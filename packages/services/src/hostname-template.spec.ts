@@ -12,7 +12,7 @@ const parse = (source: string) => parseHostnameTemplate(source, DOMAIN);
 
 describe("parseHostnameTemplate", () => {
     it("renders the examples from the design, with segments rearranged", () => {
-        const input = { slug: "my-site", id: "a1b2c3d4e5", domain: DOMAIN };
+        const input = { slug: "my-site", id: "a1b2c3d4e5" };
         expect(renderHostname(parse("{slug}-{id}-preview"), input)).toBe(
             "my-site-a1b2c3d4e5-preview.sites.example.net",
         );
@@ -59,7 +59,6 @@ describe("parseHostnameTemplate", () => {
         const worst = renderHostname(parse(`{slug}-{id}-${"a".repeat(11)}`), {
             slug: "a".repeat(40),
             id: "z".repeat(10),
-            domain: DOMAIN,
         });
         expect(worst.split(".")[0]!.length).toBe(63);
     });
@@ -75,12 +74,39 @@ describe("parseHostnameTemplate", () => {
 describe("renderHostname", () => {
     it("refuses a slug or id that would break the label", () => {
         const template = parse("{slug}-{id}");
-        const good = { slug: "site", id: "abcdefghij", domain: DOMAIN };
+        const good = { slug: "site", id: "abcdefghij" };
         expect(() => renderHostname(template, { ...good, slug: "Site" })).toThrow();
         expect(() => renderHostname(template, { ...good, slug: "-site" })).toThrow();
         expect(() => renderHostname(template, { ...good, slug: "a".repeat(41) })).toThrow();
         expect(() => renderHostname(template, { ...good, id: "abc" })).toThrow();
         expect(() => renderHostname(template, { ...good, id: "ABCDEFGHIJ" })).toThrow();
+    });
+
+    it("refuses a slug that would make a reserved or malformed label, on either side of the template", () => {
+        const id = "abcdefghij";
+        // The contract allows "--" inside a slug; the finished label must not.
+        expect(() => renderHostname(parse("{slug}-{id}-preview"), { slug: "xn--foo", id })).toThrow(
+            "cannot be used",
+        );
+        expect(() => renderHostname(parse("{slug}-{id}-preview"), { slug: "ab--cd", id })).toThrow(
+            "cannot be used",
+        );
+        expect(() => renderHostname(parse("view-{slug}-{id}"), { slug: "a--b", id })).toThrow(
+            "cannot be used",
+        );
+        expect(() => renderHostname(parse("{id}-{slug}"), { slug: "a--b", id })).toThrow(
+            "cannot be used",
+        );
+        expect(renderHostname(parse("{slug}-{id}-preview"), { slug: "xnoise", id })).toBe(
+            "xnoise-abcdefghij-preview.sites.example.net",
+        );
+    });
+
+    it("uses the domain the worst case was checked against, and no other", () => {
+        expect(parse("{slug}-{id}").domain).toBe(DOMAIN);
+        expect(renderHostname(parse("{slug}-{id}"), { slug: "a", id: "abcdefghij" })).toBe(
+            `a-abcdefghij.${DOMAIN}`,
+        );
     });
 
     it("makes ten lowercase base36 characters, never a UUID", () => {
@@ -98,7 +124,6 @@ describe("allocateHostname", () => {
     it("returns the first free hostname", async () => {
         const result = await allocateHostname({
             template,
-            domain: DOMAIN,
             slug: "site",
             isTaken: () => false,
             makeId: ids("aaaaaaaaaa"),
@@ -113,7 +138,6 @@ describe("allocateHostname", () => {
         const taken = new Set(["site-aaaaaaaaaa-preview.sites.example.net"]);
         const second = await allocateHostname({
             template,
-            domain: DOMAIN,
             slug: "site",
             isTaken: (hostname) => taken.has(hostname),
             makeId: ids("aaaaaaaaaa", "bbbbbbbbbb"),
@@ -124,7 +148,6 @@ describe("allocateHostname", () => {
         await expect(
             allocateHostname({
                 template,
-                domain: DOMAIN,
                 slug: "site",
                 isTaken: async () => {
                     calls++;

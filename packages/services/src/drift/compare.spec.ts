@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { compareDrift, driftExitCode, stableFindings } from "./compare";
+import { compareDrift, driftExitCode, stableDrift } from "./compare";
 import {
     FINDING_CODES,
     type DriftAlias,
@@ -120,6 +120,147 @@ const routerWith = (
     router: { status: "ok", data: { epoch, routes } },
 });
 
+// One case per finding code: each is produced here and is absent in the agreeing fixture.
+const cases: Record<FindingCode, (input: DriftInput) => DriftInput> = {
+    "deployment-app-missing": (i) => ({
+        ...i,
+        dokku: {
+            status: "ok",
+            data: { apps: [{ name: "lp-b", domains: ["b-preview.sites.example.net"] }] },
+        },
+    }),
+    "deployment-domain-mismatch": (i) => ({
+        ...i,
+        dokku: {
+            status: "ok",
+            data: {
+                apps: [
+                    { name: "lp-a", domains: ["changed.example.net"] },
+                    { name: "lp-b", domains: ["b-preview.sites.example.net"] },
+                ],
+            },
+        },
+    }),
+    "orphan-app": (i) => ({
+        ...i,
+        dokku: {
+            status: "ok",
+            data: {
+                apps: [
+                    ...(i.dokku.status === "ok" ? i.dokku.data.apps : []),
+                    { name: "lp-stray", domains: [] },
+                ],
+            },
+        },
+    }),
+    "reservation-without-owner": (i) =>
+        withDb(i, {
+            reservations: [
+                ...i.db.reservations,
+                {
+                    hostname: "gone.sites.example.net",
+                    ownerKind: "deployment",
+                    ownerId: "missing",
+                },
+            ],
+        }),
+    "owner-without-reservation": (i) =>
+        withDb(i, { reservations: i.db.reservations.filter((r) => r.ownerId !== "b") }),
+    "alias-route-missing": (i) => routerWith(i, []),
+    "alias-router-ahead": (i) =>
+        routerWith(i, [
+            {
+                hostname: "view-prod.sites.example.net",
+                generation: 9n,
+                operationId: "op9",
+                targetDeploymentId: "b",
+            },
+        ]),
+    "alias-router-behind": (i) =>
+        routerWith(i, [
+            {
+                hostname: "view-prod.sites.example.net",
+                generation: 1n,
+                operationId: "op0",
+                targetDeploymentId: "a",
+            },
+        ]),
+    "alias-target-conflict": (i) =>
+        routerWith(i, [
+            {
+                hostname: "view-prod.sites.example.net",
+                generation: 3n,
+                operationId: "op1",
+                targetDeploymentId: "b",
+            },
+        ]),
+    "router-unknown-route": (i) =>
+        routerWith(i, [
+            ...(i.router.status === "ok" ? i.router.data.routes : []),
+            {
+                hostname: "stray.sites.example.net",
+                generation: 1n,
+                operationId: "x",
+                targetDeploymentId: "a",
+            },
+        ]),
+    "router-epoch-mismatch": (i) =>
+        routerWith(i, i.router.status === "ok" ? i.router.data.routes : [], "epoch-2"),
+    "unreferenced-pin": (i) => {
+        // The alias is unbound, so nothing references deployment a any more; the router and the
+        // probe agree that it serves nothing.
+        const unbound = withDb(i, {
+            deployments: [deployment("a", { everPinned: true }), deployment("b")],
+            aliases: [
+                alias({
+                    state: "unbound",
+                    targetDeploymentId: null,
+                    committedGeneration: 0n,
+                    reservedGeneration: 0n,
+                }),
+            ],
+        });
+        return {
+            ...routerWith(unbound, []),
+            probe: { status: "ok", data: { results: [] } },
+        };
+    },
+    "stale-unpin": (i) =>
+        withDb(i, {
+            deployments: [
+                deployment("a", {
+                    referencedByAliasIds: ["prod"],
+                    everPinned: true,
+                    lastUnpinnedAt: PAST,
+                }),
+                deployment("b"),
+            ],
+        }),
+    "stuck-operation": (i) =>
+        withDb(i, {
+            operations: [
+                {
+                    id: "op2",
+                    aliasId: "prod",
+                    status: "applying",
+                    leaseExpiresAt: PAST,
+                    dispatched: true,
+                },
+            ],
+        }),
+    "archive-missing": (i) => ({
+        ...i,
+        archives: { status: "ok", data: { keys: ["artifacts/b"] } },
+    }),
+    "probe-mismatch": (i) => ({
+        ...i,
+        probe: {
+            status: "ok",
+            data: { results: [{ hostname: "view-prod.sites.example.net", deploymentId: "b" }] },
+        },
+    }),
+};
+
 describe("compareDrift", () => {
     it("finds nothing when every source agrees, and ignores apps that are not Launchpad's", () => {
         const report = compareDrift(agreeing());
@@ -127,143 +268,6 @@ describe("compareDrift", () => {
         expect(report.ignoredAppCount).toBe(1);
         expect(driftExitCode(report)).toBe(0);
     });
-
-    // One case per finding code: each is produced here and is absent in the agreeing fixture.
-    const cases: Record<FindingCode, (input: DriftInput) => DriftInput> = {
-        "deployment-app-missing": (i) => ({
-            ...i,
-            dokku: {
-                status: "ok",
-                data: { apps: [{ name: "lp-b", domains: ["b-preview.sites.example.net"] }] },
-            },
-        }),
-        "deployment-domain-mismatch": (i) => ({
-            ...i,
-            dokku: {
-                status: "ok",
-                data: {
-                    apps: [
-                        { name: "lp-a", domains: ["changed.example.net"] },
-                        { name: "lp-b", domains: ["b-preview.sites.example.net"] },
-                    ],
-                },
-            },
-        }),
-        "orphan-app": (i) => ({
-            ...i,
-            dokku: {
-                status: "ok",
-                data: {
-                    apps: [
-                        ...(i.dokku.status === "ok" ? i.dokku.data.apps : []),
-                        { name: "lp-stray", domains: [] },
-                    ],
-                },
-            },
-        }),
-        "reservation-without-owner": (i) =>
-            withDb(i, {
-                reservations: [
-                    ...i.db.reservations,
-                    {
-                        hostname: "gone.sites.example.net",
-                        ownerKind: "deployment",
-                        ownerId: "missing",
-                    },
-                ],
-            }),
-        "owner-without-reservation": (i) =>
-            withDb(i, { reservations: i.db.reservations.filter((r) => r.ownerId !== "b") }),
-        "alias-route-missing": (i) => routerWith(i, []),
-        "alias-router-ahead": (i) =>
-            routerWith(i, [
-                {
-                    hostname: "view-prod.sites.example.net",
-                    generation: 9n,
-                    operationId: "op9",
-                    targetDeploymentId: "b",
-                },
-            ]),
-        "alias-router-behind": (i) =>
-            routerWith(i, [
-                {
-                    hostname: "view-prod.sites.example.net",
-                    generation: 1n,
-                    operationId: "op0",
-                    targetDeploymentId: "a",
-                },
-            ]),
-        "alias-target-conflict": (i) =>
-            routerWith(i, [
-                {
-                    hostname: "view-prod.sites.example.net",
-                    generation: 3n,
-                    operationId: "op1",
-                    targetDeploymentId: "b",
-                },
-            ]),
-        "router-unknown-route": (i) =>
-            routerWith(i, [
-                ...(i.router.status === "ok" ? i.router.data.routes : []),
-                {
-                    hostname: "stray.sites.example.net",
-                    generation: 1n,
-                    operationId: "x",
-                    targetDeploymentId: "a",
-                },
-            ]),
-        "router-epoch-mismatch": (i) =>
-            routerWith(i, i.router.status === "ok" ? i.router.data.routes : [], "epoch-2"),
-        "unreferenced-pin": (i) =>
-            routerWith(
-                withDb(i, {
-                    deployments: [deployment("a", { everPinned: true }), deployment("b")],
-                    aliases: [
-                        alias({
-                            state: "unbound",
-                            targetDeploymentId: null,
-                            committedGeneration: 0n,
-                            reservedGeneration: 0n,
-                        }),
-                    ],
-                }),
-                [],
-            ),
-        "stale-unpin": (i) =>
-            withDb(i, {
-                deployments: [
-                    deployment("a", {
-                        referencedByAliasIds: ["prod"],
-                        everPinned: true,
-                        lastUnpinnedAt: PAST,
-                    }),
-                    deployment("b"),
-                ],
-            }),
-        "stuck-operation": (i) =>
-            withDb(i, {
-                operations: [
-                    {
-                        id: "op2",
-                        aliasId: "prod",
-                        status: "applying",
-                        leaseExpiresAt: PAST,
-                        dispatched: true,
-                    },
-                ],
-            }),
-        "archive-missing": (i) => ({
-            ...i,
-            archives: { status: "ok", data: { keys: ["artifacts/b"] } },
-        }),
-        "probe-mismatch": (i) => ({
-            ...i,
-            probe: {
-                status: "ok",
-                data: { results: [{ hostname: "view-prod.sites.example.net", deploymentId: "b" }] },
-            },
-        }),
-    };
 
     it("has a case for every finding code", () => {
         expect(Object.keys(cases).toSorted()).toEqual([...FINDING_CODES].toSorted());
@@ -393,7 +397,8 @@ describe("compareDrift", () => {
                 deployment("b"),
             ],
         });
-        expect(codes(input)).toEqual(["alias-target-conflict"]);
+        // The router serves it (conflict) and a probe confirms it (the alias should serve nothing).
+        expect(codes(input).toSorted()).toEqual(["alias-target-conflict", "probe-mismatch"]);
     });
 
     it("produces a report that serializes with identifiers only, and writes nothing", () => {
@@ -415,27 +420,188 @@ describe("compareDrift", () => {
     });
 });
 
-describe("stableFindings", () => {
-    it("drops a finding whose alias changed between the two snapshots, keeps stable ones", () => {
-        const before = agreeing();
-        const input = cases2(before);
-        const report = compareDrift(input);
-        expect(report.findings.length).toBeGreaterThan(0);
+describe("stableDrift", () => {
+    const behind = (i: DriftInput) =>
+        routerWith(i, [
+            {
+                hostname: "view-prod.sites.example.net",
+                generation: 1n,
+                operationId: "op0",
+                targetDeploymentId: "a",
+            },
+        ]);
+
+    it("keeps a finding both snapshots report, and drops it when its alias moved in between", () => {
+        const input = behind(agreeing());
+        expect(stableDrift(input, input.db).findings.map((f) => f.code)).toEqual([
+            "alias-router-behind",
+        ]);
         const moved = withDb(input, {
-            aliases: [alias({ committedGeneration: 4n, reservedGeneration: 4n })],
+            aliases: [alias({ committedGeneration: 1n, reservedGeneration: 1n })],
         });
-        expect(stableFindings(input.db, moved.db, report.findings)).toEqual([]);
-        expect(stableFindings(input.db, input.db, report.findings)).toEqual(report.findings);
+        expect(stableDrift(input, moved.db).findings).toEqual([]);
+    });
+
+    it("drops a probe finding caused by a promotion that landed between the snapshots", () => {
+        // The probe already sees the new target (b); the earlier snapshot still expects a.
+        const input: DriftInput = {
+            ...agreeing(),
+            probe: {
+                status: "ok",
+                data: { results: [{ hostname: "view-prod.sites.example.net", deploymentId: "b" }] },
+            },
+        };
+        const after = withDb(input, {
+            aliases: [
+                alias({
+                    targetDeploymentId: "b",
+                    committedGeneration: 4n,
+                    reservedGeneration: 4n,
+                    lastOperationId: "op2",
+                }),
+            ],
+        }).db;
+        expect(compareDrift(input).findings.map((f) => f.code)).toContain("probe-mismatch");
+        expect(stableDrift(input, after).findings.map((f) => f.code)).not.toContain(
+            "probe-mismatch",
+        );
+    });
+
+    it("drops an orphan-app finding for a deployment created between the snapshots", () => {
+        const base = agreeing();
+        const stray = { name: "lp-new", domains: ["new-preview.sites.example.net"] };
+        const input: DriftInput = {
+            ...base,
+            dokku: { status: "ok", data: { apps: [...okApps(base), stray] } },
+        };
+        const created = deployment("new", { dokkuAppName: "lp-new", hostname: stray.domains[0]! });
+        const after: DriftDatabase = {
+            ...input.db,
+            deployments: [...input.db.deployments, created],
+            reservations: [
+                ...input.db.reservations,
+                { hostname: created.hostname, ownerKind: "deployment", ownerId: "new" },
+            ],
+        };
+        expect(compareDrift(input).findings.map((f) => f.code)).toEqual(["orphan-app"]);
+        expect(stableDrift(input, after).findings).toEqual([]);
+    });
+
+    it("drops a router-unknown-route finding for an alias created between the snapshots", () => {
+        const base = agreeing();
+        const input = routerWith(base, [
+            ...(base.router.status === "ok" ? base.router.data.routes : []),
+            {
+                hostname: "view-new.sites.example.net",
+                generation: 1n,
+                operationId: "op9",
+                targetDeploymentId: "a",
+            },
+        ]);
+        const after = withDb(input, {
+            aliases: [
+                ...input.db.aliases,
+                alias({
+                    id: "new",
+                    hostname: "view-new.sites.example.net",
+                    committedGeneration: 1n,
+                    reservedGeneration: 1n,
+                    lastOperationId: "op9",
+                }),
+            ],
+            reservations: [
+                ...input.db.reservations,
+                { hostname: "view-new.sites.example.net", ownerKind: "alias", ownerId: "new" },
+            ],
+        }).db;
+        expect(compareDrift(input).findings.map((f) => f.code)).toEqual(["router-unknown-route"]);
+        expect(stableDrift(input, after).findings).toEqual([]);
     });
 });
 
-function cases2(input: DriftInput): DriftInput {
-    return routerWith(input, [
-        {
-            hostname: "view-prod.sites.example.net",
-            generation: 1n,
-            operationId: "op0",
-            targetDeploymentId: "a",
+describe("source and edge handling", () => {
+    it.each([
+        ["dokku", "deployment-app-missing"],
+        ["router", "alias-route-missing"],
+        ["archives", "archive-missing"],
+        ["probe", "probe-mismatch"],
+    ] as const)(
+        "an unavailable %s source suppresses only its own findings (%s)",
+        (source, code) => {
+            const broken = cases[code](agreeing());
+            expect(codes(broken)).toContain(code);
+            const down = {
+                ...broken,
+                [source]: { status: "unavailable", reason: "down" },
+            } as DriftInput;
+            expect(codes(down)).not.toContain(code);
+            expect(compareDrift(down).sources[source]).toBe("unavailable");
         },
-    ]);
-}
+    );
+
+    it("treats a dispatched operation with no lease as stuck, and an undispatched queued one as in flight", () => {
+        const base = withDb(agreeing(), {
+            aliases: [alias({ state: "binding", reservedGeneration: 4n })],
+        });
+        const dispatched: DriftOperation = {
+            id: "op2",
+            aliasId: "prod",
+            status: "applying",
+            leaseExpiresAt: null,
+            dispatched: true,
+        };
+        expect(codes(withDb(base, { operations: [dispatched] }))).toEqual(["stuck-operation"]);
+        expect(
+            codes(
+                withDb(base, {
+                    operations: [{ ...dispatched, status: "queued", dispatched: false }],
+                }),
+            ),
+        ).toEqual([]);
+    });
+
+    it("is not fooled by a stateful /g pattern", () => {
+        const input = agreeing();
+        const apps = [
+            ...okApps(input),
+            { name: "lp-x1", domains: [] as string[] },
+            { name: "lp-x2", domains: [] as string[] },
+        ];
+        const found = compareDrift({
+            ...input,
+            dokku: { status: "ok", data: { apps } },
+            config: { ...input.config, appNamePattern: /^lp-[a-z0-9]+$/g },
+        });
+        expect(found.findings.map((f) => f.code)).toEqual(["orphan-app", "orphan-app"]);
+    });
+
+    it("expects an unbound or withdrawn alias to serve nothing when probed", () => {
+        const input = withDb(agreeing(), {
+            aliases: [
+                alias({
+                    state: "unbound",
+                    targetDeploymentId: null,
+                    committedGeneration: 0n,
+                    reservedGeneration: 0n,
+                }),
+            ],
+            deployments: [
+                deployment("a", { everPinned: true, lastUnpinnedAt: PAST }),
+                deployment("b"),
+            ],
+        });
+        const served = routerWith(
+            {
+                ...input,
+                probe: {
+                    status: "ok",
+                    data: {
+                        results: [{ hostname: "view-prod.sites.example.net", deploymentId: "a" }],
+                    },
+                },
+            },
+            [],
+        );
+        expect(codes(served)).toEqual(["probe-mismatch"]);
+    });
+});

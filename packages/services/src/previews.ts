@@ -1,4 +1,5 @@
-import { createHash, randomInt } from "node:crypto";
+import { createHash } from "node:crypto";
+import { PREVIEW_DOMAIN_PATTERN, opaqueId } from "./ids";
 import { createPreviewSchema, extendPreviewSchema, parseDuration } from "@launchpad-kit/contracts";
 import type { Database } from "@launchpad-kit/database";
 import { type Kysely, sql } from "kysely";
@@ -12,7 +13,6 @@ type Db = Kysely<Database>;
 
 export const MAX_PREVIEWS_PER_ORGANIZATION = 10;
 export const IDEMPOTENCY_TTL_MS = 24 * 60 * 60 * 1000;
-const ID_ALPHABET = "abcdefghijklmnopqrstuvwxyz0123456789";
 const LIST_LIMIT = 100;
 
 export interface PreviewDeps {
@@ -25,14 +25,7 @@ export interface PreviewDeps {
     lifecycle?: LifecycleConfig;
 }
 
-export const PREVIEW_DOMAIN_PATTERN =
-    /^(?=.{1,200}$)([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/;
-
-export function opaqueId(length: number): string {
-    let id = "";
-    for (let i = 0; i < length; i++) id += ID_ALPHABET[randomInt(ID_ALPHABET.length)];
-    return id;
-}
+export { PREVIEW_DOMAIN_PATTERN, opaqueId };
 
 // The name that reaches Dokku is generated here and never derived from user input.
 export function generatePreviewNames(slug: string, domain: string) {

@@ -1,5 +1,5 @@
-import { PREVIEW_DOMAIN_PATTERN, opaqueId } from "./previews";
 import { ServiceError } from "./errors";
+import { PREVIEW_DOMAIN_PATTERN, opaqueId } from "./ids";
 
 // Generated hostnames for immutable deployments and their aliases (docs/design/deployment-modes.md,
 // "Configurable hostname templates"). A template names one DNS label with the tokens {slug} and
@@ -19,6 +19,8 @@ const TOKEN = /\{([^{}]*)\}/g;
 
 export interface HostnameTemplate {
     readonly source: string;
+    // The domain the worst case was checked against: rendering uses no other.
+    readonly domain: string;
     readonly parts: readonly ("slug" | "id" | { readonly literal: string })[];
 }
 
@@ -84,19 +86,26 @@ export function parseHostnameTemplate(source: string, domain: string): HostnameT
     if (worstLabel + 1 + domain.length > MAX_HOSTNAME_LENGTH) {
         throw new HostnameTemplateError("The hostname can exceed 253 characters with this domain.");
     }
-    return { source, parts };
+    return { source, domain, parts };
 }
 
 export function renderHostname(
     template: HostnameTemplate,
-    input: { slug: string; id: string; domain: string },
+    input: { slug: string; id: string },
 ): string {
     if (!SLUG.test(input.slug)) throw new HostnameTemplateError("The slug is not valid.");
     if (!ID.test(input.id)) throw new HostnameTemplateError("The id is not valid.");
     const label = template.parts
         .map((part) => (part === "slug" ? input.slug : part === "id" ? input.id : part.literal))
         .join("");
-    return `${label}.${input.domain}`;
+    // A slug may hold "--" (the contract allows it), which would make an ab-- label or the
+    // reserved xn-- prefix: the finished label must still be one a DNS name can carry.
+    if (label.includes("--") || label.length > MAX_DNS_LABEL_LENGTH) {
+        throw new HostnameTemplateError(
+            "This slug cannot be used in a hostname with this template.",
+        );
+    }
+    return `${label}.${template.domain}`;
 }
 
 // The hostname's random token: ten lowercase base36 characters, not a UUID and not the
@@ -107,7 +116,6 @@ export const newHostnameId = () => opaqueId(HOSTNAME_ID_LENGTH);
 // fresh id each time and at most five tries. It never truncates or reuses a hostname.
 export async function allocateHostname(options: {
     template: HostnameTemplate;
-    domain: string;
     slug: string;
     isTaken: (hostname: string) => boolean | Promise<boolean>;
     makeId?: () => string;
@@ -115,11 +123,7 @@ export async function allocateHostname(options: {
     const makeId = options.makeId ?? newHostnameId;
     for (let attempt = 0; attempt < MAX_ALLOCATION_ATTEMPTS; attempt++) {
         const id = makeId();
-        const hostname = renderHostname(options.template, {
-            slug: options.slug,
-            id,
-            domain: options.domain,
-        });
+        const hostname = renderHostname(options.template, { slug: options.slug, id });
         if (!(await options.isTaken(hostname))) return { hostname, id };
     }
     throw new ServiceError("conflict", "A free hostname could not be allocated; try again.");
