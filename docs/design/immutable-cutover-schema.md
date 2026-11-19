@@ -1,285 +1,65 @@
-# Immutable cutover schema map
+# Replacement schema map (migration 018)
 
-Status: **P1 draft; executable retirement and model/reservation segments**, 2026-11-19.
-For the author and reviewer of migration
-`20261119_018_immutable_deployment_model`. This specifies the retirement map and
-new physical schema. Complete executable SQL and deferred-trigger implementation
-must be reviewed before P2; this document does not authorize migration.
-See the [delivery plan](../plans/immutable-deployment-model.md) and
-[resource/state-machine design](deployment-modes.md).
+Status: **revised 2026-11-19: replace, do not retire.** For the author and reviewer of
+migration `20261119_018_immutable_deployment_model`. This is the contract for its SQL;
+it is not the SQL. See the [P2 plan](../plans/immutable-p2-cutover.md), the
+[parent plan](../plans/immutable-deployment-model.md) and the
+[resource and state-machine design](deployment-modes.md).
 
-The test-only [retirement SQL candidate](../../apps/controller/src/admin/__tests__/fixtures/immutable-retirement.sql)
-now executes the locking/refusal/rename/key-revocation segment against isolated
-PostgreSQL databases. It explicitly refuses non-`lp_test_` database names, is not
-discoverable by `migrate`, and does not record migration 018. It installs no new
-model tables, reservations/triggers, restricted-role grants, restore floor or
-recovery gate. It is **not a standalone safe installation cutover**.
-Those remaining segments must join the same transaction in P2.
-The paired [model SQL candidate](../../apps/controller/src/admin/__tests__/fixtures/immutable-model.sql)
-now creates the eight new tables, constraints, identity guards and reciprocal
-reservation triggers in the same test transaction as retirement, retaining its
-exclusive locks. All historical previews seed both registries before their tables
-are frozen. Both candidates remain outside migration discovery and record no
-migration 018. Functions are fixture-owned by the test migrator, not yet the
-production non-login definer role; metadata checks are not restricted-role
-execution proof.
-The candidate's currently tested/supported PostgreSQL major is **17**, matching
-the disposable `postgres:17-alpine` fixture. A suite assertion records that major.
-Constraint-name comparison filters to PK/unique/FK/check/exclusion types so
-PostgreSQL 18's extra NOT NULL catalog rows do not contaminate that name set;
-this filter alone does **not** establish PostgreSQL 18 support.
+The earlier draft of this document specified retiring the preview tables into
+read-only `legacy_*` history with reserved identities, a refusal guard, an object-name
+inventory and an old-process drill. The user chose to drop the legacy runtime and its
+data unconditionally (nothing is in production), so all of that is removed. The P1
+test-only SQL and drill on `main` specify the retired design and are deleted by P2.
 
-## Immutable input and old-process fixtures
+## What the migration does
 
-The baseline commit was first recorded as `39fbc29` (the original squash merge of
-#54). Restoring the dropped #50–#54 to `main` replaced that commit with the equivalent
-`e03c542`; the `packages` tree (`187c0045a1e8…`) and `package.json` are byte-identical,
-so the source and hashes below are unchanged. `39fbc29` is no longer reachable from the
-remote, which is why CI could not extract it. Use `e03c542`, which is on `main`.
+Inside the migrator's own transaction (Kysely takes the advisory lock and runs all
+pending migrations in one transaction; 018 opens no transaction of its own):
 
-The historical source of truth is commit
-`e03c54257ebe14926da4e50d2ba58fe324e5b4bb`, not the rebased branch's new hashes.
-Preserve that object before building the P2 compatibility fixture. Build the old
-artifact from that tree with its own lockfile; do not import current services
-into an alleged old-worker test.
+1. `SET LOCAL lock_timeout`, so a straggling session fails the migration instead of
+   queueing an exclusive lock behind every reader.
+2. Drop `deployment_event`, `deletion_operation`, `deployment`, `preview` and
+   `worker_heartbeat` **and their data, unconditionally**, with one
+   `DROP TABLE a, b, c, d, e` statement and no `CASCADE`. The four preview tables
+   reference each other in a cycle (`preview.active_deployment_id` references `deployment`), so
+   they must go in one statement, and omitting `CASCADE` makes the migration fail if anything
+   unexpected depends on them. Nothing writes heartbeats after P2a; P3 designs its own. No refusal, no history, no reservation of
+   the dropped hostnames or Dokku names. It does not touch Dokku: apps those previews
+   owned stay on the host until the operator removes them by exact name.
+3. Delete all `idempotency_key` rows (temporary replay records; the table is kept and
+   emptied on purpose), delete the `instance_state` key `lifecycle.enabled_at`, and revoke
+   every API key with a scope that starts with `preview:`, including keys that also hold
+   other scopes (legacy automation keys are not grandfathered), recording counts only in
+   the audit event.
+4. Create the tables below, their guards, and initialize the recovery gate.
 
-| Baseline source                        | SHA-256 of exact Git blob contents                                 |
-| -------------------------------------- | ------------------------------------------------------------------ |
-| `packages/services/src/deployments.ts` | `d130632341a6d1418bf028a3946c51a3d9ce9f913c0cb10a583d2e28387fed48` |
-| `packages/services/src/deletions.ts`   | `850dfcb86d31d2fad5515f20b2ffecaa10131b83d893da68ffd2a9be2716ded7` |
-| `packages/services/src/artifact-gc.ts` | `aeb8d63f47e41ddc12d208d5c8f6f2d9a35e3a315754222b2a22191a69214ffc` |
+A failure in any step rolls everything back. The new tables do not reuse the dropped
+names, so an old process that survives fails with "relation does not exist" instead of
+operating on new rows; its startup check refuses once 018 is recorded. That does not stop a
+process already running or a Dokku operation it already dispatched, so the runbook is to stop
+every old controller, worker and admin job, and let in-flight remote work settle, first.
 
-The compatibility test extracts the commit with `git archive` and re-links its
-workspace packages to the extracted tree, but it uses the **current** third-party
-dependencies, not the baseline's own lockfile, and runs source rather than a built
-artifact. The three hashes cover only the three files above; `packages/database` is
-trusted through the archive. A package resolves its own name through itself, so the
-check that matters is that its _dependencies_ resolve inside the extracted tree; the
-subprocess asserts that and a mutation check proves it can fail.
+## Physical table map
 
-Hashes above were read from the historical Git objects, not copied from the
-current working tree. P2 must preserve/build the full baseline artifact and
-record its digest too; these three source hashes are provenance, not a substitute
-for running its real entrypoints.
-
-## Transaction and retirement map
-
-Before invoking migration: close application ingress/writers, stop all old
-controller/worker/admin/GC processes, settle remote operations and pending archive
-moves, fence every old database login and terminate its sessions. A distinct
-maintenance principal runs migration; new application processes never inherit the
-old login. Stop if the operator cannot prove these prerequisites. Password
-rotation alone does not disconnect existing sessions. Database fencing alone
-does not revoke SSH, Docker or filesystem access from an old process.
-
-Inside the forward-only migration transaction:
-
-1. Take `ACCESS EXCLUSIVE` locks in this exact order:
-   `"user"`, `organization`, `project`, `member`, `api_key`, `artifact`,
-   `preview`, `deployment`, `deployment_event`, `deletion_operation`,
-   `idempotency_key`, `worker_heartbeat`, `instance_state`, `audit_event`.
-   Parent identities precede their dependents; allocation, heartbeats,
-   revocation/auditing and old idempotency writers cannot race this transaction.
-   Migration bookkeeping remains Kysely's responsibility. Other auth tables
-   (sessions/accounts/verifications/login attempts/invitations) are neither
-   rewritten nor referenced by new FKs; old writers are already fenced and
-   this migration does not invalidate sessions.
-   Do not make network or filesystem calls inside this transaction.
-2. Refuse any preview not terminally deleted; any deployment outside
-   `succeeded`, `failed`, `cancelled`; any deletion not `succeeded`; any
-   non-null `step_pending`, `lease_owner` or `lease_expires_at` on **any**
-   legacy deployment/deletion row, including terminal rows. Expiry is not proof
-   of settling. Preview/event tables have no lease or pending-step columns.
-   Do not clear intent or invent a successful remote outcome.
-3. Rename the four legacy tables and their owned objects as below.
-4. Create the new schema, seed permanent identity reservations, revoke legacy
-   grants with audit counts, and initialize the recovery gate.
-5. Verify reservation set equality and reciprocal ownership before commit.
-   Any failure rolls back all DDL, seeding, revocation and audit writes.
-
-| Current table        | Retired table               | Dependent objects and preserved data                                                                                                                      |
-| -------------------- | --------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `preview`            | `legacy_preview`            | PK, org/project FKs, `(organization_id,id)`, permanent `app_name`/`hostname` uniqueness, live slug index, active-deployment FK, expiry/deleted timestamps |
-| `deployment`         | `legacy_deployment`         | PK, org/artifact/preview FKs, `(organization_id,preview_id,id)`, unfinished index, claim index, image identity, lease/step/rollback history               |
-| `deployment_event`   | `legacy_deployment_event`   | PK, identity sequence ownership, deployment FK, unique `(deployment_id,seq)`                                                                              |
-| `deletion_operation` | `legacy_deletion_operation` | PK, preview/org/user FKs, claim/unfinished indexes, attempt and monotonic fence                                                                           |
-
-PostgreSQL renames table references in existing FKs but not every object name.
-P2 explicitly enumerates constraint/index/identity-sequence names from the frozen
-schema and assigns `legacy_` names, including schema-level backing indexes.
-No `deployment`, `deployment_event`, `deletion_operation` or `preview` views or
-tables remain. Do not drop history or rebuild it through a lossy projection.
-Keep existing referential restrictions; application credentials cannot mutate
-legacy history. Maintenance/forensic access is separate.
-
-`artifact`, `idempotency_key`, `worker_heartbeat`, `instance_state`, auth,
-organizations, projects and audit tables remain. Existing idempotency entries
-remain under old endpoint names; new endpoints cannot replay them as new grants.
-Worker heartbeats remain historical and never prove old processes are fenced.
-
-### Existing object names
-
-These names follow migrations 010–016, including PostgreSQL's names for unnamed
-constraints. The executable candidate compares real schema-017 owned constraint/
-index names and the event identity-sequence mapping with this list; the schema-017 positive
-case passes on disposable PostgreSQL. P2 must repeat against the frozen fixture;
-unexpected names within the inspected sets cause refusal. This is not a full
-dependency inventory: incoming FKs, views, rules, RLS policies, publications,
-dependent functions, extra columns/defaults, ownership/grants and index ownership
-are not checked. Neither are constraint definitions, validation state or
-deferrability. P2's dependency/grant review must cover these before deployment;
-names alone cannot prove arbitrary out-of-band schema changes safe.
-Constraints are table-scoped, so their
-renaming is cosmetic. Indexes (including constraint-backed indexes) and sequences
-share the schema namespace. This map renames every listed owned object to its
-`legacy_` equivalent for clarity, not because every rename is required to avoid
-a clash with the distinctly named new tables.
-
-| Owner                | Existing indexes (constraint-backed included)                                                                                                                                                     |
-| -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `preview`            | `preview_pkey`, `preview_app_name_key`, `preview_hostname_key`, `preview_organization_id_id_key`, `preview_project_slug_live_idx`, `preview_expiry_idx`                                           |
-| `deployment`         | `deployment_pkey`, `deployment_organization_id_id_key`, `deployment_organization_id_preview_id_id_key`, `deployment_one_unfinished_per_preview`, `deployment_preview_idx`, `deployment_claim_idx` |
-| `deployment_event`   | `deployment_event_pkey`, `deployment_event_deployment_id_seq_key`                                                                                                                                 |
-| `deletion_operation` | `deletion_operation_pkey`, `deletion_operation_organization_id_id_key`, `deletion_one_unfinished_per_preview`, `deletion_claim_idx`                                                               |
-
-Rename PK/unique constraints with `ALTER TABLE ... RENAME CONSTRAINT`, which
-also renames their backing indexes; do not rename those indexes twice.
-Standalone indexes use `ALTER INDEX ... RENAME TO ...`.
-`preview_project_id_slug_key` was dropped by migration 016; never recreate it.
-
-| Owner                | Existing FK/check constraint names                                                                                                                                                                                                                                                                                                                                 |
-| -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `preview`            | `preview_organization_id_fkey`, `preview_created_by_fkey`, `preview_organization_id_project_id_fkey`, `preview_organization_id_id_active_deployment_id_fkey`, `preview_slug_check`, `preview_app_name_check`, `preview_hostname_check`, `preview_desired_state_check`, `preview_deleted_at_matches_state`                                                          |
-| `deployment`         | `deployment_organization_id_fkey`, `deployment_requested_by_fkey`, `deployment_organization_id_preview_id_fkey`, `deployment_organization_id_artifact_id_fkey`, `deployment_status_check`, `deployment_attempt_check`, `deployment_step_done_check`, `deployment_step_pending_check`                                                                               |
-| `deployment_event`   | `deployment_event_organization_id_fkey`, `deployment_event_organization_id_deployment_id_fkey`, `deployment_event_seq_check`, `deployment_event_level_check`, `deployment_event_message_check`                                                                                                                                                                     |
-| `deletion_operation` | `deletion_operation_organization_id_fkey`, `deletion_operation_requested_by_fkey`, `deletion_operation_organization_id_preview_id_fkey`, `deletion_operation_reason_check`, `deletion_operation_status_check`, `deletion_operation_attempt_check`, `deletion_operation_fence_check`, `deletion_operation_step_done_check`, `deletion_operation_step_pending_check` |
-
-The only identity sequence is `deployment_event_id_seq`; rename it to
-`legacy_deployment_event_id_seq`, preserving generation, current sequence value
-and ownership of the renamed event column. There are no existing user triggers
-or trigger functions to rename; reciprocal reservation triggers are new work.
-
-## Permanent identity reservation sources
-
-No source query filters by live state or slug. Slug reuse is irrelevant to
-identity ownership: every historical preview ID retains its own reservations.
-Refuse legacy hostnames that are not already lowercase canonical DNS names, or
-whose lowercase values collide. Never silently lowercase, trim or reassign a
-recorded hostname. Malformed historical identity requires separately reviewed
-operator action; migration does not edit it to make seeding pass.
-
-| Registry                 | Seed query source               | Identity                                                 |
-| ------------------------ | ------------------------------- | -------------------------------------------------------- |
-| `hostname_reservation`   | every `legacy_preview.hostname` | `legacy_preview.id`, organization, kind `legacy_preview` |
-| `dokku_name_reservation` | every `legacy_preview.app_name` | same owner ID/organization/kind                          |
-
-The baseline has no distinct hostname/app-name columns on deployments, deletion
-operations or events. A rollback refers to a deployment of the same preview and
-therefore the same recorded remote app. Verify those FKs during seeding; never
-parse image tags or event prose to infer an additional owned remote resource.
-If later inspection discovers another identity source, stop and extend this map.
-
-New deployment and alias allocation inserts registry and owner atomically.
-Hostnames are lowercase DNS names; registry PK is the canonical hostname, and
-`UNIQUE(owner_kind,owner_id)` prevents a second reservation for one owner.
-Dokku names have their own permanent PK and the same owner uniqueness.
-No cascade from organization/project deletion may remove these records.
-`released_at` is an audit timestamp, never availability for reuse.
-The runtime soft-deletes owning resources; hard deletion is not an application API.
-Release auditing requires a deleted deployment/legacy preview or withdrawn alias,
-checked against the final owner state at COMMIT. Release still never frees a key.
-
-Each registry has a `DEFERRABLE INITIALLY DEFERRED` constraint trigger for
-inserts/updates, and reciprocal triggers on its owner tables. Row deletion is
-rejected immediately by permanent-history guards, before a deferred DELETE
-event could be needed. Statement-level BEFORE TRUNCATE guards additionally cover
-all twelve model/registry/legacy tables, including cascading truncation. New
-deployment events are append-only. At commit,
-an owner must exist with matching organization and exact name/hostname, and each
-owner must have its one registry row. Validate the final state, not a transient
-intermediate statement. PK/unique conflicts serialize concurrent allocation.
-Reject owner-kind/owner-ID changes after admission. For Dokku names, allowed
-owners are `legacy_preview` and `deployment`; aliases own no Dokku app.
-For hostname reservations, allowed owners are `legacy_preview`, `deployment`
-and `alias`.
-New `immutable_deployment.app_name` has the same
-`CHECK (app_name ~ '^lp-[a-z0-9]{10}$')` as legacy previews.
-The retirement candidate also validates every legacy `app_name` directly under
-the table locks, independently of the constraint-name check. Its refusal
-fixtures deliberately weaken the named legacy check to prove malformed names
-cannot enter the later Dokku-name registry merely because a check has that name.
-
-Commit-time validation reads frozen owners through narrowly scoped
-`SECURITY DEFINER` trigger functions, owned by a maintenance-managed non-login
-role with only the required owner/registry read privileges. Functions use fixed
-`search_path = pg_catalog`, fully qualified `public.*` relations, no dynamic SQL
-and no caller-selected relation/function names. Revoke public direct execution
-and schema-creation privileges. Review function ownership/grants with the SQL;
-test under restricted application credentials, not only the schema owner.
-P2 must also revoke TRUNCATE and prevent application roles from owning tables,
-disabling triggers, changing `session_replication_role`, or inheriting those
-powers. An owner/superuser can deliberately bypass triggers; the fixture does
-not claim protection against that privileged operator.
-
-## New physical table map
-
-All timestamps are `timestamptz`, IDs are UUID except existing organization/user
-IDs (`text`). All resource PKs also have organization-qualified unique keys for
-FKs. Use `ON DELETE RESTRICT` for resources/history/ownership, not cascade.
-Required actor references point to the existing user table.
+All timestamps are `timestamptz`; IDs are UUID except the existing organization and
+user IDs (`text`). Every resource has an organization-qualified unique key for use in
+foreign keys, and all references are `ON DELETE RESTRICT`, never cascade. Actor
+references point to the existing user table.
 
 Explicit composite keys and FK targets:
 
-- `app`: `UNIQUE(organization_id,id)` and
-  `UNIQUE(organization_id,project_id,id)`; its project FK is
-  `(organization_id,project_id) → project(organization_id,id)`.
-- `app_alias`: `UNIQUE(organization_id,app_id,id)`; the promotion alias FK
-  references that exact triple.
+- `app`: `UNIQUE(organization_id,id)` and `UNIQUE(organization_id,project_id,id)`; its
+  project FK is `(organization_id,project_id) → project(organization_id,id)`.
+- `app_alias`: `UNIQUE(organization_id,app_id,id)`; the promotion alias FK references
+  that exact triple.
 - `immutable_deployment`: `UNIQUE(organization_id,id)` and
   `UNIQUE(organization_id,app_id,id)`; deletion's FK uses
   `(organization_id,app_id,deployment_id)`, as do alias and promotion targets.
 - `promotion_operation`: `UNIQUE(alias_id,id)` supports nullable
-  `(alias_id,supersedes_operation_id)` and
-  `(alias_id,superseded_by_operation_id)` self-FKs. Same-alias membership implies
-  same app/org. Service locking also enforces reciprocal, acyclic supersession.
-
-The model candidate additionally freezes app/project identity, owner identity,
-deployment artifact/SPA settings, completed deployment images/status, and
-promotion/deletion intent. Fences and alias generations cannot decrease.
-New queues use integer retry `attempt` fields and independent nonnegative bigint
-fences; SQL updates cannot lower the fences. A future retry-budget reset must
-never reset its independent fence.
-Non-null image tags are unique among immutable deployment owners, so new-model
-cleanup cannot treat a shared tag as belonging to two deployments. Build-time
-image identity/probe verification and legacy-image ownership remain P3 gates.
-These guards do **not** replace the worker's fenced WHERE clauses, authorization,
-pin/reservation locks, target eligibility, app-shutdown or quota checks. Those
-service/worker gates are still unimplemented. Supersession self-FKs establish
-same-alias membership only; reciprocal/acyclic higher-generation chains remain
-service checks, not a claim of this candidate.
-Settled succeeded/failed promotions cannot acquire a corrective successor, and
-`superseded` status requires a successor. The reverse is deliberately not a
-CHECK: linked uncertain predecessors remain unfinished until the corrective
-barrier is verified, preserving their pins. The normally unreachable
-`legacy_preview_reservations` owner trigger is not seed-coverage evidence;
-registry INSERT events validate the frozen legacy seeds.
-Manual deployment deletion requires an actor. Deployment deletion cannot be
-cancelled by changing `deleting` back to `active`.
-A further ten cases run the model under **test-only** roles: a NOLOGIN definer
-that owns the three SECURITY DEFINER validators, and an application role that
-owns nothing. The deferred owner checks succeed for that role although it cannot
-read `legacy_preview`, a missing reservation still fails at COMMIT, and the role
-cannot truncate or delete registry history, disable triggers, set
-`session_replication_role`, drop or re-own a guard function, or execute a
-validator directly. This shows the design works when the roles are separated; it
-is **not** the production role setup. P2 must still create the real roles and
-grants, record them in the migration, and repeat these cases against them.
-The model/reservation suite currently passes 67 cases on PostgreSQL 17,
-including deferred COMMIT failures, reservation-before-owner ordering,
-cross-kind allocation blocked by an uncommitted competing reservation,
-cross-org/app FK failures, permanent released names and atomic rollback of
-retirement plus model creation. It checks hardened function metadata, **not**
-execution under the intended restricted production role.
+  `(alias_id,supersedes_operation_id)` and `(alias_id,superseded_by_operation_id)`
+  self-FKs. Same-alias membership implies same app and organization. Reciprocal and
+  acyclic supersession remain service checks.
 
 | Table                           | Required fields / constraints                                                                                                                                                                                                                                                                                                                                                                                             |
 | ------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -307,95 +87,165 @@ decision takes app, ordered aliases, ordered deployments, then operation locks.
 Operations reference previous/desired targets through the full unresolved chain.
 These requirements become service/SQL integration tests, not merely this map.
 
-## Restore and scope boundary
+## Permanent identity registries
 
-Use `instance_state.key='immutable_recovery'`, value `blocked` or `ready`.
-Fresh/retired migration initializes `ready` only after all retirement checks pass.
-Before any import/archive mutation, restore writes an owner-only durable marker
-`<LAUNCHPAD_DATA_DIR>/maintenance/immutable-recovery-blocked`, outside the dump
-and backup archive subtree, using atomic rename and file/directory fsync.
-All new mutating controller/worker/GC/admin entrypoints check this marker and
-the database gate. Existing marker, unreadable directory or absent/invalid/blocked
-database state fails closed. Processes must share this persistent directory;
-a missing mount is a startup error, never permission to assume readiness.
-Reads and backup verification remain available.
+`hostname_reservation` and `dokku_name_reservation` hold every hostname and Dokku app
+name ever allocated. Owners are `deployment` or `alias` for hostnames and `deployment`
+for Dokku names (an alias owns no Dokku app). `released_at` is an audit fact and never
+frees a key.
 
-Maintain stopped/fenced application processes throughout import and set/verify
-database `blocked` after import before enabling new credentials/processes.
-The external marker survives a crash between importing a dump containing `ready`
-and writing `blocked`; failure to set/verify either gate aborts recovery.
-P3/P4 consult both gates in every mutation transaction and before dispatch.
-P5 is the only operator path to clear it after verified remote reconciliation.
-Recovery sets database `ready` under recovery locks, then removes the marker and
-fsyncs its directory. A crash before marker removal stays blocked; clearing
-either gate alone is insufficient. Test a process death immediately after import,
-before writing the database gate, and a fresh process restart.
+- A row's owner must exist, in the same organization, with the same hostname or app name,
+  and every owner must have its row. This is checked by `DEFERRABLE INITIALLY DEFERRED`
+  constraint triggers on both sides, so it is validated on the final state at COMMIT and
+  the order of inserts inside a transaction does not matter.
+- Owner identity, registry identity, release history, app identity and operation intent
+  cannot be rewritten; fences and generations only increase; completed deployments cannot
+  change status or image; a deleted resource cannot be reactivated; rows cannot be
+  deleted, and `BEFORE TRUNCATE` statement guards cover every table above.
+- A release is accepted only for a soft-deleted deployment or a withdrawn alias.
+- `immutable_deployment.app_name` keeps the `lp-[a-z0-9]{10}` namespace; hostnames are
+  lowercase DNS names (`<= 253` characters, labels `<= 63`); image tags are unique.
+- The validator functions are ordinary `plpgsql` with a fixed `search_path`. They are
+  **not** `SECURITY DEFINER`: with no legacy tables there is nothing the application role
+  cannot read, so there is no privilege to elevate.
 
-Before archive copying or schema import, require manifest migration ID
-`20261119_018_immutable_deployment_model`; error code `backup-schema-floor`.
-Post-restore verification checks the actual migration table and the blocked
-gate, not just the manifest. `BACKUP_FORMAT=1` remains unchanged.
+**Residual (stated, not hidden):** these guards are owned by the schema owner, who is also
+the application's role today. They defend against bugs and mistaken SQL, not against the
+application's own database role, which can still `ALTER` or `DISABLE TRIGGER`. Splitting
+owner and application roles is a deployment decision and belongs to the production Compose
+plan, where it is also tested through backup and restore (`pg_dump --no-owner
+--no-privileges` drops ownership and grants).
 
-Revoke every API key containing a scope whose prefix is exactly `preview:`,
-including mixed-scope keys. Do not map grants to `app:*`.
-Prefix matching is exact and case-sensitive: `preview:` is not `Preview:` or
-`previewish:`. Unknown scopes never gain new permissions.
-Already revoked keys keep their original timestamp; audit counts distinguish
-affected rows from newly revoked keys and expose no hashes/secrets.
-Unrelated keys and user sessions are unchanged. Runtime rejects legacy grants
-even if a malformed/restored key escapes migration. New scope fixtures include
-contracts, client-core, SDK/CLI/MCP and authorization callers.
+## Restore and the recovery gate
 
-## Old-process findings (executed, P1)
+A restored database may disagree with the router and Dokku, so model mutations stay off until
+that is reconciled. The rule keys on **this binary knowing 018**, never on the manifest: an
+older dump restored over an installation that already ran the model would otherwise bring
+back an empty registry and stale generations while the router and Dokku keep the old state.
 
-`immutable-old-process.spec.ts` runs the real `e03c542` code, extracted from git
-with its three source hashes checked, against a database cut over by both SQL
-segments. Seven cases pass on PostgreSQL 17:
+- **Marker.** Every restore by a binary that knows 018 writes
+  `<data dir>/maintenance/immutable-recovery-blocked`, owner-only, by atomic rename with the
+  file and its directory fsynced. It lives outside the dump, so a restored `ready` row cannot
+  clear it. It is written **after** every refusal and the archive pre-check, and **before** the
+  first archive copy, so a refused restore blocks nothing. A restore that fails part-way keeps
+  the marker on purpose: partial state is never offered to workers.
+- **Database gate.** `instance_state` key `immutable_recovery`, `blocked` or `ready`. Migration
+  018 initializes `ready`. After import, restore sets and verifies `blocked`.
+- **Scope.** The gate covers **model mutations only**: apps, deployments, aliases, promotions,
+  deletions, artifact collection and the worker. Sign-in, sessions, organizations, projects,
+  members and API-key administration stay available, or a restored controller could not be used.
+- **Checks.** A missing gate row is permitted only while 018 is not recorded in
+  `launchpad_migration`; with 018 recorded and no row it is refused. An unreadable marker
+  directory or database fails closed. The marker lives in the data directory the artifacts
+  already require every process to share (one `LAUNCHPAD_DATA_DIR` volume); a missing mount is a
+  startup error, never permission to assume readiness.
+- **Clearing.** `launchpad-admin recovery-clear` sets `ready` under the recovery locks, then
+  removes the marker and fsyncs the directory (a crash in between stays blocked). **Empty model
+  tables prove nothing about remote state**: after an older dump is restored over an installation
+  that already used the model, the tables are empty while the router and Dokku still hold the old
+  routes and apps. The rule therefore has two parts, and the outcome is unambiguous:
+    - **Writer-seen record.** **Before its first model mutation or remote side effect**, the
+      first model writer creates and fsyncs the durable file
+      `<data dir>/maintenance/model-writer-seen` and its directory, outside the dump, so a
+      restore cannot erase it. If that step fails the writer fails closed and performs no
+      mutation, so a crash can never leave state behind without the record. P2b has no writer,
+      so on a P2b installation the file never exists.
+    - **P2b rule.** `recovery-clear` **succeeds** only if every model table is empty **and** the
+      writer-seen file does not exist; it **refuses** in every other case, including an empty
+      database after any writer has run. Rolling back to a P2b binary after P3 has written is not
+      supported, and this record is what makes the P2b command refuse if someone does.
+    - **Interim rule (from P3).** Reconciliation itself is P5, so P3 cannot depend on it. The
+      P3 PR that adds the first writer replaces the P2b rule with an **interim fail-closed
+      rule** that does **not** consult `model-writer-seen` or the model tables: the file lives on
+      the data volume, so a replaced volume restored from an older dump loses it, and empty
+      tables cannot be told from a never-used installation. `recovery-clear` therefore **always**
+      refuses unless the operator passes the explicit attestation
+      `--i-have-reconciled-router-and-dokku`, recorded in an audit event (count-only, no
+      secrets). Tests assert the P2b rule is gone, that the command refuses without the flag on a
+      database with rows, on an empty one, and with the file absent. This follows the restore
+      command's confirmation flags and is weaker than verification, so it is **interim**.
+    - **What the attestation covers (the manual procedure until P5).** The flag attests that the
+      operator did all of the following, in this order, because nothing verifies it yet:
+        1. Closed ingress and stopped every pre-restore writer (controller, worker, admin jobs),
+           **and waited for every Dokku operation those writers had already dispatched (build, load,
+           destroy) to settle.** Stopping a worker does not stop a dispatched operation, and rotating
+           router credentials does not fence Dokku, so a pending destroy could otherwise finish after
+           reconciliation and leave the restored database pointing at a missing app.
+        2. **Rotated the router epoch and control credentials offline**, so a delayed request from
+           a pre-restore writer is rejected. Without this, a higher-generation delayed write is
+           accepted by the router (`packages/alias-router/src/store.ts:352-353`) and the restored
+           database never records it. This is the fence required by `deployment-modes.md`.
+        3. Reconciled the router and Dokku against the restored database (P3: deployments and
+           Dokku apps; P4: aliases, with `recovery-raise-counters`).
+        4. Only then ran `recovery-clear`.
+           The unfenced window exists only if step 2 is skipped, and the consequence is a route change
+           the database cannot see. **P5 removes the reliance on memory**: when the restore begins it
+           records the router's current epoch ID (not a secret) in the recovery marker, and
+           `recovery-clear` verifies the router's epoch now differs from it. The anchor is the
+           moment the restore started, **not** the backup manifest: a router that rotated after the
+           backup but before the restore would otherwise look like a rotation made during recovery.
+           P5 keeps the Dokku settling condition (below): its verified reconciliation runs only after
+           the settling rule is met, and the operator procedure still requires it, because nothing
+           can prove from the restored database that no dispatched Dokku operation is still running.
+    - **Settling rule (what "settled" means).** The set of dispatched operations **cannot come from
+      the restored database**: it is exactly the post-backup state the restore lost. So the
+      procedure does not try to enumerate it from there.
+        1. **Time bound.** Every worker call to Dokku or Docker is bounded by a lease-derived
+           deadline, and the worker's documented stop grace is 25 minutes (`docker stop --time 1500`,
+           `stop_grace_period: 25m`; a load can take about 24). After the last writer has stopped,
+           wait at least that long. Past it, every dispatched call has either finished or hit its
+           deadline.
+        2. **Host check.** On the Dokku host, confirm that nothing started by the worker's SSH key is
+           still running: no `docker build`, `docker load` or `dokku apps:destroy` process for the
+           worker's user (for example `pgrep -u <dokku user> -af 'docker|dokku'`).
+        3. **Known set (before the restore).** Keep the pre-restore database, which still holds the
+           operation rows. List every deployment or deletion operation with a pending step or an
+           unexpired lease at stop time, and after steps 1 and 2 read each target app with the
+           allowlisted exact-name Dokku read (`apps:exists`). A target whose state disagrees with that
+           row is a reconciliation input, never silently ignored.
+           The settling wait of a rule-1 duration is all that P5 can automate (it has no host access);
+           P5's reconciliation report includes the step-3 list, and steps 2 and 3 stay in the runbook.
+    - **Counter repair (P4).** P3 has no routes, so no counters exist. The P4 PR that adds aliases
+      also adds, using its read-only router client, a check inside `recovery-clear` that refuses
+      while any alias `reserved_generation` is below the router's generation for that route or the
+      router holds a route the database does not know, and a `recovery-raise-counters` step that
+      raises counters with `GREATEST` under the alias lock while the gate is set and never lowers
+      one. The attestation is still required.
+    - **P5 replacement.** P5 adds tombstone comparison, protection of unknown routed targets and
+      Dokku reconciliation, replaces the attestation with that verification, and removes the flag
+      in the same PR.
+- **Older dumps.** There is no backup floor. An older dump restores, is migrated forward, and
+  018 drops its preview tables again; the marker is written like any restore.
 
-- **Control.** Before cutover the same old `claimNext` claims work (and writes
-  events) and the old GC removes an unreferenced archive, so the refusals below
-  are not vacuous.
-- **Fails closed.** After cutover the old claim, deletion claim and artifact GC
-  each fail with `relation ... does not exist`. A queued new deployment is not
-  claimed, and the archive file and its row are untouched.
-- **Finding 1: the fixtures give an old binary no startup refusal.** They record
-  no migration, so the old `assertSchemaCurrent` still passes. With
-  `20261119_018_immutable_deployment_model` recorded (simulated by inserting the
-  row) it refuses at startup naming that migration. The real migration must record
-  018, and P2 must keep that test.
-- **Finding 2: the fail-closed behaviour is incidental.** It exists only because
-  the new tables use names no old binary knows. It is not a guard, and an old
-  process that is still running would fail on every poll rather than stop. The
-  database-role fence is what actually removes it.
-- **Finding 3: terminating sessions is not a fence.** The old login simply
-  reconnects. `ALTER ROLE ... NOLOGIN` followed by `pg_terminate_backend` ends the
-  held session, leaves zero sessions, and refuses a reconnect. Order matters:
-  fence the login first, then terminate.
+## API scopes
 
-Not covered: in-flight Docker or SSH calls an old worker already dispatched, an
-old process connecting as a superuser or owner role, and the old controller's API
-handlers (only the worker and GC code paths were run).
+`preview:*` scopes are removed from issuance and authentication and fail closed if a
+stored key somehow survives; they are never mapped to `app:*`. The new `app:read`,
+`app:deploy`, `app:promote`, `app:alias:manage` and `app:delete` scopes follow the
+[permission matrix](deployment-modes.md#permission-matrix-and-client-confirmation).
 
-## P2 verification gates (partly executed above)
+## Verification (P2b)
 
-- Empty, frozen schema-014 and fully retired schema-017 upgrades.
-- Each nonterminal deployment/deletion state independently blocks migration;
-  a terminal row with pending rollback or any leftover lease field also blocks it.
-- Same-slug retired rows reserve every historical hostname/app name.
-- All registry owner kinds: missing owner, missing reservation, reciprocal
-  mismatch, cross-org mismatch, release/reuse and transaction-commit timing.
-- Baseline worker/controller/GC cannot reconnect through old credentials;
-  actual baseline SQL fails against absent old names with fixture-only access.
-  Archive sentinel checks include a GC paused after candidate selection.
-- Mixed/legacy/unknown-prefix/unrelated/revoked key cases and audit counts.
-- Pre-model restore leaves database/archive sentinels byte-identical.
-  Post-model restore preserves unfinished work but cannot dispatch/GC/delete
-  until verified operator recovery, including after restart.
+`SET LOCAL lock_timeout` covers only 018; a run that starts from 014 is not protected for 015 to 017.
 
-P1 adds retirement fixtures to the existing inventory suite; that verifies the
-current read-only inventory, **not** the future migration refusals, role fence or
-restore gate. The separate SQL-candidate suite verifies retirement refusals,
-names/history preservation and key revocation inside isolated test transactions.
-That does not prove old-login fencing, restricted-role trigger execution,
-reservation closure, backup floors or recovery-gate durability. Complete model/
-reservation SQL review and these P2 gates remain required before declaring cutover ready.
+On disposable PostgreSQL, from the frozen schema-014 fixture and from an empty database:
+
+- 017 then 018 in one migrator run, and 018 alone; a refusal (for example a held
+  conflicting lock hitting `lock_timeout`) leaves the schema untouched.
+- Preview data of every state is dropped, and the new tables are empty.
+- Every reservation rule above, each by a failing case and a passing control, including
+  COMMIT-time failures, cross-organization and cross-app keys, immutable fields, TRUNCATE
+  and delete refusal, and cross-kind hostname races.
+- Key revocation (mixed, unknown-prefix, case variant, already revoked) and count-only
+  audit; idempotency rows removed; sessions untouched.
+- An old binary against the migrated schema is refused at startup (018 recorded).
+- Restore: a post-018 backup round trip writes the marker and sets the gate; a crash after
+  import before the gate write stays blocked after a fresh start; an older dump restores,
+  migrates, and writes the marker like any restore.
+- The upgrade drill and the built images run the new migration, and the drill asserts the
+  four preview tables and `worker_heartbeat` are gone afterwards.
+- An old dump restored over a database that already holds model rows writes the marker.
+- `recovery-clear` refuses while any model table has a row, and refuses on an empty database
+  once the `model-writer-seen` file exists (simulated by creating it). The P3 change that adds the
+  first writer carries the matching tests: the file exists and is fsynced before the first
+  mutation or remote call, and a failure to create it aborts the writer with nothing changed.

@@ -1,6 +1,6 @@
 # Immutable deployment model implementation
 
-Status: **P1 in progress after user approval**, 2026-11-19.
+Status: **P2 planning; revised 2026-11-19 to replace rather than retire the previews.**
 For implementers and reviewers; this plan defines safe delivery boundaries, not
 operator instructions. No runtime changes are authorized by this document alone.
 
@@ -19,8 +19,8 @@ prove application-database concurrency.
   finalization, migration compatibility and restore reconciliation still need
   executable proof. Investigate these before expanding the client surface.
 - **Undo difficulty:** easy before migration; after it, matched old binary and
-  pre-upgrade backup in isolation, never a down migration or an old worker against
-  the new database. Remote alias state requires separate fenced reconciliation.
+  pre-upgrade backup in isolation (the preview data is dropped by design), never a down
+  migration or an old worker against the new database. Remote alias state requires separate fenced reconciliation.
 - **People / time:** one integrating author and independent Opus review at each
   nontrivial push; multiple reviewable PRs, not a one-session change. No fixed
   delivery estimate until the concurrency slice is proven.
@@ -43,55 +43,31 @@ not authorize broad cleanup.
 ## Observed baseline and choices
 
 - `packages/database/src/migrations/` has 17 forward-only migrations.
-  `deployment` and `deletion_operation` currently reference mutable `preview`.
-  `deployment_event` references the existing deployment table.
-- `assertSchemaCurrent` rejects missing/unknown migrations at process startup.
-  `apps/worker/src/index.ts` checks once before starting its loop: this is **not**
-  a fence for a previously running old process.
-- `apps/worker/src/worker.ts` calls the current deployment and lifecycle runners;
-  scheduled lifecycle currently gates the deletion loop too. Explicit deletion
-  must become independently runnable.
-- `apps/controller/src/admin/restore.ts` rejects unknown manifest migrations
-  before copying archives, but has no immutable-model minimum migration.
+  `deployment` and `deletion_operation` currently reference mutable `preview`;
+  migration 018 drops all four preview-era tables.
+- `assertSchemaCurrent` rejects missing/unknown migrations at process startup, so an old
+  binary is refused once 018 is recorded. It is not a fence for a process already running.
+- `apps/worker/src/worker.ts` calls the current deployment and lifecycle runners; P2a removes
+  them and idles the worker. Explicit deletion becomes independently runnable in P3.
+- `apps/controller/src/admin/restore.ts` rejects unknown manifest migrations before copying
+  archives. It needs the recovery marker and gate for restores that hold the new model.
 - Slice 0 hostname/config/drift helpers exist but are not runtime wiring.
   The design is authoritative for lock order, scope matrix and retention formula.
 
-**Chosen cutover:** coordinated pre-release maintenance, not dual writing.
-Keep legacy rows as `legacy_*` history and build a distinct immutable schema.
-Do not convert mutable previews or have old and new workers share queues.
-An additive preparation PR can remain inert. The actual table retirement,
-runtime disabling and restore floor must land together in a runnable cutover PR.
-It may temporarily offer app/history reads with mutations unavailable until the
-following slices; report that limitation explicitly, never fall back to previews.
+**Chosen cutover (revised 2026-11-19): replace, do not retire.** Nothing is in
+production, so the user dropped the legacy runtime. Migration 018 drops the preview tables
+and their data **unconditionally**: no `legacy_*` history, no reserved legacy identities, no
+retirement guard, no old-process fencing, no `410` stubs and no backup floor. It does not
+touch Dokku; the operator removes any remaining apps by exact name. The earlier
+retirement design and its test-only SQL (P1, merged in #55) are superseded and deleted by
+P2. Remote alias state still needs separate fenced reconciliation after any restore.
 
-Rejected: reuse existing rows as immutable deployments (ownership/rollback
-ambiguity); maintain both active deployment models (doubles safety paths); rename
-tables without replacing worker/GC callers (old SQL can target new resources).
-
-New physical queue tables are `immutable_deployment`,
-`app_deployment_event` and `deployment_deletion_operation`; never reuse
-`deployment`, `deployment_event` or `deletion_operation`, even as compatibility
-views. The design's deployment terminology denotes resources, not old SQL names.
-
-The cutover runbook must stop controller writers, workers and admin/GC jobs and
-settle bounded remote calls. Before migration, an operator fences the old database
-login with `NOLOGIN`, terminates its existing backend sessions and verifies their
-absence, using a separate maintenance principal. New processes use a distinct
-non-inheriting application login; do not re-enable the old login. This requires
-explicit operator authorization and privileges, not automatic role modification
-inside the schema migration. Inventory additional writer roles and poolers too;
-an unfenced privileged writer blocks cutover. Database fencing cannot cancel an
-already dispatched Docker/SSH call: process shutdown and remote settling remain
-mandatory before accepting retirement preconditions.
-
-The migration takes explicit locks and refuses live previews or unfinished
-deployment/deletion/rollback work. Fresh heartbeats are an additional refusal
-signal, not proof of exclusion. Test old worker, controller and artifact-GC
-entrypoints from the actual `e03c542` artifact against the migrated fixture, both
-with a held old connection and attempted reconnect. They must lose access under
-the role fence. Separately, with test-only access, actual old claim/write SQL
-must fail against absent old table names, never claim new work. Preserve the
-old artifact and its provenance; a hand-written approximation is not this test.
+Delivery order is "retire first": `main` may be unable to deploy between P2 and P3. The new
+tables use names no old binary knows, so a surviving old process cannot operate on new
+rows, and the startup check refuses new starts once 018 is recorded. Neither stops a process
+that is already running or a Dokku operation it already dispatched: the operator stops all old
+processes and settles in-flight remote work before upgrading. See the [P2 plan](immutable-p2-cutover.md) and
+the [replacement schema map](../design/immutable-cutover-schema.md).
 
 ## Worked acceptance example
 
@@ -114,204 +90,22 @@ does not unpin A. Verified final withdrawal releases the last pin and starts the
 rollback window; scheduled GC waits for the later deadline. Manual DELETE may
 waive time only, never pins. Restore an older post-model backup while the router
 has a newer acknowledged generation: close ingress, fence epoch/credentials,
-reconcile and raise counters before enabling mutations. Reject a pre-model
-backup without changing database or archive files.
+reconcile and raise counters before enabling mutations. An older dump restores and
+migrates forward, and the restore still writes the recovery marker.
 
 ## Ordered delivery
 
-### P0 — plan and review (complete for starting P1)
+### P0 and P1: planning and verification of the table contracts (complete)
 
-Review migration boundaries, stale-process safety, router contracts, pin closure,
-restore gate and the example above. Close blocking findings before coding.
-Check: independent reviewer says whether P1 is ready. Undo: discard the draft.
+Planning and three independent reviews, and PR #55: a test-only specification of the table
+contracts, guards and registry rules on real PostgreSQL. The retirement parts of that work
+were superseded by the 2026-11-19 decision above; the verified contracts carry into P2.
 
-Opus's first review conditionally accepted P1 after table-name and old-process
-fencing corrections, and blocked P2 pending those plus restore-gate and
-reservation detail. This revision addresses all five findings in the plan;
-the concrete SQL map and runnable tests remain P1/P2 gates, not completed proof.
+### P2: replace the previews with the model's schema
 
-### P1 — inert safety fixtures and cutover specification
-
-User approved continuing P1 after rebasing onto `main` and syncing projections.
-The [schema map](../design/immutable-cutover-schema.md) now records retirement,
-identity sources, physical table contracts, role fencing and restore-gate ordering.
-The inventory suite adds real-schema fixtures for every unfinished legacy
-deployment/deletion status and slug-reused retired identities. These exercise
-existing inventory behavior only; migration SQL, key/floor fixtures and frozen
-baseline artifact execution are not yet implemented or claimed as verified.
-The second Opus review found inventory/migration predicate disagreement and
-order-dependent tests. Fixed: each test has an isolated database; inventory now
-blocks any non-null pending-step/lease field even on terminal jobs, without
-using expiry as evidence of settling. With explicit user approval, the
-disposable PostgreSQL reproduced 11 failing cases before the fix; all 25 cases
-passed after it. The database fixture was removed with `test:db:down`.
-No Dokku or controller server was started.
-
-Next P1 increment: the executable retirement segment lives only in controller
-admin test fixtures (`immutable-retirement.sql`), not the migrations directory.
-It locks/refuses unsettled legacy work, rejects noncanonical historical hostnames,
-checks the real object-name inventory, preserves table/FK/sequence history through
-renames and revokes exact legacy API-key prefixes with audit counts. Integration
-tests also exercise atomic failure and later-segment rollback. Model tables,
-reservation triggers, role/old-artifact fencing and restore-floor/gate fixtures
-remain outstanding; this segment must never be used alone as a cutover.
-With explicit user permission, `test:cutover:retirement` passed all 40 cases and
-`test:inventory` passed all 25 cases against disposable PostgreSQL on loopback 55432. The full `omni -i run check test build` gate passed (98 tasks, 83 cache
-hits). The test container was removed through `test:db:down`; neither Dokku nor
-the controller server ran. The independent review of that segment follows below.
-Opus conditionally accepted the segment as a prerequisite for drafting model/
-reservation SQL, not for shipping P2. Its four findings are addressed:
-typed catalog filtering and an explicit PostgreSQL-17 test contract, direct
-legacy Dokku-name validation, accurately limited catalog-coverage claims, and
-specific failure/rollback assertions. The revised candidate passed all 45 cases
-on disposable PostgreSQL 17; the container was removed again. PostgreSQL 18 is
-not claimed as supported or tested. No additional independent re-review is
-claimed; the author checked these bounded corrections directly.
-
-After the authorized restoration of PRs #50–#54 to `main`, P1 continues with
-`immutable-model.sql` and its dedicated `test:cutover:model` suite. The test-only
-candidate creates the eight model/registry tables, composite FKs, immutable
-identity/intent guards, deferred reciprocal checks and permanent legacy seeds.
-It must run in the retirement transaction while its exclusive locks remain held.
-It records no migration 018 and installs no recovery gate or production grants.
-Restricted-role execution, old-artifact/login fencing, backup floors and the
-restore-gate fixtures remain outstanding. Review of this new segment is required
-before it becomes a prerequisite for P2.
-Verification: 44 model/reservation, 45 retirement and 25 inventory cases pass
-together on disposable PostgreSQL 17. Full `omni -i run check test build` passes
-(98 tasks, 83 cache hits). The PostgreSQL container was removed with
-`test:db:down`. No controller/Dokku server was started, no migration 018 was
-installed/recorded, and none of the uncommitted P1 work was pushed to `main`.
-Opus conditioned model-segment acceptance on adding TRUNCATE guards.
-The two new regression cases first reproduced successful truncation of permanent
-registry/legacy data. Added BEFORE TRUNCATE statement guards on all twelve
-model/registry/legacy tables; both cases now pass. Also tightened append-only
-events, manual-deletion attribution, irreversible deletion state, retirement-only
-release auditing and settled promotion links. The suggested supersession
-equivalence was not adopted: a linked uncertain predecessor must remain
-unfinished until the corrective barrier is verified. The expanded model suite
-passes 57 cases on PostgreSQL 17; its disposable container was removed.
-Ten further cases then exercised the model under test-only definer and application
-roles (the definer owns the validators; the application role owns nothing and
-cannot truncate, delete history, disable triggers, bypass them via
-`session_replication_role`, or execute a validator): all 67 model cases pass on
-PostgreSQL 17. The first run of those cases failed in teardown only (dropping the
-definer's functions while triggers depended on them); teardown now reassigns
-ownership first. The failed run's leftover test roles and databases lived only in
-the disposable container, which was removed. The real production roles and grants
-are still P2 work, and old-artifact/login fencing and the restore floor and
-recovery gate remain outstanding.
-
-Old-process compatibility is **partially** executed (`test:cutover:old-process`, 8 cases
-on PostgreSQL 17). The real `e03c542` claim, deletion claim and artifact GC were run
-as the database owner against the cut-over schema and fail closed with the relation
-named, leaving the archive, its row and new-model rows untouched; a control shows the
-same code does act before cutover. The fence mechanics (`NOLOGIN`, then session
-termination, then a refused reconnect) were exercised on a raw client with a test-only
-role, **not** through old entrypoints. Not done: the old controller's API handlers, old
-entrypoints run under the fenced role, a built artifact, and in-flight remote calls.
-The baseline is the old **source plus the current third-party dependencies**, not a
-built artifact and not installed from its own lockfile. A runtime assertion proves its
-workspace packages resolve inside the extracted tree; a mutation check (relinking
-`database` to the current package) was shown to fail that test.
-Two findings change P2: the SQL fixtures alone give an old binary **no startup
-refusal** (migration 018 must be recorded, and then it refuses), and the fail-closed
-behaviour is **incidental to unused table names**, so the role fence stays mandatory.
-Terminating sessions without `NOLOGIN` is shown not to fence.
-
-The third independent review accepted P1 as an inert PR after documentation fixes
-(done here) and listed what P2 must still prove before any cutover:
-
-1. **Record 018 as a real Kysely migration.** The migrator runs all pending migrations
-   in one transaction under `launchpad_migration_lock` and inserts the row in it, so the
-   fixtures' own transaction wrappers go, a 017+018 run in one go is tested, and the
-   inserted-row test is rewritten against the real migration.
-2. **Rewrite every service that reads legacy tables** (`deployments`, `deletions`,
-   `previews`, `drift/*`, `status`, `expiry`, `lifecycle-run`, `artifact-gc`, the worker,
-   `inventory`, `restore`, `live/restore.live.ts` and the `Database` types), or new
-   binaries fail with the same missing-relation error the old ones do.
-3. **Real roles and grants** (non-login definer, distinct application login, no rights on
-   `legacy_*`), with old entrypoints run under the fenced role.
-4. **Floor and gate**: `backup-schema-floor` beside the unknown-migration check in
-   `restore.ts`, the marker written and fsynced before archive copying, the database gate
-   set and verified after `pg_restore`, `verifyRestored` asserting both, and a test that
-   kills the process right after import and restarts.
-5. **Idempotency replay**: `idempotency_key.resource_id` is a bare UUID scoped only by
-   endpoint, so new endpoints must use new names and a fixture must show an old key
-   cannot replay into a new resource.
-6. **In-flight requests**: a held transaction that commits after fencing.
-7. **`lock_timeout`** on the migration, so a straggling old session fails it rather than
-   queueing an exclusive lock behind every reader; and the full dependency inventory
-   (incoming FKs, views, grants, constraint definitions).
-8. CI must have full history for `git archive e03c542`: the integration job now uses
-   `fetch-depth: 0`, and the spec fails with an explicit message in a shallow clone.
-
-Add regression fixtures for legacy retirement refusal, API-key revocation,
-pre-model backup refusal and stale claims. Specify the exact immutable migration
-ID (`20261119_018_immutable_deployment_model`), legacy rename/constraint map
-and new table SQL before building the cutover.
-Do not add a migration that activates the new model in this preparation PR.
-Keep the baseline runnable; tests for future behavior belong with the implementing
-change rather than leaving failing tests on main.
-The old worker and GC source compatibility test is **active now**
-(`test:cutover:old-process`, extracting `e03c542` from git). Old controller-handler and
-fenced-role entrypoint tests are P2 work. The backup floor and recovery gate need
-migration 018 and are P2, not P1.
-
-Checks: fixture integrity and existing upgrade/unit gates; SQL review of all
-organization-qualified FKs, reciprocal hostname deferred triggers, cross-model
-Dokku-name reservations and preserved history. Undo: revert inert preparation.
-
-### P2 — maintenance cutover and safe read-only model
-
-One coordinated PR: retire `preview`, `deployment`, `deployment_event` and
-`deletion_operation` into explicitly named legacy history; preserve keys/FKs and
-history without cascading hostname/name loss. Create the app/deployment/alias,
-reservation and operation schema from the design, using the distinct physical
-names above. Seed all legacy names/hosts
-before permitting allocation; keep permanent name ownership across both models.
-The SQL map must enumerate each source column, including deleted/tombstoned
-previews, slug-reused predecessors and recorded rollback targets. Check set
-coverage of every distinct recorded Dokku name and hostname, not only live rows.
-Hostname reservations use `owner_kind=legacy_preview`; the SQL map must separately
-specify permanent cross-model Dokku-name reservation and uniqueness enforcement.
-Remove legacy worker/GC selection and mutation entry points. Do not leave
-artifact collection reading only the new deployment table.
-
-Install the exact migration-ID restore floor before any restore mutation.
-In `admin/restore.ts`, require `manifest.migrations` to contain
-`20261119_018_immutable_deployment_model` before archive copying or `pg_restore`,
-with a distinct `backup-schema-floor` error code. `verifyRestored` also asserts
-the floor against the restored schema.
-Create the persisted installation mutation gate in this slice. Restore sets it
-before any restored work can run, regardless of whether the backup has unfinished
-operations; do not trust a gate value from the dump. A failed/interrupted restore
-must leave recovery blocked. Keep application processes stopped/database-fenced
-through restore; only explicit verified operator recovery clears the gate.
-P3/P4 must check it on enqueue, claim, dispatch, deletion and GC from their first
-implementation. Until P5 supplies recovery, a restored installation remains
-blocked, not temporarily operational.
-Keep format 1; pre-upgrade backups remain possible with explicit previous-binary
-restore warnings. Revoke keys with any `preview:*` grant with audit counts; reject
-legacy scope issuance/authentication, without revoking unrelated keys or sessions.
-Wire canonical configuration and reject obsolete settings together with examples,
-tooling and affected fixtures. New mutations remain unavailable until implemented;
-deployment/routing/retention default off. Legacy history stays operator-readable.
-Retired preview endpoints return an explicit 410 response rather than accidental
-500s; the dashboard explains the maintenance transition. Update contracts,
-client-core and scope fixtures alongside revocation; full new client UX is P6.
-
-Checks: real PostgreSQL migration from empty, frozen schema-014 and retired
-schema-017 fixtures; refusal of every active/uncertain legacy state with no partial
-schema change; held old claim cannot write/dispatch into new resources; deferred
-reservation constraints at commit, quota/name collisions, key scope isolation;
-pre-model restore leaves sentinel DB/files checksums unchanged; post-model backup
-round trip preserves unfinished operations but leaves the mutation gate set.
-Exercise actual old artifact GC as well as old worker claims under the role fence,
-including reconnect attempts; tests never change production roles.
-Update image and built-artifact upgrade drills in this PR, not later.
-Undo: before migration revert binary; after migration stop everything and restore
-the matched old backup/binary under closed ingress. No in-place downgrade.
+Split into three PRs in the order **code first, schema second**: (a) remove the legacy
+runtime with the schema untouched, (b) migration 018 with its readers and the recovery gate,
+(c) the configuration break. Full plan, risks and checks: [P2 plan](immutable-p2-cutover.md).
 
 ### P3 — deploy and delete one immutable candidate end to end
 
@@ -320,7 +114,7 @@ services/API and minimal SDK fixture. Worker builds/loads/verifies only its fres
 recorded app; remove mutable rollback reload. Persist exact image identity and
 hostname; failed/uncertain work touches only owned resources. Share app locking
 with guarded deployment deletion, including manual deletion with scheduling off.
-Artifact GC protects both retained immutable and legacy references.
+Artifact GC protects archives referenced by retained immutable deployments.
 
 Checks: PostgreSQL queue/lease/reclaim tests plus real worker-port stale-claim
 test; two deployments have distinct remote identities; a failed candidate cannot
@@ -355,12 +149,21 @@ cases on PostgreSQL plus production-router adapter integration. Verify retention
 boundary equality, alias recreation cannot reuse hostname, exhausted generations
 fail closed, idempotent retries do not allocate another generation, and request
 payload conflicts have no side effects.
+Recovery during P4: with aliases present, `recovery-clear` also refuses while any
+alias counter is below the router's generation or the router holds an unknown route, and
+`recovery-raise-counters` raises counters monotonically before it can pass.
 Undo: disable dispatch and GC, keep pins; reconcile under a new fenced operation.
 
 ### P5 — restore reconciliation and operator drift
 
 Complete recovery for the persisted post-restore mutation gate installed in P2
-and enforced by P3/P4, not a status/report convention. Provide
+and enforced by P3/P4, not a status/report convention. P3 ships an interim
+operator attestation for `recovery-clear` that is always required once a writer exists
+(not dependent on a file or on table contents) and that covers closing ingress, rotating
+the router epoch and credentials, and reconciling router and Dokku, as the schema map
+spells out; P5 verifies the epoch changed since the restore began, using the epoch recorded in the recovery marker; P4 adds a router-read counter check and a
+monotonic `recovery-raise-counters` step; P5 replaces the attestation with verified
+reconciliation. Provide
 an operator-only procedure/command that uses rotated epoch/credentials, compares
 complete durable router state including tombstones, raises reserved counters and
 protects unknown routed targets. Never silently discard unknown routes or enable
@@ -376,13 +179,13 @@ findings is a separate optional follow-up, not a prerequisite for safe routing.
 Checks: post-model restore with router ahead, unknown target/alias, missing
 tombstone, epoch mismatch, lost router state and repeated interrupted recovery.
 Mutation gate survives restart and refuses every mutation path until explicit
-verified reconciliation. Pre-model refusal and format-1 integrity remain tested.
+verified reconciliation. An older dump restores and migrates, and the restore still writes the marker.
 Undo: keep ingress closed and gate set; retry reconciliation, never lower counters.
 
 ### P6 — coordinated client and documentation cutover
 
 Finish API/OpenAPI, app/alias dashboard, SDK, CLI and MCP together against the
-settled contracts. Remove `/previews` as an active contract with explicit breaking
+settled contracts. Finish the app/alias UX over the removed `/previews` contract (P2a removes it) with explicit breaking
 release notes. Deploy never promotes implicitly. Require independent key scopes,
 project checks, session-only recent-auth reconciliation and explicit MCP promotion/
 alias-management startup opt-ins and confirmation. Update examples and install,
@@ -408,7 +211,7 @@ rehearsal evidence, zero unowned cleanup. Undo: exact recorded fixture cleanup o
 ## Risks and remaining gates
 
 Highest risk is a delayed worker/router write combined with premature pin release;
-P1/P2 test database fencing and P4 proves routing/GC closure before clients expand.
+P2b tests the schema guards and P4 proves routing/GC closure before clients expand.
 Other High risks: table rename/FK mistakes, archive GC losing history references,
 key privilege escalation and restoring stale state with live mutation dispatch.
 Each has an explicit gate above; no router-only test substitutes for worker tests.
