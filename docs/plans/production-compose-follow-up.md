@@ -94,10 +94,14 @@ Requirements this work must meet that the application milestones surfaced:
 
 Items the milestone 6 review deferred to this work:
 
-- **Worker healthcheck.** Only the controller image has a `HEALTHCHECK`; the worker has no HTTP
+- **Worker healthcheck (done).** The worker image now has a `HEALTHCHECK` that reads a file the
+  worker touches whenever its heartbeat is recorded (and while idle with deployments off); it is
+  liveness only and `test:images` asserts it reports healthy. Original note: the worker has no HTTP
   surface. Decide what "healthy" means (a recent `worker_heartbeat` row is the natural signal, which
   needs a small database probe or a heartbeat file) and add it with a check in `test:images`.
-- **PostgreSQL client for backups.** The controller image carries no `pg_dump`/`pg_restore`. Provide a
+- **PostgreSQL client for backups (done).** The one-off operator image (`--target admin` of the
+  controller Dockerfile) carries PostgreSQL 17 client tools and is checked by `test:images`.
+  Original note: the controller image carries no `pg_dump`/`pg_restore`. Provide a
   matching client (an admin sidecar or a documented checkout) and rehearse a backup from the stack.
 - **Credential reset after a restore** is manual (`docs/restore.md` step 4). Consider
   `launchpad-admin` commands that revoke every restored API key and session, so a mistake cannot

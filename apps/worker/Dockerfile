@@ -41,8 +41,14 @@ RUN apt-get update \
     && install -d -o launchpad -g launchpad -m 0700 /data
 COPY --from=docker-cli /usr/local/bin/docker /usr/local/bin/docker
 WORKDIR /app
-ENV NODE_ENV=production LAUNCHPAD_DATA_DIR=/data LAUNCHPAD_VERSION=${LAUNCHPAD_VERSION}
+ENV NODE_ENV=production LAUNCHPAD_DATA_DIR=/data LAUNCHPAD_VERSION=${LAUNCHPAD_VERSION} \
+    LAUNCHPAD_WORKER_HEALTH_FILE=/tmp/launchpad-worker-health
 COPY --from=build --chown=root:root /app/apps/worker/dist ./dist
 USER ${LAUNCHPAD_UID}:${LAUNCHPAD_UID}
 VOLUME /data
+# Liveness only: the worker touches this file whenever its heartbeat is recorded in PostgreSQL (and
+# while idle with deployments off), so a stale file means it is stuck or cannot reach the database.
+# It does not prove that Dokku or Docker work. Needs a writable /tmp (a tmpfs on a read-only root).
+HEALTHCHECK --interval=15s --timeout=5s --start-period=30s --retries=3 \
+    CMD test -n "$(find /tmp/launchpad-worker-health -mmin -1 2>/dev/null)"
 CMD ["bun", "dist/index.js"]

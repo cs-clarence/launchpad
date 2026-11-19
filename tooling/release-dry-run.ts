@@ -156,17 +156,18 @@ async function rehearse(out: string, version: string, skipImages: boolean) {
         const built: string[] = [];
         let failure: unknown;
         try {
-            for (const name of ["controller", "worker"]) {
+            for (const name of ["controller", "worker", "admin"]) {
                 const tag = `launchpad-release-dry-run-${run}/${name}:${IMAGE_TAG}`;
                 built.push(tag);
                 await exec([
                     "docker",
                     "build",
                     "-q",
+                    ...(name === "admin" ? ["--target", "admin"] : []),
                     "--build-arg",
                     `LAUNCHPAD_VERSION=${version}`,
                     "-f",
-                    `apps/${name}/Dockerfile`,
+                    `apps/${name === "admin" ? "controller" : name}/Dockerfile`,
                     "-t",
                     tag,
                     ".",

@@ -198,14 +198,16 @@ credentials into an image.
 
 `apps/controller/Dockerfile` and `apps/worker/Dockerfile` are multistage Bun image
 recipes, kept beside the app they build (`containers/` is reserved for images of external software, such as
-the Dokku image once it moves there), built from the monorepo root (each has a Dockerfile-specific ignore file that excludes local
-env files, state, dependencies and agent context, overriding the root Dokku build ignore file):
+the Dokku image, `containers/dokku/Dockerfile`, which Compose builds from its own directory), built from the monorepo root (each has a Dockerfile-specific ignore file that excludes local
+env files, state, dependencies and agent context):
 
 ```sh
 version="$(sed -n 's/^ *"version": *"\([^"]*\)".*/\1/p' package.json | head -n 1)"
 [ -n "$version" ] || { echo "could not read the version from package.json" >&2; false; }
 docker build --build-arg LAUNCHPAD_VERSION="$version" -f apps/controller/Dockerfile -t launchpad/controller:dev .   # needs BuildKit
 docker build --build-arg LAUNCHPAD_VERSION="$version" -f apps/worker/Dockerfile -t launchpad/worker:dev .
+# The one-off operator image: the controller's program and user plus PostgreSQL 17 client tools.
+docker build --target admin --build-arg LAUNCHPAD_VERSION="$version" -f apps/controller/Dockerfile -t launchpad/admin:dev .
 ```
 
 Both run as the fixed unprivileged uid 10001 (they share one data directory), hold no secret (every

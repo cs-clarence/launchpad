@@ -34,7 +34,7 @@ number), except the shared tooling packages (`@launchpad-kit/tsconfig`, `vite-co
 | Artifact                                                  | Built by                              | Checked by                         |
 | --------------------------------------------------------- | ------------------------------------- | ---------------------------------- |
 | `@launchpad-kit/contracts`, `sdk`, `cli`, `mcp` tarballs  | `tooling/package-clients.ts`          | `test:packages`, the dry run       |
-| Controller and worker images                              | `apps/{controller,worker}/Dockerfile` | `test:images`, the dry run (build) |
+| Controller, worker and operator (admin) images            | `apps/{controller,worker}/Dockerfile` | `test:images`, the dry run (build) |
 | Database migrations (forward-only, bundled in the images) | `packages/database/src/migrations`    | `test:integration`, `test:upgrade` |
 | Operator documentation                                    | `docs/`                               | review                             |
 

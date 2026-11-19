@@ -16,8 +16,12 @@ the controller publicly. Those are the [separate production follow-up](plans/pro
     [ -n "$version" ] || { echo "could not read the version from package.json" >&2; false; }
     docker build --build-arg LAUNCHPAD_VERSION="$version" -f apps/controller/Dockerfile -t launchpad/controller:local .
     docker build --build-arg LAUNCHPAD_VERSION="$version" -f apps/worker/Dockerfile -t launchpad/worker:local .
+    docker build --target admin --build-arg LAUNCHPAD_VERSION="$version" -f apps/controller/Dockerfile -t launchpad/admin:local .
     ```
 
+    The third image is the one-off **operator image**: the controller's program and user plus
+    the PostgreSQL 17 client tools that `backup` and `restore` need. Run it with
+    `docker run --rm --env DATABASE_URL ... launchpad/admin:local migrate --status`; it is never a service.
     The build argument records the version in backups and in the operator status; an image
     built without it reports `unknown`.
 

@@ -16,6 +16,7 @@ const version: string = JSON.parse(readFileSync(path.join(root, "package.json"),
 const images = {
     controller: `launchpad-image-check-${run}/controller:test`,
     worker: `launchpad-image-check-${run}/worker:test`,
+    admin: `launchpad-image-check-${run}/admin:test`,
 };
 const containers: string[] = [];
 const problems: string[] = [];
@@ -224,6 +225,9 @@ async function main() {
             "app/.output/migrations/20261114_001_auth_schema.mjs",
         ]);
         if (!controller.Healthcheck) fail("the controller image has no healthcheck");
+        const workerConfig = JSON.parse((await docker(["image", "inspect", images.worker])).out)[0]
+            .Config;
+        if (!workerConfig.Healthcheck) fail("the worker image has no healthcheck");
         await inspectImage(images.worker, [
             "app/dist/index.js",
             "app/dist/migrations/20261114_001_auth_schema.mjs",
@@ -363,6 +367,15 @@ async function main() {
             if (!idle) await Bun.sleep(500);
         }
         if (!idle) fail("the worker did not report that deployments are off");
+        // Idle with deployments off is healthy, not stuck: the healthcheck must say so.
+        let workerHealth = "";
+        for (let i = 0; i < 60 && workerHealth !== "healthy"; i++) {
+            workerHealth = (
+                await docker(["inspect", "--format", "{{.State.Health.Status}}", workerName])
+            ).out;
+            if (workerHealth !== "healthy") await Bun.sleep(1000);
+        }
+        if (workerHealth !== "healthy") fail(`the worker's healthcheck says "${workerHealth}"`);
         for (const command of [
             ["docker", "--version"],
             ["ssh", "-V"],
@@ -384,6 +397,45 @@ async function main() {
             fail(`the worker did not stop gracefully (exit ${workerStopped})`);
         }
         console.log("the worker starts and stops");
+
+        // The operator image: the controller's program and user plus PostgreSQL client tools of
+        // at least the disposable server's major version, and the admin command as its entry point.
+        await docker([
+            "build",
+            "-q",
+            "--target",
+            "admin",
+            "--build-arg",
+            `LAUNCHPAD_VERSION=${version}`,
+            "-f",
+            "apps/controller/Dockerfile",
+            "-t",
+            images.admin,
+            ".",
+        ]);
+        const adminConfig = JSON.parse((await docker(["image", "inspect", images.admin])).out)[0]
+            .Config;
+        if (adminConfig.User !== "10001:10001")
+            fail(`the admin image runs as "${adminConfig.User}"`);
+        if (adminConfig.Healthcheck)
+            fail("the admin image has a healthcheck: it is a one-off, not a service");
+        const dump = await docker(
+            ["run", "--rm", "--entrypoint", "pg_dump", images.admin, "--version"],
+            {
+                allowFailure: true,
+            },
+        );
+        const major = Number(/\(PostgreSQL\) (\d+)/.exec(dump.out)?.[1]);
+        if (!(major >= 17)) fail(`the admin image's pg_dump is "${dump.out}", not 17 or newer`);
+        const restore = await docker(
+            ["run", "--rm", "--entrypoint", "pg_restore", images.admin, "--version"],
+            { allowFailure: true },
+        );
+        if (restore.code !== 0) fail("the admin image has no pg_restore");
+        const help = await docker(["run", "--rm", images.admin, "--help"], { allowFailure: true });
+        if (help.code !== 0 || !help.out.includes("backup"))
+            fail("the admin image does not run the admin command");
+        console.log("the admin image has the client tools and runs the admin command");
     } finally {
         await cleanup();
     }
