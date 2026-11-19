@@ -6,7 +6,6 @@ import {
     apiKeyStatusSchema,
     apiKeySummarySchema,
     createApiKeySchema,
-    createDeploymentSchema,
     createProjectSchema,
     errorSchema,
     keyInfoSchema,
@@ -58,22 +57,15 @@ describe("contracts", () => {
         expect(ORGANIZATION_ROLES).toEqual(["owner", "admin", "deployer", "viewer"]);
     });
 
-    it("offers the preview scopes, so a key can deploy without managing anything", () => {
-        expect(API_KEY_SCOPES).toEqual(
-            expect.arrayContaining([
-                "preview:read",
-                "preview:create",
-                "preview:deploy",
-                "preview:delete",
-            ]),
-        );
-        expect(createDeploymentSchema.safeParse({ artifactId: crypto.randomUUID() }).success).toBe(
-            true,
-        );
-        expect(createDeploymentSchema.safeParse({ artifactId: "x" }).success).toBe(false);
+    it("no longer offers any preview scope", () => {
+        // Previews were replaced by apps; the new app scopes arrive with the model.
+        expect(API_KEY_SCOPES.filter((scope) => scope.startsWith("preview:"))).toEqual([]);
         expect(
-            createDeploymentSchema.safeParse({ artifactId: crypto.randomUUID(), image: "x" })
-                .success,
+            createApiKeySchema.safeParse({
+                name: "ci",
+                scopes: ["preview:deploy"],
+                expiresInDays: 30,
+            }).success,
         ).toBe(false);
     });
 
@@ -136,6 +128,14 @@ describe("contracts", () => {
         for (const status of ["active", "expired", "revoked", "inactive"]) {
             expect(apiKeyStatusSchema.safeParse(status).success).toBe(true);
             expect(apiKeySummarySchema.safeParse({ ...summary, status }).success).toBe(true);
+            // Metadata must remain readable after scopes are retired, including after revocation.
+            expect(
+                apiKeySummarySchema.safeParse({
+                    ...summary,
+                    status,
+                    scopes: ["project:read", "preview:deploy"],
+                }).success,
+            ).toBe(true);
         }
         expect(apiKeySummarySchema.safeParse({ ...summary, status: "unknown" }).success).toBe(
             false,

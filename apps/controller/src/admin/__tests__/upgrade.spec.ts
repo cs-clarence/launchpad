@@ -144,8 +144,6 @@ async function start(url: string, data: string, work: string) {
         LAUNCHPAD_BASE_URL: base,
         HOST: "127.0.0.1",
         PORT: String(port),
-        LAUNCHPAD_DEPLOYMENTS: "off",
-        LAUNCHPAD_LIFECYCLE: "off",
     };
     if (process.env.LAUNCHPAD_UPGRADE_IMAGE) {
         const name = `launchpad-upgrade-${randomUUID().slice(0, 8)}-server`;

@@ -37,15 +37,14 @@ the controller publicly. Those are the [separate production follow-up](plans/pro
 3. Supply `DATABASE_URL`, `LAUNCHPAD_AUTH_SECRET` (at least 32 random characters),
    `LAUNCHPAD_BASE_URL` (the exact HTTPS origin used by browsers), and
    `LAUNCHPAD_DATA_DIR=/data` to the controller **at runtime**, never in an image.
-   Start with `LAUNCHPAD_DEPLOYMENTS=off` and `LAUNCHPAD_LIFECYCLE=off` in **both**
-   processes. Keep the database and admin command private. Use
+   Keep the database and admin command private. Use
    [the controller settings reference](../apps/controller/README.md#configuration)
-   and [worker settings](../apps/worker/README.md#settings) for remaining values.
+   for remaining values. The worker reads no settings while it is idle.
 4. Run `bun .output/admin.mjs migrate --status` in the controller image with
    `DATABASE_URL` set. On a fresh database, a nonzero exit with pending migrations
    is expected. Run `bun .output/admin.mjs migrate` explicitly, then run
    `migrate --status` again; it must report `pending: 0` and exit 0. Neither process
-   migrates on startup. The worker and controller refuse an incompatible schema.
+   migrates on startup. The controller refuses an incompatible schema.
 5. Start the controller with its private listener connected to the database and
    shared volume. Verify `/api/health`, then sign in after running
    `bun .output/admin.mjs setup --email <operator-address> --password-file <mode-600-file>`
@@ -54,15 +53,11 @@ the controller publicly. Those are the [separate production follow-up](plans/pro
    `10001`; a host-owned `0600` file with another UID will not work). The health endpoint reports
    static metadata, **not** database/Dokku readiness; use the signed-in
    operator-only `GET /api/v1/status` for runtime state.
-6. Mount the Dokku SSH key and pinned `known_hosts` file **read-only** into the
-   worker, and provide its Docker engine connection; the controller must not
-   have those credentials. Docker-socket access is root-equivalent on the host.
-   Give the worker a 25-minute stop grace period (`docker stop --time 1500` or
-   `stop_grace_period: 25m`) before enabling deployments. Configure the same
-   upload limits and deployment/lifecycle switches in both processes. Only
-   enable deployments after private [routing](access.md) and a
-   [backup/restore rehearsal](restore.md) have been checked; enable lifecycle
-   separately after reviewing preview expiry.
+6. The worker is idle (the preview runtime was removed) and needs no database, Dokku or Docker
+   access; you may leave it stopped. When the app worker returns, it will need the Dokku SSH key
+   and pinned `known_hosts` mounted **read-only**, a Docker engine connection (root-equivalent
+   on the host), and a 25-minute stop grace period. Enable deployments only after private
+   [routing](access.md) and a [backup/restore rehearsal](restore.md) have been checked.
 
 If the status shows a schema mismatch, stop the processes, take a backup and
 follow [upgrade](upgrade.md). Do not point a second installation at the same

@@ -5,7 +5,7 @@ import { createReadStream, createWriteStream, promises as fs } from "node:fs";
 import path from "node:path";
 import { pipeline } from "node:stream/promises";
 import { createDatabase, type Database, migrationStatus } from "@launchpad-kit/database";
-import { resolveArtifactPath, WORKER_LIVE_SECONDS } from "@launchpad-kit/services";
+import { resolveArtifactPath } from "@launchpad-kit/services";
 import { type Kysely, sql } from "kysely";
 import { type BackupManifest, columnExists, pgEnvironment, verifyBackup } from "./backup";
 
@@ -19,7 +19,7 @@ export interface RestoreOptions {
     databaseUrl: string;
     dataDir: string;
     // The operator's confirmation that docs/plans/application.md's restore step 1 is done: the
-    // lifecycle and deployments off, every worker stopped and waited for, destroys settled.
+    // every writer stopped and waited for, and the Dokku operations they dispatched settled.
     workersStopped: boolean;
     // Replace a database that already has data: its address typed out as host:port/database, so
     // naming a scratch copy with the live one's name is not enough.
@@ -204,6 +204,9 @@ async function outsideDependents(db: Kysely<any>): Promise<string[]> {
     return [...views.rows, ...keys.rows, ...defaults.rows].map((r) => r.name).sort();
 }
 
+// An older build's worker may still be running (a rollback, a rolling upgrade). The table goes
+// with the schema cutover; until then a recent heartbeat means a writer is still alive.
+const WORKER_LIVE_SECONDS = 60;
 async function liveWorkers(db: Kysely<any>) {
     const present = await sql<{ present: boolean }>`
         select to_regclass('public.worker_heartbeat') is not null as present`.execute(db);
@@ -224,13 +227,14 @@ async function userTableCount(db: Kysely<any>) {
 // Restores a backup made by `createBackup`: the stored archives first (additive, so a failure
 // there changes nothing that matters), then the database. It never touches Dokku. It restores
 // into an empty database, or into one the operator names to be replaced, and it refuses while a
-// worker is running against the target. What the operator must do before and after is the
+// writer is running against the target. What the operator must do before and after is the
 // restore runbook in docs/restore.md; this does the middle of it.
 export async function restoreBackup(options: RestoreOptions): Promise<RestoreResult> {
     if (!options.workersStopped) {
         throw new RestoreError(
-            "Restore needs your confirmation that the lifecycle and deployments are off and every worker " +
-                "has stopped and been waited for (--i-have-stopped-the-workers).",
+            "Restore needs your confirmation that the controller, every worker and every admin job that " +
+                "could write are stopped, and that Dokku operations they dispatched have settled " +
+                "(--i-have-stopped-the-workers).",
         );
     }
     const problems = await verifyBackup(options.backupDir);
@@ -258,7 +262,6 @@ export async function restoreBackup(options: RestoreOptions): Promise<RestoreRes
         const populated = (await userTableCount(db)) > 0;
         const target = replaceTarget(options.databaseUrl);
         if (populated) {
-            // Whoever is running against this database is the first thing to refuse, whatever else is said.
             if ((await liveWorkers(db)) > 0) {
                 throw new RestoreError(
                     "A worker has reported in the last minute: it is still running against this database. " +
@@ -354,7 +357,6 @@ export async function restoreBackup(options: RestoreOptions): Promise<RestoreRes
             await db.transaction().execute(async (trx) => {
                 // Do not wait behind a session that still holds the schema.
                 await sql`set local lock_timeout = '10s'`.execute(trx);
-                // The check made minutes ago (hashing and copying take time) is made again.
                 if ((await liveWorkers(trx)) > 0) {
                     throw new RestoreError(
                         "A worker has reported in: stop it and wait for it to exit first.",

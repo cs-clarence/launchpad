@@ -7,7 +7,6 @@ import { createTestDatabase } from "@launchpad-kit/database/testing";
 import {
     createOrganization,
     createProject,
-    recordHeartbeat,
     resolveArtifactPath,
     uploadArtifact,
     type Principal,
@@ -138,8 +137,6 @@ beforeAll(async () => {
         databaseUrl: source.url,
         dataDir: sourceData,
         dest: backupDir,
-        workersStopped: true,
-        lifecycleEnabled: false,
         version: "0.0.0-test",
         pgDump: dump,
     });
@@ -216,12 +213,10 @@ describe("restoreBackup", () => {
     it("refuses while a worker has reported in the target database, even with the confirmation", async () => {
         const target = await emptyTarget();
         await target.migrate();
-        await recordHeartbeat(target.db, {
-            workerId: "w1",
-            version: "t",
-            lifecycleEnabled: false,
-            started: true,
-        });
+        await target.db
+            .insertInto("worker_heartbeat")
+            .values({ worker_id: "w1", version: "t", lifecycle_enabled: false })
+            .execute();
         const name = replaceTarget(target.url);
         await expect(
             restoreBackup(restoreOptions(target, { replaceDatabase: name })),
@@ -335,8 +330,6 @@ describe("restoreBackup", () => {
             databaseUrl: odd.url,
             dataDir: path.join(work, "odd-data"),
             dest: everything,
-            workersStopped: true,
-            lifecycleEnabled: false,
             version: "0.0.0-test",
             pgDump: unfiltered,
         });
@@ -396,8 +389,6 @@ describe("restoreBackup", () => {
                 databaseUrl: odd.url,
                 dataDir: path.join(work, "owner-data"),
                 dest,
-                workersStopped: true,
-                lifecycleEnabled: false,
                 version: "0.0.0-test",
                 pgDump: unfiltered,
             });
@@ -424,8 +415,6 @@ describe("restoreBackup", () => {
             databaseUrl: source.url,
             dataDir: sourceData,
             dest,
-            workersStopped: true,
-            lifecycleEnabled: false,
             version: "0.0.0-test",
             pgDump: quoted,
         });
@@ -459,8 +448,6 @@ describe("restoreBackup", () => {
             databaseUrl: old.url,
             dataDir: path.join(work, "very-old-data"),
             dest,
-            workersStopped: true,
-            lifecycleEnabled: false,
             version: "0.0.0-test",
             pgDump: dump,
         });
@@ -555,8 +542,6 @@ describe("restoreBackup", () => {
             databaseUrl: old.url,
             dataDir: path.join(work, "old-data"),
             dest,
-            workersStopped: true,
-            lifecycleEnabled: false,
             version: "0.0.0-test",
             pgDump: dump,
         });

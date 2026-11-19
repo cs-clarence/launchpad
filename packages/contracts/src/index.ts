@@ -16,10 +16,6 @@ export const API_KEY_SCOPES = [
     "project:read",
     "project:create",
     "project:delete",
-    "preview:read",
-    "preview:create",
-    "preview:deploy",
-    "preview:delete",
 ] as const;
 export type ApiKeyScopeName = (typeof API_KEY_SCOPES)[number];
 
@@ -70,116 +66,13 @@ export const createApiKeySchema = z
         message: "A project-limited API key cannot create projects.",
     });
 
-// How long a preview lives: a duration such as "24h" or "7d", or "none" for no expiry
-// (refused unless the operator allows it). Omitted, the operator's default applies.
-export const lifetimeSchema = z.union([durationSchema, z.literal("none")]);
-
-export const createPreviewSchema = z.object({
-    slug: slugSchema,
-    ttl: lifetimeSchema.optional().meta({
-        description: 'Lifetime such as "24h" or "7d", at most the instance maximum.',
-    }),
-});
-export const extendPreviewSchema = z.strictObject({
-    ttl: lifetimeSchema.meta({
-        description:
-            'How much longer, such as "24h". Never shortens a lifetime; capped at the instance maximum from now.',
-    }),
-});
-export const previewStateSchema = z.enum(["active", "deleting", "deleted"]);
-
-export const requestedDeletionSchema = z.strictObject({
-    operationId: z.uuid(),
-    state: z.literal("deleting"),
-});
-export const resolveDeletionSchema = z.strictObject({
-    outcome: z.enum(["deleted", "retry"]),
-});
-// Every `failure.code` a deletion can carry, by the status it appears with. A test checks
-// this against the codes the deletion service writes.
-export const DELETION_NOTE_CODES = {
-    "queued or running (a retry is scheduled)": [
-        "destroy-waiting",
-        "destroy-retry",
-        "images-retry",
-    ],
-    succeeded: ["images-left-behind", "resolved-deleted"],
-    "reconciliation-needed": [
-        "too-many-attempts",
-        "destroy-uncertain",
-        "destroy-rejected",
-        "not-owned",
-        "unexpected-state",
-    ],
-} as const;
+// How the instance is doing, for the operator. Counts only: no ids, names or text that came
+// from a remote system. Deployments, workers and queues return with the immutable model.
 export const statusSchema = z.strictObject({
     generatedAt: z.string().meta({ format: "date-time" }),
-    dependencies: z.strictObject({
-        database: z.literal("ok"),
-        dataDirectory: z
-            .enum(["ok", "missing", "not-writable", "not-a-directory", "not-checked"])
-            .meta({
-                description: "`not-checked` while deployments are off: nothing uses it then.",
-            }),
-    }),
-    controller: z.strictObject({
-        deploymentsEnabled: z.boolean(),
-        lifecycleEnabled: z.boolean(),
-        deletionsAccepted: z.boolean().meta({
-            description: "Both are on: the controller takes new deletions.",
-        }),
-    }),
-    workers: z.array(
-        z.strictObject({
-            id: z.string(),
-            version: z.string(),
-            lifecycleEnabled: z.boolean(),
-            startedAt: z.string().meta({ format: "date-time" }),
-            lastSeenSecondsAgo: z.number().int().min(0),
-            live: z.boolean().meta({ description: "Reported within the last minute." }),
-        }),
-    ),
-    deployments: z.strictObject({
-        queued: z.number().int(),
-        running: z.number().int(),
-        held: z.number().int().meta({ description: "Waiting for an administrator." }),
-        oldestQueuedSeconds: z.number().int().nullable(),
-        oldestRunningSeconds: z.number().int().nullable().meta({
-            description: "Since the least recently moved running deployment last moved.",
-        }),
-    }),
-    expiry: z.strictObject({
-        overdue: z.number().int().meta({ description: "Past their expiry and not yet claimed." }),
-    }),
-    deletions: z.strictObject({
-        waiting: z.number().int(),
-        held: z.number().int().meta({ description: "Waiting for an administrator." }),
-    }),
+    dependencies: z.strictObject({ database: z.literal("ok") }),
     artifacts: z.strictObject({ stored: z.number().int(), bytes: z.number() }),
     warnings: z.array(z.string()).meta({ description: "What looks wrong, in plain words." }),
-});
-
-export const deletionSchema = z.strictObject({
-    id: z.uuid(),
-    previewId: z.uuid(),
-    status: z.enum(["queued", "running", "succeeded", "reconciliation-needed"]),
-    reason: z.enum(["manual", "expired"]),
-    failure: z
-        .strictObject({ code: z.string(), message: z.string() })
-        .nullable()
-        .meta({
-            description:
-                "A note from the last attempt, not necessarily a failure: read it together with `status`. Codes: " +
-                Object.entries(DELETION_NOTE_CODES)
-                    .map(
-                        ([status, codes]) =>
-                            `${codes.map((c) => `\`${c}\``).join(", ")} (${status})`,
-                    )
-                    .join("; ") +
-                ". Only `reconciliation-needed` needs a person. Codes may be added.",
-        }),
-    createdAt: z.string().meta({ format: "date-time" }),
-    finishedAt: z.string().meta({ format: "date-time" }).nullable(),
 });
 
 const role = z.enum(ORGANIZATION_ROLES);
@@ -248,89 +141,6 @@ export const createdProjectSchema = z.strictObject({
     name: z.string(),
 });
 
-export const previewSchema = z.strictObject({
-    id: z.uuid(),
-    projectId: z.uuid(),
-    slug: z.string(),
-    hostname: z.string(),
-    state: previewStateSchema,
-    activeDeploymentId: z.uuid().nullable(),
-    expiresAt: timestamp.nullable().meta({ description: "null: the preview never expires." }),
-    createdAt: timestamp,
-});
-
-export const previewListSchema = z.strictObject({
-    items: z.array(previewSchema),
-    nextCursor: z.uuid().nullable().meta({ description: "Pass as `cursor` for the next page." }),
-});
-
-export const deploymentStatusSchema = z.enum([
-    "queued",
-    "preparing",
-    "building",
-    "deploying",
-    "verifying",
-    "succeeded",
-    "failed",
-    "cancelled",
-    "reconciliation-needed",
-]);
-export type DeploymentStatusName = z.infer<typeof deploymentStatusSchema>;
-
-export const createDeploymentSchema = z.strictObject({
-    artifactId: z.uuid(),
-    spa: z.boolean().optional().meta({
-        description: "Serve index.html (200) for unknown paths, for single-page apps.",
-    }),
-});
-
-export const createdDeploymentSchema = z.strictObject({
-    id: z.uuid(),
-    status: deploymentStatusSchema,
-    createdAt: timestamp,
-});
-
-export const deploymentSchema = z.strictObject({
-    id: z.uuid(),
-    previewId: z.uuid(),
-    artifactId: z.uuid(),
-    spa: z.boolean(),
-    status: deploymentStatusSchema,
-    failure: z
-        .strictObject({ code: z.string(), message: z.string() })
-        .nullable()
-        .meta({ description: "Fixed, safe text; remote output is never included." }),
-    createdAt: timestamp,
-    updatedAt: timestamp,
-    finishedAt: timestamp.nullable(),
-});
-
-export const resolveDeploymentSchema = z.strictObject({
-    outcome: z.enum(["failed", "succeeded"]).meta({
-        description:
-            "What the host was found to be serving: `succeeded` if the new release is live, `failed` if the previous one still is.",
-    }),
-});
-
-export const deploymentListSchema = z.strictObject({ items: z.array(deploymentSchema) });
-
-export const deploymentEventSchema = z.strictObject({
-    seq: z.number().int().positive(),
-    phase: z.string(),
-    level: z.enum(["info", "warn", "error"]),
-    message: z.string(),
-    createdAt: timestamp,
-});
-
-export const deploymentEventsSchema = z.strictObject({
-    items: z.array(deploymentEventSchema),
-    nextAfter: z
-        .number()
-        .int()
-        .nullable()
-        .meta({ description: "Pass as `after` to continue; null when caught up." }),
-});
-
 export const artifactSchema = z.strictObject({
     id: z.uuid(),
     digest: z.string().regex(/^[0-9a-f]{64}$/),
@@ -386,7 +196,10 @@ export const apiKeySummarySchema = z.strictObject({
     id: z.uuid(),
     name: z.string(),
     prefix: z.string(),
-    scopes: z.array(apiKeyScope),
+    scopes: z.array(z.string()).meta({
+        description:
+            "Scopes originally granted, including retired scope names. Metadata only: issuance and authentication accept current scopes only.",
+    }),
     projectIds: z.array(z.uuid()).nullable(),
     createdBy: z.string(),
     createdAt: timestamp,

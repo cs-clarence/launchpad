@@ -247,10 +247,7 @@ async function main() {
         const workerConfig = JSON.parse((await docker(["image", "inspect", images.worker])).out)[0]
             .Config;
         if (!workerConfig.Healthcheck) fail("the worker image has no healthcheck");
-        await inspectImage(images.worker, [
-            "app/dist/index.js",
-            "app/dist/migrations/20261114_001_auth_schema.mjs",
-        ]);
+        await inspectImage(images.worker, ["app/dist/index.js"]);
 
         // The database is empty: the guard must refuse, `migrate` must work from the image alone.
         const status = await docker(
@@ -367,7 +364,7 @@ async function main() {
         if (stopped !== "0") fail(`the controller exited ${stopped} on a stop, not 0`);
         await docker(["rm", "-fv", name]);
 
-        // The worker with deployments off idles; it carries the tools it needs.
+        // The worker idles while the preview runtime is removed; it carries the tools it needs.
         const workerName = `launchpad-image-check-${run}-worker`;
         containers.push(workerName);
         await docker([
@@ -382,11 +379,11 @@ async function main() {
         ]);
         let idle = false;
         for (let i = 0; i < 40 && !idle; i++) {
-            idle = (await logs(workerName)).includes('"event":"disabled"');
+            idle = (await logs(workerName)).includes('"event":"legacy-runtime-removed"');
             if (!idle) await Bun.sleep(500);
         }
-        if (!idle) fail("the worker did not report that deployments are off");
-        // Idle with deployments off is healthy, not stuck: the healthcheck must say so.
+        if (!idle) fail("the worker did not report that it is idle");
+        // Idle is healthy, not stuck: the healthcheck must say so.
         let workerHealth = "";
         for (let i = 0; i < 60 && workerHealth !== "healthy"; i++) {
             workerHealth = (

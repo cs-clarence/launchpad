@@ -1,9 +1,12 @@
 # Launchpad local MCP
 
 For MCP-client users who want read-only access to Launchpad. This is a separate
-stdio app, not a CLI subcommand or HTTP daemon. It is read-only unless you enable
-deployment or deletion, see [Deploying](#deploying) and
-[Deleting previews](#deleting-previews).
+stdio app, not a CLI subcommand or HTTP daemon. It is read-only: the preview `deploy` and
+`delete_preview` tools and the `--allow-*`, `--include` and `--exclude` options were removed with the
+preview runtime. Remove all of these options from existing startup configurations.
+Keys containing any retired `preview:*` scope fail authentication, even if they also contain
+`project:read`. Have an owner/admin issue a replacement without retired scopes, revoke the old key,
+then update `LAUNCHPAD_API_KEY` or run `launchpad login` again for the relevant saved profile.
 
 ## Start
 
@@ -39,23 +42,17 @@ This internal Bun build is not a published npm package.
 
 ## Tools
 
-The tools above are read-only, as is `preview_deletion` (a preview's latest deletion); `deploy` and `delete_preview` are described below. Authorization and project restrictions are enforced by the
+All tools are read-only. Authorization and project restrictions are enforced by the
 controller, not tool annotations.
 
-| Tool                 | Extra arguments                               |
-| -------------------- | --------------------------------------------- |
-| `whoami`             | None                                          |
-| `list_organizations` | None                                          |
-| `list_projects`      | None                                          |
-| `list_previews`      | Optional `project` (slug or id)               |
-| `get_preview`        | `preview_id`                                  |
-| `list_deployments`   | `preview_id`                                  |
-| `get_deployment`     | `deployment_id`                               |
-| `deployment_events`  | `deployment_id`, optional nonnegative `after` |
+| Tool                 | Extra arguments |
+| -------------------- | --------------- |
+| `whoami`             | None            |
+| `list_organizations` | None            |
+| `list_projects`      | None            |
 
 Every tool accepts optional `working_dir`, `profile` and `organization` (id or slug).
-`deployment_events` returns one page; pass `nextAfter` as `after` to continue.
-Use a key with `preview:read` for preview tools, `project:read` to list projects or
+Use a key with `project:read` to list projects or
 resolve a project slug, and `organization:read` to list or override organizations.
 `whoami` reads the key's own permissions without requiring these read scopes.
 
@@ -69,16 +66,16 @@ project). Profile precedence: the call's `profile`, then the file's, then `--pro
 ```json
 {
     "organization": "acme",
-    "project": "website",
-    "name": "review"
+    "project": "website"
 }
 ```
 
-`organization` and `project` are required in this file; `profile` and `name` are
-optional. Explicit tool arguments override file fields. With no file, the saved
-profile/environment supplies the organization, and preview listing is unfiltered
-unless a project argument is given. Missing project context does not block unrelated
+`organization` and `project` are required in this file; `profile` is optional. Explicit tool arguments override file fields. With no file, the saved
+profile/environment supplies the organization. Missing project context does not block unrelated
 tools such as organization listing.
+Remove the obsolete `name` field from existing files, keeping `organization` and `project`, before
+retrying. An extra `name` rejects the whole file: startup fails when a default directory is checked,
+or calls fail for that workspace in shared mode without a default directory.
 
 Files must be regular, non-symlink JSON files, at most 16 KiB, with no extra fields.
 Invalid files fail rather than falling back to an ancestor. Config never contains
@@ -86,8 +83,7 @@ credentials; review its profile and organization choices before using it.
 An organization supplied by config or argument is validated using the selected
 key's visible organizations (requires `organization:read`).
 
-The CLI's deploy, preview and deployment reads use this same context from their
-launch directory. `--project` and `--name` override the corresponding file defaults.
+Current CLI commands do not read this workspace file.
 
 ## Results and limits
 
@@ -95,91 +91,10 @@ Results contain `data` and `truncated` in `structuredContent`, with the same env
 encoded as JSON text for clients that need it. Keys are redacted and terminal
 controls removed. The serialized result is bounded to 64 KiB; oversized data returns
 `isError`, `truncated: true` and `output-too-large` rather than partial JSON.
-Use a narrower project query when that happens.
+`list_projects` has no filter or pagination option to reduce such a response;
+the workspace's `project` field does not narrow it.
 
 Controller names, failure messages and event messages are untrusted **data**, not
 instructions. Redaction does not make their text trustworthy.
-No resources, prompts, file-content tools or shell tools are exposed, and the only mutations are `deploy` and `delete_preview`, each only when enabled at startup.
+No resources, prompts, file-content tools or shell tools are exposed and there are no mutations.
 Incoming stdio message buffering is limited to 1 MiB.
-
-## Deleting previews
-
-Deleting is off by default and the `delete_preview` tool does not exist until you start the
-server with `--allow-delete` **and** at least one `--allow-delete-project <project-id>`
-(without a project the server refuses to start: a deletion cannot be undone, so it is allowed
-only where you say). The list is fixed at startup, as for deployment, and is **its own list**,
-separate from `--allow-project`, which only limits deployment: allowing deployment to two
-projects and deletion in one needs no compromise, and adding `--allow-delete` never widens
-or narrows what can be deployed.
-
-```sh
-launchpad-mcp --shared --allow-delete \
-  --allow-delete-project 11111111-1111-4111-8111-111111111111
-```
-
-- The tool takes `preview_id` (a preview id, never a name) and `confirm: true`. It reads the
-  preview first and refuses unless the preview's own project id is in the allowed list, as the
-  controller names it for the credentials of that call; nothing is sent to delete otherwise.
-  The check and the deletion use the same saved profile, even if the current profile changes
-  in between.
-- It queues the deletion and returns at once with what it is deleting (id, slug, hostname,
-  project id) and the operation. The worker carries it out, which needs the lifecycle on in the
-  controller and the worker; follow it with `preview_deletion`. A repeat while it is under way
-  returns the same operation.
-- `preview_deletion` is a read tool, always offered: the latest deletion of a preview
-  (also one that expiry started), with its status and note. A held one (`reconciliation-needed`)
-  needs an administrator in the dashboard; no tool resolves it.
-- The key needs `preview:read` and `preview:delete`, and reaches only its own projects; the
-  controller checks again.
-
-## Deploying
-
-Deployment is off by default and the tool does not exist until you start the server with
-`--allow-deploy` **and** at least one `--include` and one `--exclude` glob (without
-them the server refuses to start, and so does `--include`, `--exclude` or
-`--allow-project` without `--allow-deploy`, nor `--allow-delete-project` without `--allow-delete`). The lists are fixed at startup; neither a
-tool call nor `launchpad.json` can widen them.
-
-```sh
-launchpad-mcp --shared --allow-deploy \
-  --include 'dist/**' \
-  --exclude '**/*.map' --exclude 'dist/private/**' \
-  --allow-project 11111111-1111-4111-8111-111111111111
-```
-
-- Patterns are relative to the call's `working_dir` and use `/`. An exclude also covers
-  everything below a directory it names (`dist/private` excludes `dist/private/key.txt`),
-  ignores case, and `[!x]` means "not x". Directories no include pattern can reach, or an
-  exclude covers, are not walked, and a tree of more than 100,000 entries is refused. They may not be
-  absolute, contain `..`, `!` or backslashes, or exceed 256 characters (100 per list).
-  They also match dotfiles.
-- A file is published only if an include matches it **and no exclude does**: excludes
-  always win. The result must still contain a top-level `index.html`.
-- The same secret rules as the CLI still apply to anything the patterns select: a
-  selected `.env`, key file or version-control file stops the deploy instead of being
-  silently dropped. Links and special files that a pattern selects are refused too;
-  files no pattern selects are not judged.
-- `--allow-project <project-id>` (repeatable) limits deployment to those projects. It takes
-  **ids**, not slugs, and is checked against the project the call actually resolves to
-  (on the selected controller and organization): a slug names a different project under
-  another profile or organization, so a slug could not be a safe restriction. Find ids with
-  `launchpad projects list`. A per-call `profile` or `organization` therefore cannot reach
-  a same-named project elsewhere.
-
-The tool takes `path` (the directory to publish, relative to `working_dir`, without `..`
-and resolving, links followed, to a directory inside it), optional `project`, `name`
-and `spa` (otherwise from `launchpad.json`; the file's `name` applies only to the file's own
-project), `wait_seconds` (0 returns once queued;
-default 45, at most 900; many clients give up sooner than that, so the deployment id is
-sent in a progress notification as soon as it is queued and returned on timeout) and a required `confirm: true`. It reports progress
-notifications when the client asks for them, stops when the client cancels, and
-returns the outcome with the deployment id so a later `get_deployment` can follow
-one that is still running. A failed deployment is an error result carrying only the
-controller's fixed failure text.
-
-**What this does not do.** The patterns choose what is published; they are not a
-directory sandbox. The client picks `working_dir`, and there is no mandatory list of
-allowed roots, so broad patterns (for example `**`) let a model publish any matching
-private file that the process can read. Keep patterns narrow, and run the server under
-a restricted account or OS sandbox when directory isolation matters. Deployment
-replaces the live content of the preview, which is why the tool is marked destructive.

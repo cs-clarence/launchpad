@@ -71,14 +71,6 @@ tasks:
     cache:
       enabled: false
 
-  # Explicit opt-in on the approved disposable Dokku only. The test refuses any other
-  # PostgreSQL target and allows only lp-test- app names; no CI job calls this.
-  test:restore:live:
-    description: Rehearse the whole restore runbook on disposable PostgreSQL and Dokku
-    exec: bun --bun vitest run --config vitest.config.restore-live.ts
-    cache:
-      enabled: false
-
   test:
     enabled: true
 

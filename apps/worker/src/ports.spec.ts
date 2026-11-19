@@ -1,9 +1,9 @@
 import { DokkuError, type DokkuClient } from "@launchpad-kit/dokku";
-import type { DeployContext } from "@launchpad-kit/services";
 import { describe, expect, it } from "vitest";
 import { createDocker, DockerError, type Docker } from "./docker";
 import { createDeployPorts } from "./ports";
 import { fakeDocker, LIMITS, tempDir } from "./testing";
+import type { DeployContext } from "./types";
 
 const context: DeployContext = {
     deploymentId: "0f8fad5b-d9cb-469f-a165-70867728950e",

@@ -29,7 +29,6 @@
         "kysely": "catalog:",
         "react": "catalog:",
         "react-dom": "catalog:",
-        "tldts": "catalog:",
         "zod": "catalog:"
     },
     "devDependencies": {

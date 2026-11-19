@@ -1,12 +1,9 @@
 import { promises as fs } from "node:fs";
 import path from "node:path";
 import type { DokkuClient } from "@launchpad-kit/dokku";
-import type { Database } from "@launchpad-kit/database";
-import type { Kysely } from "kysely";
 import { describe, expect, it } from "vitest";
 import type { Docker } from "./docker";
 import { createLifecyclePorts } from "./lifecycle-ports";
-import { runWorker } from "./worker";
 
 function fakes() {
     const calls: string[] = [];
@@ -83,50 +80,6 @@ describe("the lifecycle ports", () => {
     });
 });
 
-describe("the worker loop and the lifecycle", () => {
-    let touches = 0;
-    const untouched = new Proxy(
-        {},
-        {
-            get: () => {
-                touches++;
-                throw new Error("touched");
-            },
-        },
-    ) as Kysely<Database>;
-
-    it("does no lifecycle work, and does not touch the database for it, while it is off", async () => {
-        const { ports, calls } = fakes();
-        const stop = new AbortController();
-        const done = runWorker(untouched, {} as never, {
-            owner: "w",
-            deps: { enabled: false },
-            leaseMs: 60_000,
-            pollMs: 100,
-            signal: stop.signal,
-            lifecycle: {
-                ports,
-                config: {
-                    enabled: false,
-                    defaultTtlSeconds: 1,
-                    maxTtlSeconds: 1,
-                    allowNoExpiry: false,
-                    artifactRetentionSeconds: 1,
-                },
-                dataDir: "/data",
-            },
-        });
-        setTimeout(() => stop.abort(), 250);
-        await done;
-        expect(calls).toEqual([]);
-        // The loop catches a database error and carries on, so the calls alone would not
-        // show a touch: count it.
-        expect(touches).toBe(0);
-    });
-});
-
-// The whole outside-world vocabulary, written down and checked against the code: a new
-// Dokku operation or docker verb must be added here deliberately, and none of these exist.
 describe("what the worker and the Dokku adapter can do", () => {
     const sources = async (dir: string) =>
         (await fs.readdir(dir))

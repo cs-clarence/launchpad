@@ -164,7 +164,7 @@ export async function uploadArtifact(
     deps: ArtifactDeps,
     signal?: AbortSignal,
 ): Promise<UploadedArtifact> {
-    await requireMembership(db, principal, organizationId, "preview:deploy");
+    await requireMembership(db, principal, organizationId, "app:deploy");
     const limits = resolveLimits(deps.limits);
     if (!body) throw new ServiceError("invalid", "The request has no body.");
     if (meta.contentLength !== null && meta.contentLength > limits.maxUploadBytes) {
@@ -306,7 +306,7 @@ async function finalize(
         );
         // Authority is re-read under the lock: a caller removed during a long upload
         // must not still store an artifact.
-        await requireMembership(trx, principal, organizationId, "preview:deploy");
+        await requireMembership(trx, principal, organizationId, "app:deploy");
         const existing = await trx
             .selectFrom("artifact")
             .select([

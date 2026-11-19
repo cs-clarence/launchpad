@@ -5,12 +5,13 @@ import https from "node:https";
 import os from "node:os";
 import path from "node:path";
 import { createDokkuClient, type DokkuClient } from "@launchpad-kit/dokku";
-import { artifactStorageKey, type DeployContext, type DeployPorts } from "@launchpad-kit/services";
+import { artifactStorageKey } from "@launchpad-kit/services";
 import { tarGz, type FixtureEntry } from "@launchpad-kit/services/testing";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createDocker } from "../docker";
 import { createLifecyclePorts } from "../lifecycle-ports";
 import { createDeployPorts } from "../ports";
+import type { DeployContext, DeployPorts } from "../types";
 import { compactId } from "../template";
 
 // LIVE TESTS. They talk to a real Dokku and a real Docker engine, so they are an

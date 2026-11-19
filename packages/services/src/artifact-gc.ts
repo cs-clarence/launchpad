@@ -4,7 +4,6 @@ import path from "node:path";
 import type { ArtifactTable, Database } from "@launchpad-kit/database";
 import { type Kysely, type SelectQueryBuilder, sql } from "kysely";
 import { resolveArtifactPath } from "./artifacts";
-import { LIFECYCLE_AUDIT } from "./lifecycle";
 
 type Db = Kysely<Database>;
 
@@ -164,7 +163,7 @@ export async function collectArtifacts(
                     .insertInto("audit_event")
                     .values({
                         actor: "system",
-                        action: LIFECYCLE_AUDIT.artifactCollected,
+                        action: "artifact.collected",
                         target_type: "artifact",
                         target_id: candidate.id,
                         organization_id: candidate.organization_id,

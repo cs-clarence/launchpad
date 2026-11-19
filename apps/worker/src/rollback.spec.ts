@@ -3,11 +3,12 @@ import http from "node:http";
 import type { AddressInfo } from "node:net";
 import path from "node:path";
 import type { DokkuClient } from "@launchpad-kit/dokku";
-import { artifactStorageKey, type DeployContext } from "@launchpad-kit/services";
+import { artifactStorageKey } from "@launchpad-kit/services";
 import { SITE, tarGz } from "@launchpad-kit/services/testing";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createDocker } from "./docker";
 import { createDeployPorts } from "./ports";
+import type { DeployContext } from "./types";
 import { compactId, imageTagFor, nginxConf } from "./template";
 import { fakeDocker, LIMITS, tempDir } from "./testing";
 

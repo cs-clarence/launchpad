@@ -1,6 +1,6 @@
 import type { DokkuClient } from "@launchpad-kit/dokku";
-import type { LifecyclePorts } from "@launchpad-kit/services";
 import type { Docker } from "./docker";
+import type { LifecyclePorts } from "./types";
 
 export interface LifecyclePortsDeps {
     dokku: DokkuClient;
