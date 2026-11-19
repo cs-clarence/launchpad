@@ -46,8 +46,17 @@ or prove. `restore` never contacts Dokku. Back up the target database first.
    access-gateway rules (or an equivalently restricted private maintenance path)
    that allowlist **identity, target organization, HTTP method and exact API path**.
    Verify the member's current authority for that organization against the external
-   record before granting access, never against restored ownership alone. Allow
-   only the reconciliation operations below for that organization and the minimal
+   record before granting access, never against restored ownership alone.
+   Before accepting **any** maintenance request from that member, require their
+   restored membership and role in every organization allowed by the grant to
+   match the verified current authority exactly. Method/path restrictions alone
+   do not constrain a membership POST body: an admin whose restored row still
+   says owner could otherwise grant ownership. Keep that identity blocked until
+   an independently verified authorized member, whose own restored role already
+   meets this rule, corrects the stale membership through the restricted path.
+   If no such member is available, stop recovery with ingress closed; do not
+   temporarily admit the stale actor to repair their own permissions.
+   Allow only the reconciliation operations below for that organization and the minimal
    sign-in/session endpoints needed to authenticate. Block other organizations,
    dashboard/server-function routes and unrelated mutations, including for a member
    who is a restored owner elsewhere. Check denied requests cannot bypass these
