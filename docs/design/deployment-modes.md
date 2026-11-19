@@ -456,7 +456,13 @@ closed, promotions/deletions off. First fence every pre-restore writer: establis
 new router epoch and rotate control credentials, because a write issued after the
 backup may still be delayed and the restored database cannot know it. Then compare
 saved intentions with the router's durable state, keeping acknowledged generations
-and tombstones and never replaying an older route over a newer one. A fresh router
+and tombstones and never replaying an older route over a newer one. The restored
+`reserved_generation` can be lower than what the router already acknowledged,
+because the backup cannot record later writes. Promotions and deletions stay
+disabled until each alias's `reserved_generation` is at least the highest
+generation the router acknowledged for it, including writes recorded in the router
+after the backup. Reconciliation raises it to that value or higher; otherwise each
+promotion would reserve a stale number and the router would reject it with a 409. A fresh router
 needs an explicit offline bootstrap into a new epoch with old credentials fenced out.
 The concrete bootstrap/recovery procedure must pass the routing experiment.
 

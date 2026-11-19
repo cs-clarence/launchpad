@@ -55,6 +55,10 @@ never accept arbitrary client URLs, headers, private IPs or proxy directives.
 - Return the observed epoch, operation, generation and target from an
   authoritative read. Never infer success solely from a TCP connection, an HTTP
   200 on a control request or absence of an SSH error.
+- Validate the epoch and credential **atomically with the route commit**, not only
+  when the request is authenticated. A write the router accepted before an epoch
+  change or credential rotation but has not yet committed must be rejected,
+  leaving the route and authoritative read free of any state from that operation.
 - Acknowledge success only when the route decision is persisted and active.
   Each incoming request chooses one complete mapping (old or new), not a partial
   configuration; existing requests may finish on the old target. Propagation across
@@ -135,12 +139,17 @@ Cloudflare/Playit connectors. No real DNS or public routing changes.
    closed-ingress observed-state recovery. Simulate
    router-state loss and establish a new epoch that rejects every old credential/
    epoch combination.
-10. Remove only recorded experiment resources, report leftovers, and retain
+10. Hold an old-epoch write inside the router after authentication and before its
+    commit. Establish the new epoch and rotate credentials, then resume it. The
+    router must reject it, the route must not change, and the authoritative read
+    must show no state from that operation. Passing step 9 alone does not cover this
+    case: a router that checks the epoch only at authentication would still commit it.
+11. Remove only recorded experiment resources, report leftovers, and retain
     credential-free outcomes and exact image/build counts.
 
 ## Acceptance and evidence
 
-All ten steps must pass, with recorded versions/configuration, failure injection
+All eleven steps must pass, with recorded versions/configuration, failure injection
 points, route observations and cleanup results. One independent review must
 validate the evidence and the chosen router's generation/persistence behavior.
 Only then may schema, worker and public promotion integration start.
