@@ -183,13 +183,8 @@ beforeAll(async () => {
             })
             .execute();
     }
-    // Lifecycle is on here while deployments are off: a deletion would never be run.
-    direct = await start(false, { LAUNCHPAD_API_DOCS: "false", LAUNCHPAD_LIFECYCLE: "on" });
-    // Deployments are on here (no worker runs in these tests); `direct` leaves them off.
-    proxied = await start(true, {
-        LAUNCHPAD_DEPLOYMENTS: "on",
-        LAUNCHPAD_LIFECYCLE: "on",
-    });
+    direct = await start(false, { LAUNCHPAD_API_DOCS: "false" });
+    proxied = await start(true, {});
     smtp = startFakeSmtp();
     mailed = await start(true, {
         LAUNCHPAD_SMTP_URL: smtp.url,

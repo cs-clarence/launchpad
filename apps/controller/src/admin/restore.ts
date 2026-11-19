@@ -204,6 +204,19 @@ async function outsideDependents(db: Kysely<any>): Promise<string[]> {
     return [...views.rows, ...keys.rows, ...defaults.rows].map((r) => r.name).sort();
 }
 
+// An older build's worker may still be running (a rollback, a rolling upgrade). The table goes
+// with the schema cutover; until then a recent heartbeat means a writer is still alive.
+const WORKER_LIVE_SECONDS = 60;
+async function liveWorkers(db: Kysely<any>) {
+    const present = await sql<{ present: boolean }>`
+        select to_regclass('public.worker_heartbeat') is not null as present`.execute(db);
+    if (!present.rows[0]?.present) return 0;
+    const live = await sql<{ n: string }>`
+        select count(*) as n from public.worker_heartbeat
+        where last_seen_at > now() - ${WORKER_LIVE_SECONDS} * interval '1 second'`.execute(db);
+    return Number(live.rows[0]?.n ?? 0);
+}
+
 async function userTableCount(db: Kysely<any>) {
     const { rows } = await sql<{ n: string }>`
         select count(*) as n from pg_class c join pg_namespace s on s.oid = c.relnamespace
@@ -249,6 +262,12 @@ export async function restoreBackup(options: RestoreOptions): Promise<RestoreRes
         const populated = (await userTableCount(db)) > 0;
         const target = replaceTarget(options.databaseUrl);
         if (populated) {
+            if ((await liveWorkers(db)) > 0) {
+                throw new RestoreError(
+                    "A worker has reported in the last minute: it is still running against this database. " +
+                        "Stop every worker and wait for it to exit first.",
+                );
+            }
             const dependents = await outsideDependents(db);
             if (dependents.length > 0) {
                 throw new RestoreError(
@@ -338,6 +357,11 @@ export async function restoreBackup(options: RestoreOptions): Promise<RestoreRes
             await db.transaction().execute(async (trx) => {
                 // Do not wait behind a session that still holds the schema.
                 await sql`set local lock_timeout = '10s'`.execute(trx);
+                if ((await liveWorkers(trx)) > 0) {
+                    throw new RestoreError(
+                        "A worker has reported in: stop it and wait for it to exit first.",
+                    );
+                }
                 await sql.raw(`alter schema public rename to ${aside}`).execute(trx);
                 if (!createsPublic) await sql`create schema public`.execute(trx);
             });

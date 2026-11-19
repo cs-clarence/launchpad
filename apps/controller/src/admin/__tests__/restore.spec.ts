@@ -210,6 +210,20 @@ describe("restoreBackup", () => {
         expect((await target.db.selectFrom("user").select("id").execute()).length).toBe(2);
     });
 
+    it("refuses while a worker has reported in the target database, even with the confirmation", async () => {
+        const target = await emptyTarget();
+        await target.migrate();
+        await target.db
+            .insertInto("worker_heartbeat")
+            .values({ worker_id: "w1", version: "t", lifecycle_enabled: false })
+            .execute();
+        const name = replaceTarget(target.url);
+        await expect(
+            restoreBackup(restoreOptions(target, { replaceDatabase: name })),
+        ).rejects.toThrow(/still running/);
+        expect(await tableCount(target.db)).toBeGreaterThan(1);
+    });
+
     it("puts the old data back when pg_restore fails after the swap", async () => {
         const target = await emptyTarget();
         await target.migrate();

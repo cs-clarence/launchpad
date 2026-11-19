@@ -147,8 +147,8 @@ checksums. A database whose migrations are still pending can be backed up (do th
 - **One consistent view.** The live artifact rows, the list of applied migrations and the dump
   are read in the same exported snapshot, and the files are copied for exactly those rows; an upload
   made meanwhile is just not in this backup. If a live row's file is missing or altered, the backup
-  fails rather than record a restore that cannot work (a file that a worker moved aside during an
-  interrupted collection is put back when a worker starts).
+  fails rather than record a restore that cannot work (a file that a collection moved aside before the preview runtime was removed is not put back
+  automatically now: restore it by hand from its `.gone` name).
 - **No stop flag.** Nothing collects archives now, so `backup` has no worker check and no
   `--i-have-stopped-the-workers` option.
 - **Keep the directory private** (it is created mode 0700). The dump holds password and API-key

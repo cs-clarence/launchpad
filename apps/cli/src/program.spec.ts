@@ -16,29 +16,6 @@ let dir = "";
 const json = (body: unknown, status = 200) =>
     new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
 
-const PID = "0f8fad5b-d9cb-469f-a165-70867728950e";
-const PREVIEW = {
-    id: PID,
-    projectId: PID,
-    slug: "review",
-    hostname: "review-a1b2c3.previews.example.com",
-    state: "active",
-    activeDeploymentId: null,
-    expiresAt: "2026-11-20T00:00:00.000Z",
-    createdAt: "2026-11-15T00:00:00.000Z",
-};
-const DELETION = {
-    id: PID,
-    previewId: PID,
-    status: "reconciliation-needed",
-    reason: "expired",
-    failure: { code: "destroy-uncertain", message: "Destroying the app did not finish clearly." },
-    createdAt: "2026-11-15T00:00:00.000Z",
-    finishedAt: null,
-};
-// Runs when a DELETE reaches the controller, to change things while a command is working.
-let duringDelete: (() => Promise<unknown>) | undefined;
-let sent: { method: string; path: string; body: unknown; key: string | null }[] = [];
 let controllerDown = false;
 const controller = (async (url: string, init: RequestInit) => {
     if (controllerDown) throw new TypeError("fetch failed");
@@ -68,35 +45,6 @@ const controller = (async (url: string, init: RequestInit) => {
                 createdAt: "2026-01-01T00:00:00.000Z",
             },
         ]);
-    }
-    const previews = `/api/v1/organizations/${ORG}/previews`;
-    const method = init.method ?? "GET";
-    const headers = init.headers as Record<string, string>;
-    if (route.startsWith(previews)) {
-        sent.push({
-            method,
-            path: route,
-            body: init.body ? JSON.parse(init.body as string) : undefined,
-            key: headers["idempotency-key"] ?? null,
-        });
-    }
-    if (route === previews && method === "GET") {
-        return json({
-            items: [
-                PREVIEW,
-                { ...PREVIEW, id: crypto.randomUUID(), slug: "old", expiresAt: null },
-                { ...PREVIEW, id: crypto.randomUUID(), slug: "going", state: "deleting" },
-            ],
-            nextCursor: null,
-        });
-    }
-    if (route === `${previews}/${PID}/extend`) {
-        return json({ ...PREVIEW, expiresAt: "2026-11-27T00:00:00.000Z" });
-    }
-    if (route === `${previews}/${PID}/deletion`) return json(DELETION);
-    if (route === `${previews}/${PID}` && method === "DELETE") {
-        await duringDelete?.();
-        return json({ operationId: PID, state: "deleting" }, 202);
     }
     return json({ code: "not-found", status: 404, title: "Not Found" }, 404);
 }) as unknown as typeof fetch;
