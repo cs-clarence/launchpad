@@ -165,8 +165,9 @@ with injected requests) and **R2b** (`apps/router`: operator commands, listeners
 `apps/router` binds the two listeners from the settings and owns the **single-process lock**, held by
 the kernel rather than inferred from a PID: a dedicated SQLite lock file next to the state, opened
 with `locking_mode=EXCLUSIVE` and an open `BEGIN EXCLUSIVE` for the life of the process. A second
-process fails immediately; a crash releases it; PIDs are written only for diagnostics and corrupt
-file contents are ignored. Operator commands `init` and `rotate` read the token from an
+process fails immediately and a crash releases it. No PID is written, and a lock file with any
+content is **refused** (fail closed) rather than ignored or interpreted: the file is empty by
+construction, so content means tampering. Operator commands `init` and `rotate` read the token from an
 owner-only file (others refused) or standard input without echo, never an argument or the
 environment, call the R1 functions directly and print only the epoch. `rotate` takes the same lock
 and so refuses to run while `serve` is running. `serve` refuses to start without complete state.
@@ -257,3 +258,16 @@ additive package code or the unreferenced app; nothing else depends on them unti
   hardening findings are fixed (abort listener and timer released on every failure path, a body that
   fails mid-read is 400, IPv6 listen hosts are bare, one Connection-header helper, canonical ports, no
   unreachable 101 case). Status 413 was added for oversized bodies.
+- R2b implemented in `apps/router`: `serve`, `init` and `rotate`, secrets from an owner-only file or
+  stdin, the kernel-held lock, ordered shutdown, 15 unit and 10 integration tests (real listeners, raw
+  sockets with hostile request lines, a CLI subprocess with SIGTERM). Mutation checks caught: a
+  non-exclusive lock, abandoning the drain, rotate without the lock, the secret mode check and a leaked
+  store connection (observable as surviving WAL sidecars). Findings recorded rather than hidden:
+  `Bun.serve` offers no header-size limit, header-read timeout or connection cap, and it routes
+  absolute-form requests by `Host` (cannot redirect traffic; documented). Opus implementation review found a real
+  defect and fixed it: closing _any_ Node descriptor on the lock file drops all of the process's POSIX
+  locks, so a refused second attempt in the same process silently released the first attempt's real lock.
+  Node now only creates the file (exclusively) and checks it by path; SQLite alone opens it, and the
+  path identity is re-checked once the lock is held. Added a two-process regression test (fails against
+  the old code), a SIGKILL test (the kernel releases the lock, no stale lock), strict `serve` arguments
+  and the NFS caveat.

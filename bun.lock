@@ -106,6 +106,22 @@
         "vitest": "catalog:",
       },
     },
+    "apps/router": {
+      "name": "@launchpad-kit/router",
+      "version": "0.0.0",
+      "dependencies": {
+        "@launchpad-kit/alias-router": "workspace:^",
+      },
+      "devDependencies": {
+        "@launchpad-kit/tsconfig": "workspace:^",
+        "@launchpad-kit/vite-config": "workspace:^",
+        "@launchpad-kit/vitest-config": "workspace:^",
+        "@types/bun": "catalog:",
+        "typescript": "catalog:",
+        "vite": "catalog:",
+        "vitest": "catalog:",
+      },
+    },
     "apps/worker": {
       "name": "@launchpad-kit/worker",
       "version": "0.0.0",
@@ -467,6 +483,8 @@
     "@launchpad-kit/dokku": ["@launchpad-kit/dokku@workspace:packages/dokku"],
 
     "@launchpad-kit/mcp": ["@launchpad-kit/mcp@workspace:apps/mcp"],
+
+    "@launchpad-kit/router": ["@launchpad-kit/router@workspace:apps/router"],
 
     "@launchpad-kit/sdk": ["@launchpad-kit/sdk@workspace:packages/sdk"],
 
