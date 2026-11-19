@@ -78,6 +78,14 @@ Rules that keep the graph correct:
   uses only the approved disposable Dokku and PostgreSQL, guarded `lp-test-`
   names, and a test-only database constraint; see [the restore drill](restore.md).
   It is opt-in and is not a CI job.
+- **Disposable routing experiment.** The opt-in `test:routing:experiment` tooling task
+  builds a worker image, deploys two fixtures through pinned SSH to its own Dokku,
+  and exercises the experimental generation-checked Bun/SQLite router. It has no
+  default/CI dependency and needs `LAUNCHPAD_ROUTING_EXPERIMENT=1` plus explicit
+  approval to start disposable infrastructure. Child commands use minimal
+  environments rather than production `.env.local` settings. Resource inventory,
+  cleanup scope, evidence and limitations are in
+  [the experiment record](plans/routing-experiment-evidence.md).
 - **Omni loads `.env.local`** from the repository root and the project into task
   environments without expanding variables, and task `env.vars` override the shell. For
   a default that the shell may override, apply it in the command

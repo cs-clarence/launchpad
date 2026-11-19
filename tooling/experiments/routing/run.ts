@@ -1,0 +1,315 @@
+import { randomBytes } from "node:crypto";
+import { chmod, lstat, mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
+import path from "node:path";
+import { verifyFaultTransport } from "./fault-proxy";
+
+// This task is opt-in, never a dependency of a default check or CI.
+if (process.env.LAUNCHPAD_ROUTING_EXPERIMENT !== "1") {
+    throw new Error("Set LAUNCHPAD_ROUTING_EXPERIMENT=1 to authorize disposable Docker checks.");
+}
+await verifyFaultTransport();
+if (process.env.LAUNCHPAD_ROUTING_TRANSPORT_ONLY === "1") process.exit(0);
+const root = process.cwd();
+const dir = await mkdtemp("/tmp/opencode/lp-routing-");
+// Containers need traversal to the explicitly mounted fixture files; secret files stay 0600.
+await chmod(dir, 0o755);
+const id = path.basename(dir).toLowerCase();
+const resources = {
+    dir,
+    network: `${id}-net`,
+    dokku: `${id}-dokku`,
+    worker: `${id}-worker`,
+    router: `${id}-router`,
+    upstream: `${id}-upstream`,
+    ingress: `${id}-ingress`,
+    image: `${id}/worker:test`,
+    apps: Array.from({ length: 2 }, () => `lp-test-${randomBytes(3).toString("hex")}`),
+    helpers: [] as string[],
+};
+await writeFile(`${dir}/resources.json`, JSON.stringify(resources, null, 2));
+console.log(`Resources recorded before creation: ${dir}/resources.json`);
+
+// Docker commands never inherit the repository's .env.local or production settings.
+async function command(args: string[], allowFailure = false, stdin?: string) {
+    const p = Bun.spawn(args, {
+        env: { PATH: process.env.PATH!, HOME: process.env.HOME!, DOCKER_BUILDKIT: "1" },
+        stdin: stdin === undefined ? "ignore" : new Blob([stdin]),
+        stdout: "pipe",
+        stderr: "pipe",
+    });
+    const deadline = setTimeout(() => p.kill("SIGKILL"), 900_000);
+    const [out, err, code] = await Promise.all([
+        new Response(p.stdout).text(),
+        new Response(p.stderr).text(),
+        p.exited.finally(() => clearTimeout(deadline)),
+    ]);
+    if (code && !allowFailure) throw new Error(`${args.slice(0, 3).join(" ")}: ${err}`);
+    return { out: out.trim(), err: err.trim(), code };
+}
+const docker = async (args: string[], allowFailure = false, stdin?: string) => {
+    if (args[0] === "run") {
+        args = [...args];
+        if (!args.includes("--name")) {
+            const name = `${id}-helper-${resources.helpers.length + 1}`;
+            resources.helpers.push(name);
+            await writeFile(`${dir}/resources.json`, JSON.stringify(resources, null, 2));
+            args.splice(1, 0, "--name", name);
+        }
+        // The worker base declares VOLUME /data. Helpers/router need no anonymous
+        // volume: use tmpfs unless this invocation explicitly binds its artifact data.
+        if (args.includes(resources.image) && !args.some((arg) => arg.includes(":/data"))) {
+            args.splice(1, 0, "--tmpfs", "/data");
+        }
+    }
+    return command(["docker", ...args], allowFailure, stdin);
+};
+const cleanup: string[] = [];
+let failure: unknown;
+try {
+    for (const app of resources.apps) {
+        const existing = await docker(["ps", "-aq", "--filter", `label=com.dokku.app-name=${app}`]);
+        const image = await docker(["image", "inspect", `dokku/${app}:latest`], true);
+        if (existing.out || !image.code)
+            throw new Error("Generated app name collides with existing engine resources.");
+    }
+    await mkdir(`${dir}/credentials`);
+    await mkdir(`${dir}/data`);
+    await mkdir(`${dir}/dokku`);
+    await mkdir(`${dir}/router-state`);
+    await command([
+        "ssh-keygen",
+        "-q",
+        "-t",
+        "ed25519",
+        "-N",
+        "",
+        "-f",
+        `${dir}/credentials/id_ed25519`,
+    ]);
+    await command([
+        "bun",
+        "build",
+        "--target=bun",
+        `${root}/tooling/experiments/routing/fixtures.ts`,
+        "--outfile",
+        `${dir}/fixtures.js`,
+    ]);
+    await docker(["network", "create", resources.network]);
+    await docker(["build", "-q", "-f", "apps/worker/Dockerfile", "-t", resources.image, "."]);
+    await docker([
+        "run",
+        "-d",
+        "--name",
+        resources.dokku,
+        "--network",
+        "bridge",
+        "--label",
+        `launchpad.experiment=${id}`,
+        "-e",
+        "DOKKU_HOSTNAME=live.example.com",
+        "-e",
+        `DOKKU_HOST_ROOT=${dir}/dokku/home/dokku`,
+        "-e",
+        `DOKKU_LIB_HOST_ROOT=${dir}/dokku/var/lib/dokku`,
+        "-v",
+        `${dir}/dokku:/mnt/dokku`,
+        "-v",
+        "/var/run/docker.sock:/var/run/docker.sock",
+        "launchpad/dokku:0.38.34",
+    ]);
+    await docker(["network", "connect", "--alias", "dokku", resources.network, resources.dokku]);
+    // Bounded readiness, not a fixed startup delay.
+    let ready = false;
+    let lastReadiness = "";
+    for (let attempt = 0; attempt < 90; attempt++) {
+        const check = await docker(
+            [
+                "exec",
+                resources.dokku,
+                "sh",
+                "-c",
+                "test -s /etc/ssh/ssh_host_ed25519_key.pub || { ls -l /etc/ssh; exit 1; }; dokku version",
+            ],
+            true,
+        );
+        lastReadiness = `${check.out}\n${check.err}`;
+        if (!check.code) {
+            ready = true;
+            break;
+        }
+        await Bun.sleep(1000);
+    }
+    if (!ready) throw new Error(`Disposable Dokku did not initialize: ${lastReadiness}`);
+    // Pin via the container's local public key, not an unauthenticated network scan.
+    const hostKey = (
+        await docker(["exec", resources.dokku, "cat", "/etc/ssh/ssh_host_ed25519_key.pub"])
+    ).out;
+    await writeFile(`${dir}/credentials/known_hosts`, `dokku ${hostKey}\n`, { mode: 0o600 });
+    const publicKey = await readFile(`${dir}/credentials/id_ed25519.pub`, "utf8");
+    await docker(["exec", "-i", resources.dokku, "dokku", "ssh-keys:add", id], false, publicKey);
+    // Chown only fresh directories created above; never existing user data.
+    await docker([
+        "run",
+        "--rm",
+        "--user",
+        "0",
+        "--entrypoint",
+        "sh",
+        "-v",
+        `${dir}/credentials:/credentials`,
+        "-v",
+        `${dir}/data:/data`,
+        "-v",
+        `${dir}/router-state:/state`,
+        resources.image,
+        "-c",
+        "chown -R 10001:10001 /credentials /data /state",
+    ]);
+    const socketGroup = (await command(["stat", "-c", "%g", "/var/run/docker.sock"])).out;
+    await docker([
+        "run",
+        "-d",
+        "--name",
+        resources.worker,
+        "--network",
+        resources.network,
+        "--group-add",
+        socketGroup,
+        "--entrypoint",
+        "sleep",
+        "-v",
+        "/var/run/docker.sock:/var/run/docker.sock",
+        "-v",
+        `${dir}/credentials:/credentials:ro`,
+        "-v",
+        `${dir}/data:/data`,
+        "-v",
+        `${dir}:/experiment:ro`,
+        resources.image,
+        "infinity",
+    ]);
+    const fixtureResult = await docker([
+        "exec",
+        resources.worker,
+        "bun",
+        "/experiment/fixtures.js",
+    ]);
+    console.log(fixtureResult.out);
+    await writeFile(`${dir}/topology.log`, fixtureResult.out);
+    console.log(`Topology fixtures passed; evidence: ${dir}/data/fixtures.json`);
+    // Router experiment is a separate process using the same recorded fixture inventory.
+    const routerExperiment = await import("./verify-router");
+    await routerExperiment.verifyRouter({ dir, resources, docker });
+} catch (error) {
+    failure = error;
+    await writeFile(`${dir}/failure.log`, String(error));
+    console.error(String(error));
+} finally {
+    const dokkuLog = await docker(["logs", resources.dokku], true);
+    await writeFile(`${dir}/dokku.log`, `${dokkuLog.out}\n${dokkuLog.err}`);
+    const created = await Bun.file(`${dir}/data/created-apps.json`)
+        .json()
+        .catch(() => []);
+    for (const { app } of created) {
+        if (!resources.apps.includes(app)) {
+            failure ??= new Error("Cleanup journal contains an unowned app.");
+            continue;
+        }
+        // Only the random exact names recorded before this run; apps:destroy is safe if absent.
+        const result = await docker(
+            ["exec", resources.dokku, "dokku", "--force", "apps:destroy", app],
+            true,
+        );
+        cleanup.push(`app ${app}: ${result.code === 0 ? "destroyed" : result.err}`);
+        const inspect = await docker(["image", "inspect", `dokku/${app}:latest`], true);
+        if (!inspect.code) await docker(["rmi", `dokku/${app}:latest`], true);
+    }
+    // Source tags may survive a failed build/load; names come only from this run's fixture journal.
+    for (const fixture of created) {
+        await docker(["rmi", fixture.imageTag], true);
+        const containers = await docker([
+            "ps",
+            "-aq",
+            "--filter",
+            `label=com.dokku.app-name=${fixture.app}`,
+        ]);
+        const image = await docker(["image", "inspect", `dokku/${fixture.app}:latest`], true);
+        const source = await docker(["image", "inspect", fixture.imageTag], true);
+        const absent = !containers.out && image.code !== 0 && source.code !== 0;
+        cleanup.push(
+            `fixture ${fixture.app}: ${absent ? "containers and image tags absent" : "LEFTOVER"}`,
+        );
+        if (!absent) failure ??= new Error("Fixture cleanup incomplete.");
+    }
+    for (const name of [
+        resources.ingress,
+        resources.upstream,
+        resources.router,
+        resources.worker,
+        resources.dokku,
+    ]) {
+        await docker(["rm", "-f", "-v", name], true);
+        const absent = (await docker(["inspect", name], true)).code !== 0;
+        cleanup.push(`container ${name}: ${absent ? "absent" : "LEFTOVER"}`);
+        if (!absent) failure ??= new Error("Container cleanup incomplete.");
+    }
+    await docker(["network", "rm", resources.network], true);
+    // Use the image we already built, before removing it. A failed helper must not
+    // skip the cleanup report or replace the original experiment failure.
+    const secretPaths = [
+        "credentials",
+        "dokku",
+        "router-state",
+        "old-router-state",
+        "tls",
+        "router-config.json",
+        "router-config.next",
+    ];
+    const removed = await docker(
+        [
+            "run",
+            "--rm",
+            "--pull=never",
+            "--user",
+            "0",
+            "--entrypoint",
+            "rm",
+            "-v",
+            `${dir}:/experiment`,
+            resources.image,
+            "-rf",
+            ...secretPaths.map((name) => `/experiment/${name}`),
+        ],
+        true,
+    );
+    if (removed.code) {
+        cleanup.push("secret/state removal helper: FAILED");
+        failure ??= new Error("Secret/state removal helper failed.");
+    }
+    for (const name of secretPaths) {
+        const absent = await lstat(`${dir}/${name}`).then(
+            () => false,
+            (error: NodeJS.ErrnoException) => error.code === "ENOENT",
+        );
+        cleanup.push(`secret/state path ${name}: ${absent ? "absent" : "LEFTOVER"}`);
+        if (!absent) failure ??= new Error("Secret/state cleanup incomplete; see cleanup.log.");
+    }
+    await docker(["rmi", resources.image], true);
+    for (const [kind, name] of [
+        ["network", resources.network],
+        ["image", resources.image],
+    ]) {
+        const absent = (await docker([kind!, "inspect", name!], true)).code !== 0;
+        cleanup.push(`${kind} ${name}: ${absent ? "absent" : "LEFTOVER"}`);
+        if (!absent) failure ??= new Error("Network/image cleanup incomplete.");
+    }
+    for (const name of resources.helpers) {
+        const absent = (await docker(["inspect", name], true)).code !== 0;
+        cleanup.push(`helper ${name}: ${absent ? "absent" : "LEFTOVER"}`);
+        if (!absent) failure ??= new Error("Helper cleanup incomplete.");
+    }
+    await writeFile(`${dir}/cleanup.log`, cleanup.join("\n"));
+    console.log(cleanup.join("\n"));
+    console.log(`Evidence directory: ${dir}`);
+}
+if (failure) throw failure;

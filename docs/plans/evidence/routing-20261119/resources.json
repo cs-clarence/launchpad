@@ -1,0 +1,21 @@
+{
+    "dir": "/tmp/opencode/lp-routing-nDukOy",
+    "network": "lp-routing-ndukoy-net",
+    "dokku": "lp-routing-ndukoy-dokku",
+    "worker": "lp-routing-ndukoy-worker",
+    "router": "lp-routing-ndukoy-router",
+    "upstream": "lp-routing-ndukoy-upstream",
+    "ingress": "lp-routing-ndukoy-ingress",
+    "image": "lp-routing-ndukoy/worker:test",
+    "apps": ["lp-test-e75828", "lp-test-26a1fa"],
+    "helpers": [
+        "lp-routing-ndukoy-helper-1",
+        "lp-routing-ndukoy-helper-2",
+        "lp-routing-ndukoy-helper-3",
+        "lp-routing-ndukoy-helper-4",
+        "lp-routing-ndukoy-helper-5",
+        "lp-routing-ndukoy-helper-6",
+        "lp-routing-ndukoy-helper-7",
+        "lp-routing-ndukoy-helper-8"
+    ]
+}

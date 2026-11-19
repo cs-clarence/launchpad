@@ -1,0 +1,16 @@
+{
+    "before": [
+        "sha256:a59d750ecaa6566db8ff3339ed8d05d1400132bf4e5c019afa5de05b7f161827",
+        "sha256:a829bfc7d6a49fd305f3746640801372388da7c5a7fc047e3715dd57be2df9e0"
+    ],
+    "after": [
+        "sha256:a59d750ecaa6566db8ff3339ed8d05d1400132bf4e5c019afa5de05b7f161827",
+        "sha256:a829bfc7d6a49fd305f3746640801372388da7c5a7fc047e3715dd57be2df9e0"
+    ],
+    "fixtureBuilds": 2,
+    "promotionBuilds": 0,
+    "workerImage": "sha256:6c66286de6c9eab32c257f90902632f55f75766aad022dfed4b5e0ab4d11ae88",
+    "dokkuImage": "sha256:8a9dff85047331e5dbbc743b4744e3a446ce80ab33f0cf827891917d20a692bb",
+    "bun": "1.4.4",
+    "sqlite": "3.53.4"
+}

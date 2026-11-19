@@ -1,8 +1,9 @@
 # Generation-checked routing for immutable deployment aliases
 
 Date: 2026-11-19.
-Status: **selected design direction; feasibility experiment not yet run**.
+Status: **selected design direction; router-only feasibility accepted after independent review**.
 Related design: `docs/design/deployment-modes.md`.
+Experiment authorization, attempts and evidence: `docs/plans/routing-experiment-evidence.md`.
 
 ## Context and decision
 
@@ -117,7 +118,10 @@ Cloudflare/Playit connectors. No real DNS or public routing changes.
    each acknowledgement. The other alias never changes; neither image rebuilds.
 4. Delay a lower-generation write, apply a newer generation, then release the
    delayed write. The old request must conflict and data-plane probes must remain
-   on the newer target. Repeat with a delayed withdrawal and a stale worker claim.
+   on the newer target. Repeat with a delayed withdrawal. The actual stale-worker-claim
+   case is deferred to, and gates completion of, the worker-lease integration:
+   a superseded claim must not undo a confirmed higher-generation route. Router-only
+   delayed senders do not claim to verify worker lease/claim behavior.
 5. Use a throwaway driver with a journal of intended/observed routing writes.
    Crash that driver after a router write and drop a response after applying it.
    Replaying an identical operation is idempotent; an authoritative read identifies
@@ -152,7 +156,9 @@ Cloudflare/Playit connectors. No real DNS or public routing changes.
 All eleven steps must pass, with recorded versions/configuration, failure injection
 points, route observations and cleanup results. One independent review must
 validate the evidence and the chosen router's generation/persistence behavior.
-Only then may schema, worker and public promotion integration start.
+Only then may schema, worker and public promotion integration start. The real
+stale-worker-claim check in step 4 remains an integration acceptance gate, not a
+guarantee verified by this router-only experiment.
 
 The experiment needs no new application schema or HTTP API. Use the existing
 Dokku deploy primitives and the throwaway driver; “stale worker” means a simulated

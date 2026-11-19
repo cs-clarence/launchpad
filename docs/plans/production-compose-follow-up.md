@@ -45,6 +45,12 @@ publishing images/namespaces.
 
 ## Status
 
+The user explicitly authorized the disposable worker/Dokku and alias-router checks
+on 2026-11-19 (“Go start those checks”). Their resource inventory, partial results
+and cleanup are recorded in [the experiment evidence](routing-experiment-evidence.md).
+This does not authorize starting production. Immutable-model integration remains
+gated on a complete experiment pass and independent evidence review.
+
 Queued. Application milestones 0 to 6 are built (milestone 6 closed 2026-11-18, `docs/plans/milestone-6-release.md`).
 The user requested one draft production-preparation PR on 2026-11-19, with this
 plan committed first and the package-scope rename next. Its initial implementation

@@ -73,6 +73,14 @@ that builds and deploys a fixture site on a real Dokku and Docker. It is not par
 creates and removes only `lp-test-` apps. Its settings are in the header of
 `apps/worker/src/__tests__/live.spec.ts`.
 
+The production-preparation routing experiment is separately opt-in:
+`LAUNCHPAD_ROUTING_EXPERIMENT=1 omni -i run test:routing:experiment -p @launchpad-kit/tooling`.
+It creates its own disposable Dokku, two fixture apps, a worker and experimental
+router, with no published host ports. It needs Docker and host `ssh-keygen`/`openssl`,
+uses the host engine socket (root-equivalent), and must not be run without explicit
+permission to start disposable services. See
+[scope and evidence](docs/plans/routing-experiment-evidence.md). It is not in CI.
+
 Operator and development tasks live in the controller project:
 
 ```sh
