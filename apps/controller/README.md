@@ -150,7 +150,9 @@ checksums. A database whose migrations are still pending can be backed up (do th
   fails rather than record a restore that cannot work (a file that a collection moved aside before the preview runtime was removed is not put back
   automatically now: restore it by hand from its `.gone` name).
 - **No stop flag.** Nothing collects archives now, so `backup` has no worker check and no
-  `--i-have-stopped-the-workers` option.
+  `--i-have-stopped-the-workers` option. Stop any older-version collectors and wait for them to exit
+  before backing up: their collection can race with the file copy. No stop is needed if only the
+  current idle worker is running.
 - **Keep the directory private** (it is created mode 0700). The dump holds password and API-key
   hashes **and live session tokens**: with the authentication secret they would let someone sign
   cookies, so never store the secret beside the backup. Environment files, the secret and
@@ -164,10 +166,11 @@ Restoring is a procedure, not one command. The current step-by-step
 [restore how-to](../../docs/restore.md) includes the safety and recovery checks
 (the rationale is in `docs/plans/application.md`, "Restore order"):
 
-1. **Stop every worker and the controller** (it keeps its database connections and only checks the schema when it starts,
+1. **Stop every worker, the controller and every admin job that can write** (the controller keeps its database connections and only checks the schema when it starts,
    so restart it after the restore), wait until each has exited, and then wait longer than the
    longest Dokku command and the deletion lease (five minutes by default). A worker's exit does not
    prove a Dokku destroy it started has finished, and a missing app is not proof either.
+   Follow [the restore prerequisites](../../docs/restore.md) for legacy worker settling checks.
 2. `restore <dir> --i-have-stopped-the-workers` into an **empty** database, or
    `--replace <host:port/database>` to replace one that has data, typing the address exactly as the
    refusal message prints it (naming only the database would not tell a scratch copy from the live
@@ -261,8 +264,9 @@ failure does not restore keys. Use operator recovery if necessary.
 
 `GET /api/v1/status` is for the instance operator and needs a session (an API key cannot read it,
 whatever its scopes; an organization owner who is not the operator gets 403). It returns counts only:
-`dependencies.database` (`ok` if the request got an answer), `artifacts` (stored count and bytes) and
-`warnings` (empty for now). Workers, queues and deployments return with the immutable app model, which
+`dependencies.database` (`ok` if the request got an answer), `artifacts` (count and bytes from
+uncollected database rows, not checks that archive files exist) and `warnings` (always empty in this
+version). Workers, queues and deployments return with the immutable app model, which
 defines their own status. There is no dashboard panel for it.
 
 ## Removed: preview deployment

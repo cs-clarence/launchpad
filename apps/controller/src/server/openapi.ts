@@ -280,7 +280,7 @@ export const docs = {
         tags: ["Operations"],
         summary: "How the instance is doing",
         description:
-            "Needs the instance operator and a session (an API key cannot do this). Database readiness, the number and size of stored artifacts, and warnings in plain words. Counts only: no names or ids. Workers, queues and deployments return with the app model.",
+            "Needs the instance operator and a session (an API key cannot do this). Database readiness and artifact count/byte totals from database rows only; archive files are not checked. This version emits no warnings (warnings is empty). Counts only: no names or ids. Workers, queues and deployments return with the app model.",
         ok: { description: "The status.", schema: statusSchema },
         errors: [401, 403],
     }),

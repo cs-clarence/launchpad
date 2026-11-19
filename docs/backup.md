@@ -8,7 +8,9 @@ Dokku state or any preview datastore; back those up separately.
    to the admin command, and a `pg_dump` at least as new as the PostgreSQL
    server (`LAUNCHPAD_PG_DUMP` can name the tool). Choose a **new** destination.
    Nothing collects archives while the preview runtime is removed, so there is
-   no worker check and no stop-confirmation flag.
+   no worker check and no stop-confirmation flag. Older-version collectors can
+   still move files against the unchanged schema: stop them and wait for them
+   to exit before backing up. The current idle worker need not be stopped.
 
     ```sh
     bun .output/admin.mjs backup /private/backups/launchpad-2026-11-18

@@ -2,7 +2,8 @@
 
 For MCP-client users who want read-only access to Launchpad. This is a separate
 stdio app, not a CLI subcommand or HTTP daemon. It is read-only: the preview `deploy` and
-`delete_preview` tools and the `--allow-*` options were removed with the preview runtime.
+`delete_preview` tools and the `--allow-*`, `--include` and `--exclude` options were removed with the
+preview runtime. Remove all of these options from existing startup configurations.
 
 ## Start
 
@@ -69,6 +70,9 @@ project). Profile precedence: the call's `profile`, then the file's, then `--pro
 `organization` and `project` are required in this file; `profile` is optional. Explicit tool arguments override file fields. With no file, the saved
 profile/environment supplies the organization. Missing project context does not block unrelated
 tools such as organization listing.
+Remove the obsolete `name` field from existing files, keeping `organization` and `project`, before
+retrying. An extra `name` rejects the whole file: startup fails when a default directory is checked,
+or calls fail for that workspace in shared mode without a default directory.
 
 Files must be regular, non-symlink JSON files, at most 16 KiB, with no extra fields.
 Invalid files fail rather than falling back to an ancestor. Config never contains
@@ -76,7 +80,7 @@ credentials; review its profile and organization choices before using it.
 An organization supplied by config or argument is validated using the selected
 key's visible organizations (requires `organization:read`).
 
-The CLI uses this same context from its launch directory.
+Current CLI commands do not read this workspace file.
 
 ## Results and limits
 

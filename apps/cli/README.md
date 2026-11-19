@@ -33,12 +33,9 @@ and `--profile <name>`.
 
 ## Workspace file
 
-`launchpad.json`, found by walking up from the working directory, selects the organization and project.
-It requires `organization` (id or slug) and `project` (id or slug), with an optional `profile`.
-`--profile` and `--project` override file values. A file owned by another user is ignored. Files are strictly
-validated, bounded to 16 KiB and must not be symlinks. Organization selection from the file requires
-`organization:read`; it is checked against the key's organizations and never saved. This resolver is shared
-with the [separate MCP app](../mcp/README.md).
+Current CLI commands do not read `launchpad.json` and do not accept `--project`.
+`projects list` uses the selected credential profile or environment organization.
+Workspace-file resolution is currently used only by the [MCP app](../mcp/README.md#project-context).
 
 Preview deployment was removed (`deploy`, `previews` and `deployments` no longer exist, and the controller
 has no such endpoints); the app deploy command arrives with the immutable deployment model. The old

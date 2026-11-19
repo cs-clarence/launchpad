@@ -12,6 +12,11 @@ down migration. Rehearse on disposable infrastructure first: the checked-in
    version. Store the database dump and archives together, and keep the auth
    secret, environment settings, Dokku host state and preview datastores
    separately. Do not proceed if `verify-backup` fails.
+   With all legacy upload writers stopped, inspect the actual data directory's
+   `tmp/` directory for regular files named `upload-<24 lowercase hex characters>.part`.
+   Record and remove only those exact abandoned staging files, one at a time;
+   never remove finalized files under `artifacts/`, other temporary names or symlinks.
+   The new controller no longer sweeps upload staging files at startup.
 3. Make the new controller image available **without starting the server or
    workers**. With the same database and migration files as that image, run
    `bun .output/admin.mjs migrate --status`. Pending migrations return exit 1;

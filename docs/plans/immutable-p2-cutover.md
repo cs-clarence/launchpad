@@ -184,7 +184,9 @@ Deviations from the plan above, and the client-facing breaks for release notes.
 - `apps/worker/src/config.ts` is deleted, and the worker no longer depends on the database package.
   The worker's port types moved to `apps/worker/src/types.ts`.
 - Backup lost its worker/lifecycle refusal and the `--i-have-stopped-the-workers` flag; restore keeps
-  the flag with new wording and no longer checks worker heartbeats.
+  the flag with new wording. Restore retains the legacy heartbeat checks before restore and before
+  the schema swap: a populated target with a heartbeat in the last minute is refused even with the
+  confirmation flag. These checks go away when P2b drops `worker_heartbeat`.
 - `launchpad.json` no longer accepts `name`. CLI exit codes 7 and 8 are reserved for the app deploy
   command.
 

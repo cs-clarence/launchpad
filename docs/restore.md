@@ -6,8 +6,14 @@ or prove. `restore` never contacts Dokku. Back up the target database first.
 
 1. Close **all management access** at the private ingress (including API-key
    access); keep it closed through restore and credential reconciliation.
-   Stop all workers and the controller and wait for their
-   processes to exit. Make sure no other installation shares this Dokku
+   Stop all workers, the controller and every admin job that can write to the
+   target database, and wait for their processes to exit. Give any legacy worker
+   its full 25-minute stop grace period. Wait for every Dokku operation it
+   dispatched to settle; after the last legacy worker exits, wait longer than
+   the longest possible remote Dokku command and the five-minute deletion lease
+   (longer for slow destroy triggers). Verify on the Dokku host that no
+   worker-started Docker/Dokku process remains. An SSH client exiting or an app
+   disappearing is not proof of settlement. Make sure no other installation shares this Dokku
    host and data directory.
 2. Verify the directory, then restore into an **empty** database owned by the
    runtime role using the same `LAUNCHPAD_DATA_DIR`, `DATABASE_URL` and
@@ -20,7 +26,9 @@ or prove. `restore` never contacts Dokku. Back up the target database first.
 
     For a populated target, first back it up, then add
     `--replace <host:port/database>` with **exactly** the address printed by
-    the refusal. The flag confirms _all of step 1_. It checks
+    the refusal. The flag confirms _all of step 1_. On a populated target,
+    restore also refuses a worker heartbeat within the last minute, even with
+    the flag; that check cannot prove that admin jobs or remote operations stopped. It checks
     the manifest and dump before changing anything, restores archives first,
     then swaps the `public` schema. A failed restore rolls back a schema swap
     where possible; for an interrupted process, follow the recovery notes in
@@ -34,8 +42,8 @@ or prove. `restore` never contacts Dokku. Back up the target database first.
    apps and expired previews**. `--no-dokku` is only a partial check.
    Missing archives require repair before a deployment; an unreachable Dokku
    is an error, not a missing app. The check changes nothing.
-4. With the normal ingress still closed, allow only a trusted operator
-   maintenance connection to the restored controller. Before opening
+4. Start the restored controller with normal ingress still closed, allowing
+   only a trusted operator maintenance connection. Before opening
    management access, compare restored API keys, organization memberships
    and roles with a trustworthy **external** record of changes since the
    backup. Revoke those keys again. For each membership removed since the
@@ -79,7 +87,7 @@ or prove. `restore` never contacts Dokku. Back up the target database first.
    organization owners and remove any unverified access before reopening;
    otherwise keep ingress closed. Do not assume that stopped workers prevent
    authenticated reads. Confirm revocations before reopening the private
-   ingress. Then start the controller and the worker.
+   ingress. Then start the idle worker if needed.
 5. Restored preview data is inert: the preview runtime was removed, so nothing
    redeploys, extends or deletes previews. Never manually delete a Dokku app
    just because it was absent in step 3. A restored database can also leave
