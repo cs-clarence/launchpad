@@ -27,7 +27,7 @@ not two build pipelines.
   review of promotion concurrency, remote outcomes and garbage collection.
 - **Undo:** before cutover, abandon the candidate; after cutover, promote the
   previous retained deployment. Schema rollback remains matched backup restore,
-  not down migrations. Existing previews may be retired rather than converted.
+  not down migrations. Existing previews are dropped, not converted or kept.
 - **Not authorized here:** broad deletion, registry publishing, production startup
   or modification of existing ingress/connectors.
 
@@ -61,26 +61,24 @@ modify resources outside it. Do not describe this as protection against that ope
 
 ## Database proposal
 
-Physical-name safety refinement from the implementation-plan review: new
-deployment, event and deletion tables are `immutable_deployment`,
-`app_deployment_event` and `deployment_deletion_operation`. The resource names
-`deployment`, `deployment_event` and `deletion_operation` below are logical
-shorthand, not permission to reuse legacy SQL names. Retire the old tables into
-`legacy_*` history without compatibility views. Cutover also fences old database
-logins/connections and stops/settles old remote work; names alone cannot fence a
-surviving controller or artifact collector. See the
+Physical table names: the new deployment, event and deletion tables are
+`immutable_deployment`, `app_deployment_event` and `deployment_deletion_operation`.
+The resource names `deployment`, `deployment_event` and `deletion_operation` below
+are logical shorthand. The old preview-era tables are dropped, but the new tables
+deliberately do not reuse their names, so a surviving old process fails with
+"relation does not exist" instead of operating on new rows. See the
 [implementation plan](../plans/immutable-deployment-model.md) for ordered gates.
 
 Add new forward-only migrations; never rewrite frozen migrations.
 
-| Table                 | Responsibility                                                                                                                                                                |
-| --------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `app`                 | Organization/project, live-unique slug and timestamps. No preview/persistent mode or single production hostname.                                                              |
-| `deployment`          | App/artifact references, fixed settings, unique Dokku `app_name`, unique deployment hostname, job status, lease/fence, image identity, retention deadline and deletion state. |
-| `deployment_event`    | Existing ordered deployment progress/events.                                                                                                                                  |
-| `app_alias`           | Stable alias ID, app ID, live-unique per-app slug, generated hostname, committed target deployment ID, routing generation and lifecycle state. Many aliases per app.          |
-| `promotion_operation` | Alias ID, desired target, previous target, expected alias generation, status, lease/fence, actor, idempotency key and routing reconciliation details.                         |
-| `deletion_operation`  | Guarded deletion of one deployment's resources, rather than a mutable preview target.                                                                                         |
+| Table                                                  | Responsibility                                                                                                                                                                |
+| ------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `app`                                                  | Organization/project, live-unique slug and timestamps. No preview/persistent mode or single production hostname.                                                              |
+| `deployment` (`immutable_deployment`)                  | App/artifact references, fixed settings, unique Dokku `app_name`, unique deployment hostname, job status, lease/fence, image identity, retention deadline and deletion state. |
+| `deployment_event` (`app_deployment_event`)            | Ordered deployment progress/events, append-only.                                                                                                                              |
+| `app_alias`                                            | Stable alias ID, app ID, live-unique per-app slug, generated hostname, committed target deployment ID, routing generation and lifecycle state. Many aliases per app.          |
+| `promotion_operation`                                  | Alias ID, desired target, previous target, expected alias generation, status, lease/fence, actor, idempotency key and routing reconciliation details.                         |
+| `deletion_operation` (`deployment_deletion_operation`) | Guarded deletion of one deployment's resources, rather than a mutable preview target.                                                                                         |
 
 Retain organization-qualified foreign keys. An alias may reference only a
 deployment of the **same app and organization**. Only a succeeded, verified,
@@ -100,7 +98,7 @@ A future externally provisioned custom hostname can reuse the alias binding,
 promotion and retention contracts after its admission/ownership policy is designed.
 This does not add a custom-domain endpoint, ACME client or DNS provider now.
 
-Keep hostname and Dokku-name uniqueness even for retired records. A fresh
+Keep hostname and Dokku-name uniqueness even for soft-deleted records. A fresh
 deployment never adopts a previous deployment's remote app.
 
 The current one-unfinished-deployment-per-preview rule becomes per-app
@@ -121,16 +119,15 @@ parallel release jobs are not needed for the first version.
   `(organization_id, app_id, target_deployment_id)` to `deployment`.
   Eligibility is checked in the transaction, not inferred from that nullable FK.
 - `hostname_reservation`: canonical lowercase `hostname` primary key,
-  `owner_kind` (`deployment`, `alias` or `legacy_preview`), UUID `owner_id`, organization ID,
+  `owner_kind` (`deployment` or `alias`), UUID `owner_id`, organization ID,
   `created_at`, nullable `released_at`, unique `(owner_kind, owner_id)`.
   Insert it in the same transaction as its owning resource, with a database
   `DEFERRABLE INITIALLY DEFERRED` constraint trigger verifying the polymorphic
   owner and reciprocal hostname reference at transaction commit. No other table
   may allocate a hostname outside this registry.
   `released_at` is an audit fact, **not** permission to reuse the hostname.
-  Seed every legacy hostname before admitting new allocations. Preserve registry
-  tombstones on organization/app deletion: no cascading delete from the organization;
-  retired owner identities remain in minimal history so reciprocal references hold.
+  Preserve registry tombstones on organization/app deletion: no cascading delete
+  from the organization; soft-deleted owners keep their rows so reciprocal references hold.
 - `promotion_operation`: alias/app/organization-qualified FK; action `bind` or
   `withdraw`; previous and desired target FKs qualified to the same app; desired
   target required only for `bind`. Store `generation`, UUID operation ID, status,
@@ -267,7 +264,7 @@ report**; it never repairs, deletes, withdraws, re-routes or gates anything.
 
 | Source   | What it provides                                                                                                                                          |
 | -------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Database | Deployments (Dokku app name, hostname, state), aliases (target, generations, state), operations, reservations, legacy previews and retired history.       |
+| Database | Deployments (Dokku app name, hostname, state), aliases (target, generations, state), operations, reservations and soft-deleted history.                   |
 | Dokku    | Apps by exact name, their domains and, where the allowlisted client can read it, running state. Needs new read operations (`apps:list`, a domain report). |
 | Router   | Authoritative per-alias routes: epoch, generation, operation ID, target and tombstones.                                                                   |
 | Probe    | Optional: the deployment identity a route actually serves.                                                                                                |
@@ -276,11 +273,11 @@ report**; it never repairs, deletes, withdraws, re-routes or gates anything.
 Match by recorded identity: Dokku app name, hostname and router operation ID.
 **Never infer ownership from a naming pattern.** The app-name pattern only limits
 which Dokku apps are _considered_; an app is known when any deployment row (including
-retired or tombstoned history), or any `legacy_preview` record, names it exactly.
-Apps that do not match the pattern are not reported, or are shown only as a count.
-Until Slice 2 retires them, legacy previews are an input, or every legacy app would
-look like an orphan; and an app missing from an older backup appears as `orphan-app`
-after a restore, which is expected.
+soft-deleted history) names it exactly. Apps that do not match the pattern are not
+reported, or are shown only as a count. The migration drops the old preview records
+without touching Dokku, so any app a dropped preview owned appears as `orphan-app`
+until the operator removes it, and an app missing from an older backup appears the
+same way after a restore. Both are expected.
 
 ### Statuses and findings
 
@@ -301,7 +298,7 @@ operator action, and never carries credentials or environment values.
 | ---------------------------- | --------------------------------------------------------------------------------------------------------------- | -------- | ---------------------------------------------------------------------------------- |
 | `deployment-app-missing`     | A succeeded, pinned or uncertain-chain deployment's Dokku app does not exist.                                   | high     | Investigate; redeploy the artifact as a new deployment.                            |
 | `deployment-domain-mismatch` | The Dokku domain differs from the recorded hostname.                                                            | high     | Find who changed it; do not edit the record to match.                              |
-| `orphan-app`                 | A pattern-matching Dokku app is named by no deployment, history or legacy record.                               | medium   | Identify the owner; deletion is a separate, exact-name, authorized action.         |
+| `orphan-app`                 | A pattern-matching Dokku app is named by no deployment or history record.                                       | medium   | Identify the owner; deletion is a separate, exact-name, authorized action.         |
 | `reservation-without-owner`  | A hostname reservation names an owner that does not exist.                                                      | high     | Integrity alarm; stop mutations and investigate.                                   |
 | `owner-without-reservation`  | A deployment or alias has no reservation for its hostname (the deferred trigger should make this impossible).   | high     | Integrity alarm; stop mutations and investigate.                                   |
 | `alias-route-missing`        | A bound alias has no route, or a withdrawn alias has no tombstone, in the router.                               | high     | Reconcile through a promotion operation.                                           |
@@ -362,8 +359,8 @@ empty report.
 - An in-flight promotion produces no finding; an expired dispatched lease produces
   `stuck-operation`; a router ahead after a restore is `alias-router-ahead`, not
   `alias-target-conflict`.
-- An app named in retired history or a legacy record is not an orphan; an app that
-  does not match the pattern is not reported.
+- An app named by any deployment row, including soft-deleted history, is not an orphan;
+  an app that does not match the pattern is not reported.
 - Generations above 2^53 compare correctly.
 - The report contains no secret by construction and writes nothing to Dokku, the
   router or the database apart from the later findings table.
@@ -552,37 +549,27 @@ tool input, **not proof that a human approved the action**. Alias management has
 its own `--allow-alias-manage` startup opt-in; deploy permission does not imply
 either opt-in.
 
-### Legacy retirement and backup/restore boundary
+### Replacing the previews, and the backup/restore boundary
 
-Live upgrade requires all legacy previews terminally deleted and every legacy
-deployment/deletion operation finished, including rollback intent. Keep their
-rows/events as read-only `legacy_*` history, outside the new worker/GC selection.
-Migration refuses active/held legacy work; it never destroys remote apps or
-implicitly marks an unknown remote outcome resolved. Legacy `rollback_*` fields
-stay in historical records only; new deployments have no in-place rollback intent.
-Any non-null pending-step or lease field blocks retirement, even on a terminal
-row or when the lease timestamp is expired. The read-only inventory must apply
-the same predicates; it never clears these fields or proves remote settling.
+Nothing is in production, so the previews are **replaced, not retired**. The migration
+drops the preview-era `preview`, `deployment`, `deployment_event` and
+`deletion_operation` tables and their data unconditionally. There is no `legacy_*`
+history, no read-only copy, no retirement guard and no reservation of the dropped
+names. It does not touch Dokku: any app a dropped preview owned stays on the host
+until the operator removes it by exact name. Before upgrading, list them with the
+previous binary's `inventory-previews` (or `dokku apps:list`), because afterwards the
+database no longer records them. The migration also deletes the temporary
+`idempotency_key` rows and revokes every API key holding a `preview:*` scope.
 
-**New binaries refuse pre-model backups before restoring any files or schema.**
-Add the immutable-model migration to the backup compatibility floor. Older dumps
-may be opened with the earlier binary in an isolated forensic environment, never
-used to restart new workers or automatically recreate retired apps. New-format
-backups preserve the legacy history alongside the new tables.
-The floor is defined by the backup manifest's `migrations` array containing the
-immutable-model migration ID, not by `launchpadVersion` or the backup's date.
-Keep `BACKUP_FORMAT = 1`: directory/manifest serialization is unchanged; this
-is schema compatibility policy. A new binary may still take a pre-upgrade backup
-of an older schema, but must prominently report “restore only with the previous
-compatible binary” and list the missing floor migration. Verification can confirm
-integrity without implying that the current binary will restore it.
+No running code keeps a compatibility path. The preview API, UI pages, SDK methods,
+CLI commands, MCP tools and their contracts are **removed**, not answered with a stub;
+the app-based replacements arrive with the model. An old binary against the new
+schema is stopped by its startup check, because the migration is recorded.
 
-This is an intentional pre-release restore-compatibility break, chosen instead
-of allowing a restored old database to reintroduce mutable targets. Record it
-in upgrade/restore/release notes. The frozen schema-014 fixture can still prove
-old-schema migration and retirement preconditions, but the new round-trip
-restore drill must use a post-model backup and additionally assert the old
-backup refusal. Do not weaken the floor merely to keep the old test unchanged.
+**Backups.** There is no backup floor. An older dump restores and is then migrated
+forward like any other, and migration 018 drops its preview tables again, so a restore
+cannot reintroduce a mutable target. Keep `BACKUP_FORMAT = 1`. After a restore of a
+database that holds the new model, the recovery gate below applies.
 
 Aliases need separate remote reconciliation after every restore: ingress stays
 closed, promotions/deletions off. First fence every pre-restore writer: establish a
@@ -604,11 +591,9 @@ The concrete bootstrap/recovery procedure must pass the routing experiment.
 1. Establish the routing mechanism with an independently
    reviewed disposable spike. No destructive migration until cutover/reconciliation
    and stale-writer behavior are demonstrated.
-2. Inventory and retire exact existing previews through the guarded deletion path.
-   Await terminal operations and remote settling, then stop workers. The migration
-   refuses active or unfinished legacy previews; do not silently truncate tables.
-   Keep retired history as specified above; do not attempt an automatic
-   conversion of an active mutable app.
+2. Stop the workers and controller, then optionally list and remove any Dokku apps
+   the old previews owned. Migration 018 drops the preview tables and their data
+   unconditionally; it never converts an active mutable app.
 3. Implement schema/types/contracts, immutable worker path, promotion operation,
    retention guards and admin backup/restore checks.
 4. Update API/OpenAPI, dashboard, SDK, CLI, MCP, examples and docs together.
@@ -649,10 +634,8 @@ domain is unset (the migration case), so it must not be wired in before the runt
 stops reading those names. `stableDrift` compares the fixed remote reads against the
 database before and after, and `compareDrift` applies the stuck-operation rule: a
 dispatched operation with a missing or expired lease is stuck. Not yet done in
-Slice 0: nothing. The read-only legacy-preview inventory is
-`launchpad-admin inventory-previews` (it lists what the database recorded and whether
-every preview is terminally deleted with no unfinished job, pending intent or
-leftover lease field; exit 1 while not), and the parser now requires
+Slice 0: nothing. `launchpad-admin inventory-previews` lists what the database recorded
+before the upgrade and is removed with the preview tables, and the parser now requires
 the apps domain to be a different registrable domain from `LAUNCHPAD_BASE_URL`
 (enforced once the parser is wired in; nothing calls it at runtime yet). Slice 1
 (the router-only experiment) is complete: it was approved, run on disposable infrastructure, and its
@@ -663,13 +646,13 @@ scenarios against the production router image, and Slices 2 to 4.
 
 ### Implementation slices and gates
 
-| Slice                                                                                      | Check                                                                                                                                                                        | Undo / stop condition                                                                                                                                                                                                                                                                         |
-| ------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 0. Docs, pure template/config functions, read-only legacy inventory, pure drift comparison | Unit tests, including each drift finding against fixtures; no remote calls or active API/schema changes                                                                      | Remove additive helpers; preserve existing runtime.                                                                                                                                                                                                                                           |
-| 1. Disposable alias-router experiment                                                      | Router-only generation/idempotency, restart/crash, fixed-404, Host/SNI and epoch tests; throwaway driver simulates dispatch/response loss without the new application schema | Exact-name removal of newly created test resources; if an invariant fails, stop. Explicit disposable-infrastructure approval required.                                                                                                                                                        |
-| 2. Retirement and coordinated backend/model change                                         | Schema upgrade, pre-model backup refusal, worker/auth tests, DB CAS, GC/reservation races, retention and corrective-chain pin tests                                          | Restore the pre-change matched backup with the previous binary into an isolated target. No mixed-version workers. New immutable apps/router state are absent from an old backup: inventory them by exact name and quarantine them from old workers before separately approved orphan cleanup. |
-| 3. API/UI/SDK/CLI/MCP integration                                                          | New contracts, permission matrix and generated-hostname workflows across all clients                                                                                         | Keep draft/unreleased; do not publish a half-compatible client/server set.                                                                                                                                                                                                                    |
-| 4. Combined disposable rehearsal and operator docs                                         | Build once, preview, multi-alias promotion/rollback, failures, restore and exact cleanup                                                                                     | Withdraw only test routes; retain uncertain targets until reconciled. Production remains untouched.                                                                                                                                                                                           |
+| Slice                                                                                         | Check                                                                                                                                                                        | Undo / stop condition                                                                                                                                                                                                                                                                                                                                                              |
+| --------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 0. Docs, pure template/config functions, pre-upgrade preview inventory, pure drift comparison | Unit tests, including each drift finding against fixtures; no remote calls or active API/schema changes                                                                      | Remove additive helpers; preserve existing runtime.                                                                                                                                                                                                                                                                                                                                |
+| 1. Disposable alias-router experiment                                                         | Router-only generation/idempotency, restart/crash, fixed-404, Host/SNI and epoch tests; throwaway driver simulates dispatch/response loss without the new application schema | Exact-name removal of newly created test resources; if an invariant fails, stop. Explicit disposable-infrastructure approval required.                                                                                                                                                                                                                                             |
+| 2. Replacement of the previews and coordinated backend/model change                           | Schema upgrade from the frozen earlier-schema backup, restore recovery gate, worker/auth tests, DB CAS, GC/reservation races, retention and corrective-chain pin tests       | Restore the pre-change matched backup with the previous binary into an isolated target. No mixed-version workers. The preview data is dropped by design, so before upgrading take a backup and list the old Dokku apps with the previous binary. New immutable apps and router state are absent from an old backup; after any restore the recovery gate stays on until reconciled. |
+| 3. API/UI/SDK/CLI/MCP integration                                                             | New contracts, permission matrix and generated-hostname workflows across all clients                                                                                         | Keep draft/unreleased; do not publish a half-compatible client/server set.                                                                                                                                                                                                                                                                                                         |
+| 4. Combined disposable rehearsal and operator docs                                            | Build once, preview, multi-alias promotion/rollback, failures, restore and exact cleanup                                                                                     | Withdraw only test routes; retain uncertain targets until reconciled. Production remains untouched.                                                                                                                                                                                                                                                                                |
 
 Use the production-preparation draft PR. It may temporarily be marked ready for
 CI/CodeRabbit review, then returned to draft once that round is green. Do not
