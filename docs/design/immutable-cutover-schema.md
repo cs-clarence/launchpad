@@ -144,9 +144,12 @@ back an empty registry and stale generations while the router and Dokku keep the
   tables prove nothing about remote state**: after an older dump is restored over an installation
   that already used the model, the tables are empty while the router and Dokku still hold the old
   routes and apps. The rule therefore has two parts, and the outcome is unambiguous:
-    - **Writer-seen record.** The first model writer creates a durable file
-      `<data dir>/maintenance/model-writer-seen`, outside the dump, so a restore cannot erase it.
-      P2b has no writer, so on a P2b installation the file never exists.
+    - **Writer-seen record.** **Before its first model mutation or remote side effect**, the
+      first model writer creates and fsyncs the durable file
+      `<data dir>/maintenance/model-writer-seen` and its directory, outside the dump, so a
+      restore cannot erase it. If that step fails the writer fails closed and performs no
+      mutation, so a crash can never leave state behind without the record. P2b has no writer,
+      so on a P2b installation the file never exists.
     - **P2b rule.** `recovery-clear` **succeeds** only if every model table is empty **and** the
       writer-seen file does not exist; it **refuses** in every other case, including an empty
       database after any writer has run. Rolling back to a P2b binary after P3 has written is not
@@ -186,4 +189,6 @@ On disposable PostgreSQL, from the frozen schema-014 fixture and from an empty d
   four preview tables and `worker_heartbeat` are gone afterwards.
 - An old dump restored over a database that already holds model rows writes the marker.
 - `recovery-clear` refuses while any model table has a row, and refuses on an empty database
-  once the `model-writer-seen` file exists (simulated by creating it).
+  once the `model-writer-seen` file exists (simulated by creating it). The P3 change that adds the
+  first writer carries the matching tests: the file exists and is fsynced before the first
+  mutation or remote call, and a failure to create it aborts the writer with nothing changed.

@@ -120,7 +120,7 @@ and scope string across `apps`, `packages`, `tooling` and `docs`.
 - **Recovery gate.** The marker (written after every refusal and the archive pre-check, before
   the first copy, and kept if a restore fails), the database gate, the fail-closed checks scoped
   to model mutations, a missing gate row allowed only while 018 is not recorded, and
-  `launchpad-admin recovery-clear`, which in P2b succeeds only when every model table is empty **and** the durable `model-writer-seen` file (created by the first writer, outside the dump) does not exist. Empty tables prove nothing about remote state once a writer has run, so the P3 PR that adds the first writer must replace that rule with verified reconciliation in the same PR, with a test that the old rule is gone. Rolling back to a P2b binary after P3 has written is unsupported.
+  `launchpad-admin recovery-clear`, which in P2b succeeds only when every model table is empty **and** the durable `model-writer-seen` file (created and fsynced by the first writer **before** its first mutation or remote side effect, outside the dump, failing closed if it cannot) does not exist. Empty tables prove nothing about remote state once a writer has run, so the P3 PR that adds the first writer must replace that rule with verified reconciliation in the same PR, with a test that the old rule is gone. Rolling back to a P2b binary after P3 has written is unsupported.
   Any restore by a binary that knows 018 writes the marker, whatever the manifest holds.
 - **Delete the P1 scaffolding:** `immutable-retirement.spec.ts`, `immutable-old-process.spec.ts`,
   `inventory.spec.ts`, the fixtures `immutable-retirement.sql` and `immutable-model.sql`, and the
