@@ -1,0 +1,690 @@
+[
+    {
+        "probe": "view-one.live.example.com",
+        "status": 404,
+        "body": "Not found\n"
+    },
+    {
+        "probe": "view-two.live.example.com",
+        "status": 404,
+        "body": "Not found\n"
+    },
+    {
+        "probe": "view-unbound.live.example.com",
+        "status": 404,
+        "body": "Not found\n"
+    },
+    {
+        "probe": "unknown.live.example.com",
+        "status": 404,
+        "body": "Not found\n"
+    },
+    {
+        "control": "GET /v1/routes (none)",
+        "status": 401,
+        "body": "{\"error\":\"unauthorized\"}"
+    },
+    {
+        "control": "GET /v1/routes (wrong token)",
+        "status": 401,
+        "body": "{\"error\":\"unauthorized\"}"
+    },
+    {
+        "control": "GET /v1/routes (wrong instance)",
+        "status": 401,
+        "body": "{\"error\":\"unauthorized\"}"
+    },
+    {
+        "control": "GET /v1/routes (stale epoch)",
+        "status": 401,
+        "body": "{\"error\":\"unauthorized\"}"
+    },
+    {
+        "control": "POST /v1/deployments",
+        "status": 200,
+        "body": {
+            "deploymentId": "f106c710-d6ce-4c24-b993-539b0c9c9b34",
+            "hostname": "lp-test-d7cbf2.live.example.com"
+        }
+    },
+    {
+        "control": "POST /v1/deployments",
+        "status": 200,
+        "body": {
+            "deploymentId": "d141e638-28b0-4d2a-9e99-007a5e1d1d1c",
+            "hostname": "lp-test-fe70fe.live.example.com"
+        }
+    },
+    {
+        "control": "POST /v1/deployments",
+        "status": 200,
+        "body": {
+            "deploymentId": "f106c710-d6ce-4c24-b993-539b0c9c9b34",
+            "hostname": "lp-test-d7cbf2.live.example.com"
+        }
+    },
+    {
+        "control": "POST /v1/deployments",
+        "status": 409,
+        "body": {
+            "error": "conflict"
+        }
+    },
+    {
+        "control": "POST /v1/routes",
+        "status": 200,
+        "body": {
+            "instanceId": "be4c37a5-b0d9-462a-8c74-ac6b26eab3c8",
+            "epoch": "d9d44328-4ae0-47e9-a4a0-8635b840fefe",
+            "route": {
+                "aliasId": "9f95a943-472e-437c-b4c4-6e6339e34f99",
+                "hostname": "view-one.live.example.com",
+                "operationId": "d96bc034-9afd-4de4-8a7b-573d50a90a47",
+                "generation": "1",
+                "target": {
+                    "deploymentId": "f106c710-d6ce-4c24-b993-539b0c9c9b34",
+                    "hostname": "lp-test-d7cbf2.live.example.com"
+                }
+            }
+        }
+    },
+    {
+        "control": "POST /v1/routes",
+        "status": 200,
+        "body": {
+            "instanceId": "be4c37a5-b0d9-462a-8c74-ac6b26eab3c8",
+            "epoch": "d9d44328-4ae0-47e9-a4a0-8635b840fefe",
+            "route": {
+                "aliasId": "a99fda0d-b6fe-4e3e-8a45-590299702b38",
+                "hostname": "view-two.live.example.com",
+                "operationId": "ede89ed2-3309-44a7-aaa5-c82c4d094d38",
+                "generation": "1",
+                "target": {
+                    "deploymentId": "f106c710-d6ce-4c24-b993-539b0c9c9b34",
+                    "hostname": "lp-test-d7cbf2.live.example.com"
+                }
+            }
+        }
+    },
+    {
+        "probe": "view-one.live.example.com",
+        "status": 200,
+        "body": "fixture:f106c710-d6ce-4c24-b993-539b0c9c9b34"
+    },
+    {
+        "probe": "view-two.live.example.com",
+        "status": 200,
+        "body": "fixture:f106c710-d6ce-4c24-b993-539b0c9c9b34"
+    },
+    {
+        "control": "POST /v1/routes",
+        "status": 200,
+        "body": {
+            "instanceId": "be4c37a5-b0d9-462a-8c74-ac6b26eab3c8",
+            "epoch": "d9d44328-4ae0-47e9-a4a0-8635b840fefe",
+            "route": {
+                "aliasId": "9f95a943-472e-437c-b4c4-6e6339e34f99",
+                "hostname": "view-one.live.example.com",
+                "operationId": "8a39dbe4-8eba-4bbd-81d4-ce0f4692fe7a",
+                "generation": "2",
+                "target": {
+                    "deploymentId": "d141e638-28b0-4d2a-9e99-007a5e1d1d1c",
+                    "hostname": "lp-test-fe70fe.live.example.com"
+                }
+            }
+        }
+    },
+    {
+        "probe": "view-one.live.example.com",
+        "status": 200,
+        "body": "fixture:d141e638-28b0-4d2a-9e99-007a5e1d1d1c"
+    },
+    {
+        "probe": "view-two.live.example.com",
+        "status": 200,
+        "body": "fixture:f106c710-d6ce-4c24-b993-539b0c9c9b34"
+    },
+    {
+        "control": "POST /v1/routes",
+        "status": 200,
+        "body": {
+            "instanceId": "be4c37a5-b0d9-462a-8c74-ac6b26eab3c8",
+            "epoch": "d9d44328-4ae0-47e9-a4a0-8635b840fefe",
+            "route": {
+                "aliasId": "9f95a943-472e-437c-b4c4-6e6339e34f99",
+                "hostname": "view-one.live.example.com",
+                "operationId": "4dbf475a-670c-4245-bcc8-78faf551618a",
+                "generation": "3",
+                "target": {
+                    "deploymentId": "f106c710-d6ce-4c24-b993-539b0c9c9b34",
+                    "hostname": "lp-test-d7cbf2.live.example.com"
+                }
+            }
+        }
+    },
+    {
+        "probe": "view-one.live.example.com",
+        "status": 200,
+        "body": "fixture:f106c710-d6ce-4c24-b993-539b0c9c9b34"
+    },
+    {
+        "control": "GET /v1/routes",
+        "status": 200,
+        "body": {
+            "instanceId": "be4c37a5-b0d9-462a-8c74-ac6b26eab3c8",
+            "epoch": "d9d44328-4ae0-47e9-a4a0-8635b840fefe",
+            "routes": [
+                {
+                    "aliasId": "9f95a943-472e-437c-b4c4-6e6339e34f99",
+                    "hostname": "view-one.live.example.com",
+                    "operationId": "4dbf475a-670c-4245-bcc8-78faf551618a",
+                    "generation": "3",
+                    "target": {
+                        "deploymentId": "f106c710-d6ce-4c24-b993-539b0c9c9b34",
+                        "hostname": "lp-test-d7cbf2.live.example.com"
+                    }
+                },
+                {
+                    "aliasId": "a99fda0d-b6fe-4e3e-8a45-590299702b38",
+                    "hostname": "view-two.live.example.com",
+                    "operationId": "ede89ed2-3309-44a7-aaa5-c82c4d094d38",
+                    "generation": "1",
+                    "target": {
+                        "deploymentId": "f106c710-d6ce-4c24-b993-539b0c9c9b34",
+                        "hostname": "lp-test-d7cbf2.live.example.com"
+                    }
+                }
+            ],
+            "nextCursor": null
+        }
+    },
+    {
+        "control": "POST /v1/routes",
+        "status": 409,
+        "body": {
+            "error": "conflict"
+        }
+    },
+    {
+        "control": "POST /v1/routes",
+        "status": 409,
+        "body": {
+            "error": "conflict"
+        }
+    },
+    {
+        "control": "GET /v1/routes",
+        "status": 200,
+        "body": {
+            "instanceId": "be4c37a5-b0d9-462a-8c74-ac6b26eab3c8",
+            "epoch": "d9d44328-4ae0-47e9-a4a0-8635b840fefe",
+            "routes": [
+                {
+                    "aliasId": "9f95a943-472e-437c-b4c4-6e6339e34f99",
+                    "hostname": "view-one.live.example.com",
+                    "operationId": "4dbf475a-670c-4245-bcc8-78faf551618a",
+                    "generation": "3",
+                    "target": {
+                        "deploymentId": "f106c710-d6ce-4c24-b993-539b0c9c9b34",
+                        "hostname": "lp-test-d7cbf2.live.example.com"
+                    }
+                },
+                {
+                    "aliasId": "a99fda0d-b6fe-4e3e-8a45-590299702b38",
+                    "hostname": "view-two.live.example.com",
+                    "operationId": "ede89ed2-3309-44a7-aaa5-c82c4d094d38",
+                    "generation": "1",
+                    "target": {
+                        "deploymentId": "f106c710-d6ce-4c24-b993-539b0c9c9b34",
+                        "hostname": "lp-test-d7cbf2.live.example.com"
+                    }
+                }
+            ],
+            "nextCursor": null
+        }
+    },
+    {
+        "control": "POST /v1/routes",
+        "status": 200,
+        "body": {
+            "instanceId": "be4c37a5-b0d9-462a-8c74-ac6b26eab3c8",
+            "epoch": "d9d44328-4ae0-47e9-a4a0-8635b840fefe",
+            "route": {
+                "aliasId": "9f95a943-472e-437c-b4c4-6e6339e34f99",
+                "hostname": "view-one.live.example.com",
+                "operationId": "8278cfda-72bf-4222-8162-19c429363afc",
+                "generation": "9007199254740993",
+                "target": {
+                    "deploymentId": "f106c710-d6ce-4c24-b993-539b0c9c9b34",
+                    "hostname": "lp-test-d7cbf2.live.example.com"
+                }
+            }
+        }
+    },
+    {
+        "control": "POST /v1/routes",
+        "status": 409,
+        "body": {
+            "error": "conflict"
+        }
+    },
+    {
+        "control": "POST /v1/routes",
+        "status": 409,
+        "body": {
+            "error": "conflict"
+        }
+    },
+    {
+        "probe": "view-one.live.example.com",
+        "status": 200,
+        "body": "fixture:f106c710-d6ce-4c24-b993-539b0c9c9b34"
+    },
+    {
+        "lostResponse": "POST /v1/routes",
+        "operation": "ce2cc6d1-1806-4143-9fd8-c202dceea0d5"
+    },
+    {
+        "control": "GET /v1/routes/view-one.live.example.com",
+        "status": 200,
+        "body": {
+            "instanceId": "be4c37a5-b0d9-462a-8c74-ac6b26eab3c8",
+            "epoch": "d9d44328-4ae0-47e9-a4a0-8635b840fefe",
+            "route": {
+                "aliasId": "9f95a943-472e-437c-b4c4-6e6339e34f99",
+                "hostname": "view-one.live.example.com",
+                "operationId": "ce2cc6d1-1806-4143-9fd8-c202dceea0d5",
+                "generation": "9007199254740995",
+                "target": {
+                    "deploymentId": "d141e638-28b0-4d2a-9e99-007a5e1d1d1c",
+                    "hostname": "lp-test-fe70fe.live.example.com"
+                }
+            }
+        }
+    },
+    {
+        "control": "POST /v1/routes",
+        "status": 200,
+        "body": {
+            "instanceId": "be4c37a5-b0d9-462a-8c74-ac6b26eab3c8",
+            "epoch": "d9d44328-4ae0-47e9-a4a0-8635b840fefe",
+            "route": {
+                "aliasId": "9f95a943-472e-437c-b4c4-6e6339e34f99",
+                "hostname": "view-one.live.example.com",
+                "operationId": "ce2cc6d1-1806-4143-9fd8-c202dceea0d5",
+                "generation": "9007199254740995",
+                "target": {
+                    "deploymentId": "d141e638-28b0-4d2a-9e99-007a5e1d1d1c",
+                    "hostname": "lp-test-fe70fe.live.example.com"
+                }
+            }
+        }
+    },
+    {
+        "control": "POST /v1/routes",
+        "status": 409,
+        "body": {
+            "error": "conflict"
+        }
+    },
+    {
+        "control": "POST /v1/routes",
+        "status": 409,
+        "body": {
+            "error": "conflict"
+        }
+    },
+    {
+        "probe": "view-one.live.example.com",
+        "status": 200,
+        "body": "fixture:d141e638-28b0-4d2a-9e99-007a5e1d1d1c"
+    },
+    {
+        "control": "POST /v1/routes",
+        "status": 200,
+        "body": {
+            "instanceId": "be4c37a5-b0d9-462a-8c74-ac6b26eab3c8",
+            "epoch": "d9d44328-4ae0-47e9-a4a0-8635b840fefe",
+            "route": {
+                "aliasId": "6e5fad50-8072-4b9b-8941-f6cd8bd5f81e",
+                "hostname": "view-unbound.live.example.com",
+                "operationId": "154a0eb6-8bbd-4ed6-8285-e7a6fd637141",
+                "generation": "8",
+                "target": null
+            }
+        }
+    },
+    {
+        "control": "GET /v1/routes/view-unbound.live.example.com",
+        "status": 200,
+        "body": {
+            "instanceId": "be4c37a5-b0d9-462a-8c74-ac6b26eab3c8",
+            "epoch": "d9d44328-4ae0-47e9-a4a0-8635b840fefe",
+            "route": {
+                "aliasId": "6e5fad50-8072-4b9b-8941-f6cd8bd5f81e",
+                "hostname": "view-unbound.live.example.com",
+                "operationId": "154a0eb6-8bbd-4ed6-8285-e7a6fd637141",
+                "generation": "8",
+                "target": null
+            }
+        }
+    },
+    {
+        "control": "POST /v1/routes",
+        "status": 409,
+        "body": {
+            "error": "conflict"
+        }
+    },
+    {
+        "probe": "view-unbound.live.example.com",
+        "status": 404,
+        "body": "Not found\n"
+    },
+    {
+        "control": "POST /v1/routes",
+        "status": 200,
+        "body": {
+            "instanceId": "be4c37a5-b0d9-462a-8c74-ac6b26eab3c8",
+            "epoch": "d9d44328-4ae0-47e9-a4a0-8635b840fefe",
+            "route": {
+                "aliasId": "a99fda0d-b6fe-4e3e-8a45-590299702b38",
+                "hostname": "view-two.live.example.com",
+                "operationId": "8988c773-f03b-4fd3-bb18-d5981c6a30c4",
+                "generation": "2",
+                "target": null
+            }
+        }
+    },
+    {
+        "probe": "view-two.live.example.com",
+        "status": 404,
+        "body": "Not found\n"
+    },
+    {
+        "control": "GET /v1/routes",
+        "status": 200,
+        "body": {
+            "instanceId": "be4c37a5-b0d9-462a-8c74-ac6b26eab3c8",
+            "epoch": "d9d44328-4ae0-47e9-a4a0-8635b840fefe",
+            "routes": [
+                {
+                    "aliasId": "9f95a943-472e-437c-b4c4-6e6339e34f99",
+                    "hostname": "view-one.live.example.com",
+                    "operationId": "ce2cc6d1-1806-4143-9fd8-c202dceea0d5",
+                    "generation": "9007199254740995",
+                    "target": {
+                        "deploymentId": "d141e638-28b0-4d2a-9e99-007a5e1d1d1c",
+                        "hostname": "lp-test-fe70fe.live.example.com"
+                    }
+                },
+                {
+                    "aliasId": "a99fda0d-b6fe-4e3e-8a45-590299702b38",
+                    "hostname": "view-two.live.example.com",
+                    "operationId": "8988c773-f03b-4fd3-bb18-d5981c6a30c4",
+                    "generation": "2",
+                    "target": null
+                },
+                {
+                    "aliasId": "6e5fad50-8072-4b9b-8941-f6cd8bd5f81e",
+                    "hostname": "view-unbound.live.example.com",
+                    "operationId": "154a0eb6-8bbd-4ed6-8285-e7a6fd637141",
+                    "generation": "8",
+                    "target": null
+                }
+            ],
+            "nextCursor": null
+        }
+    },
+    {
+        "control": "POST /v1/routes",
+        "status": 400,
+        "body": {
+            "error": "invalid"
+        }
+    },
+    {
+        "control": "POST /v1/routes",
+        "status": 400,
+        "body": {
+            "error": "invalid"
+        }
+    },
+    {
+        "control": "POST /v1/routes",
+        "status": 400,
+        "body": {
+            "error": "invalid"
+        }
+    },
+    {
+        "control": "POST /v1/routes",
+        "status": 400,
+        "body": {
+            "error": "invalid"
+        }
+    },
+    {
+        "control": "POST /v1/routes",
+        "status": 400,
+        "body": {
+            "error": "invalid"
+        }
+    },
+    {
+        "control": "POST /v1/routes",
+        "status": 400,
+        "body": {
+            "error": "invalid"
+        }
+    },
+    {
+        "control": "POST /v1/routes",
+        "status": 400,
+        "body": {
+            "error": "invalid"
+        }
+    },
+    {
+        "control": "POST /v1/routes",
+        "status": 400,
+        "body": {
+            "error": "invalid"
+        }
+    },
+    {
+        "control": "POST /v1/routes",
+        "status": 400,
+        "body": {
+            "error": "invalid"
+        }
+    },
+    {
+        "control": "POST /v1/routes",
+        "status": 413,
+        "body": {
+            "error": "too-large"
+        }
+    },
+    {
+        "control": "POST /v1/routes (content-type text/plain)",
+        "status": 400
+    },
+    {
+        "control": "POST /v1/rotate",
+        "status": 404,
+        "body": {
+            "error": "not-found"
+        }
+    },
+    {
+        "control": "POST /v1/init",
+        "status": 404,
+        "body": {
+            "error": "not-found"
+        }
+    },
+    {
+        "control": "POST /v1/held",
+        "status": 404,
+        "body": {
+            "error": "not-found"
+        }
+    },
+    {
+        "control": "POST /v1/release",
+        "status": 404,
+        "body": {
+            "error": "not-found"
+        }
+    },
+    {
+        "control": "POST /v1/write",
+        "status": 404,
+        "body": {
+            "error": "not-found"
+        }
+    },
+    {
+        "control": "DELETE /v1/routes",
+        "status": 405,
+        "body": {
+            "error": "method-not-allowed"
+        }
+    },
+    {
+        "control": "GET /v1/routes",
+        "status": 200,
+        "body": {
+            "instanceId": "be4c37a5-b0d9-462a-8c74-ac6b26eab3c8",
+            "epoch": "d9d44328-4ae0-47e9-a4a0-8635b840fefe",
+            "routes": [
+                {
+                    "aliasId": "9f95a943-472e-437c-b4c4-6e6339e34f99",
+                    "hostname": "view-one.live.example.com",
+                    "operationId": "ce2cc6d1-1806-4143-9fd8-c202dceea0d5",
+                    "generation": "9007199254740995",
+                    "target": {
+                        "deploymentId": "d141e638-28b0-4d2a-9e99-007a5e1d1d1c",
+                        "hostname": "lp-test-fe70fe.live.example.com"
+                    }
+                },
+                {
+                    "aliasId": "a99fda0d-b6fe-4e3e-8a45-590299702b38",
+                    "hostname": "view-two.live.example.com",
+                    "operationId": "8988c773-f03b-4fd3-bb18-d5981c6a30c4",
+                    "generation": "2",
+                    "target": null
+                },
+                {
+                    "aliasId": "6e5fad50-8072-4b9b-8941-f6cd8bd5f81e",
+                    "hostname": "view-unbound.live.example.com",
+                    "operationId": "154a0eb6-8bbd-4ed6-8285-e7a6fd637141",
+                    "generation": "8",
+                    "target": null
+                }
+            ],
+            "nextCursor": null
+        }
+    },
+    {
+        "control": "POST /v1/routes",
+        "status": 200,
+        "body": {
+            "instanceId": "be4c37a5-b0d9-462a-8c74-ac6b26eab3c8",
+            "epoch": "d9d44328-4ae0-47e9-a4a0-8635b840fefe",
+            "route": {
+                "aliasId": "f784e5c7-77c5-430b-b8fa-ce039a7d66d1",
+                "hostname": "view-ct.live.example.com",
+                "operationId": "231cd549-40a0-4d2f-be18-ac23318c0f06",
+                "generation": "1",
+                "target": {
+                    "deploymentId": "f106c710-d6ce-4c24-b993-539b0c9c9b34",
+                    "hostname": "lp-test-d7cbf2.live.example.com"
+                }
+            }
+        }
+    },
+    {
+        "probe": "data plane /healthz (no such route)",
+        "status": 404
+    },
+    {
+        "hostile": "duplicate Host",
+        "status": 404
+    },
+    {
+        "hostile": "absolute-form to another host",
+        "status": 404
+    },
+    {
+        "hostile": "bracketed IPv6",
+        "status": 404
+    },
+    {
+        "hostile": "userinfo",
+        "status": 404
+    },
+    {
+        "hostile": "trailing dot",
+        "status": 404
+    },
+    {
+        "hostile": "POST",
+        "status": 405
+    },
+    {
+        "hostile": "chunked GET",
+        "status": 400
+    },
+    {
+        "probe": "view-one.live.example.com",
+        "status": 200,
+        "body": "fixture:d141e638-28b0-4d2a-9e99-007a5e1d1d1c"
+    },
+    {
+        "control": "GET /v1/routes",
+        "status": 200,
+        "body": {
+            "instanceId": "be4c37a5-b0d9-462a-8c74-ac6b26eab3c8",
+            "epoch": "d9d44328-4ae0-47e9-a4a0-8635b840fefe",
+            "routes": [
+                {
+                    "aliasId": "f784e5c7-77c5-430b-b8fa-ce039a7d66d1",
+                    "hostname": "view-ct.live.example.com",
+                    "operationId": "231cd549-40a0-4d2f-be18-ac23318c0f06",
+                    "generation": "1",
+                    "target": {
+                        "deploymentId": "f106c710-d6ce-4c24-b993-539b0c9c9b34",
+                        "hostname": "lp-test-d7cbf2.live.example.com"
+                    }
+                },
+                {
+                    "aliasId": "9f95a943-472e-437c-b4c4-6e6339e34f99",
+                    "hostname": "view-one.live.example.com",
+                    "operationId": "ce2cc6d1-1806-4143-9fd8-c202dceea0d5",
+                    "generation": "9007199254740995",
+                    "target": {
+                        "deploymentId": "d141e638-28b0-4d2a-9e99-007a5e1d1d1c",
+                        "hostname": "lp-test-fe70fe.live.example.com"
+                    }
+                },
+                {
+                    "aliasId": "a99fda0d-b6fe-4e3e-8a45-590299702b38",
+                    "hostname": "view-two.live.example.com",
+                    "operationId": "8988c773-f03b-4fd3-bb18-d5981c6a30c4",
+                    "generation": "2",
+                    "target": null
+                },
+                {
+                    "aliasId": "6e5fad50-8072-4b9b-8941-f6cd8bd5f81e",
+                    "hostname": "view-unbound.live.example.com",
+                    "operationId": "154a0eb6-8bbd-4ed6-8285-e7a6fd637141",
+                    "generation": "8",
+                    "target": null
+                }
+            ],
+            "nextCursor": null
+        }
+    }
+]

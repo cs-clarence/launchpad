@@ -1,0 +1,37 @@
+{
+    "dir": "/tmp/opencode/lp-rehearsal-Gq4qdW",
+    "network": "lp-rehearsal-gq4qdw-net",
+    "dokku": "lp-rehearsal-gq4qdw-dokku",
+    "worker": "lp-rehearsal-gq4qdw-worker",
+    "router": "lp-rehearsal-gq4qdw-router",
+    "upstream": "lp-rehearsal-gq4qdw-upstream",
+    "ingress": "lp-rehearsal-gq4qdw-ingress",
+    "routerTls": "lp-rehearsal-gq4qdw-router-tls",
+    "faultProxy": "lp-rehearsal-gq4qdw-fault-proxy",
+    "image": "lp-rehearsal-gq4qdw/worker:test",
+    "routerImage": "lp-rehearsal-gq4qdw/router:test",
+    "volumes": [
+        "lp-rehearsal-gq4qdw-router-state",
+        "lp-rehearsal-gq4qdw-router-state-2",
+        "lp-rehearsal-gq4qdw-router-state-3"
+    ],
+    "apps": ["lp-test-d7cbf2", "lp-test-fe70fe"],
+    "helpers": [
+        "lp-rehearsal-gq4qdw-helper-1",
+        "lp-rehearsal-gq4qdw-helper-2",
+        "lp-rehearsal-gq4qdw-helper-3",
+        "lp-rehearsal-gq4qdw-helper-4",
+        "lp-rehearsal-gq4qdw-router-stateless",
+        "lp-rehearsal-gq4qdw-helper-6",
+        "lp-rehearsal-gq4qdw-helper-7",
+        "lp-rehearsal-gq4qdw-helper-8",
+        "lp-rehearsal-gq4qdw-helper-9",
+        "lp-rehearsal-gq4qdw-helper-10",
+        "lp-rehearsal-gq4qdw-helper-11",
+        "lp-rehearsal-gq4qdw-helper-12",
+        "lp-rehearsal-gq4qdw-helper-13",
+        "lp-rehearsal-gq4qdw-helper-14",
+        "lp-rehearsal-gq4qdw-helper-15",
+        "lp-rehearsal-gq4qdw-helper-16"
+    ]
+}

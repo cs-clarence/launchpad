@@ -3,15 +3,21 @@ import { chmod, lstat, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/p
 import path from "node:path";
 import { verifyFaultTransport } from "./fault-proxy";
 
-// This task is opt-in, never a dependency of a default check or CI.
-if (process.env.LAUNCHPAD_ROUTING_EXPERIMENT !== "1") {
-    throw new Error("Set LAUNCHPAD_ROUTING_EXPERIMENT=1 to authorize disposable Docker checks.");
+// This task is opt-in, never a dependency of a default check or CI. By default it runs the
+// accepted prototype-router experiment; LAUNCHPAD_ROUTING_REHEARSAL=1 runs the same scenarios against
+// the production router image (apps/router) instead.
+const rehearsal = process.env.LAUNCHPAD_ROUTING_REHEARSAL === "1";
+if (!rehearsal && process.env.LAUNCHPAD_ROUTING_EXPERIMENT !== "1") {
+    throw new Error(
+        "Set LAUNCHPAD_ROUTING_EXPERIMENT=1 (prototype) or LAUNCHPAD_ROUTING_REHEARSAL=1 (production " +
+            "router image) to authorize disposable Docker checks.",
+    );
 }
 await verifyFaultTransport();
 if (process.env.LAUNCHPAD_ROUTING_TRANSPORT_ONLY === "1") process.exit(0);
 const root = process.cwd();
 await mkdir("/tmp/opencode", { recursive: true });
-const dir = await mkdtemp("/tmp/opencode/lp-routing-");
+const dir = await mkdtemp(`/tmp/opencode/${rehearsal ? "lp-rehearsal" : "lp-routing"}-`);
 // Containers need traversal to the explicitly mounted fixture files; secret files stay 0600.
 await chmod(dir, 0o755);
 const id = path.basename(dir).toLowerCase();
@@ -23,7 +29,11 @@ const resources = {
     router: `${id}-router`,
     upstream: `${id}-upstream`,
     ingress: `${id}-ingress`,
+    routerTls: `${id}-router-tls`,
+    faultProxy: `${id}-fault-proxy`,
     image: `${id}/worker:test`,
+    routerImage: `${id}/router:test`,
+    volumes: [] as string[],
     apps: Array.from({ length: 2 }, () => `lp-test-${randomBytes(3).toString("hex")}`),
     helpers: [] as string[],
 };
@@ -103,6 +113,17 @@ try {
     ]);
     await docker(["network", "create", resources.network]);
     await docker(["build", "-q", "-f", "apps/worker/Dockerfile", "-t", resources.image, "."]);
+    if (rehearsal) {
+        await docker([
+            "build",
+            "-q",
+            "-f",
+            "apps/router/Dockerfile",
+            "-t",
+            resources.routerImage,
+            ".",
+        ]);
+    }
     await docker([
         "run",
         "-d",
@@ -205,8 +226,13 @@ try {
     await writeFile(`${dir}/topology.log`, fixtureResult.out);
     console.log(`Topology fixtures passed; evidence: ${dir}/data/fixtures.json`);
     // Router experiment is a separate process using the same recorded fixture inventory.
-    const routerExperiment = await import("./verify-router");
-    await routerExperiment.verifyRouter({ dir, resources, docker });
+    if (rehearsal) {
+        const production = await import("./verify-production");
+        await production.verifyProduction({ dir, resources, docker, command });
+    } else {
+        const routerExperiment = await import("./verify-router");
+        await routerExperiment.verifyRouter({ dir, resources, docker });
+    }
 } catch (error) {
     failure = error;
     await writeFile(`${dir}/failure.log`, String(error));
@@ -275,6 +301,8 @@ try {
         if (!absent) failure ??= new Error("Fixture cleanup incomplete.");
     }
     for (const name of [
+        resources.faultProxy,
+        resources.routerTls,
         resources.ingress,
         resources.upstream,
         resources.router,
@@ -286,7 +314,15 @@ try {
         cleanup.push(`container ${name}: ${absent ? "absent" : "LEFTOVER OR UNVERIFIED"}`);
         if (!absent) failure ??= new Error("Container cleanup incomplete.");
     }
+    // Recorded helpers go first: a helper still holding a state volume would make its removal fail.
+    for (const name of resources.helpers) await docker(["rm", "-f", "-v", name], true);
     await docker(["network", "rm", resources.network], true);
+    for (const volume of resources.volumes) {
+        await docker(["volume", "rm", "-f", volume], true);
+        const absent = confirmedAbsent(await docker(["volume", "inspect", volume], true));
+        cleanup.push(`volume ${volume}: ${absent ? "absent" : "LEFTOVER OR UNVERIFIED"}`);
+        if (!absent) failure ??= new Error("Volume cleanup incomplete.");
+    }
     // Use the image we already built, before removing it. A failed helper must not
     // skip the cleanup report or replace the original experiment failure.
     const secretPaths = [
@@ -297,6 +333,8 @@ try {
         "tls",
         "router-config.json",
         "router-config.next",
+        "rehearsal-config.json",
+        "rehearsal-config.next",
     ];
     // Host-owned paths (an ssh key made before the image existed, say) are removed directly: the
     // helper below needs the worker image, which may never have been built. Paths handed to the
@@ -334,15 +372,19 @@ try {
         if (!absent) failure ??= new Error("Secret/state cleanup incomplete; see cleanup.log.");
     }
     await docker(["rmi", resources.image], true);
+    await docker(["rmi", resources.routerImage], true);
     for (const [kind, name] of [
         ["network", resources.network],
         ["image", resources.image],
+        ...(rehearsal ? [["image", resources.routerImage]] : []),
     ]) {
         const absent = confirmedAbsent(await docker([kind!, "inspect", name!], true));
         cleanup.push(`${kind} ${name}: ${absent ? "absent" : "LEFTOVER OR UNVERIFIED"}`);
         if (!absent) failure ??= new Error("Network/image cleanup incomplete.");
     }
     for (const name of resources.helpers) {
+        // Named helpers started detached are removed here too (exact recorded names only).
+        await docker(["rm", "-f", "-v", name], true);
         const absent = confirmedAbsent(await docker(["inspect", name], true));
         cleanup.push(`helper ${name}: ${absent ? "absent" : "LEFTOVER OR UNVERIFIED"}`);
         if (!absent) failure ??= new Error("Helper cleanup incomplete.");
