@@ -7,16 +7,29 @@ down migration. Rehearse on disposable infrastructure first: the checked-in
 
 1. Record the current image versions and runtime settings, and arrange an
    outage. Stop all workers and the controller and wait for them to exit. The idle
-   worker stops at once. See [restore](restore.md).
+   worker stops at once. For a pre-P2a worker, complete the legacy worker
+   grace-period and dispatched Dokku operation settlement checks in
+   [restore, step 1](restore.md) **before taking the backup**. A worker exiting
+   does not prove that its remote destroy finished.
 2. Take and verify a [pre-upgrade backup](backup.md) with the currently running
    version. Store the database dump and archives together, and keep the auth
    secret, environment settings, Dokku host state and preview datastores
-   separately. Do not proceed if `verify-backup` fails.
-   With all legacy upload writers stopped, inspect the actual data directory's
-   `tmp/` directory for regular files named `upload-<24 lowercase hex characters>.part`.
-   Record and remove only those exact abandoned staging files, one at a time;
-   never remove finalized files under `artifacts/`, other temporary names or symlinks.
-   The new controller no longer sweeps upload staging files at startup.
+   separately. When upgrading from pre-P2a, run the old admin build's backup
+   command after the confirmed stop and settlement in step 1:
+
+    ```sh
+    bun .output/admin.mjs backup /private/backups/launchpad-pre-p2a --i-have-stopped-the-workers
+    bun .output/admin.mjs verify-backup /private/backups/launchpad-pre-p2a
+    ```
+
+    This flag belongs to the **old** backup command; P2a's backup command no
+    longer accepts it. Do not proceed if `verify-backup` fails.
+    With all legacy upload writers stopped, inspect the actual data directory's
+    `tmp/` directory for regular files named `upload-<24 lowercase hex characters>.part`.
+    Record and remove only those exact abandoned staging files, one at a time;
+    never remove finalized files under `artifacts/`, other temporary names or symlinks.
+    The new controller no longer sweeps upload staging files at startup.
+
 3. Make the new controller image available **without starting the server or
    workers**. With the same database and migration files as that image, run
    `bun .output/admin.mjs migrate --status`. Pending migrations return exit 1;

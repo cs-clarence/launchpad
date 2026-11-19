@@ -4,6 +4,9 @@ For MCP-client users who want read-only access to Launchpad. This is a separate
 stdio app, not a CLI subcommand or HTTP daemon. It is read-only: the preview `deploy` and
 `delete_preview` tools and the `--allow-*`, `--include` and `--exclude` options were removed with the
 preview runtime. Remove all of these options from existing startup configurations.
+Keys containing any retired `preview:*` scope fail authentication, even if they also contain
+`project:read`. Have an owner/admin issue a replacement without retired scopes, revoke the old key,
+then update `LAUNCHPAD_API_KEY` or run `launchpad login` again for the relevant saved profile.
 
 ## Start
 

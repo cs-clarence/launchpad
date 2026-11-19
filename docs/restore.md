@@ -42,8 +42,15 @@ or prove. `restore` never contacts Dokku. Back up the target database first.
    apps and expired previews**. `--no-dokku` is only a partial check.
    Missing archives require repair before a deployment; an unreachable Dokku
    is an error, not a missing app. The check changes nothing.
-4. Start the restored controller with normal ingress still closed, allowing
-   only a trusted operator maintenance connection. Before opening
+4. Start the restored controller with normal ingress still closed. Use temporary,
+   identity-specific access-gateway rules (or an equivalently restricted private
+   maintenance path) for the trusted operator and only the authorized organization
+   members needed for reconciliation. Each member signs in with their own session
+   to perform the membership changes below; the operator cannot act as that member.
+   Admit an invitee only for the acceptance step described below. Do not admit
+   other restored identities or API-key traffic. Remove these temporary grants
+   after reconciliation and retain any required identity denies before reopening
+   normal ingress. Before opening
    management access, compare restored API keys, organization memberships
    and roles with a trustworthy **external** record of changes since the
    backup. Revoke those keys again. For each membership removed since the
