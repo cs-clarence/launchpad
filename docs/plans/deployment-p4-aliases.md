@@ -1,8 +1,8 @@
 # P4: aliases, promotion, recovery counters and retention pins
 
-Status: **approved 2026-11-20 as written (automatic expiry stays out). P4a is merged;
-P4b is built on `feat/deployment-p4b-promotion`; later slices are not started. Nothing here is authorized to run
-against real infrastructure.** Parent: [deployment model plan](deployment-model.md), P4. Schema
+Status: **approved 2026-11-20 as written (automatic expiry stays out). P4a, P4b
+and the P4c private client are merged; P4c worker wiring is pending. Nothing here
+is authorized to run against real infrastructure.** Parent: [deployment model plan](deployment-model.md), P4. Schema
 contract: [replacement schema map](../design/deployment-cutover-schema.md). Behavior and the alias
 and operation state machines: [deployment design](../design/deployment-modes.md). Router:
 [alias router plan](production-alias-router.md) (R1 core and R2a host are built and unwired; R3
@@ -98,6 +98,14 @@ reservation races, alias recreation never reusing a hostname.
 First land the private client without a runtime caller. Add fenced database
 transitions, pin release and worker integration in follow-up changes. A
 request-level refusal does not settle an earlier ambiguous write.
+
+The database transition slice parks an expired claim with pending dispatch.
+It can reclaim a recorded dispatch for read-only verification, never for a
+second dispatch. Finalization compares the router readback with the expected
+instance, epoch and recorded route; the worker must also probe the served
+identity before calling it. It settles the corrective chain and records the
+last pin release in the same transaction. Until worker wiring lands, no
+runtime caller claims or finalizes these operations.
 
 A private router control client (in `packages/alias-router`) with typed, bounded calls that classify
 every failure as definite or uncertain (a timeout is never proof of failure). A promotion runner in
