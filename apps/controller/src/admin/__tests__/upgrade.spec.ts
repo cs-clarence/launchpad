@@ -305,13 +305,13 @@ it(
             expect((await admin(source.url, data, work, "migrate")).status).toBe(0);
             const gone = await sql<{ name: string | null }>`
                 select to_regclass(name)::text as name from unnest(array[
-                    'public.preview', 'public.deployment', 'public.deployment_event',
+                    'public.preview', 'public.deployment_event',
                     'public.deletion_operation', 'public.worker_heartbeat'
                 ]) as name`.execute(source.db);
-            expect(gone.rows).toEqual(Array.from({ length: 5 }, () => ({ name: null })));
+            expect(gone.rows).toEqual(Array.from({ length: 4 }, () => ({ name: null })));
             expect(
                 (
-                    await sql`select value from instance_state where key = 'immutable_recovery'`.execute(
+                    await sql`select value from instance_state where key = 'deployment_recovery'`.execute(
                         source.db,
                     )
                 ).rows,
@@ -399,7 +399,7 @@ it(
             expect(rows.map((row) => row.email)).toContain(oldUser);
             const recoveryMarker = path.join(
                 work,
-                "restored-data/maintenance/immutable-recovery-blocked",
+                "restored-data/maintenance/deployment-recovery-blocked",
             );
             expect((await fs.stat(recoveryMarker)).isFile()).toBe(true);
             const cleared = await admin(
@@ -430,13 +430,13 @@ it(
                     await modelTarget.db
                         .selectFrom("instance_state")
                         .select("value")
-                        .where("key", "=", "immutable_recovery")
+                        .where("key", "=", "deployment_recovery")
                         .executeTakeFirstOrThrow()
                 ).value,
             ).toBe("blocked");
             expect(
                 (
-                    await fs.stat(path.join(modelData, "maintenance/immutable-recovery-blocked"))
+                    await fs.stat(path.join(modelData, "maintenance/deployment-recovery-blocked"))
                 ).isFile(),
             ).toBe(true);
         } catch (error) {

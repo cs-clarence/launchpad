@@ -1,9 +1,9 @@
 # Replacement schema map (migration 018)
 
 Status: **revised 2026-11-19: replace, do not retire.** For the author and reviewer of
-migration `20261119_018_immutable_deployment_model`. This is the contract for its SQL;
-it is not the SQL. See the [P2 plan](../plans/immutable-p2-cutover.md), the
-[parent plan](../plans/immutable-deployment-model.md) and the
+migration `20261119_018_deployment_model`. This is the contract for its SQL;
+it is not the SQL. See the [P2 plan](../plans/deployment-p2-cutover.md), the
+[parent plan](../plans/deployment-model.md) and the
 [resource and state-machine design](deployment-modes.md).
 
 The earlier draft of this document specified retiring the preview tables into
@@ -34,11 +34,12 @@ pending migrations in one transaction; 018 opens no transaction of its own):
    the audit event.
 4. Create the tables below, their guards, and initialize the recovery gate.
 
-A failure in any step rolls everything back. The new tables do not reuse the dropped
-names, so an old process that survives fails with "relation does not exist" instead of
-operating on new rows; its startup check refuses once 018 is recorded. That does not stop a
-process already running or a Dokku operation it already dispatched, so the runbook is to stop
-every old controller, worker and admin job, and let in-flight remote work settle, first.
+A failure in any step rolls everything back. The new `deployment` table reuses the
+old table's name, not its rows or schema; `app_id` replaces `preview_id`. Names
+describe resources, while constraints enforce immutable behavior. Names are not an
+old-process fence. Startup checks refuse old binaries once 018 is recorded, but do
+not stop running processes or dispatched Dokku operations. Stop every old
+controller, worker and admin job and let remote work settle before migration.
 
 ## Physical table map
 
@@ -53,7 +54,7 @@ Explicit composite keys and FK targets:
   project FK is `(organization_id,project_id) → project(organization_id,id)`.
 - `app_alias`: `UNIQUE(organization_id,app_id,id)`; the promotion alias FK references
   that exact triple.
-- `immutable_deployment`: `UNIQUE(organization_id,id)` and
+- `deployment`: `UNIQUE(organization_id,id)` and
   `UNIQUE(organization_id,app_id,id)`; deletion's FK uses
   `(organization_id,app_id,deployment_id)`, as do alias and promotion targets.
 - `promotion_operation`: `UNIQUE(alias_id,id)` supports nullable
@@ -64,8 +65,8 @@ Explicit composite keys and FK targets:
 | Table                           | Required fields / constraints                                                                                                                                                                                                                                                                                                                                                                                             |
 | ------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `app`                           | `id`, `organization_id`, `project_id`, `slug`, `state` (`active`, `shutting-down`, `deleted`), actor/timestamps; qualified project FK, unique `(organization_id,id)`, partial live `(project_id,slug)` uniqueness                                                                                                                                                                                                         |
-| `immutable_deployment`          | `id`, org/app/artifact, fixed `spa`, permanent `app_name`/`hostname`, job status, `attempt`, lease owner/expiry, done/pending step, image tag and image ID, fixed failure fields, requester/timestamps, required `preview_expires_at`, nullable `last_unpinned_at`, deletion state/timestamp; qualified app/artifact FKs; unique `(organization_id,app_id,id)`; no preview ID, active-deployment pointer or rollback step |
-| `app_deployment_event`          | identity bigint PK, org/deployment, positive `seq`, phase, level, bounded fixed message, timestamp; FK `(organization_id,deployment_id)` to `immutable_deployment`; unique `(deployment_id,seq)`                                                                                                                                                                                                                          |
+| `deployment`                    | `id`, org/app/artifact, fixed `spa`, permanent `app_name`/`hostname`, job status, `attempt`, lease owner/expiry, done/pending step, image tag and image ID, fixed failure fields, requester/timestamps, required `preview_expires_at`, nullable `last_unpinned_at`, deletion state/timestamp; qualified app/artifact FKs; unique `(organization_id,app_id,id)`; no preview ID, active-deployment pointer or rollback step |
+| `app_deployment_event`          | identity bigint PK, org/deployment, positive `seq`, phase, level, bounded fixed message, timestamp; FK `(organization_id,deployment_id)` to `deployment`; unique `(deployment_id,seq)`                                                                                                                                                                                                                                    |
 | `app_alias`                     | ID/org/app/slug, permanent hostname, state from design, nullable committed target, nonnegative bigint `reserved_generation` and `committed_generation`, actor/timestamps; committed ≤ reserved; target FK `(organization_id,app_id,target_deployment_id)`; live slug unique per app; positive generation on bound state                                                                                                   |
 | `promotion_operation`           | ID/org/app/alias, action, previous/desired target, expected generation, allocated generation, status, attempt/fence/lease, done/pending intent, actor/idempotency/timestamps, safe outcome details, supersedes/superseded-by; bind requires desired target; withdraw requires null desired target; same-app/org alias and target FKs; unique `(alias_id,generation)`                                                      |
 | `deployment_deletion_operation` | ID/org/app/deployment, reason (`manual`, `expired`, `shutdown`), status, attempt, independently monotonic fence, lease, done/pending destroy/images step, requester and timestamps; qualified deployment FK; unfinished unique per deployment                                                                                                                                                                             |
@@ -107,7 +108,7 @@ frees a key.
   change status or image; a deleted resource cannot be reactivated; rows cannot be
   deleted, and `BEFORE TRUNCATE` statement guards cover every table above.
 - A release is accepted only for a soft-deleted deployment or a withdrawn alias.
-- `immutable_deployment.app_name` keeps the `lp-[a-z0-9]{10}` namespace; hostnames are
+- `deployment.app_name` keeps the `lp-[a-z0-9]{10}` namespace; hostnames are
   lowercase DNS names (`<= 253` characters, labels `<= 63`); image tags are unique.
 - The validator functions are ordinary `plpgsql` with a fixed `search_path`. They are
   **not** `SECURITY DEFINER`: with no legacy tables there is nothing the application role
@@ -128,18 +129,18 @@ older dump restored over an installation that already ran the model would otherw
 back an empty registry and stale generations while the router and Dokku keep the old state.
 
 - **Marker.** Every restore by a binary that knows 018 writes
-  `<data dir>/maintenance/immutable-recovery-blocked`, owner-only, by atomic rename with the
+  `<data dir>/maintenance/deployment-recovery-blocked`, owner-only, by atomic rename with the
   file and its directory fsynced. It lives outside the dump, so a restored `ready` row cannot
   clear it. It is written **after** every refusal and the archive pre-check, and **before** the
   first archive copy, so a refused restore blocks nothing. A restore that fails part-way keeps
   the marker on purpose: partial state is never offered to workers.
-- **Database gate.** `instance_state` key `immutable_recovery`, `blocked` or `ready`. Migration
+- **Database gate.** `instance_state` key `deployment_recovery`, `blocked` or `ready`. Migration
   018 initializes `ready` only when the key is absent; it preserves any pre-migration
   `blocked` row written while restoring an older dump. After import, restore sets and verifies `blocked`
   wherever `instance_state` exists; for dumps predating that table, the external marker blocks after migration.
 - **Importer crash guard (user decision, 2026-11-20).** The admin's session advisory lock
   cannot survive its death while a separate `pg_restore` continues. Before spawning it,
-  persist/fsync `maintenance/immutable-import-in-progress` with an operation identity,
+  persist/fsync `maintenance/deployment-import-in-progress` with an operation identity,
   database identity and importer application name. Clear only after observing child exit
   and import-backend disconnect. A crash or unproven exit keeps the record and refuses
   new restores and recovery-clear, including on an empty database; no schema rollback

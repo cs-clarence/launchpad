@@ -43,7 +43,7 @@ or prove. `restore` never contacts Dokku. Back up the target database first.
    running `migrate`**. If it is, keep ingress closed
    and first use the **pre-P2b binary** against the restored database for
    `inventory-previews --all`. Verify a matched backup and preserve Dokku state
-   before any exact-name cleanup; follow the [cutover runbook](immutable-cutover.md)
+   before any exact-name cleanup; follow the [cutover runbook](deployment-cutover.md)
    while the old table identities still exist. Never defer this inventory until
    after migrating. Then migrate from the **intended** version and run `migrate --status` (`pending: 0`, exit
    0). Run `bun .output/admin.mjs check-restore` with the `DOKKU_SSH_*` settings (the worker is idle and does not read them; these are only for this check). It records
@@ -127,25 +127,25 @@ or prove. `restore` never contacts Dokku. Back up the target database first.
    ingress. Then start the idle worker if needed.
 5. Migration 018 unconditionally drops preview-era data, including from an old
    restored backup; inventory/cleanup must use the pre-P2b binary first
-   ([cutover runbook](immutable-cutover.md)). Never manually delete a Dokku app
+   ([cutover runbook](deployment-cutover.md)). Never manually delete a Dokku app
    just because it was absent in step 3. A restored database can also leave
    unreferenced apps; Launchpad deliberately leaves those alone. The
    immutable model remains mutation-blocked until recovery is explicitly cleared.
 6. As the controller's OS user, for **P2b only**, `bun .output/admin.mjs recovery-clear` succeeds only when all
    eight model tables are empty and no durable `maintenance/model-writer-seen`
    file exists. It audits the operation, commits the ready gate, then removes
-   `maintenance/immutable-recovery-blocked` and fsyncs its directory. If a writer
+   `maintenance/deployment-recovery-blocked` and fsyncs its directory. If a writer
    has ever run, or any table has rows, it refuses: do not delete either file to
    bypass it. Rolling back to P2b after P3 wrote model state is unsupported.
    P3 replaces this limited rule with mandatory audited reconciliation attestation;
-   P5 supplies verification ([recovery design](design/immutable-cutover-schema.md#restore-and-the-recovery-gate)).
+   P5 supplies verification ([recovery design](design/deployment-cutover-schema.md#restore-and-the-recovery-gate)).
    Sign-in, organizations, members, projects and key administration remain available
    while the model is blocked; the marker is not an access-control substitute.
 
 ## Recover a crashed importer before retrying
 
 Before spawning `pg_restore`, this binary fsyncs
-`maintenance/immutable-import-in-progress`, identifying the target database and
+`maintenance/deployment-import-in-progress`, identifying the target database and
 the import's `PGAPPNAME`. A normal child exit is followed by a check that import
 backends have disconnected before the record is removed. If the admin dies,
 or backend exit cannot be established, the record remains. Another restore and
@@ -176,7 +176,7 @@ wrapper safe; such wrappers are unsupported.
 
     The flag attests to step 1 and backend exit. The command additionally refuses
     while an import backend is visible. It fsyncs a count-only acknowledgement in
-    `maintenance/immutable-import-ack-<operation-id>` **outside the database dump**,
+    `maintenance/deployment-import-ack-<operation-id>` **outside the database dump**,
     then removes/fsyncs the pending record. The acknowledgement is durable even if
     `public` is empty or replaced by the next restore. It does **not** clear the
     model recovery marker.

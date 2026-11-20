@@ -10,7 +10,7 @@ import { createDatabase, migrateToLatest, migrationStatus } from "@launchpad-kit
 import { readFileSync, statSync } from "node:fs";
 import path from "node:path";
 import { createDokkuClient } from "@launchpad-kit/dokku";
-import { acknowledgeImmutableImport, clearImmutableRecovery } from "@launchpad-kit/services";
+import { acknowledgeDeploymentImport, clearDeploymentRecovery } from "@launchpad-kit/services";
 import { createBackup, verifyBackup } from "./backup";
 import { checkRestore, restoreBackup, replaceTarget } from "./restore";
 
@@ -190,7 +190,7 @@ program
     )
     .action(async (options) => {
         await withDatabase((db) =>
-            acknowledgeImmutableImport(
+            acknowledgeDeploymentImport(
                 db,
                 path.resolve(process.env.LAUNCHPAD_DATA_DIR ?? ".data/controller"),
                 replaceTarget(process.env.DATABASE_URL!),
@@ -205,21 +205,21 @@ program
 program
     .command("recovery-clear")
     .description(
-        "P2b only: clear immutable recovery if every model table is empty and no model writer has run",
+        "P2b only: clear deployment recovery if every model table is empty and no model writer has run",
     )
     .action(async () => {
         await withDatabase((db) =>
-            clearImmutableRecovery(
+            clearDeploymentRecovery(
                 db,
                 path.resolve(process.env.LAUNCHPAD_DATA_DIR ?? ".data/controller"),
             ),
         );
-        console.log("Immutable recovery cleared: empty model, no writer seen.");
+        console.log("Deployment recovery cleared: empty model, no writer seen.");
     });
 
 program
     .command("check-restore")
-    .description("Read-only: list missing archives and immutable deployment apps")
+    .description("Read-only: list missing archives and deployment apps")
     .option("--no-dokku", "skip the Dokku check (otherwise DOKKU_SSH_* settings are required)")
     .action(async (options) => {
         const env = process.env;

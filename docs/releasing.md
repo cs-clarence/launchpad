@@ -102,7 +102,7 @@ directory layout or required mounts of the images. State each in the upgrade not
 ## Release checklist
 
 The P2b release must announce migration 018's unconditional deletion of preview-era
-tables/data and revocation of `preview:*` keys. Link the [pre-P2b cutover runbook](immutable-cutover.md):
+tables/data and revocation of `preview:*` keys. Link the [pre-P2b cutover runbook](deployment-cutover.md):
 backup, inventory and exact-name Dokku cleanup use the old binary before migrating.
 Also announce removal of `inventory-previews` and the changed `check-restore` report
 (immutable deployment IDs/deadlines, not preview IDs/slugs), the required data directory,

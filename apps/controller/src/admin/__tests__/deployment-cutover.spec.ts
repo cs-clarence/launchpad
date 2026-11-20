@@ -10,7 +10,7 @@ import { afterEach, describe, expect, it } from "vitest";
 const BEFORE_018 = "20261116_017_worker_heartbeat_lifecycle";
 const resources = [
     "app",
-    "immutable_deployment",
+    "deployment",
     "app_deployment_event",
     "app_alias",
     "promotion_operation",
@@ -166,6 +166,8 @@ describe("migration 018 destructive replacement", () => {
         "replaces populated schema %s without retaining any preview identity",
         async (before) => {
             const { db } = await seed(before);
+            const oldDeployment = await sql<{ oid: number }>`
+                select 'public.deployment'::regclass::oid as oid`.execute(db);
             if (before === BEFORE_018) {
                 await db
                     .insertInto("instance_state")
@@ -182,13 +184,21 @@ describe("migration 018 destructive replacement", () => {
             const names = tables.rows.map((row) => row.name);
             for (const old of [
                 "preview",
-                "deployment",
                 "deployment_event",
                 "deletion_operation",
                 "worker_heartbeat",
             ]) {
                 expect(names).not.toContain(old);
             }
+            // The name is reused, not the preview-era table or its rows/shape.
+            const newDeployment = await sql<{ oid: number }>`
+                select 'public.deployment'::regclass::oid as oid`.execute(db);
+            expect(newDeployment.rows[0]!.oid).not.toBe(oldDeployment.rows[0]!.oid);
+            const deploymentColumns = await sql<{ name: string }>`
+                select column_name as name from information_schema.columns
+                where table_schema = 'public' and table_name = 'deployment'`.execute(db);
+            expect(deploymentColumns.rows.map((row) => row.name)).toContain("app_id");
+            expect(deploymentColumns.rows.map((row) => row.name)).not.toContain("preview_id");
             expect(names.some((name) => name.startsWith("legacy_"))).toBe(false);
             for (const table of resources) {
                 expect((await sql.raw(`select * from ${table}`).execute(db)).rows).toEqual([]);
@@ -196,7 +206,7 @@ describe("migration 018 destructive replacement", () => {
             expect(await db.selectFrom("idempotency_key").selectAll().execute()).toEqual([]);
             expect(
                 await db.selectFrom("instance_state").select(["key", "value"]).execute(),
-            ).toEqual([{ key: "immutable_recovery", value: "ready" }]);
+            ).toEqual([{ key: "deployment_recovery", value: "ready" }]);
             expect(await db.selectFrom("session").select("id").execute()).toEqual([
                 { id: "preserved-session" },
             ]);
@@ -252,7 +262,7 @@ describe("migration 018 destructive replacement", () => {
         expect(audit).toEqual([
             {
                 actor: "system",
-                action: "immutable.cutover",
+                action: "deployment.cutover",
                 target_type: "instance",
                 target_id: "self",
                 organization_id: null,

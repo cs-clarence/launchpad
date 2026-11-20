@@ -29,9 +29,9 @@ tasks:
       append:
         - build
 
-  test:immutable-schema:
+  test:deployment-schema:
     description: Exercise migration 018 and its immutable-model constraints on isolated PostgreSQL databases
-    exec: sh -c 'export TEST_DATABASE_URL="${TEST_DATABASE_URL:-postgres://postgres:dev@127.0.0.1:55432/postgres}"; exec bun --bun vitest run --config vitest.config.integration.ts src/admin/__tests__/immutable-model.spec.ts src/admin/__tests__/immutable-cutover.spec.ts'
+    exec: sh -c 'export TEST_DATABASE_URL="${TEST_DATABASE_URL:-postgres://postgres:dev@127.0.0.1:55432/postgres}"; exec bun --bun vitest run --config vitest.config.integration.ts src/admin/__tests__/deployment-model.spec.ts src/admin/__tests__/deployment-cutover.spec.ts'
     dependencies:
       - ^build
     cache:

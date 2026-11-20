@@ -47,12 +47,12 @@ omni -i run test:db:down
 ```
 
 For focused migration/model checks, run
-`omni -i run test:immutable-schema -p @launchpad-kit/controller` between `test:db:up`
+`omni -i run test:deployment-schema -p @launchpad-kit/controller` between `test:db:up`
 and `test:db:down`. These uncached tests cover populated 014/017 upgrades,
 rollback/refusal, permanent registries and immutable constraints using real migration
 018 in isolated databases. The old P1 SQL fixtures, inventory and old-process tasks
 are removed. Recovery-gate coverage lives in services integration tests and controller
-restore/upgrade tests. See [the cutover runbook](docs/immutable-cutover.md).
+restore/upgrade tests. See [the cutover runbook](docs/deployment-cutover.md).
 
 To repeat the frozen previous-schema backup → migrate → restart → restore drill
 against disposable PostgreSQL, run `omni -i run test:upgrade -p @launchpad-kit/controller`

@@ -11,9 +11,9 @@ import {
     resolveArtifactPath,
     uploadArtifact,
     assertModelMutationsReady,
-    clearImmutableRecovery,
+    clearDeploymentRecovery,
     recordModelWriterSeen,
-    acknowledgeImmutableImport,
+    acknowledgeDeploymentImport,
     type Principal,
 } from "@launchpad-kit/services";
 import { SITE, tarGz } from "@launchpad-kit/services/testing";
@@ -179,7 +179,7 @@ describe("restoreBackup", () => {
         expect(result.pendingMigrations).toEqual([]);
         expect(
             (
-                await fs.stat(path.join(options.dataDir, "maintenance/immutable-recovery-blocked"))
+                await fs.stat(path.join(options.dataDir, "maintenance/deployment-recovery-blocked"))
             ).isFile(),
         ).toBe(true);
         expect(
@@ -187,7 +187,7 @@ describe("restoreBackup", () => {
                 await target.db
                     .selectFrom("instance_state")
                     .select("value")
-                    .where("key", "=", "immutable_recovery")
+                    .where("key", "=", "deployment_recovery")
                     .executeTakeFirstOrThrow()
             ).value,
         ).toBe("blocked");
@@ -208,7 +208,7 @@ describe("restoreBackup", () => {
         }
         // Running it again against the now-populated database is refused, nothing replaced.
         await expect(restoreBackup({ ...options })).rejects.toThrow(/already has data/);
-        await clearImmutableRecovery(target.db, options.dataDir);
+        await clearDeploymentRecovery(target.db, options.dataDir);
         await assertModelMutationsReady(target.db, options.dataDir);
     });
 
@@ -256,7 +256,7 @@ describe("restoreBackup", () => {
         await expect(restoreBackup(options)).rejects.toThrow(/boom/);
         expect(
             (
-                await fs.stat(path.join(options.dataDir, "maintenance/immutable-recovery-blocked"))
+                await fs.stat(path.join(options.dataDir, "maintenance/deployment-recovery-blocked"))
             ).isFile(),
         ).toBe(true);
         await expect(assertModelMutationsReady(target.db, options.dataDir)).rejects.toThrow(
@@ -323,20 +323,20 @@ exit 0
                 await target.db
                     .selectFrom("instance_state")
                     .select("value")
-                    .where("key", "=", "immutable_recovery")
+                    .where("key", "=", "deployment_recovery")
                     .executeTakeFirstOrThrow()
             ).value,
         ).toBe("ready");
         expect(
             (
-                await fs.stat(path.join(options.dataDir, "maintenance/immutable-recovery-blocked"))
+                await fs.stat(path.join(options.dataDir, "maintenance/deployment-recovery-blocked"))
             ).isFile(),
         ).toBe(true);
         await expect(assertModelMutationsReady(target.db, options.dataDir)).rejects.toThrow(
             /pg_restore/,
         );
         await expect(restoreBackup(options)).rejects.toThrow(/previous pg_restore/);
-        await expect(clearImmutableRecovery(target.db, options.dataDir)).rejects.toThrow(
+        await expect(clearDeploymentRecovery(target.db, options.dataDir)).rejects.toThrow(
             /pg_restore/,
         );
         const acknowledged = spawnSync(
@@ -421,7 +421,7 @@ fi
             // There is not even a backend yet. The durable guard must refuse
             // before a later import could commit into the second restore's schema.
             await expect(restoreBackup(options)).rejects.toThrow(/previous pg_restore/);
-            await expect(clearImmutableRecovery(target.db, options.dataDir)).rejects.toThrow(
+            await expect(clearDeploymentRecovery(target.db, options.dataDir)).rejects.toThrow(
                 /pg_restore/,
             );
         } finally {
@@ -434,7 +434,7 @@ fi
             }
         }
         expect((await fs.readFile(finished, "utf8")).trim()).toBe("0");
-        await acknowledgeImmutableImport(
+        await acknowledgeDeploymentImport(
             target.db,
             options.dataDir,
             replaceTarget(target.url),
@@ -786,7 +786,7 @@ fi
         expect(result.pendingMigrations).toHaveLength(files.length - 14);
         expect(
             (
-                await fs.stat(path.join(options.dataDir, "maintenance/immutable-recovery-blocked"))
+                await fs.stat(path.join(options.dataDir, "maintenance/deployment-recovery-blocked"))
             ).isFile(),
         ).toBe(true);
         await target.migrate();
@@ -794,7 +794,7 @@ fi
         await expect(assertModelMutationsReady(target.db, options.dataDir)).rejects.toThrow(
             /blocked/,
         );
-        await expect(clearImmutableRecovery(target.db, options.dataDir)).rejects.toThrow(/writer/);
+        await expect(clearDeploymentRecovery(target.db, options.dataDir)).rejects.toThrow(/writer/);
     });
 
     it("migrates a restored 017 dump without overwriting its blocked gate", async () => {
@@ -818,11 +818,11 @@ fi
                 await target.db
                     .selectFrom("instance_state")
                     .select("value")
-                    .where("key", "=", "immutable_recovery")
+                    .where("key", "=", "deployment_recovery")
                     .executeTakeFirstOrThrow()
             ).value,
         ).toBe("blocked");
-        await clearImmutableRecovery(target.db, options.dataDir);
+        await clearDeploymentRecovery(target.db, options.dataDir);
         await assertModelMutationsReady(target.db, options.dataDir);
     });
 });
@@ -855,7 +855,7 @@ describe("checkRestore", () => {
             const app = `lp-${randomUUID().replaceAll("-", "").slice(0, 10)}`;
             await target.db.transaction().execute(async (trx) => {
                 await trx
-                    .insertInto("immutable_deployment")
+                    .insertInto("deployment")
                     .values({
                         id,
                         organization_id: org,
@@ -893,18 +893,14 @@ describe("checkRestore", () => {
             previews.push({ id, app_name: app });
         }
         await target.db
-            .updateTable("immutable_deployment")
+            .updateTable("deployment")
             .set({ preview_expires_at: sql<Date>`now() - interval '1 day'` })
             .where("id", "=", previews[0]!.id)
             .execute();
         const gone = (await target.db.selectFrom("artifact").select("storage_key").execute())[0]!;
         await fs.rm(resolveArtifactPath(options.dataDir, gone.storage_key));
         const asked: string[] = [];
-        const before = await target.db
-            .selectFrom("immutable_deployment")
-            .selectAll()
-            .orderBy("id")
-            .execute();
+        const before = await target.db.selectFrom("deployment").selectAll().orderBy("id").execute();
         const report = await checkRestore({
             db: target.db,
             dataDir: options.dataDir,
@@ -920,7 +916,7 @@ describe("checkRestore", () => {
         expect(asked).not.toContain(previews[2]!.app_name);
         // Nothing was changed.
         expect(
-            await target.db.selectFrom("immutable_deployment").selectAll().orderBy("id").execute(),
+            await target.db.selectFrom("deployment").selectAll().orderBy("id").execute(),
         ).toEqual(before);
         const skipped = await checkRestore({ db: target.db, dataDir: options.dataDir });
         expect(skipped.dokkuChecked).toBe(false);

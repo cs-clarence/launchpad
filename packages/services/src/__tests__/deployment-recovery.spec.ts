@@ -8,20 +8,20 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
     assertModelMutationsReady,
     blockRestoredModel,
-    clearImmutableRecovery,
-    markImmutableRecoveryBlocked,
+    clearDeploymentRecovery,
+    markDeploymentRecoveryBlocked,
     recordModelWriterSeen,
     withModelMutation,
-    withImmutableRecoveryMaintenance,
-    beginImmutableImport,
-    acknowledgeImmutableImport,
-    assertNoPendingImmutableImport,
-} from "../immutable-recovery";
+    withDeploymentRecoveryMaintenance,
+    beginDeploymentImport,
+    acknowledgeDeploymentImport,
+    assertNoPendingDeploymentImport,
+} from "../deployment-recovery";
 import { getStatus } from "../status";
 
 let source: Awaited<ReturnType<typeof createTestDatabase>>;
 let dataDir: string;
-const marker = () => path.join(dataDir, "maintenance/immutable-recovery-blocked");
+const marker = () => path.join(dataDir, "maintenance/deployment-recovery-blocked");
 const seen = () => path.join(dataDir, "maintenance/model-writer-seen");
 beforeEach(async () => {
     source = await createTestDatabase();
@@ -34,10 +34,10 @@ afterEach(async () => {
     if (dataDir) await fs.rm(dataDir, { recursive: true, force: true });
 });
 
-describe("immutable model recovery gate", () => {
+describe("deployment model recovery gate", () => {
     it("refuses importer acknowledgement without attestation or while its backend is alive", async () => {
-        await markImmutableRecoveryBlocked(dataDir);
-        const record = await beginImmutableImport(dataDir, "localhost:5432/fixture");
+        await markDeploymentRecoveryBlocked(dataDir);
+        const record = await beginDeploymentImport(dataDir, "localhost:5432/fixture");
         let release!: () => void;
         const held = new Promise<void>((resolve) => {
             release = resolve;
@@ -60,25 +60,25 @@ describe("immutable model recovery gate", () => {
         try {
             await ready;
             await expect(
-                acknowledgeImmutableImport(source.db, dataDir, record.databaseIdentity, false),
+                acknowledgeDeploymentImport(source.db, dataDir, record.databaseIdentity, false),
             ).rejects.toThrow(/Confirm/);
             await expect(
-                acknowledgeImmutableImport(source.db, dataDir, record.databaseIdentity, true),
+                acknowledgeDeploymentImport(source.db, dataDir, record.databaseIdentity, true),
             ).rejects.toThrow(/backend/);
-            await expect(clearImmutableRecovery(source.db, dataDir)).rejects.toThrow(/pg_restore/);
+            await expect(clearDeploymentRecovery(source.db, dataDir)).rejects.toThrow(/pg_restore/);
         } finally {
             release();
             await importer;
         }
         await expect(
-            acknowledgeImmutableImport(source.db, dataDir, "wrong:5432/database", true),
+            acknowledgeDeploymentImport(source.db, dataDir, "wrong:5432/database", true),
         ).rejects.toThrow(/different database/);
-        await expect(assertNoPendingImmutableImport(dataDir)).rejects.toThrow(
+        await expect(assertNoPendingDeploymentImport(dataDir)).rejects.toThrow(
             /previous pg_restore/,
         );
-        await acknowledgeImmutableImport(source.db, dataDir, record.databaseIdentity, true);
-        await assertNoPendingImmutableImport(dataDir);
-        const audit = path.join(dataDir, `maintenance/immutable-import-ack-${record.id}`);
+        await acknowledgeDeploymentImport(source.db, dataDir, record.databaseIdentity, true);
+        await assertNoPendingDeploymentImport(dataDir);
+        const audit = path.join(dataDir, `maintenance/deployment-import-ack-${record.id}`);
         expect(JSON.parse(await fs.readFile(audit, "utf8"))).toMatchObject({
             attestedStoppedImports: 1,
             activeImportBackends: 0,
@@ -101,9 +101,9 @@ describe("immutable model recovery gate", () => {
             }
             return handle;
         });
-        await expect(markImmutableRecoveryBlocked(dataDir)).rejects.toThrow("parent fsync failed");
+        await expect(markDeploymentRecoveryBlocked(dataDir)).rejects.toThrow("parent fsync failed");
         expect((await fs.stat(path.join(dataDir, "maintenance"))).isDirectory()).toBe(true);
-        await markImmutableRecoveryBlocked(dataDir);
+        await markDeploymentRecoveryBlocked(dataDir);
         expect(parentSyncs).toBe(2);
     });
 
@@ -126,11 +126,11 @@ describe("immutable model recovery gate", () => {
         let called = false;
         try {
             await expect(
-                withImmutableRecoveryMaintenance(
+                withDeploymentRecoveryMaintenance(
                     source.db,
                     async () => {
                         called = true;
-                        await markImmutableRecoveryBlocked(dataDir);
+                        await markDeploymentRecoveryBlocked(dataDir);
                     },
                     AbortSignal.timeout(50),
                 ),
@@ -147,12 +147,12 @@ describe("immutable model recovery gate", () => {
         await assertModelMutationsReady(source.db, dataDir);
         await source.db
             .deleteFrom("instance_state")
-            .where("key", "=", "immutable_recovery")
+            .where("key", "=", "deployment_recovery")
             .execute();
         await expect(assertModelMutationsReady(source.db, dataDir)).rejects.toThrow(/gate/);
         await source.db
             .insertInto("instance_state")
-            .values({ key: "immutable_recovery", value: "unknown" })
+            .values({ key: "deployment_recovery", value: "unknown" })
             .execute();
         await expect(assertModelMutationsReady(source.db, dataDir)).rejects.toThrow(/gate/);
     });
@@ -162,7 +162,7 @@ describe("immutable model recovery gate", () => {
         try {
             await old.migrateTo("20261116_017_worker_heartbeat_lifecycle");
             await assertModelMutationsReady(old.db, dataDir);
-            await markImmutableRecoveryBlocked(dataDir);
+            await markDeploymentRecoveryBlocked(dataDir);
             await expect(assertModelMutationsReady(old.db, dataDir)).rejects.toThrow(/blocked/);
         } finally {
             await old.destroy();
@@ -170,7 +170,7 @@ describe("immutable model recovery gate", () => {
     });
 
     it("keeps an external marker authoritative over a restored ready row", async () => {
-        await markImmutableRecoveryBlocked(dataDir);
+        await markDeploymentRecoveryBlocked(dataDir);
         expect((await fs.stat(marker())).mode & 0o777).toBe(0o600);
         expect(JSON.parse(await fs.readFile(marker(), "utf8"))).toMatchObject({ version: 1 });
         await expect(assertModelMutationsReady(source.db, dataDir)).rejects.toThrow(/blocked/);
@@ -195,26 +195,26 @@ describe("immutable model recovery gate", () => {
     });
 
     it("clears only a never-used empty model and audits the explicit operation", async () => {
-        await markImmutableRecoveryBlocked(dataDir);
+        await markDeploymentRecoveryBlocked(dataDir);
         await blockRestoredModel(source.db);
-        await clearImmutableRecovery(source.db, dataDir);
+        await clearDeploymentRecovery(source.db, dataDir);
         await expect(fs.stat(marker())).rejects.toMatchObject({ code: "ENOENT" });
         await assertModelMutationsReady(source.db, dataDir);
         const audit = await source.db
             .selectFrom("audit_event")
             .select(["action", "detail"])
-            .where("action", "=", "immutable.recovery-cleared")
+            .where("action", "=", "deployment.recovery-cleared")
             .execute();
         expect(audit).toEqual([
-            { action: "immutable.recovery-cleared", detail: "model_rows=0;writer_seen=0" },
+            { action: "deployment.recovery-cleared", detail: "model_rows=0;writer_seen=0" },
         ]);
     });
 
     it("refuses to clear empty tables once a durable writer record exists", async () => {
         await recordModelWriterSeen(dataDir);
-        await markImmutableRecoveryBlocked(dataDir);
+        await markDeploymentRecoveryBlocked(dataDir);
         await blockRestoredModel(source.db);
-        await expect(clearImmutableRecovery(source.db, dataDir)).rejects.toThrow(/writer/);
+        await expect(clearDeploymentRecovery(source.db, dataDir)).rejects.toThrow(/writer/);
         expect((await fs.stat(marker())).isFile()).toBe(true);
         await expect(assertModelMutationsReady(source.db, dataDir)).rejects.toThrow(/blocked/);
     });
@@ -260,8 +260,8 @@ describe("immutable model recovery gate", () => {
                 created_by: user,
             })
             .execute();
-        await markImmutableRecoveryBlocked(dataDir);
-        await expect(clearImmutableRecovery(source.db, dataDir)).rejects.toThrow(/not empty/);
+        await markDeploymentRecoveryBlocked(dataDir);
+        await expect(clearDeploymentRecovery(source.db, dataDir)).rejects.toThrow(/not empty/);
         expect((await fs.stat(marker())).isFile()).toBe(true);
     });
 
@@ -292,7 +292,7 @@ describe("immutable model recovery gate", () => {
                 .execute(),
         ).toEqual([]);
         expect((await fs.stat(seen())).isFile()).toBe(true);
-        await expect(clearImmutableRecovery(source.db, dataDir)).rejects.toThrow(/writer/);
+        await expect(clearDeploymentRecovery(source.db, dataDir)).rejects.toThrow(/writer/);
     });
 
     it("aborts before the effect when writer-seen cannot be created safely", async () => {
@@ -320,7 +320,7 @@ describe("immutable model recovery gate", () => {
         await expect(assertModelMutationsReady(source.db, dataDir)).rejects.toThrow(
             /plain directory/,
         );
-        await expect(markImmutableRecoveryBlocked(dataDir)).rejects.toThrow(/plain directory/);
+        await expect(markDeploymentRecoveryBlocked(dataDir)).rejects.toThrow(/plain directory/);
     });
 
     it("serializes restore maintenance against a running model transaction", async () => {
@@ -342,7 +342,7 @@ describe("immutable model recovery gate", () => {
                 await sql`set lock_timeout = '250ms'`.execute(connection);
                 try {
                     await expect(
-                        withImmutableRecoveryMaintenance(connection, async () => {}),
+                        withDeploymentRecoveryMaintenance(connection, async () => {}),
                     ).rejects.toThrow(/lock timeout/);
                 } finally {
                     await sql`reset lock_timeout`.execute(connection);

@@ -52,13 +52,13 @@ fixture and built-artifact upgrade drill live in
 [onboarding](../onboarding.md).
 
 The model SQL has moved
-to the real migration `packages/database/src/migrations/20261119_018_immutable_deployment_model.ts`;
-`immutable-model.spec.ts` and `immutable-cutover.spec.ts` exercise it using
-`test:immutable-schema` on disposable PostgreSQL. P1 fixtures, old-process tests
+to the real migration `packages/database/src/migrations/20261119_018_deployment_model.ts`;
+`deployment-model.spec.ts` and `deployment-cutover.spec.ts` exercise it using
+`test:deployment-schema` on disposable PostgreSQL. P1 fixtures, old-process tests
 and inventory are removed. `Database` describes the new physical tables;
-artifact collection pins `immutable_deployment`, and `check-restore` reports
+artifact collection pins `deployment`, and `check-restore` reports
 immutable deployment identities. The recovery gate is
-`packages/services/src/immutable-recovery.ts`: shared/exclusive advisory locks,
+`packages/services/src/deployment-recovery.ts`: shared/exclusive advisory locks,
 fsynced external marker/writer record and the P2b empty-model clear rule.
 Only model mutations use that gate; organization/auth/key administration stays available.
 

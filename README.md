@@ -5,7 +5,7 @@ Custom Dokku image with the `http-auth` plugin for local deployments.
 The controller has operator login, organizations, members, projects, optional
 email invitations and recovery, and an OpenAPI reference. The earlier preview deployment runtime was
 removed; the worker idles until the immutable app model arrives (see
-[the plan](docs/plans/immutable-deployment-model.md)). Nothing is published or deployed from this
+[the plan](docs/plans/deployment-model.md)). Nothing is published or deployed from this
 repository's CI. Backup and restore, quotas and a production Compose
 setup are still to come (see [the plan](docs/plans/application.md)). See
 [Controller](#controller) below, [the controller README](apps/controller/README.md) and

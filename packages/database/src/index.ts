@@ -150,7 +150,7 @@ export type DeploymentStatus =
 
 export type DeploymentStep = "app" | "build" | "configure" | "load" | "verify";
 
-export interface ImmutableDeploymentTable {
+export interface DeploymentTable {
     id: Generated<string>;
     organization_id: string;
     app_id: string;
@@ -328,7 +328,7 @@ export interface Database {
     api_key: ApiKeyTable;
     artifact: ArtifactTable;
     app: AppTable;
-    immutable_deployment: ImmutableDeploymentTable;
+    deployment: DeploymentTable;
     app_deployment_event: AppDeploymentEventTable;
     deployment_deletion_operation: DeploymentDeletionOperationTable;
     app_alias: AppAliasTable;

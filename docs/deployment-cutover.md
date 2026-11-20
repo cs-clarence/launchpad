@@ -2,7 +2,7 @@
 
 For an operator preparing the P2b upgrade. Use this procedure only with a reviewed
 P2b release after its schema/recovery gates pass; development test results are not
-authorization to run it against an installation. See the [cutover plan](plans/immutable-p2-cutover.md).
+authorization to run it against an installation. See the [cutover plan](plans/deployment-p2-cutover.md).
 
 Migration 018 unconditionally drops all preview, deployment, deployment-event,
 deletion-operation and worker-heartbeat data. It keeps no history and reserves
@@ -13,7 +13,7 @@ the database cannot tell you which old apps need removal.
 
 1. Close management ingress and stop every old controller, worker and writing
    admin job. Preserve the pre-cutover database and the operation list from stop
-   time. Apply the [settling rule](design/immutable-cutover-schema.md#restore-and-the-recovery-gate):
+   time. Apply the [settling rule](design/deployment-cutover-schema.md#restore-and-the-recovery-gate):
    after the last writer stops, wait at least 25 minutes, check on the Dokku
    host for worker-started Docker/Dokku processes, and examine every target in
    the pre-stop pending-intent/unexpired-lease list by exact app name. A worker

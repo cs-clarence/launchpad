@@ -18,7 +18,7 @@ const migrations = await new FileMigrationProvider({
         "../../../../../packages/database/src/migrations",
     ),
 }).getMigrations();
-const cutover = migrations["20261119_018_immutable_deployment_model"]!.up;
+const cutover = migrations["20261119_018_deployment_model"]!.up;
 interface Tenant {
     org: string;
     project: string;
@@ -147,7 +147,7 @@ async function deployment(
             await nameReservation(connection, "deployment", id, parent.org, name);
     };
     if (options.reservationsFirst) await reserve();
-    await sql`insert into immutable_deployment
+    await sql`insert into deployment
         (id, organization_id, app_id, artifact_id, hostname, app_name, status,
          image_tag, image_id, finished_at, requested_by, preview_expires_at)
         values (${id}, ${parent.org}, ${parent.id}, ${options.artifact ?? parent.artifact},
@@ -216,7 +216,7 @@ async function promotion(
     return id;
 }
 
-describe("migration 018 immutable model and reservations", () => {
+describe("migration 018 deployment model and reservations", () => {
     it("keeps bigint generations as decimal strings without JavaScript precision loss", async () => {
         const route = await allocateAlias(await app());
         const before = await db()
@@ -250,8 +250,11 @@ describe("migration 018 immutable model and reservations", () => {
             18,
         );
         expect(
-            (await sql`select * from instance_state where key = 'immutable_recovery'`.execute(db()))
-                .rows,
+            (
+                await sql`select * from instance_state where key = 'deployment_recovery'`.execute(
+                    db(),
+                )
+            ).rows,
         ).toMatchObject([{ value: "ready" }]);
     });
 
@@ -259,7 +262,7 @@ describe("migration 018 immutable model and reservations", () => {
         const parent = await app();
         await allocateDeployment(parent, { reservationsFirst: first });
         await allocateAlias(parent, { reservationsFirst: first });
-        expect((await sql`select * from immutable_deployment`.execute(db())).rows).toHaveLength(1);
+        expect((await sql`select * from deployment`.execute(db())).rows).toHaveLength(1);
         expect((await sql`select * from app_alias`.execute(db())).rows).toHaveLength(1);
     });
 
@@ -280,7 +283,7 @@ describe("migration 018 immutable model and reservations", () => {
                     }),
             ).rejects.toThrow(/owner and .* reservation must match/);
             expect(bodyCompleted).toBe(true);
-            expect((await sql`select * from immutable_deployment`.execute(db())).rows).toEqual([]);
+            expect((await sql`select * from deployment`.execute(db())).rows).toEqual([]);
             expect(
                 (
                     await sql`select * from hostname_reservation where owner_kind = 'deployment'`.execute(
@@ -383,7 +386,7 @@ describe("migration 018 immutable model and reservations", () => {
         const parent = await app();
         const deployed = await allocateDeployment(parent);
         const route = await allocateAlias(parent, { slug: "production" });
-        await sql`update immutable_deployment set desired_state = 'deleted', deleted_at = now()
+        await sql`update deployment set desired_state = 'deleted', deleted_at = now()
             where id = ${deployed.id}`.execute(db());
         await sql`update app_alias set state = 'withdrawn', reserved_generation = 1, committed_generation = 1
             where id = ${route.id}`.execute(db());
@@ -557,19 +560,19 @@ describe("migration 018 immutable model and reservations", () => {
         const parent = await app();
         const deployed = await allocateDeployment(parent);
         await expect(
-            sql`update immutable_deployment set image_id = ${`sha256:${"b".repeat(64)}`}
+            sql`update deployment set image_id = ${`sha256:${"b".repeat(64)}`}
             where id = ${deployed.id}`.execute(db()),
         ).rejects.toThrow(/cannot be redeployed/);
         await expect(
-            sql`update immutable_deployment set status = 'queued'
+            sql`update deployment set status = 'queued'
             where id = ${deployed.id}`.execute(db()),
         ).rejects.toThrow(/cannot be redeployed/);
         await expect(
-            sql`update immutable_deployment set spa = true
+            sql`update deployment set spa = true
             where id = ${deployed.id}`.execute(db()),
         ).rejects.toThrow(/deployment identity/);
         await expect(
-            sql`update immutable_deployment set hostname = 'changed.apps.example.net'
+            sql`update deployment set hostname = 'changed.apps.example.net'
             where id = ${deployed.id}`.execute(db()),
         ).rejects.toThrow(/resource identity/);
     });
@@ -578,7 +581,7 @@ describe("migration 018 immutable model and reservations", () => {
         const first = await allocateDeployment(await app());
         const second = await allocateDeployment(await app(), { status: "queued" });
         await expect(
-            sql`update immutable_deployment set image_tag = ${`launchpad/site:${first.id}`}
+            sql`update deployment set image_tag = ${`launchpad/site:${first.id}`}
             where id = ${second.id}`.execute(db()),
         ).rejects.toThrow(/duplicate key/);
     });
@@ -588,7 +591,7 @@ describe("migration 018 immutable model and reservations", () => {
             select tgname as name, tgdeferrable and tginitdeferred as deferred
             from pg_trigger where tgname in (
                 'hostname_reservation_owner', 'dokku_name_reservation_owner',
-                'immutable_deployment_reservations', 'app_alias_reservations'
+                'deployment_reservations', 'app_alias_reservations'
             )`.execute(db());
         expect(triggers.rows).toHaveLength(4);
         expect(triggers.rows.every((row) => row.deferred)).toBe(true);
@@ -602,7 +605,7 @@ describe("migration 018 immutable model and reservations", () => {
                 exists(select from aclexplode(coalesce(p.proacl, acldefault('f', p.proowner))) acl
                     where acl.grantee = 0 and acl.privilege_type = 'EXECUTE') as public_execute
             from pg_proc p where p.pronamespace = 'public'::regnamespace and p.proname in (
-                'immutable_check_reservations', 'immutable_validate_reservation', 'immutable_validate_owner'
+                'deployment_check_reservations', 'deployment_validate_reservation', 'deployment_validate_owner'
             )`.execute(db());
         expect(functions.rows).toHaveLength(3);
         for (const fn of functions.rows) {
@@ -670,7 +673,7 @@ describe("migration 018 immutable model and reservations", () => {
         expect(
             (await sql`select * from app_alias where hostname = ${hostname}`.execute(db())).rows,
         ).toHaveLength(1);
-        expect((await sql`select * from immutable_deployment`.execute(db())).rows).toEqual([]);
+        expect((await sql`select * from deployment`.execute(db())).rows).toEqual([]);
     });
 
     it("keeps app/project identity stable and allows only soft retirement", async () => {
@@ -772,17 +775,17 @@ describe("migration 018 immutable model and reservations", () => {
 
     it("installs BEFORE TRUNCATE statement guards on all eight model tables", async () => {
         const guards = await sql<{ name: string }>`select tgrelid::regclass::text as name
-            from pg_trigger where tgfoid = 'public.immutable_protect_truncate()'::regprocedure
+            from pg_trigger where tgfoid = 'public.deployment_protect_truncate()'::regprocedure
                 and (tgtype & 32) = 32 and (tgtype & 2) = 2 and (tgtype & 1) = 0
             order by name`.execute(db());
         expect(guards.rows.map((row) => row.name)).toEqual([
             "app",
             "app_alias",
             "app_deployment_event",
+            "deployment",
             "deployment_deletion_operation",
             "dokku_name_reservation",
             "hostname_reservation",
-            "immutable_deployment",
             "promotion_operation",
         ]);
     });
@@ -820,10 +823,10 @@ describe("migration 018 immutable model and reservations", () => {
 
     it("does not cancel a deployment deletion once started", async () => {
         const deployed = await allocateDeployment(await app());
-        await sql`update immutable_deployment set desired_state = 'deleting'
+        await sql`update deployment set desired_state = 'deleting'
             where id = ${deployed.id}`.execute(db());
         await expect(
-            sql`update immutable_deployment set desired_state = 'active'
+            sql`update deployment set desired_state = 'active'
             where id = ${deployed.id}`.execute(db()),
         ).rejects.toThrow(/deletion cannot be cancelled/);
     });
@@ -927,7 +930,7 @@ describe("migration 018 immutable model and reservations", () => {
 // A test-only non-owner application role. Validators are invokers, so it needs
 // read access and explicit function execution, but cannot disable owner guards.
 // Production role provisioning remains the Compose deployment gate.
-describe("immutable model under restricted roles (test-only roles)", () => {
+describe("deployment model under restricted roles (test-only roles)", () => {
     let application = "";
 
     beforeEach(async () => {
@@ -937,16 +940,16 @@ describe("immutable model under restricted roles (test-only roles)", () => {
         const grant = (text: string) => sql.raw(text).execute(db());
         await grant(`grant usage on schema public to ${application}`);
         for (const fn of [
-            "immutable_check_reservations(text, uuid)",
-            "immutable_validate_reservation()",
-            "immutable_validate_owner()",
+            "deployment_check_reservations(text, uuid)",
+            "deployment_validate_reservation()",
+            "deployment_validate_owner()",
         ]) {
             await grant(`grant execute on function public.${fn} to ${application}`);
         }
         // The application can read and write rows. It cannot delete, truncate,
         // own tables or disable their guards.
         await grant(
-            `grant select, insert, update on public.app, public.immutable_deployment,
+            `grant select, insert, update on public.app, public.deployment,
                 public.app_deployment_event, public.app_alias, public.promotion_operation,
                 public.deployment_deletion_operation, public.hostname_reservation,
                 public.dokku_name_reservation to ${application}`,
@@ -977,7 +980,7 @@ describe("immutable model under restricted roles (test-only roles)", () => {
             await deployment(trx, parent);
             await alias(trx, parent);
         });
-        expect((await sql`select * from immutable_deployment`.execute(db())).rows).toHaveLength(1);
+        expect((await sql`select * from deployment`.execute(db())).rows).toHaveLength(1);
     });
 
     it("still fails a missing reservation at COMMIT under the restricted role", async () => {
@@ -985,7 +988,7 @@ describe("immutable model under restricted roles (test-only roles)", () => {
         await expect(
             asApplication((trx) => deployment(trx, parent, { omitHost: true })),
         ).rejects.toThrow(/owner and hostname reservation must match/);
-        expect((await sql`select * from immutable_deployment`.execute(db())).rows).toEqual([]);
+        expect((await sql`select * from deployment`.execute(db())).rows).toEqual([]);
     });
 
     it.each([
@@ -993,10 +996,10 @@ describe("immutable model under restricted roles (test-only roles)", () => {
         ["delete registry history", "delete from public.hostname_reservation"],
         ["disable a guard trigger", "alter table public.hostname_reservation disable trigger user"],
         ["bypass triggers", "set session_replication_role = replica"],
-        ["drop a guard function", "drop function public.immutable_protect_truncate() cascade"],
+        ["drop a guard function", "drop function public.deployment_protect_truncate() cascade"],
         [
             "replace a validator",
-            "alter function public.immutable_check_reservations(text, uuid) owner to current_user",
+            "alter function public.deployment_check_reservations(text, uuid) owner to current_user",
         ],
     ])("denies the application role the ability to %s", async (_name, statement) => {
         const before = (
@@ -1015,8 +1018,8 @@ describe("immutable model under restricted roles (test-only roles)", () => {
             select p.proname as name, pg_get_userbyid(p.proowner) as owner,
                 p.prosecdef as definer, p.proconfig as config
             from pg_proc p where p.pronamespace = 'public'::regnamespace and p.proname in (
-                'immutable_check_reservations', 'immutable_validate_reservation',
-                'immutable_validate_owner')
+                'deployment_check_reservations', 'deployment_validate_reservation',
+                'deployment_validate_owner')
             order by p.proname`.execute(db());
         expect(rows.rows).toHaveLength(3);
         for (const fn of rows.rows) {

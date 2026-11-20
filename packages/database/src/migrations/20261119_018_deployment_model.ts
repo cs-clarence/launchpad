@@ -18,12 +18,12 @@ export async function up(db: Kysely<any>): Promise<void> {
             returning id
         )
         insert into audit_event (actor, action, target_type, target_id, organization_id, detail)
-        select 'system', 'immutable.cutover', 'instance', 'self', null,
+        select 'system', 'deployment.cutover', 'instance', 'self', null,
             'revoked_keys=' || count(*)::text from revoked
     `.execute(db);
     await sql`
 
-    CREATE FUNCTION public.immutable_hostname_valid(value text) RETURNS boolean
+    CREATE FUNCTION public.deployment_hostname_valid(value text) RETURNS boolean
     LANGUAGE sql IMMUTABLE STRICT SET search_path = pg_catalog AS $function$
         SELECT length(value) <= 253 AND value = lower(value)
             AND cardinality(string_to_array(value, '.')) >= 2
@@ -52,14 +52,14 @@ export async function up(db: Kysely<any>): Promise<void> {
         WHERE state <> 'deleted';
     CREATE INDEX app_org_created_idx ON public.app(organization_id, created_at, id);
 
-    CREATE TABLE public.immutable_deployment (
+    CREATE TABLE public.deployment (
         id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
         organization_id text NOT NULL,
         app_id uuid NOT NULL,
         artifact_id uuid NOT NULL,
         spa boolean NOT NULL DEFAULT false,
         app_name text NOT NULL UNIQUE CHECK (app_name ~ '^lp-[a-z0-9]{10}$'),
-        hostname text NOT NULL UNIQUE CHECK (public.immutable_hostname_valid(hostname)),
+        hostname text NOT NULL UNIQUE CHECK (public.deployment_hostname_valid(hostname)),
         status text NOT NULL DEFAULT 'queued' CHECK (status IN (
             'queued', 'preparing', 'building', 'deploying', 'verifying',
             'succeeded', 'failed', 'cancelled', 'reconciliation-needed'
@@ -92,16 +92,16 @@ export async function up(db: Kysely<any>): Promise<void> {
         CHECK (status <> 'succeeded' OR
             (image_tag IS NOT NULL AND image_id IS NOT NULL AND finished_at IS NOT NULL))
     );
-    CREATE UNIQUE INDEX immutable_deployment_one_unfinished_per_app
-        ON public.immutable_deployment(app_id)
+    CREATE UNIQUE INDEX deployment_one_unfinished_per_app
+        ON public.deployment(app_id)
         WHERE status IN ('queued', 'preparing', 'building', 'deploying', 'verifying', 'reconciliation-needed');
-    CREATE INDEX immutable_deployment_app_created_idx
-        ON public.immutable_deployment(app_id, created_at DESC, id);
-    CREATE INDEX immutable_deployment_artifact_idx
-        ON public.immutable_deployment(organization_id, artifact_id);
-    CREATE INDEX immutable_deployment_claim_idx ON public.immutable_deployment(created_at, id)
+    CREATE INDEX deployment_app_created_idx
+        ON public.deployment(app_id, created_at DESC, id);
+    CREATE INDEX deployment_artifact_idx
+        ON public.deployment(organization_id, artifact_id);
+    CREATE INDEX deployment_claim_idx ON public.deployment(created_at, id)
         WHERE status IN ('queued', 'preparing', 'building', 'deploying', 'verifying');
-    CREATE INDEX immutable_deployment_expiry_idx ON public.immutable_deployment(preview_expires_at)
+    CREATE INDEX deployment_expiry_idx ON public.deployment(preview_expires_at)
         WHERE desired_state = 'active';
 
     CREATE TABLE public.app_deployment_event (
@@ -115,7 +115,7 @@ export async function up(db: Kysely<any>): Promise<void> {
         created_at timestamptz NOT NULL DEFAULT now(),
         UNIQUE (deployment_id, seq),
         FOREIGN KEY (organization_id, deployment_id)
-            REFERENCES public.immutable_deployment(organization_id, id) ON DELETE RESTRICT
+            REFERENCES public.deployment(organization_id, id) ON DELETE RESTRICT
     );
 
     CREATE TABLE public.app_alias (
@@ -123,7 +123,7 @@ export async function up(db: Kysely<any>): Promise<void> {
         organization_id text NOT NULL,
         app_id uuid NOT NULL,
         slug text NOT NULL CHECK (slug ~ '^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$'),
-        hostname text NOT NULL UNIQUE CHECK (public.immutable_hostname_valid(hostname)),
+        hostname text NOT NULL UNIQUE CHECK (public.deployment_hostname_valid(hostname)),
         target_deployment_id uuid,
         state text NOT NULL DEFAULT 'unbound' CHECK (state IN (
             'unbound', 'bound', 'binding', 'binding-uncertain',
@@ -138,7 +138,7 @@ export async function up(db: Kysely<any>): Promise<void> {
         FOREIGN KEY (organization_id, app_id)
             REFERENCES public.app(organization_id, id) ON DELETE RESTRICT,
         FOREIGN KEY (organization_id, app_id, target_deployment_id)
-            REFERENCES public.immutable_deployment(organization_id, app_id, id) ON DELETE RESTRICT,
+            REFERENCES public.deployment(organization_id, app_id, id) ON DELETE RESTRICT,
         CHECK (committed_generation <= reserved_generation),
         CHECK (state <> 'unbound' OR (target_deployment_id IS NULL AND committed_generation = 0)),
         CHECK (state <> 'bound' OR (target_deployment_id IS NOT NULL AND committed_generation > 0)),
@@ -184,9 +184,9 @@ export async function up(db: Kysely<any>): Promise<void> {
         FOREIGN KEY (organization_id, app_id, alias_id)
             REFERENCES public.app_alias(organization_id, app_id, id) ON DELETE RESTRICT,
         FOREIGN KEY (organization_id, app_id, previous_target_deployment_id)
-            REFERENCES public.immutable_deployment(organization_id, app_id, id) ON DELETE RESTRICT,
+            REFERENCES public.deployment(organization_id, app_id, id) ON DELETE RESTRICT,
         FOREIGN KEY (organization_id, app_id, desired_target_deployment_id)
-            REFERENCES public.immutable_deployment(organization_id, app_id, id) ON DELETE RESTRICT,
+            REFERENCES public.deployment(organization_id, app_id, id) ON DELETE RESTRICT,
         FOREIGN KEY (alias_id, supersedes_operation_id)
             REFERENCES public.promotion_operation(alias_id, id) ON DELETE NO ACTION DEFERRABLE INITIALLY DEFERRED,
         FOREIGN KEY (alias_id, superseded_by_operation_id)
@@ -229,7 +229,7 @@ export async function up(db: Kysely<any>): Promise<void> {
         finished_at timestamptz,
         CHECK (reason <> 'manual' OR requested_by IS NOT NULL),
         FOREIGN KEY (organization_id, app_id, deployment_id)
-            REFERENCES public.immutable_deployment(organization_id, app_id, id) ON DELETE RESTRICT
+            REFERENCES public.deployment(organization_id, app_id, id) ON DELETE RESTRICT
     );
     CREATE UNIQUE INDEX deployment_deletion_one_unfinished
         ON public.deployment_deletion_operation(deployment_id)
@@ -238,7 +238,7 @@ export async function up(db: Kysely<any>): Promise<void> {
         WHERE status IN ('queued', 'running');
 
     CREATE TABLE public.hostname_reservation (
-        hostname text PRIMARY KEY CHECK (public.immutable_hostname_valid(hostname)),
+        hostname text PRIMARY KEY CHECK (public.deployment_hostname_valid(hostname)),
         owner_kind text NOT NULL CHECK (owner_kind IN ('deployment', 'alias')),
         owner_id uuid NOT NULL,
         organization_id text NOT NULL REFERENCES public.organization(id) ON DELETE RESTRICT,
@@ -260,7 +260,7 @@ export async function up(db: Kysely<any>): Promise<void> {
 
     -- Ordinary invoker functions: these enforce invariants, not privileges.
     -- Separate application/owner roles are a production deployment gate.
-    CREATE FUNCTION public.immutable_check_reservations(kind text, resource_id uuid)
+    CREATE FUNCTION public.deployment_check_reservations(kind text, resource_id uuid)
     RETURNS void LANGUAGE plpgsql SET search_path = pg_catalog AS $function$
     DECLARE
         expected_host text;
@@ -272,7 +272,7 @@ export async function up(db: Kysely<any>): Promise<void> {
             WHEN 'deployment' THEN
                 SELECT hostname, app_name, organization_id, desired_state = 'deleted'
                 INTO expected_host, expected_app, expected_org, expected_retired
-                FROM public.immutable_deployment WHERE id = resource_id;
+                FROM public.deployment WHERE id = resource_id;
             WHEN 'alias' THEN
                 SELECT hostname, organization_id, state = 'withdrawn'
                 INTO expected_host, expected_org, expected_retired
@@ -305,21 +305,21 @@ export async function up(db: Kysely<any>): Promise<void> {
     END
     $function$;
 
-    CREATE FUNCTION public.immutable_validate_reservation() RETURNS trigger
+    CREATE FUNCTION public.deployment_validate_reservation() RETURNS trigger
     LANGUAGE plpgsql SET search_path = pg_catalog AS $function$
     BEGIN
-        PERFORM public.immutable_check_reservations(NEW.owner_kind, NEW.owner_id);
+        PERFORM public.deployment_check_reservations(NEW.owner_kind, NEW.owner_id);
         RETURN NULL;
     END
     $function$;
-    CREATE FUNCTION public.immutable_validate_owner() RETURNS trigger
+    CREATE FUNCTION public.deployment_validate_owner() RETURNS trigger
     LANGUAGE plpgsql SET search_path = pg_catalog AS $function$
     BEGIN
         CASE TG_TABLE_NAME
-            WHEN 'immutable_deployment' THEN
-                PERFORM public.immutable_check_reservations('deployment', NEW.id);
+            WHEN 'deployment' THEN
+                PERFORM public.deployment_check_reservations('deployment', NEW.id);
             WHEN 'app_alias' THEN
-                PERFORM public.immutable_check_reservations('alias', NEW.id);
+                PERFORM public.deployment_check_reservations('alias', NEW.id);
             ELSE
                 RAISE EXCEPTION 'unexpected reservation owner table' USING ERRCODE = '23514';
         END CASE;
@@ -329,7 +329,7 @@ export async function up(db: Kysely<any>): Promise<void> {
 
     -- An audit release never frees a registry key. Freeze identity immediately;
     -- deferred triggers below validate the reciprocal owner at transaction end.
-    CREATE FUNCTION public.immutable_protect_reservation() RETURNS trigger
+    CREATE FUNCTION public.deployment_protect_reservation() RETURNS trigger
     LANGUAGE plpgsql SET search_path = pg_catalog AS $function$
     BEGIN
         IF TG_OP = 'DELETE' THEN
@@ -343,7 +343,7 @@ export async function up(db: Kysely<any>): Promise<void> {
     END
     $function$;
 
-    CREATE FUNCTION public.immutable_protect_owner() RETURNS trigger
+    CREATE FUNCTION public.deployment_protect_owner() RETURNS trigger
     LANGUAGE plpgsql SET search_path = pg_catalog AS $function$
     BEGIN
         IF TG_OP = 'DELETE' THEN
@@ -353,7 +353,7 @@ export async function up(db: Kysely<any>): Promise<void> {
             IS DISTINCT FROM ROW(OLD.id, OLD.organization_id, OLD.app_id, OLD.hostname) THEN
             RAISE EXCEPTION 'resource identity is immutable' USING ERRCODE = '23514';
         END IF;
-        IF TG_TABLE_NAME = 'immutable_deployment' THEN
+        IF TG_TABLE_NAME = 'deployment' THEN
             IF ROW(NEW.artifact_id, NEW.spa, NEW.app_name, NEW.requested_by, NEW.created_at)
                 IS DISTINCT FROM ROW(OLD.artifact_id, OLD.spa, OLD.app_name, OLD.requested_by, OLD.created_at)
                OR NEW.fence < OLD.fence THEN
@@ -385,7 +385,7 @@ export async function up(db: Kysely<any>): Promise<void> {
     END
     $function$;
 
-    CREATE FUNCTION public.immutable_protect_app() RETURNS trigger
+    CREATE FUNCTION public.deployment_protect_app() RETURNS trigger
     LANGUAGE plpgsql SET search_path = pg_catalog AS $function$
     BEGIN
         IF TG_OP = 'DELETE' THEN
@@ -400,7 +400,7 @@ export async function up(db: Kysely<any>): Promise<void> {
     END
     $function$;
 
-    CREATE FUNCTION public.immutable_protect_operation() RETURNS trigger
+    CREATE FUNCTION public.deployment_protect_operation() RETURNS trigger
     LANGUAGE plpgsql SET search_path = pg_catalog AS $function$
     BEGIN
         IF TG_OP = 'DELETE' THEN
@@ -436,91 +436,91 @@ export async function up(db: Kysely<any>): Promise<void> {
     END
     $function$;
 
-    CREATE FUNCTION public.immutable_protect_event() RETURNS trigger
+    CREATE FUNCTION public.deployment_protect_event() RETURNS trigger
     LANGUAGE plpgsql SET search_path = pg_catalog AS $function$
     BEGIN
         RAISE EXCEPTION 'deployment events are append only' USING ERRCODE = '23514';
     END
     $function$;
 
-    CREATE FUNCTION public.immutable_protect_truncate() RETURNS trigger
+    CREATE FUNCTION public.deployment_protect_truncate() RETURNS trigger
     LANGUAGE plpgsql SET search_path = pg_catalog AS $function$
     BEGIN
         RAISE EXCEPTION 'resource history cannot be truncated' USING ERRCODE = '23514';
     END
     $function$;
 
-    REVOKE ALL ON FUNCTION public.immutable_check_reservations(text, uuid) FROM PUBLIC;
-    REVOKE ALL ON FUNCTION public.immutable_validate_reservation() FROM PUBLIC;
-    REVOKE ALL ON FUNCTION public.immutable_validate_owner() FROM PUBLIC;
-    REVOKE ALL ON FUNCTION public.immutable_protect_reservation() FROM PUBLIC;
-    REVOKE ALL ON FUNCTION public.immutable_protect_owner() FROM PUBLIC;
-    REVOKE ALL ON FUNCTION public.immutable_protect_app() FROM PUBLIC;
-    REVOKE ALL ON FUNCTION public.immutable_protect_operation() FROM PUBLIC;
-    REVOKE ALL ON FUNCTION public.immutable_protect_event() FROM PUBLIC;
-    REVOKE ALL ON FUNCTION public.immutable_protect_truncate() FROM PUBLIC;
+    REVOKE ALL ON FUNCTION public.deployment_check_reservations(text, uuid) FROM PUBLIC;
+    REVOKE ALL ON FUNCTION public.deployment_validate_reservation() FROM PUBLIC;
+    REVOKE ALL ON FUNCTION public.deployment_validate_owner() FROM PUBLIC;
+    REVOKE ALL ON FUNCTION public.deployment_protect_reservation() FROM PUBLIC;
+    REVOKE ALL ON FUNCTION public.deployment_protect_owner() FROM PUBLIC;
+    REVOKE ALL ON FUNCTION public.deployment_protect_app() FROM PUBLIC;
+    REVOKE ALL ON FUNCTION public.deployment_protect_operation() FROM PUBLIC;
+    REVOKE ALL ON FUNCTION public.deployment_protect_event() FROM PUBLIC;
+    REVOKE ALL ON FUNCTION public.deployment_protect_truncate() FROM PUBLIC;
 
     CREATE TRIGGER hostname_reservation_permanent
         BEFORE UPDATE OR DELETE ON public.hostname_reservation
-        FOR EACH ROW EXECUTE FUNCTION public.immutable_protect_reservation();
+        FOR EACH ROW EXECUTE FUNCTION public.deployment_protect_reservation();
     CREATE TRIGGER dokku_name_reservation_permanent
         BEFORE UPDATE OR DELETE ON public.dokku_name_reservation
-        FOR EACH ROW EXECUTE FUNCTION public.immutable_protect_reservation();
-    CREATE TRIGGER immutable_deployment_identity
-        BEFORE UPDATE OR DELETE ON public.immutable_deployment
-        FOR EACH ROW EXECUTE FUNCTION public.immutable_protect_owner();
+        FOR EACH ROW EXECUTE FUNCTION public.deployment_protect_reservation();
+    CREATE TRIGGER deployment_identity
+        BEFORE UPDATE OR DELETE ON public.deployment
+        FOR EACH ROW EXECUTE FUNCTION public.deployment_protect_owner();
     CREATE TRIGGER app_alias_identity
         BEFORE UPDATE OR DELETE ON public.app_alias
-        FOR EACH ROW EXECUTE FUNCTION public.immutable_protect_owner();
+        FOR EACH ROW EXECUTE FUNCTION public.deployment_protect_owner();
     CREATE TRIGGER app_identity
         BEFORE UPDATE OR DELETE ON public.app
-        FOR EACH ROW EXECUTE FUNCTION public.immutable_protect_app();
+        FOR EACH ROW EXECUTE FUNCTION public.deployment_protect_app();
     CREATE TRIGGER promotion_intent
         BEFORE UPDATE OR DELETE ON public.promotion_operation
-        FOR EACH ROW EXECUTE FUNCTION public.immutable_protect_operation();
+        FOR EACH ROW EXECUTE FUNCTION public.deployment_protect_operation();
     CREATE TRIGGER deployment_deletion_intent
         BEFORE UPDATE OR DELETE ON public.deployment_deletion_operation
-        FOR EACH ROW EXECUTE FUNCTION public.immutable_protect_operation();
+        FOR EACH ROW EXECUTE FUNCTION public.deployment_protect_operation();
     CREATE TRIGGER app_deployment_event_append_only
         BEFORE UPDATE OR DELETE ON public.app_deployment_event
-        FOR EACH ROW EXECUTE FUNCTION public.immutable_protect_event();
+        FOR EACH ROW EXECUTE FUNCTION public.deployment_protect_event();
 
     CREATE TRIGGER hostname_reservation_no_truncate BEFORE TRUNCATE ON public.hostname_reservation
-        FOR EACH STATEMENT EXECUTE FUNCTION public.immutable_protect_truncate();
+        FOR EACH STATEMENT EXECUTE FUNCTION public.deployment_protect_truncate();
     CREATE TRIGGER dokku_name_reservation_no_truncate BEFORE TRUNCATE ON public.dokku_name_reservation
-        FOR EACH STATEMENT EXECUTE FUNCTION public.immutable_protect_truncate();
+        FOR EACH STATEMENT EXECUTE FUNCTION public.deployment_protect_truncate();
     CREATE TRIGGER app_no_truncate BEFORE TRUNCATE ON public.app
-        FOR EACH STATEMENT EXECUTE FUNCTION public.immutable_protect_truncate();
-    CREATE TRIGGER immutable_deployment_no_truncate BEFORE TRUNCATE ON public.immutable_deployment
-        FOR EACH STATEMENT EXECUTE FUNCTION public.immutable_protect_truncate();
+        FOR EACH STATEMENT EXECUTE FUNCTION public.deployment_protect_truncate();
+    CREATE TRIGGER deployment_no_truncate BEFORE TRUNCATE ON public.deployment
+        FOR EACH STATEMENT EXECUTE FUNCTION public.deployment_protect_truncate();
     CREATE TRIGGER app_alias_no_truncate BEFORE TRUNCATE ON public.app_alias
-        FOR EACH STATEMENT EXECUTE FUNCTION public.immutable_protect_truncate();
+        FOR EACH STATEMENT EXECUTE FUNCTION public.deployment_protect_truncate();
     CREATE TRIGGER promotion_operation_no_truncate BEFORE TRUNCATE ON public.promotion_operation
-        FOR EACH STATEMENT EXECUTE FUNCTION public.immutable_protect_truncate();
+        FOR EACH STATEMENT EXECUTE FUNCTION public.deployment_protect_truncate();
     CREATE TRIGGER deployment_deletion_no_truncate BEFORE TRUNCATE ON public.deployment_deletion_operation
-        FOR EACH STATEMENT EXECUTE FUNCTION public.immutable_protect_truncate();
+        FOR EACH STATEMENT EXECUTE FUNCTION public.deployment_protect_truncate();
     CREATE TRIGGER app_deployment_event_no_truncate BEFORE TRUNCATE ON public.app_deployment_event
-        FOR EACH STATEMENT EXECUTE FUNCTION public.immutable_protect_truncate();
+        FOR EACH STATEMENT EXECUTE FUNCTION public.deployment_protect_truncate();
 
     CREATE CONSTRAINT TRIGGER hostname_reservation_owner
         AFTER INSERT OR UPDATE ON public.hostname_reservation
         DEFERRABLE INITIALLY DEFERRED FOR EACH ROW
-        EXECUTE FUNCTION public.immutable_validate_reservation();
+        EXECUTE FUNCTION public.deployment_validate_reservation();
     CREATE CONSTRAINT TRIGGER dokku_name_reservation_owner
         AFTER INSERT OR UPDATE ON public.dokku_name_reservation
         DEFERRABLE INITIALLY DEFERRED FOR EACH ROW
-        EXECUTE FUNCTION public.immutable_validate_reservation();
-    CREATE CONSTRAINT TRIGGER immutable_deployment_reservations
-        AFTER INSERT OR UPDATE ON public.immutable_deployment
+        EXECUTE FUNCTION public.deployment_validate_reservation();
+    CREATE CONSTRAINT TRIGGER deployment_reservations
+        AFTER INSERT OR UPDATE ON public.deployment
         DEFERRABLE INITIALLY DEFERRED FOR EACH ROW
-        EXECUTE FUNCTION public.immutable_validate_owner();
+        EXECUTE FUNCTION public.deployment_validate_owner();
     CREATE CONSTRAINT TRIGGER app_alias_reservations
         AFTER INSERT OR UPDATE ON public.app_alias
         DEFERRABLE INITIALLY DEFERRED FOR EACH ROW
-        EXECUTE FUNCTION public.immutable_validate_owner();
+        EXECUTE FUNCTION public.deployment_validate_owner();
     `.execute(db);
     // An older restored dump may already have been marked blocked by this binary.
     // Initialize a fresh instance, never overwrite that recovery decision.
-    await sql`insert into instance_state (key, value) values ('immutable_recovery', 'ready')
+    await sql`insert into instance_state (key, value) values ('deployment_recovery', 'ready')
         on conflict (key) do nothing`.execute(db);
 }

@@ -78,7 +78,7 @@ Requirements this work must meet that the application milestones surfaced:
 
     Readiness review (Opus 5.5): the whole feature is not ready to implement.
     The chosen next step is docs and a separately authorized disposable routing
-    experiment, specified in `docs/decisions/immutable-deployment-alias-routing.md`.
+    experiment, specified in `docs/decisions/deployment-alias-routing.md`.
     The immutable-model slices/checks/undo in `docs/design/deployment-modes.md`
     are prerequisites of the final installation rehearsal below. A router-control
     contract, alias state machine, permission matrix, quotas and restore boundary

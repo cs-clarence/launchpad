@@ -7,13 +7,13 @@ import { pipeline } from "node:stream/promises";
 import { createDatabase, type Database, migrationStatus } from "@launchpad-kit/database";
 import {
     resolveArtifactPath,
-    markImmutableRecoveryBlocked,
+    markDeploymentRecoveryBlocked,
     blockRestoredModel,
-    withImmutableRecoveryMaintenance,
-    assertNoPendingImmutableImport,
-    assertNoActiveImmutableImportBackends,
-    beginImmutableImport,
-    finishImmutableImport,
+    withDeploymentRecoveryMaintenance,
+    assertNoPendingDeploymentImport,
+    assertNoActiveDeploymentImportBackends,
+    beginDeploymentImport,
+    finishDeploymentImport,
 } from "@launchpad-kit/services";
 import { type Kysely, sql } from "kysely";
 import { type BackupManifest, columnExists, pgEnvironment, verifyBackup } from "./backup";
@@ -261,11 +261,11 @@ export async function restoreBackup(options: RestoreOptions): Promise<RestoreRes
 
     const pool = createDatabase(options.databaseUrl, { max: 1 });
     try {
-        return await withImmutableRecoveryMaintenance(
+        return await withDeploymentRecoveryMaintenance(
             pool,
             async (db) => {
-                await assertNoPendingImmutableImport(options.dataDir);
-                await assertNoActiveImmutableImportBackends(db);
+                await assertNoPendingDeploymentImport(options.dataDir);
+                await assertNoActiveDeploymentImportBackends(db);
                 const populated = (await userTableCount(db)) > 0;
                 const target = replaceTarget(options.databaseUrl);
                 if (populated) {
@@ -330,7 +330,7 @@ export async function restoreBackup(options: RestoreOptions): Promise<RestoreRes
                 options.signal?.throwIfAborted();
                 // This binary knows 018 even when a migration-folder override or the
                 // backup contains only older migrations.
-                await markImmutableRecoveryBlocked(options.dataDir);
+                await markDeploymentRecoveryBlocked(options.dataDir);
                 for (const artifact of toCopy) {
                     options.signal?.throwIfAborted();
                     const target = resolveArtifactPath(options.dataDir, artifact.storageKey);
@@ -388,7 +388,7 @@ export async function restoreBackup(options: RestoreOptions): Promise<RestoreRes
                     });
                 };
                 try {
-                    const importer = await beginImmutableImport(options.dataDir, target);
+                    const importer = await beginDeploymentImport(options.dataDir, target);
                     let importFailure: unknown;
                     try {
                         await runPgRestore(
@@ -403,7 +403,7 @@ export async function restoreBackup(options: RestoreOptions): Promise<RestoreRes
                         // runPgRestore observes the child's close event on success/error.
                         // A dead admin cannot reach here, so its durable guard remains.
                         try {
-                            await finishImmutableImport(db, options.dataDir, importer);
+                            await finishDeploymentImport(db, options.dataDir, importer);
                         } catch (exitError) {
                             if (importFailure) {
                                 throw new RestoreError(
@@ -417,7 +417,7 @@ export async function restoreBackup(options: RestoreOptions): Promise<RestoreRes
                     await blockRestoredModel(db);
                 } catch (error) {
                     try {
-                        await assertNoPendingImmutableImport(options.dataDir);
+                        await assertNoPendingDeploymentImport(options.dataDir);
                     } catch {
                         throw new RestoreError(
                             "The importer's exit is unproven; no schema rollback was attempted. " +
@@ -522,7 +522,7 @@ export async function checkRestore(options: CheckRestoreOptions): Promise<CheckR
         // A queued job has not touched Dokku. Include in-flight/held jobs conservatively:
         // absence is an observation to reconcile, never permission to recreate or delete.
         const deployments = await db
-            .selectFrom("immutable_deployment")
+            .selectFrom("deployment")
             .select(["id", "organization_id", "app_name"])
             .where("desired_state", "<>", "deleted")
             .where("status", "<>", "queued")
@@ -546,7 +546,7 @@ export async function checkRestore(options: CheckRestoreOptions): Promise<CheckR
         dokkuChecked: options.appExists !== undefined,
         expired: (
             await db
-                .selectFrom("immutable_deployment")
+                .selectFrom("deployment")
                 .select(["id", "preview_expires_at"])
                 .where("desired_state", "=", "active")
                 .where("preview_expires_at", "<", sql<Date>`now()`)

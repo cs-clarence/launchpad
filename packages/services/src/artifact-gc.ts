@@ -4,7 +4,7 @@ import path from "node:path";
 import type { ArtifactTable, Database } from "@launchpad-kit/database";
 import { type Kysely, type SelectQueryBuilder, sql } from "kysely";
 import { resolveArtifactPath } from "./artifacts";
-import { assertModelMutationsReady, withModelMutation } from "./immutable-recovery";
+import { assertModelMutationsReady, withModelMutation } from "./deployment-recovery";
 
 type Db = Kysely<Database>;
 
@@ -37,7 +37,7 @@ function eligible<O>(
         .where(({ not, exists, selectFrom }) =>
             not(
                 exists(
-                    selectFrom("immutable_deployment as d")
+                    selectFrom("deployment as d")
                         .select("d.id")
                         .whereRef("d.artifact_id", "=", "a.id")
                         .whereRef("d.organization_id", "=", "a.organization_id")

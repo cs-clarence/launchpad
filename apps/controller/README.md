@@ -61,7 +61,7 @@ unknown). The controller carries its migrations, bundled so they run without the
 `bun .output/admin.mjs migrate` works in the image). The idle worker has no migration bundle.
 `LAUNCHPAD_MIGRATIONS_DIR` names another folder.
 The existing `LAUNCHPAD_DATA_DIR` directory must be mounted/available before startup;
-the controller does not create a missing mount. See [migration 018's destructive cutover](../../docs/immutable-cutover.md).
+the controller does not create a missing mount. See [migration 018's destructive cutover](../../docs/deployment-cutover.md).
 This is a directory check, not proof of volume identity: an unintended anonymous `/data`
 volume also passes. Verify that every writer/admin uses the intended shared storage.
 
@@ -204,7 +204,7 @@ Restoring is a procedure, not one command. The current step-by-step
    credential reconciliation and `recovery-clear`. Model mutations remain blocked by an
    fsynced external marker even if the restored dump said `ready`. In P2b, clear succeeds only
    for an empty model with no durable writer-seen file. Never remove these files manually.
-   A crashed import also retains `immutable-import-in-progress`; another restore and clear
+   A crashed import also retains `deployment-import-in-progress`; another restore and clear
    refuse until the exact importer/wrappers and database backend have exited and an explicit
    `recovery-ack-import --i-have-stopped-the-importer` is durably audited. Custom PostgreSQL
    wrappers must forward `PGAPPNAME` to the actual client. This acknowledgement does not clear
@@ -291,4 +291,4 @@ The preview runtime (previews, deployments, deletion and expiry, the artifact up
 dashboard preview pages and the `preview:*` key scopes) was removed. Migration 018 drops the old
 tables/data unconditionally and revokes their keys. A stored key that still holds a `preview:*` scope is refused at
 authentication. The upload endpoint returns with the app model under a new scope; see
-[the plan](../../docs/plans/immutable-p2-cutover.md).
+[the plan](../../docs/plans/deployment-p2-cutover.md).

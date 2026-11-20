@@ -75,7 +75,7 @@ Rules that keep the graph correct:
   restore procedure are in [restore](restore.md), with
   [installation](install.md), [upgrade](upgrade.md) and [routing](access.md).
 - **Migration 018 model/reservations.**
-  `omni -i run test:immutable-schema -p @launchpad-kit/controller` exercises the real
+  `omni -i run test:deployment-schema -p @launchpad-kit/controller` exercises the real
   discovered migration, populated 014/017 upgrades and rollback/refusal. It tests
   organization/app-qualified FKs, permanent identity registries, deferred
   reciprocal ownership, immutable intents and concurrent cross-kind hostname
@@ -201,7 +201,7 @@ preview-specific domain/proxy settings with `LAUNCHPAD_APPS_DOMAIN` and
 `LAUNCHPAD_APPS_PROXY_URL`, plus private alias control/probe settings. It introduces
 a strict pre-model backup compatibility floor and new app/alias permissions.
 See [the design](design/deployment-modes.md) and
-[routing experiment](decisions/immutable-deployment-alias-routing.md).
+[routing experiment](decisions/deployment-alias-routing.md).
 Do not configure these names against the current binary; implementation must
 update examples, tasks and this reference together after the experiment passes.
 

@@ -25,7 +25,7 @@ down migration. Rehearse on disposable infrastructure first: the checked-in
     This flag belongs to the **old** backup command; P2a's backup command no
     longer accepts it. Do not proceed if `verify-backup` fails.
     **After** verifying the backup and preserving Dokku state, an upgrade crossing
-    018 must complete the [pre-P2b inventory and exact-name app cleanup](immutable-cutover.md).
+    018 must complete the [pre-P2b inventory and exact-name app cleanup](deployment-cutover.md).
     Finish this before step 4: the old identities are dropped unconditionally.
     With all legacy upload writers stopped, inspect the actual data directory's
     `tmp/` directory for regular files named `upload-<24 lowercase hex characters>.part`.

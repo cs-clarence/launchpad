@@ -1,4 +1,4 @@
-# Generation-checked routing for immutable deployment aliases
+# Generation-checked deployment alias routing
 
 Date: 2026-11-19.
 Status: **selected design direction; router-only feasibility accepted after independent review**.

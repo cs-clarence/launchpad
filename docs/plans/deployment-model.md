@@ -66,8 +66,8 @@ Delivery order is "retire first": `main` may be unable to deploy between P2 and 
 tables use names no old binary knows, so a surviving old process cannot operate on new
 rows, and the startup check refuses new starts once 018 is recorded. Neither stops a process
 that is already running or a Dokku operation it already dispatched: the operator stops all old
-processes and settles in-flight remote work before upgrading. See the [P2 plan](immutable-p2-cutover.md) and
-the [replacement schema map](../design/immutable-cutover-schema.md).
+processes and settles in-flight remote work before upgrading. See the [P2 plan](deployment-p2-cutover.md) and
+the [replacement schema map](../design/deployment-cutover-schema.md).
 
 ## Worked acceptance example
 
@@ -105,7 +105,7 @@ were superseded by the 2026-11-19 decision above; the verified contracts carry i
 
 Split into three PRs in the order **code first, schema second**: (a) remove the legacy
 runtime with the schema untouched, (b) migration 018 with its readers and the recovery gate,
-(c) the configuration break. Full plan, risks and checks: [P2 plan](immutable-p2-cutover.md).
+(c) the configuration break. Full plan, risks and checks: [P2 plan](deployment-p2-cutover.md).
 
 ### P3 — deploy and delete one immutable candidate end to end
 

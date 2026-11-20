@@ -6,7 +6,7 @@ import { createTestDatabase } from "@launchpad-kit/database/testing";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { artifactStorageKey, resolveArtifactPath } from "../artifacts";
 import { collectArtifacts, sweepOrphanArtifactFiles } from "../artifact-gc";
-import { markImmutableRecoveryBlocked } from "../immutable-recovery";
+import { markDeploymentRecoveryBlocked } from "../deployment-recovery";
 
 let source: Awaited<ReturnType<typeof createTestDatabase>>;
 let dataDir: string;
@@ -101,7 +101,7 @@ async function pin(
     const hostname = `${appName}.apps.example.net`;
     await source.db.transaction().execute(async (trx) => {
         await trx
-            .insertInto("immutable_deployment")
+            .insertInto("deployment")
             .values({
                 id,
                 organization_id: org,
@@ -141,7 +141,7 @@ async function pin(
     });
 }
 
-describe("immutable deployment artifact pins", () => {
+describe("deployment artifact pins", () => {
     it.each([
         ["active", "succeeded", false, false],
         ["deleted", "reconciliation-needed", false, false],
@@ -174,7 +174,7 @@ describe("immutable deployment artifact pins", () => {
 
     it("refuses collection and sweep before any filesystem/database mutation while recovery is blocked", async () => {
         const row = await artifact();
-        await markImmutableRecoveryBlocked(dataDir);
+        await markDeploymentRecoveryBlocked(dataDir);
         await expect(collectArtifacts(source.db, { dataDir, retentionSeconds: 0 })).rejects.toThrow(
             /blocked/,
         );
