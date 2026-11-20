@@ -114,33 +114,57 @@ function scanTemplate(source: string, start: number) {
     return { out, end: i };
 }
 
-// Start offsets of quoted string literals, so an import keyword that is merely the
-// end of a string such as "recovery-ack-import" is not mistaken for code. Template
-// text is left unmarked, as before.
-function quotedSpans(code: string): [number, number][] {
-    const spans: [number, number][] = [];
-    for (let i = 0; i < code.length; i++) {
+// Walks comment-free code token by token. Quoted strings are
+// skipped whole, so a keyword ending a string such as "recovery-ack-import" is never
+// read as an import, while `${...}` interpolations are scanned as code (and template
+// text keeps counting import syntax, as before). Import
+// syntax is matched only where code starts, so the specifier string it owns is
+// consumed with it.
+function collectImports(code: string, start: number, untilBrace: boolean, found: Set<string>) {
+    const importAt = new RegExp(IMPORT.source, "y");
+    // Matches import syntax at `at` and returns the next position to scan.
+    const tryImport = (at: number) => {
+        importAt.lastIndex = at;
+        const match = importAt.exec(code);
+        if (!match) return at + 1;
+        const name = packageOf(match[1]!);
+        if (name) found.add(name);
+        return importAt.lastIndex;
+    };
+    let i = start;
+    let depth = 0;
+    while (i < code.length) {
         const c = code[i]!;
         if (c === '"' || c === "'") {
             let j = i + 1;
             while (j < code.length && code[j] !== c) j += code[j] === "\\" ? 2 : 1;
-            spans.push([i, j]);
-            i = j;
+            i = j + 1;
+        } else if (c === "`") {
+            i++;
+            while (i < code.length && code[i] !== "`") {
+                if (code[i] === "\\") i += 2;
+                else if (code[i] === "$" && code[i + 1] === "{")
+                    i = collectImports(code, i + 2, true, found) + 1;
+                else i = tryImport(i);
+            }
+            i++;
+        } else if (untilBrace && c === "{") {
+            depth++;
+            i++;
+        } else if (untilBrace && c === "}") {
+            if (depth === 0) return i;
+            depth--;
+            i++;
+        } else {
+            i = tryImport(i);
         }
     }
-    return spans;
+    return i;
 }
 
 export function importedPackages(source: string): Set<string> {
     const found = new Set<string>();
-    const code = stripComments(source);
-    const spans = quotedSpans(code);
-    for (const match of code.matchAll(IMPORT)) {
-        const at = match.index!;
-        if (spans.some(([from, to]) => at > from && at < to)) continue;
-        const name = packageOf(match[1]!);
-        if (name) found.add(name);
-    }
+    collectImports(stripComments(source), 0, false, found);
     return found;
 }
 
