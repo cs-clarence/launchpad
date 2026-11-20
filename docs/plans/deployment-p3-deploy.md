@@ -144,8 +144,7 @@ queued rows are inert; or revert.
   re-reads the gate on a short interval and aborts the shared signal when it closes (in-flight
   calls end at their own deadline, at most one call per worker can finish after closure), and the
   restore/clear attestation already requires every writer to be stopped and every dispatched
-  operation settled before reopening. A closure between a check and its dispatch is tested: the
-  watchdog aborts, no further call starts, and the in-flight one is resolved by the rule above.
+  operation settled before reopening. The race is **bounded and accepted, not eliminated**: a call may start after the gate closes but before the watchdog notices (at most one watchdog interval, configurable and short). The guarantee is that no call starts after the watchdog has detected closure, and that every writer is stopped by the operator before a restore proceeds. The test therefore closes the gate between a check and its dispatch with a deliberately delayed watchdog, asserts the in-flight call is still resolved by the timeout rule (`failed` or `reconciliation-needed`), and asserts no further call starts after detection. If no call may ever start after closure, that needs synchronization between closure and dispatch and is out of P3.
 - **Reclaim by recorded step** (migration 018's `step_done`/`step_pending`):
     - nothing remote was pending: resume from `step_done`;
     - a remote step was pending when the lease lapsed (create, build, load): the outcome is
