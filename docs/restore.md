@@ -131,14 +131,19 @@ or prove. `restore` never contacts Dokku. Back up the target database first.
    just because it was absent in step 3. A restored database can also leave
    unreferenced apps; Launchpad deliberately leaves those alone. The
    immutable model remains mutation-blocked until recovery is explicitly cleared.
-6. As the controller's OS user, for **P2b only**, `bun .output/admin.mjs recovery-clear` succeeds only when all
-   eight model tables are empty and no durable `maintenance/model-writer-seen`
-   file exists. It audits the operation, commits the ready gate, then removes
-   `maintenance/deployment-recovery-blocked` and fsyncs its directory. If a writer
-   has ever run, or any table has rows, it refuses: do not delete either file to
-   bypass it. Rolling back to P2b after P3 wrote model state is unsupported.
-   P3 replaces this limited rule with mandatory audited reconciliation attestation;
-   P5 supplies verification ([recovery design](design/deployment-cutover-schema.md#restore-and-the-recovery-gate)).
+6. Reconcile **before** clearing, then, as the controller's OS user, run
+   `bun .output/admin.mjs recovery-clear --i-have-reconciled-router-and-dokku`. The flag is
+   mandatory every time: the command never looks at the model tables or at
+   `maintenance/model-writer-seen`, because a restore can replace the volume or bring an empty
+   database that still has remote resources. By passing it you attest, in this order, that you
+   (1) closed ingress and stopped every pre-restore writer **and waited for every Dokku operation
+   they had dispatched to settle**, (2) rotated the router epoch and control credentials if a
+   router is in use, (3) reconciled Dokku apps (and, from P4, aliases) against the restored
+   database, and (4) are clearing only now. Nothing verifies this yet; P5 replaces it with
+   verified reconciliation ([recovery design](design/deployment-cutover-schema.md#restore-and-the-recovery-gate)).
+   The command audits only the attested fact, commits the ready gate, then removes
+   `maintenance/deployment-recovery-blocked` and fsyncs its directory. It still refuses while a
+   crashed import is pending. Do not delete the marker or writer record by hand.
    Sign-in, organizations, members, projects and key administration remain available
    while the model is blocked; the marker is not an access-control substitute.
 

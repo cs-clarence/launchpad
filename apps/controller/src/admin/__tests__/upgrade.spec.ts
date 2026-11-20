@@ -402,11 +402,21 @@ it(
                 "restored-data/maintenance/deployment-recovery-blocked",
             );
             expect((await fs.stat(recoveryMarker)).isFile()).toBe(true);
+            const refused = await admin(
+                target.url,
+                path.join(work, "restored-data"),
+                work,
+                "recovery-clear",
+            );
+            expect(refused.status).toBe(1);
+            expect(refused.stderr).toContain("--i-have-reconciled-router-and-dokku");
+            expect((await fs.stat(recoveryMarker)).isFile()).toBe(true);
             const cleared = await admin(
                 target.url,
                 path.join(work, "restored-data"),
                 work,
                 "recovery-clear",
+                "--i-have-reconciled-router-and-dokku",
             );
             expect(cleared.status, cleared.stderr).toBe(0);
             await expect(fs.stat(recoveryMarker)).rejects.toMatchObject({ code: "ENOENT" });

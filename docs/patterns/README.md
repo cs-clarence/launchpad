@@ -59,7 +59,7 @@ and inventory are removed. `Database` describes the new physical tables;
 artifact collection pins `deployment`, and `check-restore` reports
 immutable deployment identities. The recovery gate is
 `packages/services/src/deployment-recovery.ts`: shared/exclusive advisory locks,
-fsynced external marker/writer record and the P2b empty-model clear rule.
+fsynced external marker/writer record and the audited attestation `recovery-clear` requires.
 Only model mutations use that gate; organization/auth/key administration stays available.
 
 Operator login, organizations, members and projects exist, but
