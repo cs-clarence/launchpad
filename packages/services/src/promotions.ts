@@ -24,7 +24,11 @@ const OPERATION_COLUMNS = [
     "promotion_operation.expected_generation as expectedGeneration",
     "promotion_operation.previous_target_deployment_id as previousTargetDeploymentId",
     "promotion_operation.desired_target_deployment_id as desiredTargetDeploymentId",
+    "promotion_operation.supersedes_operation_id as supersedesOperationId",
+    "promotion_operation.superseded_by_operation_id as supersededByOperationId",
+    "promotion_operation.failure_code as failureCode",
     "promotion_operation.created_at as createdAt",
+    "promotion_operation.finished_at as finishedAt",
 ] as const;
 
 const shape = <T extends { generation: unknown; expectedGeneration: unknown }>(row: T) => ({
@@ -79,13 +83,14 @@ async function request(
         if (!found || (restrictTo && !restrictTo.includes(found.projectId))) {
             throw new ServiceError("not-found", "Alias not found.");
         }
-        await trx
+        const lockedApp = await trx
             .selectFrom("app")
             .select("id")
             .where("id", "=", found.appId)
             .where("state", "=", "active")
             .forUpdate()
-            .executeTakeFirstOrThrow();
+            .executeTakeFirst();
+        if (!lockedApp) throw new ServiceError("not-found", "Alias not found.");
         const alias = await trx
             .selectFrom("app_alias")
             .select(["id", "state", "target_deployment_id", "reserved_generation"])
@@ -100,6 +105,8 @@ async function request(
                   .selectFrom("deployment")
                   .select(["id", "organization_id", "status", "desired_state", "app_id"])
                   .where("id", "in", ids)
+                  .where("app_id", "=", found.appId)
+                  .where("organization_id", "=", organizationId)
                   .orderBy("id")
                   .forUpdate()
                   .execute()
@@ -112,6 +119,8 @@ async function request(
             .select([...OPERATION_COLUMNS])
             .where("alias_id", "=", aliasId)
             .where("idempotency_key", "=", wanted.key)
+            // A key belongs to the member who sent it: another member's identical key is theirs.
+            .where("requested_by", "=", principal.userId)
             .executeTakeFirst();
         if (existing) {
             if (
@@ -187,7 +196,7 @@ async function request(
             if (isUniqueViolation(error)) {
                 throw new ServiceError(
                     "conflict",
-                    "This alias already has an operation in progress.",
+                    "The alias changed or has an operation in progress; read it again.",
                 );
             }
             throw error;
@@ -246,11 +255,12 @@ export async function requestPromotion(
     deps: AliasDeps,
     restrictTo?: string[] | null,
 ) {
+    await requireMembership(db, principal, organizationId, "app:promote");
     const key = checkKey(idempotencyKey);
     const data = parseInput(promoteAliasSchema, input);
     return request(db, principal, organizationId, aliasId, deps, restrictTo, "app:promote", {
         action: "bind",
-        target: data.targetDeploymentId,
+        target: data.targetDeploymentId.toLowerCase(),
         expected: data.expectedGeneration,
         key,
     });
@@ -266,6 +276,7 @@ export async function requestWithdrawal(
     deps: AliasDeps,
     restrictTo?: string[] | null,
 ) {
+    await requireMembership(db, principal, organizationId, "app:alias:manage");
     const key = checkKey(idempotencyKey);
     const data = parseInput(withdrawAliasSchema, input);
     return request(db, principal, organizationId, aliasId, deps, restrictTo, "app:alias:manage", {
@@ -345,7 +356,7 @@ export async function supersedeOperation(
             .executeTakeFirstOrThrow();
         const alias = await trx
             .selectFrom("app_alias")
-            .select(["id", "target_deployment_id", "reserved_generation"])
+            .select(["id", "state", "target_deployment_id", "reserved_generation"])
             .where("id", "=", found.alias_id)
             .forUpdate()
             .executeTakeFirstOrThrow();
@@ -357,6 +368,7 @@ export async function supersedeOperation(
                   .selectFrom("deployment")
                   .select(["id", "status", "desired_state", "app_id"])
                   .where("id", "in", ids)
+                  .where("app_id", "=", found.app_id)
                   .orderBy("id")
                   .forUpdate()
                   .execute()
@@ -378,6 +390,43 @@ export async function supersedeOperation(
             throw new ServiceError(
                 "conflict",
                 "Only an operation held for reconciliation can be corrected.",
+            );
+        }
+        if (alias.state !== "binding-uncertain" && alias.state !== "withdrawal-uncertain") {
+            throw new ServiceError("conflict", "The alias is not waiting for reconciliation.");
+        }
+        // A held bind may end at its target or at the prior stable target; a held withdrawal may
+        // end withdrawn or back at the prior target. A corrective operation inherits the options of
+        // the whole chain it extends, so the targets are those of every operation in it.
+        const chainTargets = new Set<string | null>();
+        let cursor: string | null = held.id;
+        for (let depth = 0; cursor && depth < 100; depth++) {
+            const link: {
+                previous: string | null;
+                desired: string | null;
+                parent: string | null;
+            } = await trx
+                .selectFrom("promotion_operation")
+                .select([
+                    "previous_target_deployment_id as previous",
+                    "desired_target_deployment_id as desired",
+                    "supersedes_operation_id as parent",
+                ])
+                .where("id", "=", cursor)
+                .executeTakeFirstOrThrow();
+            chainTargets.add(link.previous);
+            chainTargets.add(link.desired);
+            cursor = link.parent;
+        }
+        const allowed =
+            input.action === "withdraw"
+                ? alias.state === "withdrawal-uncertain"
+                : input.targetDeploymentId !== undefined &&
+                  chainTargets.has(input.targetDeploymentId);
+        if (!allowed) {
+            throw new ServiceError(
+                "invalid",
+                "That correction is not a permitted outcome for this operation.",
             );
         }
         if (input.targetDeploymentId) {
@@ -412,7 +461,8 @@ export async function supersedeOperation(
                 app_id: found.app_id,
                 alias_id: found.alias_id,
                 action: input.action,
-                idempotency_key: `correction-${held.id}`,
+                // A space is refused in a caller's key, so this cannot collide with one.
+                idempotency_key: `correction ${held.id}`,
                 previous_target_deployment_id: alias.target_deployment_id,
                 desired_target_deployment_id: input.targetDeploymentId ?? null,
                 expected_generation: String(alias.reserved_generation),
@@ -433,6 +483,15 @@ export async function supersedeOperation(
                 .where("id", "=", input.targetDeploymentId)
                 .executeTakeFirstOrThrow();
         }
+        if (input.targetDeploymentId) {
+            await appendDeploymentEvent(
+                trx,
+                { id: input.targetDeploymentId, organization_id: found.organization_id },
+                "promotion-requested",
+                "info",
+                "Corrective promotion requested.",
+            );
+        }
         await trx
             .insertInto("audit_event")
             .values({
@@ -441,7 +500,7 @@ export async function supersedeOperation(
                 target_type: "alias",
                 target_id: found.alias_id,
                 organization_id: found.organization_id,
-                detail: `superseded=${held.id};action=${input.action}`,
+                detail: `attested=router-read;superseded=${held.id};new=${id};action=${input.action};generation=${next}${input.targetDeploymentId ? `;target=${input.targetDeploymentId}` : ""}`,
             })
             .execute();
         return { operationId: id, supersedes: held.id, generation: next.toString() };

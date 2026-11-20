@@ -77,6 +77,13 @@ matrix, quota races and hostname permanence. Nothing contacts a router.
 
 ### P4b: promotion intent, pins and corrective operations (services only)
 
+Built without a migration: the alias row lock serializes requests, so a retry looks the key up under
+that lock (scoped to the member who sent it), and a corrective operation keeps the original
+requester because the schema requires a user (the audit row names the operator CLI). A corrective
+operation may only end at a target of its chain (or a withdrawal for a held withdrawal), and the alias
+keeps its uncertain state until a verified outcome finalizes the chain (P4c). P4d's route tests must
+confirm key scopes: `app:promote` and `app:alias:manage` do not stand in for each other.
+
 `bind` and `withdraw` operations with `expected_generation` compare-and-swap, `Idempotency-Key`,
 reserved generation advancing on intent, same-app eligibility, pre-dispatch intent, and pins:
 the alias target, the previous target, and every target in the unresolved chain stay pinned; pins and

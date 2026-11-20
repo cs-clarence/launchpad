@@ -26,3 +26,4 @@ export * from "./deployment-reconcile";
 export * from "./removed-settings";
 export * from "./drift";
 export * from "./deployment-recovery";
+export * from "./pins";

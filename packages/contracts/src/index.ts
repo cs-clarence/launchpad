@@ -185,7 +185,10 @@ const MAX_GENERATION = 9223372036854775807n;
 export const generationSchema = z
     .string()
     .regex(/^(0|[1-9]\d{0,18})$/)
-    .refine((value) => /^(0|[1-9]\d{0,18})$/.test(value) && BigInt(value) <= MAX_GENERATION);
+    .refine(
+        (value) => /^(0|[1-9]\d{0,18})$/.test(value) && BigInt(value) <= MAX_GENERATION,
+        "must be a decimal string no larger than 9223372036854775807",
+    );
 
 export const promoteAliasSchema = z.strictObject({
     targetDeploymentId: z.uuid(),
@@ -213,7 +216,11 @@ export const promotionOperationSchema = z.strictObject({
     expectedGeneration: generationSchema,
     previousTargetDeploymentId: z.uuid().nullable(),
     desiredTargetDeploymentId: z.uuid().nullable(),
+    supersedesOperationId: z.uuid().nullable(),
+    supersededByOperationId: z.uuid().nullable(),
+    failureCode: z.string().nullable(),
     createdAt: timestamp,
+    finishedAt: timestamp.nullable(),
 });
 
 export const aliasSchema = z.strictObject({
@@ -231,8 +238,8 @@ export const aliasSchema = z.strictObject({
         "withdrawn",
     ]),
     targetDeploymentId: z.uuid().nullable(),
-    reservedGeneration: z.string().regex(/^(0|[1-9]\d*)$/),
-    committedGeneration: z.string().regex(/^(0|[1-9]\d*)$/),
+    reservedGeneration: generationSchema,
+    committedGeneration: generationSchema,
     createdAt: timestamp,
 });
 

@@ -243,14 +243,63 @@ describe("promotion intent", () => {
 
     it("accepts exactly one of several simultaneous requests", async () => {
         const { alias, ready } = await fixture();
-        const [a, b] = [await ready(), await ready().catch(() => null)];
-        const targets = [a, b ?? a];
+        const targets = [await ready(), await ready()];
         const results = await Promise.all(
             targets.concat(targets).map((target) => code(promote(alias.id, target, "0"))),
         );
         expect(results.filter((result) => result === "ok")).toHaveLength(1);
+        expect(results.filter((result) => result === "conflict")).toHaveLength(3);
         expect(await operations(alias.id)).toHaveLength(1);
         expect(await aliasRow(alias.id)).toMatchObject({ reserved_generation: "1" });
+    });
+
+    it("returns one operation to simultaneous retries with the same key", async () => {
+        const { alias, ready } = await fixture();
+        const target = await ready();
+        const results = await Promise.all(
+            [1, 2, 3].map(() => promote(alias.id, target, "0", "same-key")),
+        );
+        expect(new Set(results.map((result) => result.id)).size).toBe(1);
+        expect(await operations(alias.id)).toHaveLength(1);
+        expect(await aliasRow(alias.id)).toMatchObject({ reserved_generation: "1" });
+    });
+
+    it("lets exactly one of a promotion and a deletion of the same deployment win", async () => {
+        const { alias, ready } = await fixture();
+        const target = await ready();
+        const [promotion, deletion] = await Promise.all([
+            code(promote(alias.id, target, "0")),
+            code(deleteDeployment(target)),
+        ]);
+        expect([promotion, deletion].toSorted()).toEqual(["conflict", "ok"]);
+        expect((await operations(alias.id)).length === 0).toBe(deletion === "ok");
+    });
+
+    it("keys idempotency to the member who sent it", async () => {
+        const { alias, ready } = await fixture();
+        const target = await ready();
+        const mine = await promote(alias.id, target, "0", "shared");
+        // Another member's identical key is theirs: they never receive someone else's operation.
+        expect(await code(promote(alias.id, target, "0", "shared", "ann"))).toBe("conflict");
+        expect(await operations(alias.id)).toHaveLength(1);
+        expect(mine.status).toBe("queued");
+    });
+
+    it("clears the target's last unpinned time and accepts an uppercase id", async () => {
+        const { alias, ready } = await fixture();
+        const target = await ready();
+        await sql`update deployment set last_unpinned_at = now() where id = ${target}`.execute(
+            testDb.db,
+        );
+        const operation = await promote(alias.id, target.toUpperCase(), "0");
+        expect(operation.desiredTargetDeploymentId).toBe(target);
+        expect(
+            await testDb.db
+                .selectFrom("deployment")
+                .select("last_unpinned_at")
+                .where("id", "=", target)
+                .executeTakeFirstOrThrow(),
+        ).toEqual({ last_unpinned_at: null });
     });
 
     it("retries idempotently, and refuses a different request under the same key", async () => {
@@ -265,6 +314,18 @@ describe("promotion intent", () => {
         expect(await code(promote(alias.id, target, "1", key))).toBe("conflict");
         expect(await code(withdraw(alias.id, "0", key))).toBe("conflict");
         expect(await operations(alias.id)).toHaveLength(1);
+        expect(await aliasRow(alias.id)).toMatchObject({
+            reserved_generation: "1",
+            state: "binding",
+        });
+        expect(
+            await testDb.db
+                .selectFrom("audit_event")
+                .select("id")
+                .where("target_id", "=", alias.id)
+                .where("action", "like", "alias.%requested")
+                .execute(),
+        ).toHaveLength(1);
     });
 
     it("needs a valid Idempotency-Key", async () => {
@@ -305,10 +366,11 @@ describe("promotion intent", () => {
             deps(),
         );
         expect(await code(promote(alias.id, queued.id, "0"))).toBe("conflict");
-        // Being deleted.
-        await sql`update deployment set status = 'failed' where id = ${queued.id}`.execute(
+        // Failed, not succeeded.
+        await sql`update deployment set status = 'failed', finished_at = now() where id = ${queued.id}`.execute(
             testDb.db,
         );
+        expect(await code(promote(alias.id, queued.id, "0"))).toBe("conflict");
         await promote(alias.id, target, "0");
         // The alias now has an operation in progress.
         expect(await code(promote(alias.id, target, "1"))).toBe("conflict");
@@ -341,6 +403,7 @@ describe("promotion intent", () => {
             previousTargetDeploymentId: current,
             desiredTargetDeploymentId: next,
         });
+        // `current` is pinned by the alias itself and `next` by the open operation.
         expect(await code(deleteDeployment(current))).toBe("conflict");
         expect(await code(deleteDeployment(next))).toBe("conflict");
     });
@@ -358,6 +421,17 @@ describe("promotion intent", () => {
             testDb.db,
         );
         expect(await code(deleteDeployment(target))).toBe("ok");
+    });
+
+    it("withdraws an unbound alias", async () => {
+        const { alias } = await fixture();
+        const operation = await withdraw(alias.id, "0");
+        expect(operation).toMatchObject({
+            action: "withdraw",
+            generation: "1",
+            previousTargetDeploymentId: null,
+        });
+        expect(await aliasRow(alias.id)).toMatchObject({ state: "withdrawing" });
     });
 
     it("queues a withdrawal and refuses a withdrawn alias", async () => {
@@ -395,12 +469,16 @@ describe("promotion intent", () => {
             where id = ${alias.id}`.execute(testDb.db);
         const last = await promote(alias.id, target, nearEnd);
         expect(last.generation).toBe("9223372036854775807");
+        const rowsBefore = (await operations(alias.id)).length;
         expect(typeof last.generation).toBe("string");
         await sql`update promotion_operation set status = 'failed', finished_at = now() where id = ${last.id}`.execute(
             testDb.db,
         );
         await sql`update app_alias set state = 'unbound' where id = ${alias.id}`.execute(testDb.db);
-        expect(await code(promote(alias.id, target, "9223372036854775807"))).toBe("conflict");
+        await expect(promote(alias.id, target, "9223372036854775807")).rejects.toThrow(
+            /no generations left/,
+        );
+        expect((await operations(alias.id)).length).toBe(rowsBefore);
         expect(await code(promote(alias.id, target, "9223372036854775808"))).toBe("invalid");
     });
 
@@ -425,17 +503,22 @@ describe("promotion intent", () => {
 });
 
 describe("corrective operations", () => {
+    // An alias bound to `previous`, with a repoint to `first` held for reconciliation.
     async function held() {
         const { alias, ready } = await fixture();
-        const [first, second] = [await ready(), await ready()];
-        const operation = await promote(alias.id, first, "0");
+        const [previous, first] = [await ready(), await ready()];
+        await sql`update app_alias set state = 'bound', target_deployment_id = ${previous},
+            committed_generation = 1, reserved_generation = 1 where id = ${alias.id}`.execute(
+            testDb.db,
+        );
+        const operation = await promote(alias.id, first, "1");
         await sql`update promotion_operation set status = 'reconciliation-needed' where id = ${operation.id}`.execute(
             testDb.db,
         );
         await sql`update app_alias set state = 'binding-uncertain' where id = ${alias.id}`.execute(
             testDb.db,
         );
-        return { alias, first, second, operation };
+        return { alias, previous, first, operation, ready };
     }
     const correct = (
         operationId: string,
@@ -449,19 +532,23 @@ describe("corrective operations", () => {
             targetDeploymentId,
             attested,
         });
+    const hold = (id: string) =>
+        sql`update promotion_operation set status = 'reconciliation-needed' where id = ${id}`.execute(
+            testDb.db,
+        );
 
     it("blocks ordinary requests while an operation is held", async () => {
-        const { alias, second } = await held();
-        expect(await code(promote(alias.id, second, "1"))).toBe("conflict");
-        expect(await code(withdraw(alias.id, "1"))).toBe("conflict");
+        const { alias, ready } = await held();
+        const another = await ready();
+        expect(await code(promote(alias.id, another, "2"))).toBe("conflict");
+        expect(await code(withdraw(alias.id, "2"))).toBe("conflict");
     });
 
     it("takes a higher generation, links the chain and keeps every possible target pinned", async () => {
-        const { alias, first, second, operation } = await held();
-        const result = await correct(operation.id, "bind", second);
-        expect(result).toMatchObject({ supersedes: operation.id, generation: "2" });
+        const { alias, previous, first, operation } = await held();
+        const result = await correct(operation.id, "bind", previous);
+        expect(result).toMatchObject({ supersedes: operation.id, generation: "3" });
         const rows = await operations(alias.id);
-        expect(rows).toHaveLength(2);
         expect(rows.find((row) => row.id === operation.id)).toMatchObject({
             status: "reconciliation-needed",
             superseded_by_operation_id: result.operationId,
@@ -469,14 +556,18 @@ describe("corrective operations", () => {
         expect(rows.find((row) => row.id === result.operationId)).toMatchObject({
             status: "queued",
             supersedes_operation_id: operation.id,
-            generation: "2",
-            expected_generation: "1",
+            generation: "3",
+            expected_generation: "2",
+            idempotency_key: `correction ${operation.id}`,
         });
-        expect(await aliasRow(alias.id)).toMatchObject({ reserved_generation: "2" });
-        // The held operation's target and the corrective one's both stay pinned.
+        // The alias keeps its uncertain state: finalization, not the request, decides the outcome.
+        expect(await aliasRow(alias.id)).toMatchObject({
+            state: "binding-uncertain",
+            reserved_generation: "3",
+            committed_generation: "1",
+        });
+        expect(await code(deleteDeployment(previous))).toBe("conflict");
         expect(await code(deleteDeployment(first))).toBe("conflict");
-        expect(await code(deleteDeployment(second))).toBe("conflict");
-        // Only one unfinished operation can be dispatched.
         expect(
             await testDb.db
                 .selectFrom("promotion_operation")
@@ -486,15 +577,72 @@ describe("corrective operations", () => {
                 .where("superseded_by_operation_id", "is", null)
                 .execute(),
         ).toHaveLength(1);
+        expect(
+            (
+                await testDb.db
+                    .selectFrom("audit_event")
+                    .select("detail")
+                    .where("action", "=", "alias.operation-superseded")
+                    .where("target_id", "=", alias.id)
+                    .executeTakeFirstOrThrow()
+            ).detail,
+        ).toContain(`new=${result.operationId}`);
         // A second correction of the same held operation is refused.
-        expect(await code(correct(operation.id, "withdraw"))).toBe("conflict");
+        expect(await code(correct(operation.id, "bind", first))).toBe("conflict");
+    });
+
+    it("keeps both targets pinned through two corrections in a row", async () => {
+        const { alias, previous, first, operation } = await held();
+        const second = await correct(operation.id, "bind", previous);
+        await hold(second.operationId);
+        const third = await correct(second.operationId, "bind", first);
+        expect(third.generation).toBe("4");
+        const rows = await operations(alias.id);
+        expect(
+            rows
+                .map((row) => row.superseded_by_operation_id)
+                .filter(Boolean)
+                .toSorted(),
+        ).toEqual([second.operationId, third.operationId].toSorted());
+        expect(await code(deleteDeployment(previous))).toBe("conflict");
+        expect(await code(deleteDeployment(first))).toBe("conflict");
+    });
+
+    it("permits only the outcomes the design allows", async () => {
+        const { alias, first, operation, ready } = await held();
+        const unrelated = await ready();
+        // A held bind cannot be corrected to a withdrawal or to a deployment it never involved.
+        expect(await code(correct(operation.id, "withdraw"))).toBe("invalid");
+        expect(await code(correct(operation.id, "bind", unrelated))).toBe("invalid");
+        expect(await code(correct(operation.id, "bind", randomUUID()))).toBe("invalid");
+        expect(await operations(alias.id)).toHaveLength(1);
+        expect(await code(correct(operation.id, "bind", first))).toBe("ok");
+    });
+
+    it("corrects a held withdrawal to another withdrawal or back to the prior target", async () => {
+        const { alias, ready } = await fixture();
+        const target = await ready();
+        await sql`update app_alias set state = 'bound', target_deployment_id = ${target},
+            committed_generation = 1, reserved_generation = 1 where id = ${alias.id}`.execute(
+            testDb.db,
+        );
+        const operation = await withdraw(alias.id, "1");
+        await hold(operation.id);
+        await sql`update app_alias set state = 'withdrawal-uncertain' where id = ${alias.id}`.execute(
+            testDb.db,
+        );
+        expect(await code(correct(operation.id, "bind", await ready()))).toBe("invalid");
+        const back = await correct(operation.id, "bind", target);
+        expect(back.generation).toBe("3");
+        await hold(back.operationId);
+        expect(await code(correct(back.operationId, "withdraw"))).toBe("ok");
     });
 
     it("needs the attestation, a held operation and a coherent request", async () => {
-        const { alias, second, operation } = await held();
-        await expect(correct(operation.id, "bind", second, false)).rejects.toThrow(/exact-route/);
+        const { alias, previous, operation } = await held();
+        await expect(correct(operation.id, "bind", previous, false)).rejects.toThrow(/exact-route/);
         expect(await code(correct(operation.id, "bind"))).toBe("invalid");
-        expect(await code(correct(operation.id, "withdraw", second))).toBe("invalid");
+        expect(await code(correct(operation.id, "withdraw", previous))).toBe("invalid");
         expect(await code(correct(randomUUID(), "withdraw"))).toBe("not-found");
         const other = await fixture();
         const target = await other.ready();
