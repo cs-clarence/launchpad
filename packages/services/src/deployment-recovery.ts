@@ -113,7 +113,8 @@ export type RouterAnchor =
 
 export type RecoveryMarker = { version: 2; restoreStartedAt: string } & {
     routerEpoch: RouterAnchor["routerEpoch"];
-    routerEpochNote: RouterAnchor["note"];
+    // "predates-anchor" is how a version 1 marker reads: it says nothing about any router.
+    routerEpochNote: RouterAnchor["note"] | "predates-anchor";
 };
 const EPOCH = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
@@ -149,13 +150,14 @@ export async function readRecoveryMarker(
     } catch {
         return "damaged";
     }
+    if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) return "damaged";
     if (typeof parsed.restoreStartedAt !== "string") return "damaged";
     if (parsed.version === 1) {
         return {
             version: 2,
             restoreStartedAt: parsed.restoreStartedAt,
             routerEpoch: null,
-            routerEpochNote: "not-configured",
+            routerEpochNote: "predates-anchor",
         };
     }
     if (parsed.version !== 2) return "damaged";
@@ -195,6 +197,14 @@ export async function markDeploymentRecoveryBlocked(
     }
     const found = await readRecoveryMarker(dataDir);
     const existing = found && found !== "damaged" ? found : null;
+    // A retry that merely finds no router configured must not erase that one was unreachable
+    // earlier; a valid epoch still strengthens an unanchored marker.
+    const note =
+        anchor.routerEpoch === null &&
+        anchor.note === "not-configured" &&
+        existing?.routerEpochNote === "unreachable"
+            ? "unreachable"
+            : anchor.note;
     const record: RecoveryMarker =
         existing && existing.routerEpoch !== null
             ? existing
@@ -202,7 +212,7 @@ export async function markDeploymentRecoveryBlocked(
                   version: 2,
                   restoreStartedAt: existing?.restoreStartedAt ?? new Date().toISOString(),
                   routerEpoch: anchor.routerEpoch,
-                  routerEpochNote: anchor.note,
+                  routerEpochNote: note,
               } as RecoveryMarker);
     await writeDurableRecord(dataDir, BLOCKED, record);
 }
@@ -525,6 +535,12 @@ export async function clearDeploymentRecovery(
             const marker = await readRecoveryMarker(dataDir);
             const damaged = marker === "damaged";
             const anchor = marker && marker !== "damaged" ? marker.routerEpoch : null;
+            // Nothing is known about any router: damaged, or written before anchors existed.
+            const unknown = damaged || marker?.routerEpochNote === "predates-anchor";
+            const fromFile =
+                marker !== null &&
+                marker !== "damaged" &&
+                marker.routerEpochNote === "from-epoch-file";
             if (inventory) {
                 // The anchor is the router's epoch when the restore began. A router still on it was
                 // not rotated, so a delayed pre-restore write would still be accepted.
@@ -540,10 +556,18 @@ export async function clearDeploymentRecovery(
                             : "The restore recorded no router epoch (no router was configured or readable then, or the marker predates this check), so the rotation cannot be verified. After rotating the router, repeat with --router-epoch-unrecorded to confirm it yourself.",
                     );
                 }
+                // An anchor taken from the configured epoch file was not confirmed by the router: if
+                // the file was stale, an unchanged router would also look rotated. It proves "not
+                // rotated" when equal, but a difference needs the operator's confirmation.
+                if (fromFile && !options.routerEpochUnrecorded) {
+                    throw new DeploymentRecoveryError(
+                        "The restore could not read the router, so its anchor is the epoch in the configured epoch file, which the router may not have been on. The router's epoch now differs, but that is not proof of a rotation made during recovery: after rotating the router, repeat with --router-epoch-unrecorded to confirm it yourself.",
+                    );
+                }
                 epochAudit =
                     anchor === null
                         ? `;router-epoch=${damaged ? "marker-damaged-confirmed" : "unrecorded-confirmed"}`
-                        : `;router-epoch=changed;anchor=${anchor};current=${inventory.epoch}`;
+                        : `;router-epoch=${fromFile ? "changed-file-anchor-confirmed" : "changed"};anchor=${anchor};current=${inventory.epoch}`;
                 const report = await compareRouterInventory(trx, inventory);
                 if (counterProblems(report)) {
                     const shown = report.unknownRoutes.slice(0, 5).join(", ");
@@ -564,6 +588,17 @@ export async function clearDeploymentRecovery(
                     throw new DeploymentRecoveryError(
                         "A router was configured when the restore began, so recovery-clear must read it to verify the rotation: configure the router settings (LAUNCHPAD_ALIAS_CONTROL_URL and the other LAUNCHPAD_ALIAS_* settings) and retry.",
                     );
+                }
+                // No router is read, and nothing is known about one: confirm it, as with a router.
+                if (unknown) {
+                    if (!options.routerEpochUnrecorded) {
+                        throw new DeploymentRecoveryError(
+                            damaged
+                                ? "The recovery marker is damaged, so it is not known whether a router was in use. After rotating any router, repeat with --router-epoch-unrecorded to confirm it yourself."
+                                : "The recovery marker predates router anchoring, so it is not known whether a router was in use. After rotating any router, repeat with --router-epoch-unrecorded to confirm it yourself.",
+                        );
+                    }
+                    epochAudit = `;router-epoch=${damaged ? "marker-damaged-confirmed" : "unrecorded-confirmed"}`;
                 }
                 const anyAlias = await trx
                     .selectFrom("app_alias")

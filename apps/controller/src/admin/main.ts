@@ -185,6 +185,10 @@ program
             console.log(
                 `No router epoch was recorded (${routerAnchor.note === "unreachable" ? "the router could not be read" : "no router is configured"}); recovery-clear will need --router-epoch-unrecorded.`,
             );
+        } else if (routerAnchor.note === "from-epoch-file") {
+            console.log(
+                "The router could not be read, so the anchor is the epoch in the configured epoch file; recovery-clear will need --router-epoch-unrecorded to confirm the rotation.",
+            );
         }
         console.log(
             `Restored the database (${result.manifest.migrations.length} migrations applied) and ` +
