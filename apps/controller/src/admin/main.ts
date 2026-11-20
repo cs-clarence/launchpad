@@ -258,6 +258,11 @@ program
                 `The router serves ${result.unknownRoutes.length} route(s) Launchpad has no alias for: ${result.unknownRoutes.slice(0, 20).join(", ")}. recovery-clear refuses until each is withdrawn (recovery-withdraw-unknown) or its alias is restored.`,
             );
         }
+        if (result.conflicting.length) {
+            console.log(
+                `The router records ${result.conflicting.length} hostname(s) for a different alias id than the database: ${result.conflicting.slice(0, 20).join(", ")}. recovery-clear refuses until each is resolved (the router would reject that alias's writes); do not withdraw them as unknown.`,
+            );
+        }
         if (result.unknownWithdrawn.length) {
             console.log(
                 `The router also holds ${result.unknownWithdrawn.length} withdrawn route(s) Launchpad does not know; they serve nothing and do not block recovery-clear. Their hostnames stay reserved on the router for the old alias, so do not create an alias with the same hostname.`,
@@ -284,7 +289,12 @@ program
         const router = routerSessionFromEnv(process.env);
         if (!router) throw new Error("Router settings are required.");
         const result = await withDatabase((db) =>
-            withdrawUnknownRoute(db, options.hostname, router),
+            withdrawUnknownRoute(
+                db,
+                path.resolve(process.env.LAUNCHPAD_DATA_DIR ?? ".data/controller"),
+                options.hostname,
+                router,
+            ),
         );
         console.log(
             `Withdrew ${result.hostname} at generation ${result.generation}. Its hostname stays reserved on the router for the old alias.`,

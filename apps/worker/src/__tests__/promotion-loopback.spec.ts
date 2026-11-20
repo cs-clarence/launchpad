@@ -734,7 +734,7 @@ describe("P4 worked example and restore, against the real router", () => {
                 /unknown routes/,
             );
             expect(
-                await withdrawUnknownRoute(db.db, strangerHost, {
+                await withdrawUnknownRoute(db.db, tmp.dir, strangerHost, {
                     view,
                     withdraw: async (route) => {
                         await client().replaceRoute({

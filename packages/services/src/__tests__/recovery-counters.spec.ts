@@ -176,6 +176,7 @@ describe("recovery counters", () => {
             raised: 1,
             unknownRoutes: ["stranger.sites.example.net"],
             unknownWithdrawn: [],
+            conflicting: [],
         });
         expect(await aliasRow(alias.id)).toMatchObject({
             reserved_generation: "9",
@@ -238,13 +239,19 @@ describe("recovery counters", () => {
             view: async () => inventory([route(alias, "1"), stranger, idle]),
             withdraw: async (written: unknown) => void withdrawn.push(written),
         };
+        // A hostname the database owns is never withdrawn, whichever alias id the router recorded.
+        const claimed = { ...route(alias, "3"), aliasId: randomUUID() };
+        const clash = { ...router, view: async () => inventory([claimed]) };
+        await expect(withdrawUnknownRoute(db.db, dataDir, alias.hostname, clash)).rejects.toThrow(
+            /not a live route/,
+        );
         for (const hostname of [alias.hostname, idle.hostname, "missing.sites.example.net"]) {
-            await expect(withdrawUnknownRoute(db.db, hostname, router)).rejects.toThrow(
+            await expect(withdrawUnknownRoute(db.db, dataDir, hostname, router)).rejects.toThrow(
                 /not a live route/,
             );
         }
         expect(withdrawn).toEqual([]);
-        expect(await withdrawUnknownRoute(db.db, stranger.hostname, router)).toEqual({
+        expect(await withdrawUnknownRoute(db.db, dataDir, stranger.hostname, router)).toEqual({
             hostname: stranger.hostname,
             generation: "7",
         });

@@ -66,6 +66,7 @@ export async function raiseAliasCounters(db: Db, dataDir: string, view: RouterVi
                 raised,
                 unknownRoutes: report.unknownRoutes,
                 unknownWithdrawn: report.unknownWithdrawn,
+                conflicting: report.conflicting,
             };
         });
     });
@@ -77,6 +78,7 @@ export async function raiseAliasCounters(db: Db, dataDir: string, view: RouterVi
 // judged unknown. The hostname stays reserved on the router for the old alias id.
 export async function withdrawUnknownRoute(
     db: Db,
+    dataDir: string,
     hostname: string,
     router: {
         view: RouterView;
@@ -84,6 +86,10 @@ export async function withdrawUnknownRoute(
     },
 ) {
     return withDeploymentRecoveryMaintenance(db, async (connection) => {
+        // An importer that outlived its admin could be replacing the alias tables: a live route
+        // can briefly look unknown then, and must not be withdrawn on that evidence.
+        await assertNoPendingDeploymentImport(dataDir);
+        await assertNoActiveDeploymentImportBackends(connection);
         const inventory = await router.view();
         const report = await compareRouterInventory(connection, inventory);
         const route = inventory.routes.find((row) => row.hostname === hostname);

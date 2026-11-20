@@ -428,8 +428,9 @@ export async function clearDeploymentRecovery(
                 const report = await compareRouterInventory(trx, inventory);
                 if (counterProblems(report)) {
                     const shown = report.unknownRoutes.slice(0, 5).join(", ");
+                    const claimed = report.conflicting.slice(0, 5).join(", ");
                     throw new DeploymentRecoveryError(
-                        `The router is ahead of the restored database or holds routes Launchpad does not know (${report.behind.length} alias counters behind, ${report.unknownRoutes.length} unknown routes${shown ? `: ${shown}` : ""}). Run recovery-raise-counters, and withdraw or restore anything unknown (docs/restore.md), before recovery-clear.`,
+                        `The router is ahead of the restored database or disagrees with it (${report.behind.length} alias counters behind, ${report.unknownRoutes.length} unknown routes${shown ? `: ${shown}` : ""}, ${report.conflicting.length} hostnames recorded for a different alias${claimed ? `: ${claimed}` : ""}). Run recovery-raise-counters, withdraw (recovery-withdraw-unknown) or restore anything unknown, and resolve any hostname recorded for another alias, before recovery-clear (docs/restore.md).`,
                     );
                 }
             } else {

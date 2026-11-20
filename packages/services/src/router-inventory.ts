@@ -25,6 +25,9 @@ export interface CounterReport {
     unknownRoutes: string[];
     // Routes for such hostnames that serve nothing (a withdrawal): reported, never blocking.
     unknownWithdrawn: string[];
+    // Hostnames the database knows under a different alias id than the router recorded, serving
+    // or not. The router would refuse that alias's writes, so these always block.
+    conflicting: string[];
 }
 
 export async function compareRouterInventory(
@@ -36,11 +39,18 @@ export async function compareRouterInventory(
         .select(["id", "hostname", "reserved_generation"])
         .execute();
     const byHostname = new Map(aliases.map((alias) => [alias.hostname, alias]));
-    const report: CounterReport = { behind: [], unknownRoutes: [], unknownWithdrawn: [] };
+    const report: CounterReport = {
+        behind: [],
+        unknownRoutes: [],
+        unknownWithdrawn: [],
+        conflicting: [],
+    };
     for (const route of inventory.routes) {
         const alias = byHostname.get(route.hostname);
-        if (!alias || alias.id !== route.aliasId) {
+        if (!alias) {
             (route.target ? report.unknownRoutes : report.unknownWithdrawn).push(route.hostname);
+        } else if (alias.id !== route.aliasId) {
+            report.conflicting.push(route.hostname);
         } else if (BigInt(route.generation) > BigInt(alias.reserved_generation)) {
             report.behind.push({
                 aliasId: alias.id,
@@ -54,4 +64,4 @@ export async function compareRouterInventory(
 }
 
 export const counterProblems = (report: CounterReport) =>
-    report.behind.length > 0 || report.unknownRoutes.length > 0;
+    report.behind.length > 0 || report.unknownRoutes.length > 0 || report.conflicting.length > 0;
