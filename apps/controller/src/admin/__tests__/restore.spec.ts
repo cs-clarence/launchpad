@@ -367,9 +367,10 @@ exit 0
         const target = await emptyTarget();
         await target.migrate();
         const hang = path.join(work, "pg_restore_hang.sh");
+        const started = path.join(work, "hang-importer-started");
         await fs.writeFile(
             hang,
-            `#!/bin/sh\ncase "$*" in *--list*|*--schema-only*) exec ${restoreTool} "$@";; esac\nexec sleep 30\n`,
+            `#!/bin/sh\ncase "$*" in *--list*|*--schema-only*) exec ${restoreTool} "$@";; esac\n: > "${started}"\nexec sleep 30\n`,
             { mode: 0o700 },
         );
         const options = restoreOptions(target, {
@@ -377,8 +378,17 @@ exit 0
             pgRestore: hang,
         });
         const deadline = new AbortController();
-        setTimeout(() => deadline.abort(), 700);
-        await expect(restoreBackup({ ...options, signal: deadline.signal })).rejects.toThrow();
+        // Abort only once the importer is running; a separate watchdog bounds setup.
+        const watcher = (async () => {
+            const limit = Date.now() + 60_000;
+            while (!(await fs.stat(started).catch(() => null))) {
+                if (Date.now() > limit) throw new Error("importer never started");
+                await new Promise((resolve) => setTimeout(resolve, 20));
+            }
+            deadline.abort();
+        })();
+        const restoring = restoreBackup({ ...options, signal: deadline.signal });
+        await Promise.all([watcher, expect(restoring).rejects.toThrow()]);
         await expect(restoreBackup(options)).rejects.toThrow(/previous pg_restore/);
         await expect(
             fs.stat(path.join(options.dataDir, "maintenance/deployment-import-in-progress")),
