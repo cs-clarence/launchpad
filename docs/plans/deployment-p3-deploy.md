@@ -106,7 +106,11 @@ controller restore tests. Undo: revert; no schema change.
   `listDeployments`, `listDeploymentEvents`. Writes run inside `withModelMutation`.
   `createApp` takes the quota advisory lock for `LAUNCHPAD_MAX_APPS`. `createDeployment` locks in
   the schema map's order (quota advisory lock, app row), checks the artifact belongs to the
-  organization and is stored, enforces the per-app unfinished rule and both deployment quotas,
+  organization and is stored **and that the caller may use it**, in the same locked transaction as
+  the other checks: the app's project must be one the key can access, and artifacts are
+  organization-owned (they carry no project), so a key with a project restriction may deploy only
+  an artifact its own creator uploaded (`created_by`); a test uses a key restricted to project A
+  against an artifact uploaded for project B, enforces the per-app unfinished rule and both deployment quotas,
   generates the Dokku name and hostname (`hostname-template.ts`), sets `preview_expires_at` per
   decision 4, inserts the deployment and its two reservation rows in one transaction, and records
   the first `app_deployment_event` (`queued`) in the same transaction. No network I/O inside a
@@ -129,10 +133,19 @@ queued rows are inert; or revert.
   and a five-minute lease; heartbeat extends it. Every state write includes deployment ID, attempt,
   fence and a live lease in its `WHERE`, so a reclaimed job's old worker updates zero rows.
 - **Time bounds and lease loss.** Every Dokku and Docker call has a deadline that ends strictly
-  inside the current lease, and a failed or late heartbeat aborts the shared signal. Builds that
-  cannot finish inside a lease are failed cleanly, not extended past it. Every claim and every
+  inside the current lease, and a failed or late heartbeat aborts the shared signal. A call that hits its deadline while the lease is still valid is resolved by what is proven:
+  a **local** step (the Docker build) is `failed` only after the worker killed the process and
+  observed its exit; any **remote** call (Dokku over SSH, image load) whose outcome is not
+  confirmed becomes `reconciliation-needed`, exactly as for a lapsed lease. A deployment is never
+  marked `failed` while remote work may still be running. Tests cover a build killed at the
+  deadline (`failed`, exit observed) and a Dokku call timing out mid-flight (`reconciliation-needed`). Every claim and every
   remote effect first calls `recordModelWriterSeen` and re-checks the recovery gate, not only a
-  startup check; a closed gate stops the loop and aborts the signal.
+  startup check. A check cannot make dispatch atomic, so the protocol is two layers: a watchdog
+  re-reads the gate on a short interval and aborts the shared signal when it closes (in-flight
+  calls end at their own deadline, at most one call per worker can finish after closure), and the
+  restore/clear attestation already requires every writer to be stopped and every dispatched
+  operation settled before reopening. A closure between a check and its dispatch is tested: the
+  watchdog aborts, no further call starts, and the in-flight one is resolved by the rule above.
 - **Reclaim by recorded step** (migration 018's `step_done`/`step_pending`):
     - nothing remote was pending: resume from `step_done`;
     - a remote step was pending when the lease lapsed (create, build, load): the outcome is
@@ -171,11 +184,15 @@ failed candidate leaves siblings untouched, adapter tests with fake Dokku and Do
   `deleted_at`. A destroy whose outcome is uncertain stays reconcilable. Finalizing never sets a
   reservation's `released_at`: hostnames and names stay reserved permanently, as the schema map
   requires.
+- API: `DELETE /deployments/{deploymentId}` returns 202 with the operation ID. It needs the
+  `app:delete` scope and the deployer role, the app's project access for restricted keys, and is
+  refused while `LAUNCHPAD_DEPLOYMENTS` is off. Reads expose the deletion state. OpenAPI from the
+  zod schemas. Clients stay out of P3.
 - `deployment-reconcile` admin command (decision 7), audited, counts only.
 - Artifact GC already pins deployments, and already runs under `withModelMutation`; add tests
   against retained, deleting and deleted rows and the new states.
 
-Checks: deletion races with deployment creation and with GC pin checks, crash after destroy,
+Checks: the delete route's scope, role, project-restriction and switch-off matrix, deletion races with deployment creation and with GC pin checks, crash after destroy,
 absent-then-present remote app, exact-tag image removal, reservation permanence, reconcile
 command outcomes, the blocked-app case unblocked by `deployment-reconcile`. Undo:
 `LAUNCHPAD_DEPLOYMENTS=off`; rows stay `deleting` and resume later.
