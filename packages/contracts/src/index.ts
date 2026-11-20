@@ -237,6 +237,7 @@ export const appShutdownSchema = z.strictObject({
                 "deployment-unfinished",
                 "deployment-needs-reconciliation",
                 "deployment-deleting",
+                "deletion-needs-reconciliation",
             ]),
         )
         .meta({

@@ -517,10 +517,10 @@ export const docs = {
         tags: ["Apps"],
         summary: "Shut down an app",
         description:
-            "Admins and owners; a key needs all of `app:delete`, `app:alias:manage` and `app:promote`. Destructive and resumable: the app stops accepting deployments and promotions, every alias route is withdrawn and verified, and only then is each deployment deleted. Returns 202 with what was queued and what still blocks it (`blockedBy`); repeat the request to continue. Nothing is destroyed while a route is live or uncertain. Identity, hostnames and names stay reserved permanently. Needs deployments to be on.",
+            "Admins and owners; a key needs all of `app:delete`, `app:alias:manage` and `app:promote`. Destructive and resumable: the app stops accepting deployments and promotions, every alias route is withdrawn and verified, and only then is each deployment deleted. Returns 202 with what was queued and what still blocks it (`blockedBy`); repeat the request to continue. Nothing is destroyed while a route is live or uncertain. Identity, hostnames and names stay reserved permanently. A deployment queued but never started is cancelled. Refused with 503 if a route still needs withdrawing while aliases are off. Needs deployments to be on.",
         path: ["orgId", "appId"],
         ok: { status: 202, description: "Accepted.", schema: appShutdownSchema },
-        errors: [401, 403, 404, 503],
+        errors: [401, 403, 404, 409, 503],
     }),
     createDeployment: operation({
         keys: true,

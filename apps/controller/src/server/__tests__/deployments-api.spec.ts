@@ -154,6 +154,11 @@ beforeAll(async () => {
     await issue("promoter", ["app:read", "app:promote"]);
     await issue("promoter-p2", ["app:read", "app:promote"], [p2]);
     await issue("shutdowner", ["app:read", "app:delete", "app:alias:manage", "app:promote"]);
+    await issue(
+        "shutdowner-p2",
+        ["app:read", "app:delete", "app:alias:manage", "app:promote"],
+        [p2],
+    );
     const config = loadAuthConfig({
         LAUNCHPAD_AUTH_SECRET: "test-secret-".repeat(4),
         LAUNCHPAD_BASE_URL: "http://localhost:3000",
@@ -576,6 +581,17 @@ describe("apps and deployments over HTTP", () => {
 
         // Shutdown needs all three scopes; with routes in progress it destroys nothing.
         expect((await call(api, "deleter", "DELETE", `${base()}/apps/${app}`)).status).toBe(403);
+        expect((await call(api, "shutdowner-p2", "DELETE", `${base()}/apps/${app}`)).status).toBe(
+            404,
+        );
+        // With the switch off, every new write answers 503 before anything about the request.
+        expect((await call(offApi, "promoter", "POST", promote, { body })).status).toBe(503);
+        expect(
+            (await call(offApi, "aliaser", "DELETE", `${base()}/aliases/${first.id}`)).status,
+        ).toBe(503);
+        expect((await call(offApi, "shutdowner", "DELETE", `${base()}/apps/${app}`)).status).toBe(
+            503,
+        );
         const shutdown = await call(api, "shutdowner", "DELETE", `${base()}/apps/${app}`);
         expect(shutdown.status).toBe(202);
         expect(appShutdownSchema.parse(await shutdown.json())).toMatchObject({

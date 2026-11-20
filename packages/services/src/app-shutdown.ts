@@ -8,7 +8,8 @@ import { withModelMutation } from "./deployment-recovery";
 import { ServiceError } from "./errors";
 import { isUuid } from "./ids";
 import { recordAudit, requireMembership } from "./organizations";
-import { reservePromotionOperation } from "./promotions";
+import { isDeploymentPinned, OPEN_OPERATION_STATUSES } from "./pins";
+import { reservePromotionOperation } from "./promotion-reserve";
 
 type Db = Kysely<Database>;
 const databaseNow = sql<Date>`clock_timestamp()`;
@@ -20,7 +21,8 @@ export type ShutdownBlocker =
     | "alias-needs-reconciliation"
     | "deployment-unfinished"
     | "deployment-needs-reconciliation"
-    | "deployment-deleting";
+    | "deployment-deleting"
+    | "deletion-needs-reconciliation";
 
 // Called with the app row locked. Settles the shutdown once nothing can route to the app and every
 // deployment is deleted. The app's identity, hostnames and names stay reserved permanently.
@@ -43,7 +45,14 @@ export async function finishShutdownIfDone(trx: Db, appId: string): Promise<bool
         .where("app_id", "=", appId)
         .where("state", "not in", ["unbound", "withdrawn"])
         .executeTakeFirst();
-    if (live || routing) return false;
+    // A held operation can leave an alias looking settled; it still pins its possible targets.
+    const open = await trx
+        .selectFrom("promotion_operation")
+        .select("id")
+        .where("app_id", "=", appId)
+        .where("status", "in", [...OPEN_OPERATION_STATUSES])
+        .executeTakeFirst();
+    if (live || routing || open) return false;
     await trx
         .updateTable("app")
         .set({ state: "deleted", deleted_at: databaseNow })
@@ -107,13 +116,23 @@ export async function requestAppShutdown(
             .execute();
         const deployments = await trx
             .selectFrom("deployment")
-            .select(["id", "status", "desired_state"])
+            .select(["id", "status", "desired_state", "attempt"])
             .where("app_id", "=", appId)
             .orderBy("id")
             .forUpdate()
             .execute();
 
         if (app.state === "active") {
+            // Refuse before a one-way change that this instance could not finish.
+            if (
+                !deps.aliases.enabled &&
+                aliases.some(({ state }) => state !== "unbound" && state !== "withdrawn")
+            ) {
+                throw new ServiceError(
+                    "unavailable",
+                    "Aliases are off, so this app's routes cannot be withdrawn; turn them on first.",
+                );
+            }
             await trx
                 .updateTable("app")
                 .set({ state: "shutting-down" })
@@ -127,6 +146,42 @@ export async function requestAppShutdown(
                 targetId: appId,
                 organizationId,
             });
+        }
+
+        const held = new Set(
+            (
+                await trx
+                    .selectFrom("deployment_deletion_operation")
+                    .select("deployment_id")
+                    .where("app_id", "=", appId)
+                    .where("status", "=", "reconciliation-needed")
+                    .execute()
+            ).map((row) => row.deployment_id),
+        );
+        // A deployment queued before the shutdown and never started is cancelled, not built just
+        // to be destroyed again.
+        for (const deployment of deployments) {
+            if (
+                deployment.desired_state === "active" &&
+                deployment.status === "queued" &&
+                deployment.attempt === 0
+            ) {
+                await trx
+                    .updateTable("deployment")
+                    .set({ status: "cancelled", finished_at: databaseNow, updated_at: databaseNow })
+                    .where("id", "=", deployment.id)
+                    .where("status", "=", "queued")
+                    .returning("id")
+                    .executeTakeFirstOrThrow();
+                await appendDeploymentEvent(
+                    trx,
+                    { id: deployment.id, organization_id: organizationId },
+                    "cancelled",
+                    "info",
+                    "Cancelled by app shutdown before it started.",
+                );
+                deployment.status = "cancelled";
+            }
         }
 
         const blockedBy = new Set<ShutdownBlocker>();
@@ -154,7 +209,7 @@ export async function requestAppShutdown(
                         target: null,
                         expected: String(alias.reserved_generation),
                         // A space is refused in a caller's key, so this cannot collide with one.
-                        key: `shutdown ${alias.id}`,
+                        key: `shutdown ${alias.id} ${BigInt(alias.reserved_generation) + 1n}`,
                     },
                 );
                 withdrawalsQueued++;
@@ -170,7 +225,11 @@ export async function requestAppShutdown(
         if (stable) {
             for (const deployment of deployments) {
                 if (deployment.desired_state === "deleting") {
-                    blockedBy.add("deployment-deleting");
+                    blockedBy.add(
+                        held.has(deployment.id)
+                            ? "deletion-needs-reconciliation"
+                            : "deployment-deleting",
+                    );
                 } else if (deployment.desired_state === "active") {
                     if (!FINISHED.includes(deployment.status)) {
                         blockedBy.add(
@@ -178,6 +237,12 @@ export async function requestAppShutdown(
                                 ? "deployment-needs-reconciliation"
                                 : "deployment-unfinished",
                         );
+                        continue;
+                    }
+                    // The one pin definition deletion shares: a held operation can pin a target
+                    // that the alias rows no longer show.
+                    if (await isDeploymentPinned(trx, deployment.id)) {
+                        blockedBy.add("alias-needs-reconciliation");
                         continue;
                     }
                     await trx

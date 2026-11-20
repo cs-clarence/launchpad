@@ -447,7 +447,6 @@ All paths below are relative to `/api/v1/organizations/{orgId}`.
 | `GET /apps` / `GET /apps/{appId}`                                   | Apps and alias summaries, including committed targets and pending routing state.                                              |
 | `POST /apps/{appId}/aliases`                                        | Create a generated alias from a slug such as `production` or `staging`. It starts unbound; binding is an explicit promotion.  |
 | `GET /apps/{appId}/aliases` / `GET /apps/{appId}/aliases/{aliasId}` | List/read independent aliases and their routing state.                                                                        |
-| `DELETE /apps/{appId}/aliases/{aliasId}`                            | Asynchronously withdraw a route; keep its current target pinned until withdrawal is confirmed.                                |
 | `POST /apps/{appId}/deployments`                                    | Deploy once; body `{ "artifactId": "...", "spa": false }`. Returns 202 and job ID.                                            |
 | `GET /apps/{appId}/deployments`                                     | All release candidates/history; production status is derived from alias references.                                           |
 | `GET /deployments/{deploymentId}` / `/events`                       | Existing job status/events plus unique URL, retention and alias references.                                                   |
@@ -458,7 +457,7 @@ All paths below are relative to `/api/v1/organizations/{orgId}`.
 | `DELETE /deployments/{deploymentId}`                                | Guarded async deletion; refuses any protected target.                                                                         |
 | `DELETE /apps/{appId}`                                              | Explicit destructive app shutdown; must withdraw and verify all routes before deleting referenced deployments.                |
 
-Rollback is another `POST /apps/{appId}/promotions` selecting the same alias and an older deployment;
+Rollback is another `POST /aliases/{aliasId}/promotions` with an older deployment;
 do not introduce a separate divergent rollback pipeline.
 
 Promotion requests support idempotency and compare-and-swap alias generation.
