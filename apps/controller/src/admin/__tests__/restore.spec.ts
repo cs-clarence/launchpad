@@ -382,13 +382,19 @@ exit 0
         const watcher = (async () => {
             const limit = Date.now() + 60_000;
             while (!(await fs.stat(started).catch(() => null))) {
-                if (Date.now() > limit) throw new Error("importer never started");
+                if (Date.now() > limit) {
+                    deadline.abort();
+                    throw new Error("importer never started");
+                }
                 await new Promise((resolve) => setTimeout(resolve, 20));
             }
             deadline.abort();
         })();
         const restoring = restoreBackup({ ...options, signal: deadline.signal });
-        await Promise.all([watcher, expect(restoring).rejects.toThrow()]);
+        // Settle both before reporting, so no restore or importer outlives a failing test.
+        const [watched, restored] = await Promise.allSettled([watcher, restoring]);
+        if (watched.status === "rejected") throw watched.reason;
+        expect(restored.status).toBe("rejected");
         await expect(restoreBackup(options)).rejects.toThrow(/previous pg_restore/);
         await expect(
             fs.stat(path.join(options.dataDir, "maintenance/deployment-import-in-progress")),
