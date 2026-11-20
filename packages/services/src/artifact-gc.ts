@@ -82,8 +82,8 @@ export interface CollectOptions {
 // moved aside to a name only this collection knows, inside the transaction, and removed after
 // the commit: a re-upload that restores the archive in the meantime writes the real name and
 // is never touched, and a failed commit puts the file back.
-// P2b has no runtime caller. Even a no-op collection records model-writer-seen,
-// conservatively disabling the P2b-only empty-model recovery-clear rule.
+// A collection runs under the model-mutation gate and records model-writer-seen even when it
+// removes nothing. The record is history for operators; it does not decide recovery-clear.
 export async function collectArtifacts(
     db: Db,
     options: CollectOptions,

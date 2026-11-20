@@ -169,18 +169,17 @@ back an empty registry and stale generations while the router and Dokku keep the
       restore cannot erase it. If that step fails the writer fails closed and performs no
       mutation, so a crash can never leave state behind without the record. P2b has no writer,
       so on a P2b installation the file never exists.
-    - **P2b rule.** `recovery-clear` **succeeds** only if every model table is empty **and** the
+    - **P2b rule (superseded in P3a).** `recovery-clear` **succeeded** only if every model table is empty **and** the
       writer-seen file does not exist; it **refuses** in every other case, including an empty
       database after any writer has run. Rolling back to a P2b binary after P3 has written is not
       supported, and this record is what makes the P2b command refuse if someone does.
-    - **Interim rule (from P3).** Reconciliation itself is P5, so P3 cannot depend on it. The
-      P3 PR that adds the first writer replaces the P2b rule with an **interim fail-closed
+    - **Interim rule (implemented in P3a, before any writer exists).** Reconciliation itself is P5, so P3 cannot depend on it. P3a replaces the P2b rule with an **interim fail-closed
       rule** that does **not** consult `model-writer-seen` or the model tables: the file lives on
       the data volume, so a replaced volume restored from an older dump loses it, and empty
       tables cannot be told from a never-used installation. `recovery-clear` therefore **always**
       refuses unless the operator passes the explicit attestation
-      `--i-have-reconciled-router-and-dokku`, recorded in an audit event (count-only, no
-      secrets). Tests assert the P2b rule is gone, that the command refuses without the flag on a
+      `--i-have-reconciled-router-and-dokku`, recorded in an audit event (attestation only, no
+      secrets or names). Tests assert the P2b rule is gone, that the command refuses without the flag on a
       database with rows, on an empty one, and with the file absent. This follows the restore
       command's confirmation flags and is weaker than verification, so it is **interim**.
     - **What the attestation covers (the manual procedure until P5).** The flag attests that the
@@ -264,7 +263,9 @@ On disposable PostgreSQL, from the frozen schema-014 fixture and from an empty d
 - The upgrade drill and the built images run the new migration, and the drill asserts the
   four preview tables and `worker_heartbeat` are gone afterwards.
 - An old dump restored over a database that already holds model rows writes the marker.
-- `recovery-clear` refuses while any model table has a row, and refuses on an empty database
-  once the `model-writer-seen` file exists (simulated by creating it). The P3 change that adds the
-  first writer carries the matching tests: the file exists and is fsynced before the first
-  mutation or remote call, and a failure to create it aborts the writer with nothing changed.
+- `recovery-clear` refuses without `--i-have-reconciled-router-and-dokku` on an empty database
+  with no writer record, on one with the record, and on a populated one; with the flag it clears
+  in each case, audits only the attested fact and removes the marker last (P3a). The
+  `model-writer-seen` record is still written, fsynced before the first model mutation or remote
+  call, and a failure to create it aborts the writer with nothing changed; it is history now, not
+  a clearing rule.

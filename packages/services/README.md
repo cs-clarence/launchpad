@@ -48,7 +48,7 @@ model; nothing calls the collection now.
 `deployment-recovery.ts` owns the model-mutation gate. `withModelMutation` holds a shared
 recovery lock, checks the filesystem/database gate and fsyncs `model-writer-seen` before
 the callback can mutate or dispatch. Restore/clear use the exclusive lock. All artifact
-collection paths use this gate; none is called by the idle runtime. The P2b admin clear
-rule is intentionally limited to an empty, never-used model and must be replaced when
-P3 adds the first live model writer. Auth/organization/key administration does not use
-this gate. See [recovery design](../../docs/design/deployment-cutover-schema.md#restore-and-the-recovery-gate).
+collection paths use this gate; none is called by the idle runtime. `clearDeploymentRecovery`
+always requires the operator's `--i-have-reconciled-router-and-dokku` attestation and never
+consults the model tables or `model-writer-seen`. Auth/organization/key administration does
+not use this gate. See [recovery design](../../docs/design/deployment-cutover-schema.md#restore-and-the-recovery-gate).

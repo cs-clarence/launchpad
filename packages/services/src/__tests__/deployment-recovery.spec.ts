@@ -68,7 +68,9 @@ describe("deployment model recovery gate", () => {
             await expect(
                 acknowledgeDeploymentImport(source.db, dataDir, record.databaseIdentity, true),
             ).rejects.toThrow(/backend/);
-            await expect(clearDeploymentRecovery(source.db, dataDir)).rejects.toThrow(/pg_restore/);
+            await expect(clearDeploymentRecovery(source.db, dataDir, true)).rejects.toThrow(
+                /pg_restore/,
+            );
         } finally {
             release();
             await importer;
@@ -206,74 +208,111 @@ describe("deployment model recovery gate", () => {
         await expect(assertModelMutationsReady(source.db, dataDir)).rejects.toThrow(/gate/);
     });
 
-    it("clears only a never-used empty model and audits the explicit operation", async () => {
+    it("never clears without the attestation, whatever the files or tables hold", async () => {
+        // An empty database with no writer record is exactly a never-used installation, and a
+        // restore can also bring either condition: neither may substitute for the operator.
         await markDeploymentRecoveryBlocked(dataDir);
         await blockRestoredModel(source.db);
-        await clearDeploymentRecovery(source.db, dataDir);
+        await expect(clearDeploymentRecovery(source.db, dataDir, false)).rejects.toThrow(
+            /i-have-reconciled-router-and-dokku/,
+        );
+        expect((await fs.stat(marker())).isFile()).toBe(true);
+        await expect(assertModelMutationsReady(source.db, dataDir)).rejects.toThrow(/blocked/);
+        await recordModelWriterSeen(dataDir);
+        await expect(clearDeploymentRecovery(source.db, dataDir, false)).rejects.toThrow(
+            /i-have-reconciled-router-and-dokku/,
+        );
+        expect((await fs.stat(marker())).isFile()).toBe(true);
+    });
+
+    it("clears on the attestation alone and audits only the attested fact", async () => {
+        await markDeploymentRecoveryBlocked(dataDir);
+        await blockRestoredModel(source.db);
+        await clearDeploymentRecovery(source.db, dataDir, true);
         await expect(fs.stat(marker())).rejects.toMatchObject({ code: "ENOENT" });
         await assertModelMutationsReady(source.db, dataDir);
         const audit = await source.db
             .selectFrom("audit_event")
-            .select(["action", "detail"])
+            .select(["actor", "action", "detail"])
             .where("action", "=", "deployment.recovery-cleared")
             .execute();
         expect(audit).toEqual([
-            { action: "deployment.recovery-cleared", detail: "model_rows=0;writer_seen=0" },
+            {
+                actor: "operator-cli",
+                action: "deployment.recovery-cleared",
+                detail: "attested=reconciled-router-and-dokku",
+            },
         ]);
     });
 
-    it("refuses to clear empty tables once a durable writer record exists", async () => {
-        await recordModelWriterSeen(dataDir);
-        await markDeploymentRecoveryBlocked(dataDir);
-        await blockRestoredModel(source.db);
-        await expect(clearDeploymentRecovery(source.db, dataDir)).rejects.toThrow(/writer/);
-        expect((await fs.stat(marker())).isFile()).toBe(true);
-        await expect(assertModelMutationsReady(source.db, dataDir)).rejects.toThrow(/blocked/);
-    });
-
-    it("refuses any populated model even if the writer record is absent", async () => {
-        const user = randomUUID();
-        const org = randomUUID();
+    it("clears after a writer has run and with a populated model, once attested", async () => {
         await source.db
             .insertInto("user")
             .values({
-                id: user,
+                id: "u1",
                 name: "Fixture",
                 email: "fixture@example.invalid",
                 emailVerified: false,
                 role: "user",
             })
             .execute();
+        await recordModelWriterSeen(dataDir);
+        await markDeploymentRecoveryBlocked(dataDir);
+        await blockRestoredModel(source.db);
+        await clearDeploymentRecovery(source.db, dataDir, true);
+        await assertModelMutationsReady(source.db, dataDir);
+        // The writer record is untouched: it is history, no longer a rule.
+        expect((await fs.stat(seen())).isFile()).toBe(true);
+    });
+
+    it("keeps the marker when the audit transaction fails", async () => {
+        await markDeploymentRecoveryBlocked(dataDir);
+        await blockRestoredModel(source.db);
+        await source.db.schema.dropTable("audit_event").execute();
+        await expect(clearDeploymentRecovery(source.db, dataDir, true)).rejects.toThrow(
+            /audit_event/,
+        );
+        expect((await fs.stat(marker())).isFile()).toBe(true);
+        // The ready row rolled back with the failed audit, not only the marker holding.
+        expect(
+            (
+                await source.db
+                    .selectFrom("instance_state")
+                    .select("value")
+                    .where("key", "=", "deployment_recovery")
+                    .executeTakeFirstOrThrow()
+            ).value,
+        ).toBe("blocked");
+    });
+
+    it("refuses on a database without migration 018 with a clear error", async () => {
+        const old = await createTestDatabase();
+        try {
+            await old.migrateTo("20261116_017_worker_heartbeat_lifecycle");
+            await expect(clearDeploymentRecovery(old.db, dataDir, true)).rejects.toThrow(
+                /Run migration 018/,
+            );
+        } finally {
+            await old.destroy();
+        }
+    });
+
+    it("refuses a populated database without the attestation", async () => {
         await source.db
-            .insertInto("organization")
+            .insertInto("user")
             .values({
-                id: org,
+                id: randomUUID(),
                 name: "Fixture",
-                slug: "fixture",
-                createdAt: new Date(),
-            })
-            .execute();
-        const project = await source.db
-            .insertInto("project")
-            .values({
-                organization_id: org,
-                name: "Site",
-                slug: "site",
-                created_by: user,
-            })
-            .returning("id")
-            .executeTakeFirstOrThrow();
-        await source.db
-            .insertInto("app")
-            .values({
-                organization_id: org,
-                project_id: project.id,
-                slug: "site",
-                created_by: user,
+                email: "populated@example.invalid",
+                emailVerified: false,
+                role: "user",
             })
             .execute();
         await markDeploymentRecoveryBlocked(dataDir);
-        await expect(clearDeploymentRecovery(source.db, dataDir)).rejects.toThrow(/not empty/);
+        await blockRestoredModel(source.db);
+        await expect(clearDeploymentRecovery(source.db, dataDir, false)).rejects.toThrow(
+            /i-have-reconciled-router-and-dokku/,
+        );
         expect((await fs.stat(marker())).isFile()).toBe(true);
     });
 
@@ -304,7 +343,6 @@ describe("deployment model recovery gate", () => {
                 .execute(),
         ).toEqual([]);
         expect((await fs.stat(seen())).isFile()).toBe(true);
-        await expect(clearDeploymentRecovery(source.db, dataDir)).rejects.toThrow(/writer/);
     });
 
     it("aborts before the effect when writer-seen cannot be created safely", async () => {

@@ -204,17 +204,20 @@ program
 
 program
     .command("recovery-clear")
-    .description(
-        "P2b only: clear deployment recovery if every model table is empty and no model writer has run",
+    .description("Reopen model mutations after a restore, once the operator has reconciled")
+    .option(
+        "--i-have-reconciled-router-and-dokku",
+        "attest: ingress closed, dispatched Dokku work settled, router epoch and credentials rotated (if used), router and Dokku reconciled",
     )
-    .action(async () => {
+    .action(async (options) => {
         await withDatabase((db) =>
             clearDeploymentRecovery(
                 db,
                 path.resolve(process.env.LAUNCHPAD_DATA_DIR ?? ".data/controller"),
+                options.iHaveReconciledRouterAndDokku === true,
             ),
         );
-        console.log("Deployment recovery cleared: empty model, no writer seen.");
+        console.log("Deployment recovery cleared on the operator's attestation.");
     });
 
 program

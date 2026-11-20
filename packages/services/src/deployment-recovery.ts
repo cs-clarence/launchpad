@@ -404,35 +404,34 @@ export async function blockRestoredModel(db: Db) {
         throw new DeploymentRecoveryError("Restored model recovery gate could not be blocked.");
 }
 
-// P2b only: no writer exists in the deployed runtime. P3 MUST replace this rule
-// with the audited attestation regardless of empty tables or a replaced volume.
-export async function clearDeploymentRecovery(db: Db, dataDir: string) {
+// Interim rule (P3a, until P5 verifies reconciliation): never consult the writer-seen file or the
+// model tables. The file lives on the data volume, which a restore from an older dump can replace,
+// and empty tables cannot be told from a never-used installation. The operator must attest the
+// manual reconciliation procedure every time, so the confirmation is mandatory.
+export async function clearDeploymentRecovery(db: Db, dataDir: string, attested: boolean) {
+    if (!attested) {
+        throw new DeploymentRecoveryError(
+            "Clearing recovery requires --i-have-reconciled-router-and-dokku: close ingress, settle dispatched Dokku work, rotate the router epoch and credentials if a router is in use, and reconcile router and Dokku against the restored database first (docs/restore.md).",
+        );
+    }
     return withDeploymentRecoveryMaintenance(db, async (connection) => {
         await assertNoPendingDeploymentImport(dataDir);
         await assertNoActiveDeploymentImportBackends(connection);
         const dir = await maintenance(dataDir);
         await connection.transaction().execute(async (trx) => {
             await lockDeploymentRecovery(trx, true);
-            const applied =
-                await sql`select 1 from public.launchpad_migration where name = ${DEPLOYMENT_MIGRATION}`.execute(
-                    trx,
-                );
+            const table = await sql<{
+                present: boolean;
+            }>`select to_regclass('public.launchpad_migration') is not null as present`.execute(
+                trx,
+            );
+            const applied = table.rows[0]!.present
+                ? await sql`select 1 from public.launchpad_migration where name = ${DEPLOYMENT_MIGRATION}`.execute(
+                      trx,
+                  )
+                : { rows: [] };
             if (applied.rows.length !== 1)
                 throw new DeploymentRecoveryError("Run migration 018 before recovery-clear.");
-            // Prevent a direct SQL writer from inserting between the emptiness check and commit.
-            await sql.raw(`lock table ${MODEL_TABLES.join(", ")} in share mode`).execute(trx);
-            if (await exists(dir, SEEN)) {
-                throw new DeploymentRecoveryError(
-                    "A model writer has run; P2b cannot clear recovery.",
-                );
-            }
-            for (const table of MODEL_TABLES) {
-                if ((await sql.raw(`select 1 from ${table} limit 1`).execute(trx)).rows.length) {
-                    throw new DeploymentRecoveryError(
-                        "Model tables are not empty; P2b cannot clear recovery.",
-                    );
-                }
-            }
             await trx
                 .insertInto("instance_state")
                 .values({ key: "deployment_recovery", value: "ready" })
@@ -448,7 +447,7 @@ export async function clearDeploymentRecovery(db: Db, dataDir: string) {
                     target_type: "instance",
                     target_id: "self",
                     organization_id: null,
-                    detail: "model_rows=0;writer_seen=0",
+                    detail: "attested=reconciled-router-and-dokku",
                 })
                 .execute();
         });

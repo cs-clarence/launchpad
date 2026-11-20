@@ -208,7 +208,7 @@ describe("restoreBackup", () => {
         }
         // Running it again against the now-populated database is refused, nothing replaced.
         await expect(restoreBackup({ ...options })).rejects.toThrow(/already has data/);
-        await clearDeploymentRecovery(target.db, options.dataDir);
+        await clearDeploymentRecovery(target.db, options.dataDir, true);
         await assertModelMutationsReady(target.db, options.dataDir);
     });
 
@@ -336,7 +336,7 @@ exit 0
             /pg_restore/,
         );
         await expect(restoreBackup(options)).rejects.toThrow(/previous pg_restore/);
-        await expect(clearDeploymentRecovery(target.db, options.dataDir)).rejects.toThrow(
+        await expect(clearDeploymentRecovery(target.db, options.dataDir, true)).rejects.toThrow(
             /pg_restore/,
         );
         const acknowledged = spawnSync(
@@ -465,7 +465,7 @@ fi
             // There is not even a backend yet. The durable guard must refuse
             // before a later import could commit into the second restore's schema.
             await expect(restoreBackup(options)).rejects.toThrow(/previous pg_restore/);
-            await expect(clearDeploymentRecovery(target.db, options.dataDir)).rejects.toThrow(
+            await expect(clearDeploymentRecovery(target.db, options.dataDir, true)).rejects.toThrow(
                 /pg_restore/,
             );
         } finally {
@@ -838,7 +838,12 @@ fi
         await expect(assertModelMutationsReady(target.db, options.dataDir)).rejects.toThrow(
             /blocked/,
         );
-        await expect(clearDeploymentRecovery(target.db, options.dataDir)).rejects.toThrow(/writer/);
+        // The writer-seen file no longer matters: the attestation is what clears, and it is required.
+        await expect(clearDeploymentRecovery(target.db, options.dataDir, false)).rejects.toThrow(
+            /i-have-reconciled-router-and-dokku/,
+        );
+        await clearDeploymentRecovery(target.db, options.dataDir, true);
+        await assertModelMutationsReady(target.db, options.dataDir);
     });
 
     it("migrates a restored 017 dump without overwriting its blocked gate", async () => {
@@ -866,7 +871,7 @@ fi
                     .executeTakeFirstOrThrow()
             ).value,
         ).toBe("blocked");
-        await clearDeploymentRecovery(target.db, options.dataDir);
+        await clearDeploymentRecovery(target.db, options.dataDir, true);
         await assertModelMutationsReady(target.db, options.dataDir);
     });
 });
