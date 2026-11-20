@@ -22,6 +22,10 @@ function finish(bytes: Buffer): string {
 }
 
 export function readSecretFile(file: string): string {
+    return finish(readOwnerFile(file, MAX_BYTES));
+}
+
+export function readOwnerFile(file: string, maxBytes: number): Buffer {
     if (!/^\/[A-Za-z0-9._/@+-]{1,500}$/.test(file) || file.split("/").includes("..")) {
         throw new SecretError("The secret file must be a plain absolute path.");
     }
@@ -38,10 +42,11 @@ export function readSecretFile(file: string): string {
                 "The secret file must be a regular file owned by you and readable only by you (for example mode 0600).",
             );
         }
-        if (stat.size > MAX_BYTES) throw new SecretError("The secret file is too large.");
-        const buffer = Buffer.alloc(MAX_BYTES + 1);
+        if (stat.size > maxBytes) throw new SecretError("The secret file is too large.");
+        const buffer = Buffer.alloc(maxBytes + 1);
         const read = readSync(fd, buffer, 0, buffer.length, 0);
-        return finish(buffer.subarray(0, read));
+        if (read > maxBytes) throw new SecretError("The secret file is too large.");
+        return buffer.subarray(0, read);
     } finally {
         closeSync(fd);
     }

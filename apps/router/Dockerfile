@@ -3,7 +3,7 @@
 #   docker build -f apps/router/Dockerfile -t launchpad/router:dev .
 #
 # The alias router: a private control plane and a public data plane over one durable routing state.
-# It runs as uid 10001 and holds no secret: settings arrive as environment variables and the control
+# It runs as uid 10001 and holds no secret except an optional 0600 database URL file for managed `rotate`: settings arrive as environment variables and the control
 # token is supplied once to `init`/`rotate` on standard input or from a 0600 file (never an
 # argument or the environment). At run time it needs:
 # - a /state volume it owns (a named volume picks up the image's 0700 ownership; a bind-mounted

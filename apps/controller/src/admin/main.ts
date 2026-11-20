@@ -1,4 +1,5 @@
 import { Command } from "@commander-js/extra-typings";
+import { createRouterControlClient } from "@launchpad-kit/alias-router/control-client";
 import {
     createAuth,
     loadAuthConfig,
@@ -7,13 +8,23 @@ import {
     setupFirstOperator,
 } from "@launchpad-kit/auth";
 import { createDatabase, migrateToLatest, migrationStatus } from "@launchpad-kit/database";
-import { readFileSync, statSync } from "node:fs";
+import {
+    closeSync,
+    constants,
+    fstatSync,
+    openSync,
+    readFileSync,
+    readSync,
+    statSync,
+} from "node:fs";
 import path from "node:path";
 import { createDokkuClient } from "@launchpad-kit/dokku";
 import {
     acknowledgeDeploymentImport,
     clearDeploymentRecovery,
+    parseAppRoutingConfig,
     reconcileDeployment,
+    supersedeOperation,
 } from "@launchpad-kit/services";
 import { createBackup, verifyBackup } from "./backup";
 import { checkRestore, restoreBackup, replaceTarget } from "./restore";
@@ -71,6 +82,32 @@ async function readPassword(passwordFile: string | undefined): Promise<string> {
         throw new Error("Give --password-file <path>, or pipe the password on stdin.");
     }
     return readStdin();
+}
+
+function readRouterCredential(file: string, secret: boolean): string {
+    try {
+        const fd = openSync(file, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+        try {
+            const stat = fstatSync(fd);
+            const bytes = Buffer.alloc(257);
+            if (
+                !stat.isFile() ||
+                (secret && (stat.uid !== process.getuid?.() || stat.mode & 0o077)) ||
+                stat.size > 256
+            ) {
+                throw new Error();
+            }
+            const size = readSync(fd, bytes);
+            if (size === 257) throw new Error();
+            return new TextDecoder("utf-8", { fatal: true })
+                .decode(bytes.subarray(0, size))
+                .replace(/\r?\n$/, "");
+        } finally {
+            closeSync(fd);
+        }
+    } catch {
+        throw new Error("Could not read the configured router credential file.");
+    }
 }
 
 const program = new Command()
@@ -222,6 +259,61 @@ program
             ),
         );
         console.log("Deployment recovery cleared on the operator's attestation.");
+    });
+
+program
+    .command("promotion-repair-generation")
+    .description("Verify a held generation mismatch and queue a higher-generation correction")
+    .requiredOption("--operation <id>", "the held promotion operation")
+    .option("--target <id>", "bind to an eligible target from the held chain")
+    .option("--withdraw", "correct an uncertain withdrawal")
+    .option(
+        "--i-have-verified-the-router-by-exact-route",
+        "attest that the configured router is authoritative",
+    )
+    .action(async (options) => {
+        if (Boolean(options.target) === Boolean(options.withdraw)) {
+            throw new Error("Specify exactly one of --target or --withdraw.");
+        }
+        const routing = parseAppRoutingConfig(process.env);
+        if (!routing.enabled) throw new Error("Router settings are required.");
+        const url = routing.aliasControlUrl;
+        if (
+            url.protocol !== "https:" &&
+            !["127.0.0.1", "[::1]"].includes(url.hostname) &&
+            process.env.LAUNCHPAD_ALIAS_CONTROL_PRIVATE_NETWORK !== "1"
+        ) {
+            throw new Error(
+                "Router control requires HTTPS, loopback, or explicit private-network opt-in.",
+            );
+        }
+        const authority = {
+            instanceId: routing.aliasInstanceId,
+            epoch: readRouterCredential(routing.aliasRouterEpochFile, false),
+        };
+        const client = createRouterControlClient({
+            baseUrl: url,
+            credentials: {
+                ...authority,
+                token: readRouterCredential(routing.aliasControlTokenFile, true),
+            },
+        });
+        const result = await withDatabase((db) =>
+            supersedeOperation(
+                db,
+                path.resolve(process.env.LAUNCHPAD_DATA_DIR ?? ".data/controller"),
+                {
+                    operationId: options.operation,
+                    action: options.withdraw ? "withdraw" : "bind",
+                    targetDeploymentId: options.target,
+                    attested: options.iHaveVerifiedTheRouterByExactRoute === true,
+                },
+                { authority, readRoute: client.readRoute },
+            ),
+        );
+        console.log(
+            `Queued corrective promotion ${result.operationId} at generation ${result.generation}.`,
+        );
     });
 
 program

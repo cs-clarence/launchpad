@@ -12,8 +12,27 @@ sockets, owns the process lock and reads secrets safely.
 ```sh
 launchpad-router serve                                     # run both listeners
 launchpad-router init   (--token-file <path> | --token-stdin)   # create new state, print its epoch
-launchpad-router rotate (--token-file <path> | --token-stdin)   # new epoch and token, print the epoch
+launchpad-router rotate (--token-file <path> | --token-stdin) (--database-url-file <path> | --standalone)
 ```
+
+Stop the router before rotation. For a router used by Launchpad, pass `--database-url-file` (an owner-only 0600 file
+holding the primary promotion database URL; a role with only CONNECT is enough, since
+the command takes an advisory lock and checks the catalog). Managed rotation refuses
+an unmigrated or replica database, then takes the exclusive deployment recovery lock; a worker holds the shared lock from fresh
+router verification through commit. Update the worker epoch and token files before
+resuming work. `--standalone` is only for isolated routers with no Launchpad model
+users and must never be used on managed state.
+
+If the worker parks an operation with `alias-generation-mismatch`, use
+`launchpad-admin promotion-repair-generation --operation <id> --target <deployment-id>
+--i-have-verified-the-router-by-exact-route` (or `--withdraw` for an uncertain
+withdrawal). Point the admin at the authoritative router and model database.
+The command reads and checks that exact alias, then queues a correction above
+the database and router counters. It neither changes the route nor releases
+pins; a worker must verify the correction. If the alias or router reports an
+unrecognized target, stop and investigate rather than editing counters by hand.
+Use HTTPS or loopback for router control; non-loopback private HTTP requires
+`LAUNCHPAD_ALIAS_CONTROL_PRIVATE_NETWORK=1`.
 
 `init` and `rotate` read the **same settings as `serve`**, including the listen and upstream
 variables (they are validated but unused there), so one environment serves all three commands.

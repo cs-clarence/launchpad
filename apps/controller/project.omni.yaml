@@ -10,6 +10,7 @@ dependencies:
     - "@launchpad-kit/vite-config"
     - "@launchpad-kit/vitest-config"
     - "@launchpad-kit/services"
+    - "@launchpad-kit/alias-router"
     - "@launchpad-kit/auth"
     - "@launchpad-kit/database"
     - "@launchpad-kit/dokku"

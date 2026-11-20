@@ -337,7 +337,11 @@ export async function verifyProduction({
     await docker(["stop", "--time", "20", r.router]);
     const stopped = (await docker(["inspect", "--format", "{{.State.ExitCode}}", r.router])).out;
     assert.equal(stopped, "0");
-    const rotated = await oneOff(volume, ["rotate", "--token-stdin"], `${tokens[1]}\n`);
+    const rotated = await oneOff(
+        volume,
+        ["rotate", "--standalone", "--token-stdin"],
+        `${tokens[1]}\n`,
+    );
     assert.equal(rotated.code, 0, rotated.err);
     current = { epoch: rotated.out, token: tokens[1]! };
     history.push(current);

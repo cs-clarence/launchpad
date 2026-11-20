@@ -107,6 +107,13 @@ identity before calling it. It settles the corrective chain and records the
 last pin release in the same transaction. Until worker wiring lands, no
 runtime caller claims or finalizes these operations.
 
+Review follow-up (approved): hold the shared recovery lock from fresh route
+readback and identity probe through SQL commit. Managed offline router rotation
+takes the exclusive lock on the same database. Repair a parked generation mismatch
+with `promotion-repair-generation`: verify the exact router alias, require a
+coherent held chain, audit the correction, and reserve above all persisted and
+observed generations. Only the verified correction releases chain pins.
+
 A private router control client (in `packages/alias-router`) with typed, bounded calls that classify
 every failure as definite or uncertain (a timeout is never proof of failure). A promotion runner in
 the worker: fenced five-minute claims, intent recorded before dispatch, deadlines inside the lease,

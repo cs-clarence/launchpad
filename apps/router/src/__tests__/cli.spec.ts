@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import http from "node:http";
 import type { AddressInfo } from "node:net";
 import path from "node:path";
+import { createTestDatabase } from "@launchpad-kit/database/testing";
 import { afterEach, describe, expect, it } from "vitest";
 import { acquireProcessLock } from "../lock";
 import { newToken, secretFile, tempState, type TempState } from "../test-support";
@@ -67,7 +68,11 @@ describe("launchpad-router commands", () => {
         expect(again.code).toBe(1);
         expect(again.err).not.toContain(token);
         const next = newToken();
-        const rotate = await run(["rotate", "--token-stdin"], settings(), `${next}\n`);
+        const rotate = await run(
+            ["rotate", "--standalone", "--token-stdin"],
+            settings(),
+            `${next}\n`,
+        );
         expect(rotate.code).toBe(0);
         expect(rotate.out.trim()).toMatch(UUID);
         expect(rotate.out.trim()).not.toBe(init.out.trim());
@@ -116,6 +121,53 @@ describe("launchpad-router commands", () => {
         }
         expect((await run(["--help"], settings())).out).toContain("Usage: launchpad-router");
     });
+
+    it("refuses a rotation without the model database or explicit standalone mode", async () => {
+        state = tempState();
+        const rotated = await run(["rotate", "--token-stdin"], settings(), newToken());
+        expect(rotated).toMatchObject({ code: 1, out: "" });
+        expect(rotated.err).toContain("--database-url-file");
+    });
+
+    it("validates the rotation and init option combinations", async () => {
+        state = tempState();
+        const file = secretFile(state.directory, `${newToken()}\n`);
+        const database = secretFile(state.directory, "postgres://localhost/x\n", 0o600, "database");
+        for (const args of [
+            ["rotate", "--token-file", file],
+            ["rotate", "--token-file", file, "--standalone", "--database-url-file", database],
+            ["init", "--token-file", file, "--standalone"],
+            ["init", "--token-file", file, "--database-url-file", database],
+        ]) {
+            expect(await run(args, settings())).toMatchObject({ code: 1, out: "" });
+        }
+    });
+
+    it.skipIf(!process.env.TEST_DATABASE_URL)(
+        "rotates managed state with a PostgreSQL recovery lock",
+        async () => {
+            state = tempState();
+            const db = await createTestDatabase();
+            try {
+                const urlFile = secretFile(state.directory, `${db.url}\n`, 0o600, "database");
+                const args = ["rotate", "--database-url-file", urlFile, "--token-stdin"];
+                const init = await run(["init", "--token-stdin"], settings(), newToken());
+                const wrong = await run(args, settings(), newToken());
+                expect(init).toMatchObject({ code: 0, err: "" });
+                expect(wrong).toMatchObject({ code: 1, out: "" });
+                expect(wrong.err).toContain("primary deployment model database");
+                expect(wrong.err).not.toContain(db.url);
+                await db.migrate();
+                const rotated = await run(args, settings(), newToken());
+                expect(rotated).toMatchObject({ code: 0, err: "" });
+                expect(rotated.out.trim()).toMatch(UUID);
+                expect(rotated.out).not.toBe(init.out);
+            } finally {
+                await db.destroy();
+            }
+        },
+        60_000,
+    );
 });
 
 describe("launchpad-router serve", () => {
@@ -181,7 +233,7 @@ describe("launchpad-router serve", () => {
         const second = await run(["serve"], env);
         expect(second.code).toBe(1);
         expect(second.err).toContain("holds the state lock");
-        const rotate = await run(["rotate", "--token-stdin"], env, newToken());
+        const rotate = await run(["rotate", "--standalone", "--token-stdin"], env, newToken());
         expect(rotate.code).toBe(1);
         expect(rotate.err).toContain("holds the state lock");
 
@@ -215,7 +267,9 @@ describe("launchpad-router serve", () => {
         expect(await run(["healthcheck"], env)).toMatchObject({ code: 1, out: "unhealthy\n" });
         // No shutdown code ran: the kernel released the lock, so there is no stale lock to clear.
         acquireProcessLock(state.stateFile).release();
-        expect((await run(["rotate", "--token-stdin"], env, newToken())).code).toBe(0);
+        expect((await run(["rotate", "--standalone", "--token-stdin"], env, newToken())).code).toBe(
+            0,
+        );
     });
 
     it("refuses to start without complete state", async () => {

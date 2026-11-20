@@ -279,24 +279,46 @@ export interface PromotionReadback {
     } | null;
 }
 
-// Commit only after the runner has separately verified the served identity (or the fixed 404).
-// A readback mismatch changes nothing; the caller must park the work rather than release pins.
+export async function boundedPromotionEvidence<T>(verify: (signal: AbortSignal) => Promise<T>) {
+    const signal = AbortSignal.timeout(30_000);
+    const timeout = Promise.withResolvers<never>();
+    const abort = () => timeout.reject(new Error("Router verification timed out."));
+    signal.addEventListener("abort", abort, { once: true });
+    try {
+        const evidence = await Promise.race([verify(signal), timeout.promise]);
+        signal.throwIfAborted();
+        return evidence;
+    } finally {
+        signal.removeEventListener("abort", abort);
+    }
+}
+
+// The runner must read the router and verify the served identity (or fixed 404) inside
+// this callback, not return cached evidence. The recovery lock excludes managed rotation
+// through commit. Do not hold app/alias row locks during network verification.
 export function finalizePromotion(
     db: Db,
     dataDir: string,
     token: PromotionClaimToken,
     expectedAuthority: { instanceId: string; epoch: string },
-    observed: PromotionReadback,
+    verify: (signal: AbortSignal) => Promise<PromotionReadback>,
 ) {
+    const authority = { ...expectedAuthority };
     return withModelMutation(db, dataDir, async (trx) => {
+        const observed = await boundedPromotionEvidence(verify);
+        // Validate and persist the same values across subsequent row lock waits.
+        const { instanceId, epoch } = observed;
+        const route = observed.route && {
+            ...observed.route,
+            target: observed.route.target && { ...observed.route.target },
+        };
         const parents = await lockParents(trx, token.id);
         if (!parents) return null;
         const { operation, alias } = parents;
-        const { route } = observed;
         if (
             !route ||
-            observed.instanceId !== expectedAuthority.instanceId ||
-            observed.epoch !== expectedAuthority.epoch ||
+            instanceId !== authority.instanceId ||
+            epoch !== authority.epoch ||
             route.aliasId !== alias.id ||
             route.hostname !== alias.hostname ||
             route.operationId !== operation.id ||
@@ -353,7 +375,7 @@ export function finalizePromotion(
 
         await lockOperation(trx, token.id);
         const recorded = {
-            observed_epoch: observed.epoch,
+            observed_epoch: epoch,
             observed_generation: route.generation,
             observed_operation_id: route.operationId,
             observed_target_deployment_id: route.target?.deploymentId ?? null,

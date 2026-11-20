@@ -142,8 +142,10 @@ or prove. `restore` never contacts Dokku. Back up the target database first.
    `maintenance/model-writer-seen`, because a restore can replace the volume or bring an empty
    database that still has remote resources. By passing it you attest, in this order, that you
    (1) closed ingress and stopped every pre-restore writer **and waited for every Dokku operation
-   they had dispatched to settle**, (2) rotated the router epoch and control credentials if a
-   router is in use, (3) reconciled Dokku apps (and, from P4, aliases) against the restored
+   they had dispatched to settle**, (2) stopped the router if used and
+   [rotated its epoch and control credentials in managed mode](../apps/router/README.md)
+   using `--database-url-file` (a 0600 file holding the target URL) after the restore command has exited, (3) reconciled
+   Dokku apps (and, from P4, aliases) against the restored
    database, and (4) are clearing only now. Nothing verifies this yet; P5 replaces it with
    verified reconciliation ([recovery design](design/deployment-cutover-schema.md#restore-and-the-recovery-gate)).
    The command audits only the attested fact, commits the ready gate, then removes

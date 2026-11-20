@@ -3,6 +3,10 @@ import { constants, promises as fs } from "node:fs";
 import path from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import type { Database } from "@launchpad-kit/database";
+import {
+    lockDeploymentRecovery,
+    withDeploymentRecoveryMaintenance,
+} from "@launchpad-kit/database/deployment-lock";
 import { type Kysely, sql } from "kysely";
 
 export const DEPLOYMENT_MIGRATION = "20261119_018_deployment_model";
@@ -16,7 +20,6 @@ export const MODEL_TABLES = [
     "hostname_reservation",
     "dokku_name_reservation",
 ] as const;
-const LOCK = "launchpad:deployment-recovery";
 const BLOCKED = "deployment-recovery-blocked";
 const SEEN = "model-writer-seen";
 const IMPORT = "deployment-import-in-progress";
@@ -127,42 +130,7 @@ async function writeDurableRecord(dataDir: string, name: string, record: unknown
     }
 }
 
-export async function lockDeploymentRecovery(db: Db, exclusive: boolean) {
-    if (exclusive)
-        await sql`select pg_advisory_xact_lock(hashtextextended(${LOCK}, 0))`.execute(db);
-    else await sql`select pg_advisory_xact_lock_shared(hashtextextended(${LOCK}, 0))`.execute(db);
-}
-
-// A restore spans filesystem copies and pg_restore, not one SQL transaction.
-// Keep this session pinned so the exclusive lock survives the schema swap.
-export async function withDeploymentRecoveryMaintenance<T>(
-    db: Db,
-    run: (connection: Db) => Promise<T>,
-    signal?: AbortSignal,
-) {
-    return db.connection().execute(async (connection) => {
-        signal?.throwIfAborted();
-        if (!signal) {
-            await sql`select pg_advisory_lock(hashtextextended(${LOCK}, 0))`.execute(connection);
-        } else {
-            for (;;) {
-                signal.throwIfAborted();
-                const locked = await sql<{ acquired: boolean }>`
-                    select pg_try_advisory_lock(hashtextextended(${LOCK}, 0)) as acquired`.execute(
-                    connection,
-                );
-                if (locked.rows[0]!.acquired) break;
-                await delay(25, undefined, { signal });
-            }
-        }
-        try {
-            signal?.throwIfAborted();
-            return await run(connection);
-        } finally {
-            await sql`select pg_advisory_unlock(hashtextextended(${LOCK}, 0))`.execute(connection);
-        }
-    });
-}
+export { lockDeploymentRecovery, withDeploymentRecoveryMaintenance };
 
 export interface DeploymentImportRecord {
     version: 1;

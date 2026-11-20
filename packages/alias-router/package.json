@@ -5,6 +5,10 @@
     "description": "Bun-only durable generation-checked alias routing authority (unwired core)",
     "type": "module",
     "exports": {
+        "./control-client": {
+            "types": "./src/control-client.ts",
+            "default": "./src/control-client.ts"
+        },
         ".": {
             "types": "./src/index.ts",
             "import": {

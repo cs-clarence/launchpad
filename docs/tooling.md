@@ -259,7 +259,9 @@ controller image against the disposable PostgreSQL, starts the controller and wa
 and a healthy healthcheck, and starts the worker with deployments off (it logs `deployment-worker-idle`). It also builds the router image and
 checks it end to end: unprivileged, no secret, no published port, `init` from stdin (printing only the
 epoch and refusing to reinitialize), healthy, 401 on the control plane and a fixed 404 on the data plane,
-a second router refused by the lock, a graceful stop, and `rotate` after it. `init`, `rotate` and
+a second router refused by the lock, a graceful stop, and `rotate --standalone` after it. Managed
+`rotate` uses the promotion database's recovery lock; see the [router guide](../apps/router/README.md).
+`init`, `rotate` and
 `healthcheck` need the same environment as `serve`, because the settings are validated before any command runs. It needs Docker and
 `TEST_DATABASE_URL` (defaults to the disposable fixture), removes its named containers, volumes,
 images and database, never pushes, and never touches
