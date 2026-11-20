@@ -5,6 +5,7 @@ import type { Principal } from "./authorization";
 import { appendDeploymentEvent, DEPLOYMENT_LEASE_MS } from "./deployment-claims";
 import { withModelMutation } from "./deployment-recovery";
 import { ServiceError } from "./errors";
+import { isDeploymentPinned } from "./pins";
 import { recordAudit, requireMembership } from "./organizations";
 
 type Db = Kysely<Database>;
@@ -88,6 +89,13 @@ export async function requestDeploymentDeletion(
                 deployment.status === "reconciliation-needed"
                     ? "This deployment needs reconciliation before it can be deleted."
                     : "This deployment has not finished.",
+            );
+        }
+        // An alias that points at it, or an open promotion that could still route to it.
+        if (await isDeploymentPinned(trx, deploymentId)) {
+            throw new ServiceError(
+                "conflict",
+                "An alias or a pending promotion still uses this deployment.",
             );
         }
         const operation = await trx

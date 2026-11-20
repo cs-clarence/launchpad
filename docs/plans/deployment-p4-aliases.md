@@ -1,7 +1,7 @@
 # P4: aliases, promotion, recovery counters and retention pins
 
-Status: **approved 2026-11-20 as written (automatic expiry stays out). P4a is built on
-`feat/deployment-p4a-aliases`; later slices are not started. Nothing here is authorized to run
+Status: **approved 2026-11-20 as written (automatic expiry stays out). P4a is merged;
+P4b is built on `feat/deployment-p4b-promotion`; later slices are not started. Nothing here is authorized to run
 against real infrastructure.** Parent: [deployment model plan](deployment-model.md), P4. Schema
 contract: [replacement schema map](../design/deployment-cutover-schema.md). Behavior and the alias
 and operation state machines: [deployment design](../design/deployment-modes.md). Router:
@@ -76,6 +76,13 @@ per-organization counts. Scopes, switch and config parsing for aliases; routes
 matrix, quota races and hostname permanence. Nothing contacts a router.
 
 ### P4b: promotion intent, pins and corrective operations (services only)
+
+Built without a migration: the alias row lock serializes requests, so a retry looks the key up under
+that lock (scoped to the member who sent it), and a corrective operation keeps the original
+requester because the schema requires a user (the audit row names the operator CLI). A corrective
+operation may only end at a target of its chain (or a withdrawal for a held withdrawal), and the alias
+keeps its uncertain state until a verified outcome finalizes the chain (P4c). P4d's route tests must
+confirm key scopes: `app:promote` and `app:alias:manage` do not stand in for each other.
 
 `bind` and `withdraw` operations with `expected_generation` compare-and-swap, `Idempotency-Key`,
 reserved generation advancing on intent, same-app eligibility, pre-dispatch intent, and pins:
