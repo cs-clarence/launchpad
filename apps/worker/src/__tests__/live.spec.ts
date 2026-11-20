@@ -227,12 +227,12 @@ describe("deleting a preview's app on a real Dokku", () => {
             created.add(app);
             await dokku.apps.create(app, signal);
         }
-        expect(await lifecycle.dokku.apps.exists(target, signal)).toBe(true);
-        await lifecycle.dokku.apps.destroy(target, signal);
-        expect(await lifecycle.dokku.apps.exists(target, signal)).toBe(false);
+        expect(await lifecycle.exists(target, signal)).toBe(true);
+        await lifecycle.destroy(target, signal);
+        expect(await lifecycle.exists(target, signal)).toBe(false);
         // Asking again, as a retry after a lost answer would, finds it gone.
-        expect(await lifecycle.dokku.apps.exists(target, signal)).toBe(false);
-        expect(await lifecycle.dokku.apps.exists(neighbour, signal)).toBe(true);
+        expect(await lifecycle.exists(target, signal)).toBe(false);
+        expect(await lifecycle.exists(neighbour, signal)).toBe(true);
     });
 
     it("refuses an app name outside the guarded test pattern, so a real preview or the demo cannot be reached", async () => {
@@ -247,7 +247,10 @@ describe("deleting a preview's app on a real Dokku", () => {
             `${PREFIX}${suffix()};ls`,
         ]) {
             // Refused locally, before anything is sent: the error is the validator's.
-            await expect(lifecycle.dokku.apps.destroy(name), name).rejects.toMatchObject({
+            await expect(
+                lifecycle.destroy(name, new AbortController().signal),
+                name,
+            ).rejects.toMatchObject({
                 kind: "invalid-argument",
                 operation: "apps:destroy",
             });

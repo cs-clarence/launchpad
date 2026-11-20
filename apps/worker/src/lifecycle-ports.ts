@@ -1,29 +1,19 @@
 import type { DokkuClient } from "@launchpad-kit/dokku";
+import type { DeletionRunnerPorts } from "./deletion-runner";
 import type { Docker } from "./docker";
-import type { LifecyclePorts } from "./types";
 
 export interface LifecyclePortsDeps {
     dokku: DokkuClient;
     docker: Docker;
 }
 
-// The real ports of a deletion. The vocabulary is exactly this: ask whether one named app
-// exists, destroy one named app, remove one image by its exact tag. Nothing here lists,
-// prunes or removes anything else, and the Dokku client itself refuses any app name that
-// is not of the pattern it was built with (the generated `lp-` names in production).
-export function createLifecyclePorts(deps: LifecyclePortsDeps): LifecyclePorts {
+// The real ports of a deletion. Nothing here lists, prunes or removes anything else, and the
+// Dokku client itself refuses any app name that is not of the pattern it was built with (the
+// generated `lp-` names in production).
+export function createLifecyclePorts(deps: LifecyclePortsDeps): DeletionRunnerPorts {
     return {
-        dokku: {
-            apps: {
-                exists: (app, signal) => deps.dokku.apps.exists(app, signal),
-                destroy: (app, signal) => deps.dokku.apps.destroy(app, signal),
-            },
-        },
-        async removeImages({ imageTags }, signal) {
-            for (const tag of imageTags) {
-                signal.throwIfAborted();
-                await deps.docker.removeImage(tag, signal);
-            }
-        },
+        exists: (app, signal) => deps.dokku.apps.exists(app, signal),
+        destroy: (app, signal) => deps.dokku.apps.destroy(app, signal),
+        removeImage: (tag, signal) => deps.docker.removeImage(tag, signal),
     };
 }

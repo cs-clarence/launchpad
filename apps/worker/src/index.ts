@@ -10,6 +10,7 @@ import {
 import { workDeployments } from "./deployment-worker";
 import { createDocker } from "./docker";
 import { DEFAULT_HEALTH_TOUCH_MS, createHealthMarker, healthFileFromEnv } from "./health";
+import { createLifecyclePorts } from "./lifecycle-ports";
 import { createDeployPorts } from "./ports";
 import { DEFAULT_BASE_IMAGE, checkBaseImage } from "./template";
 import { parseProxyUrl } from "./verify";
@@ -33,15 +34,18 @@ async function main() {
         const databaseUrl = required("DATABASE_URL");
         const dataDir = path.resolve(required("LAUNCHPAD_DATA_DIR"));
         const baseImage = checkBaseImage(process.env.LAUNCHPAD_BASE_IMAGE || DEFAULT_BASE_IMAGE);
+        const dokku = createDokkuClient({
+            host: required("DOKKU_SSH_HOST"),
+            port: Number(process.env.DOKKU_SSH_PORT || 22),
+            username: process.env.DOKKU_SSH_USER || "dokku",
+            privateKeyPath: required("DOKKU_SSH_KEY_PATH"),
+            knownHostsPath: required("DOKKU_SSH_KNOWN_HOSTS_PATH"),
+        });
+        const docker = createDocker();
+        const deletionPorts = createLifecyclePorts({ dokku, docker });
         const ports = createDeployPorts({
-            dokku: createDokkuClient({
-                host: required("DOKKU_SSH_HOST"),
-                port: Number(process.env.DOKKU_SSH_PORT || 22),
-                username: process.env.DOKKU_SSH_USER || "dokku",
-                privateKeyPath: required("DOKKU_SSH_KEY_PATH"),
-                knownHostsPath: required("DOKKU_SSH_KNOWN_HOSTS_PATH"),
-            }),
-            docker: createDocker(),
+            dokku,
+            docker,
             dataDir,
             limits: resolveLimits(artifactLimitsFromEnv(process.env)),
             baseImage,
@@ -64,6 +68,7 @@ async function main() {
                 dataDir,
                 owner: randomUUID(),
                 ports,
+                deletionPorts,
                 shutdown: shutdown.signal,
                 markHealthy,
                 log,

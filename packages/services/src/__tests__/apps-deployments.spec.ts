@@ -10,6 +10,12 @@ import {
     addMember,
     collectArtifacts,
     claimDeployment,
+    claimDeletion,
+    beginDeletionStep,
+    completeDeletionStep,
+    renewDeletionClaim,
+    requestDeploymentDeletion,
+    stopDeletionStep,
     beginDeploymentStep,
     completeDeploymentStep,
     stopDeploymentStep,
@@ -1115,5 +1121,294 @@ describe("creating a deployment", () => {
         expect(
             await listDeploymentEvents(testDb.db, people.vic!, org, deployment.id, { afterSeq: 1 }),
         ).toEqual([]);
+    });
+});
+
+describe("deployment deletion", () => {
+    async function finished(status: "succeeded" | "failed" = "succeeded", stepDone = "verify") {
+        const app = await newApp();
+        const artifactId = await artifactFor(p1);
+        const deployment = await createDeployment(
+            testDb.db,
+            people.dee!,
+            org,
+            app.id,
+            { artifactId },
+            deps(),
+        );
+        const compact = deployment.id.replaceAll("-", "");
+        await sql`
+            update deployment set status = ${status}, finished_at = now(), step_done = ${stepDone},
+                image_tag = ${status === "succeeded" ? `launchpad/site:${compact}` : null},
+                image_id = ${status === "succeeded" ? `sha256:${"c".repeat(64)}` : null}
+            where id = ${deployment.id}`.execute(testDb.db);
+        return { app, artifactId, deployment };
+    }
+    const request = (id: string, who = "dee", restrictTo?: string[], settings = deps()) =>
+        requestDeploymentDeletion(testDb.db, people[who]!, org, id, settings, restrictTo);
+    const state = (id: string) =>
+        testDb.db
+            .selectFrom("deployment")
+            .select(["desired_state", "deleted_at", "status"])
+            .where("id", "=", id)
+            .executeTakeFirstOrThrow();
+
+    afterEach(async () => {
+        // Leave nothing runnable behind for the claim tests that share this database.
+        await testDb.db
+            .updateTable("deployment_deletion_operation")
+            .set({ status: "reconciliation-needed", lease_owner: null, lease_expires_at: null })
+            .where("status", "in", ["queued", "running"])
+            .execute();
+    });
+
+    it("queues one manual deletion and refuses repeats, unfinished and unreconciled work", async () => {
+        const { deployment } = await finished();
+        const result = await request(deployment.id);
+        expect(result).toMatchObject({ deploymentId: deployment.id, status: "queued" });
+        expect(await state(deployment.id)).toMatchObject({ desired_state: "deleting" });
+        expect(await code(request(deployment.id))).toBe("conflict");
+        expect(
+            (await listDeploymentEvents(testDb.db, people.vic!, org, deployment.id)).at(-1),
+        ).toMatchObject({ phase: "deleting" });
+
+        const app = await newApp();
+        const artifactId = await artifactFor(p1);
+        const queued = await createDeployment(
+            testDb.db,
+            people.dee!,
+            org,
+            app.id,
+            { artifactId },
+            deps(),
+        );
+        expect(await code(request(queued.id))).toBe("conflict");
+        await sql`update deployment set status = 'reconciliation-needed' where id = ${queued.id}`.execute(
+            testDb.db,
+        );
+        expect(await code(request(queued.id))).toBe("conflict");
+        expect(await state(queued.id)).toMatchObject({ desired_state: "active" });
+    });
+
+    it("needs the deployer role, the project and a switched-on instance", async () => {
+        const { deployment } = await finished("failed", "app");
+        expect(await code(request(deployment.id, "vic"))).toBe("forbidden");
+        expect(await code(request(deployment.id, "dee", [p2]))).toBe("not-found");
+        expect(
+            await code(
+                requestDeploymentDeletion(testDb.db, people.dee!, otherOrg, deployment.id, deps()),
+            ),
+        ).toBeDefined();
+        expect(
+            await code(
+                request(deployment.id, "dee", undefined, { dataDir, settings: { enabled: false } }),
+            ),
+        ).toBe("unavailable");
+        expect(await state(deployment.id)).toMatchObject({ desired_state: "active" });
+        expect(await request(deployment.id, "dee", [p1])).toMatchObject({ status: "queued" });
+    });
+
+    it("serializes concurrent requests for the same deployment", async () => {
+        const { deployment } = await finished();
+        const results = await Promise.all(
+            [request(deployment.id), request(deployment.id)].map(code),
+        );
+        expect(results.toSorted()).toEqual(["conflict", "ok"]);
+        expect(
+            await testDb.db
+                .selectFrom("deployment_deletion_operation")
+                .select("id")
+                .where("deployment_id", "=", deployment.id)
+                .execute(),
+        ).toHaveLength(1);
+    });
+
+    it("runs through its steps, deletes, and keeps both names reserved", async () => {
+        const { deployment } = await finished();
+        const operation = await request(deployment.id);
+        const claimed = await claimDeletion(testDb.db, dataDir, "worker");
+        if (claimed.kind !== "claimed") throw new Error("Expected a claim");
+        const { token } = claimed;
+        expect(claimed.deletion).toMatchObject({
+            deploymentId: deployment.id,
+            ownsRemoteApp: true,
+        });
+        expect(token.id).toBe(operation.operationId);
+        expect(await beginDeletionStep(testDb.db, dataDir, token, "images")).toBeNull();
+        expect(await beginDeletionStep(testDb.db, dataDir, token, "destroy")).not.toBeNull();
+        expect(await beginDeletionStep(testDb.db, dataDir, token, "destroy")).toBeNull();
+        expect(await completeDeletionStep(testDb.db, dataDir, token, "destroy")).toMatchObject({
+            step_done: "destroy",
+        });
+        expect(await state(deployment.id)).toMatchObject({ desired_state: "deleting" });
+        await beginDeletionStep(testDb.db, dataDir, token, "images");
+        expect(await completeDeletionStep(testDb.db, dataDir, token, "images")).toMatchObject({
+            status: "succeeded",
+        });
+        expect(await state(deployment.id)).toMatchObject({
+            desired_state: "deleted",
+            deleted_at: expect.any(Date),
+        });
+        const row = await testDb.db
+            .selectFrom("deployment")
+            .select(["hostname", "app_name"])
+            .where("id", "=", deployment.id)
+            .executeTakeFirstOrThrow();
+        expect(
+            await testDb.db
+                .selectFrom("hostname_reservation")
+                .select("released_at")
+                .where("hostname", "=", row.hostname)
+                .executeTakeFirstOrThrow(),
+        ).toEqual({ released_at: null });
+        expect(
+            await testDb.db
+                .selectFrom("dokku_name_reservation")
+                .select("released_at")
+                .where("app_name", "=", row.app_name)
+                .executeTakeFirstOrThrow(),
+        ).toEqual({ released_at: null });
+        expect(
+            (await listDeploymentEvents(testDb.db, people.vic!, org, deployment.id)).at(-1),
+        ).toMatchObject({ phase: "deleted" });
+        expect(await claimDeletion(testDb.db, dataDir, "worker")).toEqual({ kind: "idle" });
+    });
+
+    it("does not treat a name that was never created as an owned app", async () => {
+        const { deployment } = await finished("failed", null as unknown as string);
+        await request(deployment.id);
+        const claimed = await claimDeletion(testDb.db, dataDir, "worker");
+        expect(claimed).toMatchObject({ kind: "claimed", deletion: { ownsRemoteApp: false } });
+    });
+
+    it("rejects a delayed step from a reclaimed worker without changing the operation or events", async () => {
+        const { deployment } = await finished();
+        await request(deployment.id);
+        const old = await claimDeletion(testDb.db, dataDir, "worker");
+        if (old.kind !== "claimed") throw new Error("Expected a claim");
+        await beginDeletionStep(testDb.db, dataDir, old.token, "destroy");
+        await testDb.db
+            .updateTable("deployment_deletion_operation")
+            .set({ lease_expires_at: new Date(0), step_pending: null })
+            .where("id", "=", old.token.id)
+            .execute();
+        const current = await claimDeletion(testDb.db, dataDir, "worker");
+        if (current.kind !== "claimed") throw new Error("Expected replacement claim");
+        expect(current.token).toMatchObject({ attempt: 2, fence: "2" });
+        const before = await testDb.db
+            .selectFrom("deployment_deletion_operation")
+            .selectAll()
+            .where("id", "=", old.token.id)
+            .executeTakeFirstOrThrow();
+        const events = await listDeploymentEvents(testDb.db, people.vic!, org, deployment.id);
+        expect(await completeDeletionStep(testDb.db, dataDir, old.token, "destroy")).toBeNull();
+        expect(
+            await stopDeletionStep(
+                testDb.db,
+                dataDir,
+                old.token,
+                "destroy",
+                "reconciliation-needed",
+            ),
+        ).toBeNull();
+        expect(await renewDeletionClaim(testDb.db, dataDir, old.token)).toBeNull();
+        expect(
+            await testDb.db
+                .selectFrom("deployment_deletion_operation")
+                .selectAll()
+                .where("id", "=", old.token.id)
+                .executeTakeFirstOrThrow(),
+        ).toEqual(before);
+        expect(await listDeploymentEvents(testDb.db, people.vic!, org, deployment.id)).toEqual(
+            events,
+        );
+        expect(await state(deployment.id)).toMatchObject({ desired_state: "deleting" });
+    });
+
+    it("holds a pending destroy for reconciliation, repeats a pending image removal, and backs off a retry", async () => {
+        const first = await finished();
+        const second = await finished();
+        await request(first.deployment.id);
+        await request(second.deployment.id);
+        const a = await claimDeletion(testDb.db, dataDir, "worker");
+        const b = await claimDeletion(testDb.db, dataDir, "worker");
+        if (a.kind !== "claimed" || b.kind !== "claimed") throw new Error("Expected claims");
+        await beginDeletionStep(testDb.db, dataDir, a.token, "destroy");
+        await beginDeletionStep(testDb.db, dataDir, b.token, "destroy");
+        await completeDeletionStep(testDb.db, dataDir, b.token, "destroy");
+        await beginDeletionStep(testDb.db, dataDir, b.token, "images");
+        await testDb.db
+            .updateTable("deployment_deletion_operation")
+            .set({ lease_expires_at: new Date(0) })
+            .where("id", "in", [a.token.id, b.token.id])
+            .execute();
+        const results = [
+            await claimDeletion(testDb.db, dataDir, "next"),
+            await claimDeletion(testDb.db, dataDir, "next"),
+        ];
+        expect(results).toContainEqual({ kind: "reconciliation-needed", id: a.token.id });
+        expect(results).toContainEqual(
+            expect.objectContaining({
+                kind: "claimed",
+                deletion: expect.objectContaining({ stepDone: "destroy" }),
+            }),
+        );
+        expect(await claimDeletion(testDb.db, dataDir, "next")).toEqual({ kind: "idle" });
+
+        const retry = await finished();
+        await request(retry.deployment.id);
+        const claim = await claimDeletion(testDb.db, dataDir, "worker");
+        if (claim.kind !== "claimed") throw new Error("Expected a claim");
+        expect(
+            await stopDeletionStep(testDb.db, dataDir, claim.token, "destroy", "retry"),
+        ).toMatchObject({
+            status: "queued",
+            step_pending: null,
+        });
+        expect(await claimDeletion(testDb.db, dataDir, "worker")).toEqual({ kind: "idle" });
+    });
+
+    it("blocks claims and steps during recovery", async () => {
+        const { deployment } = await finished();
+        await request(deployment.id);
+        const claimed = await claimDeletion(testDb.db, dataDir, "worker");
+        if (claimed.kind !== "claimed") throw new Error("Expected a claim");
+        await markDeploymentRecoveryBlocked(dataDir);
+        await expect(claimDeletion(testDb.db, dataDir, "other")).rejects.toThrow(
+            /recovery is blocked/i,
+        );
+        await expect(
+            beginDeletionStep(testDb.db, dataDir, claimed.token, "destroy"),
+        ).rejects.toThrow(/recovery is blocked/i);
+    });
+
+    it("keeps an artifact pinned while its deployment is deleting and for the retention period after", async () => {
+        const { deployment, artifactId } = await finished();
+        await request(deployment.id);
+        const collected = async () =>
+            (
+                await testDb.db
+                    .selectFrom("artifact")
+                    .select("collected_at")
+                    .where("id", "=", artifactId)
+                    .executeTakeFirstOrThrow()
+            ).collected_at;
+        await testDb.db
+            .updateTable("artifact")
+            .set({ created_at: new Date(0) })
+            .where("id", "=", artifactId)
+            .execute();
+        await collectArtifacts(testDb.db, { dataDir, retentionSeconds: 0 });
+        expect(await collected()).toBeNull();
+        const claimed = await claimDeletion(testDb.db, dataDir, "worker");
+        if (claimed.kind !== "claimed") throw new Error("Expected a claim");
+        for (const step of ["destroy", "images"] as const) {
+            await beginDeletionStep(testDb.db, dataDir, claimed.token, step);
+            await completeDeletionStep(testDb.db, dataDir, claimed.token, step);
+        }
+        await collectArtifacts(testDb.db, { dataDir, retentionSeconds: 3600 });
+        expect(await collected()).toBeNull();
+        await collectArtifacts(testDb.db, { dataDir, retentionSeconds: 0 });
+        expect(await collected()).toBeInstanceOf(Date);
     });
 });
