@@ -16,6 +16,8 @@ import {
     assertPrivateControlUrl,
     clearDeploymentRecovery,
     parseAppRoutingConfig,
+    raiseAliasCounters,
+    type RouterView,
     readRouterCredential,
     reconcileDeployment,
     supersedeOperation,
@@ -76,6 +78,25 @@ async function readPassword(passwordFile: string | undefined): Promise<string> {
         throw new Error("Give --password-file <path>, or pipe the password on stdin.");
     }
     return readStdin();
+}
+
+// The router, read through its authenticated control endpoint, when router settings are configured.
+// Epoch and token are read from their files at the moment of use, so a rotation is picked up.
+function routerViewFromEnv(): RouterView | undefined {
+    const routing = parseAppRoutingConfig(process.env);
+    if (!routing.enabled) return undefined;
+    assertPrivateControlUrl(routing.aliasControlUrl, "LAUNCHPAD_ALIAS_CONTROL_URL");
+    return async () => {
+        const client = createRouterControlClient({
+            baseUrl: routing.aliasControlUrl,
+            credentials: {
+                instanceId: routing.aliasInstanceId,
+                epoch: readRouterCredential(routing.aliasRouterEpochFile, false),
+                token: readRouterCredential(routing.aliasControlTokenFile, true),
+            },
+        });
+        return client.listRoutes(AbortSignal.timeout(120_000));
+    };
 }
 
 const program = new Command()
@@ -224,9 +245,41 @@ program
                 db,
                 path.resolve(process.env.LAUNCHPAD_DATA_DIR ?? ".data/controller"),
                 options.iHaveReconciledRouterAndDokku === true,
+                routerViewFromEnv(),
             ),
         );
         console.log("Deployment recovery cleared on the operator's attestation.");
+    });
+
+program
+    .command("recovery-raise-counters")
+    .description(
+        "After a restore, raise each alias counter to the router's generation for its hostname (never lower). Does not reopen the model",
+    )
+    .action(async () => {
+        const view = routerViewFromEnv();
+        if (!view)
+            throw new Error(
+                "Router settings are required (LAUNCHPAD_APPS_DOMAIN and the LAUNCHPAD_ALIAS_* settings).",
+            );
+        const result = await withDatabase((db) =>
+            raiseAliasCounters(
+                db,
+                path.resolve(process.env.LAUNCHPAD_DATA_DIR ?? ".data/controller"),
+                view,
+            ),
+        );
+        console.log(`Raised ${result.raised} alias counter(s).`);
+        if (result.unknownRoutes.length) {
+            console.log(
+                `The router serves ${result.unknownRoutes.length} route(s) Launchpad has no alias for: ${result.unknownRoutes.slice(0, 20).join(", ")}. recovery-clear refuses until each is withdrawn on the router or its alias is restored.`,
+            );
+        }
+        if (result.unknownWithdrawn.length) {
+            console.log(
+                `The router also holds ${result.unknownWithdrawn.length} withdrawn route(s) Launchpad does not know; they serve nothing and do not block recovery-clear.`,
+            );
+        }
     });
 
 program

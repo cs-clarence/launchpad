@@ -219,6 +219,11 @@ proxy origin (`LAUNCHPAD_APPS_PROXY_URL`); see [install](install.md#install-a-pr
 through the private router client. The controller exposes promotion, withdrawal, operation reads and app
 shutdown (P4d).
 
+**Implemented (P4e):** `launchpad-admin recovery-raise-counters` and a router comparison inside
+`recovery-clear`, both reading the router with the same settings the worker uses (see
+[restore](restore.md)). Their router client lists routes through the control endpoint and
+checks instance and epoch on every page.
+
 **Planned, not implemented:** automatic retention expiry.
 See [the design](design/deployment-modes.md) and
 [routing experiment](decisions/deployment-alias-routing.md). Do not configure those

@@ -223,12 +223,15 @@ back an empty registry and stale generations while the router and Dokku keep the
            row is a reconciliation input, never silently ignored.
            The settling wait of a rule-1 duration is all that P5 can automate (it has no host access);
            P5's reconciliation report includes the step-3 list, and steps 2 and 3 stay in the runbook.
-    - **Counter repair (P4).** P3 has no routes, so no counters exist. The P4 PR that adds aliases
-      also adds, using its read-only router client, a check inside `recovery-clear` that refuses
-      while any alias `reserved_generation` is below the router's generation for that route or the
-      router holds a route the database does not know, and a `recovery-raise-counters` step that
-      raises counters with `GREATEST` under the alias lock while the gate is set and never lowers
-      one. The attestation is still required.
+    - **Counter repair (P4, built).** `recovery-clear` reads the router through its authenticated
+      control endpoint (every page checked for instance and epoch) while the maintenance lock
+      excludes model writers. It refuses while any alias `reserved_generation` is below the router's
+      generation for its hostname, while the router serves a route (non-null target) for a hostname
+      Launchpad has no alias for (a withdrawn route is reported but does not block), when the router
+      cannot be read, and when the database holds aliases but no router is configured.
+      `recovery-raise-counters` raises counters with `GREATEST` under the alias row lock while the gate
+      is set, never lowers one (the database also refuses it), leaves `committed_generation` alone
+      and audits the count. The attestation is still required.
     - **P5 replacement.** P5 adds tombstone comparison, protection of unknown routed targets and
       Dokku reconciliation, replaces the attestation with that verification, and removes the flag
       in the same PR.

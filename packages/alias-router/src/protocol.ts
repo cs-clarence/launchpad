@@ -74,6 +74,12 @@ export const routeObservationSchema = z.strictObject({
     epoch: uuid,
     route: routeRecordSchema.nullable(),
 });
+export const routePageSchema = z.strictObject({
+    instanceId: uuid,
+    epoch: uuid,
+    routes: z.array(routeRecordSchema),
+    nextCursor: hostnameSchema.nullable(),
+});
 export type RouteRecord = z.infer<typeof routeRecordSchema>;
 export type RouteObservation = z.infer<typeof routeObservationSchema>;
 export interface RoutePage {

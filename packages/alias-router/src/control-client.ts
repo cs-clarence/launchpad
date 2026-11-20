@@ -4,6 +4,8 @@ import {
     deploymentSchema,
     hostnameSchema,
     routeObservationSchema,
+    routePageSchema,
+    type RouteRecord,
     routeWriteSchema,
     type DeploymentTarget,
     type RouteWrite,
@@ -27,6 +29,10 @@ export class RouterControlError extends Error {
 }
 
 const MAX_REPLY_BYTES = 8192;
+// A page of the route inventory carries up to LIST_PAGE_ROUTES records.
+const MAX_LIST_REPLY_BYTES = 1024 * 1024;
+const LIST_PAGE_ROUTES = 500;
+const MAX_LIST_PAGES = 2000;
 const DEFAULT_TIMEOUT_MS = 10_000;
 const MAX_TIMEOUT_MS = 30_000;
 const rejectionSchema = z.strictObject({ error: z.enum(["invalid", "unauthorized"]) });
@@ -50,7 +56,11 @@ async function untilAbort<T>(signal: AbortSignal, run: () => Promise<T>): Promis
     }
 }
 
-async function readJson(response: Response, signal: AbortSignal): Promise<unknown> {
+async function readJson(
+    response: Response,
+    signal: AbortSignal,
+    maxBytes = MAX_REPLY_BYTES,
+): Promise<unknown> {
     const reader = response.body?.getReader();
     if (!reader) throw new RouterControlError("uncertain");
     // Do not extend the deadline to wait for transport cleanup.
@@ -72,7 +82,7 @@ async function readJson(response: Response, signal: AbortSignal): Promise<unknow
             const chunk = await reader.read();
             if (chunk.done) break;
             size += chunk.value.byteLength;
-            if (size > MAX_REPLY_BYTES) throw new RouterControlError("uncertain");
+            if (size > maxBytes) throw new RouterControlError("uncertain");
             chunks.push(chunk.value);
         }
         // Cancellation can complete a pending read as `done` with a partial body.
@@ -116,7 +126,12 @@ export function createRouterControlClient(options: {
     const send = options.fetch ?? globalThis.fetch;
     url.pathname = `${url.pathname.replace(/\/+$/, "")}/`;
 
-    async function call(path: string, body: unknown, signal?: AbortSignal): Promise<unknown> {
+    async function call(
+        path: string,
+        body: unknown,
+        signal?: AbortSignal,
+        maxBytes = MAX_REPLY_BYTES,
+    ): Promise<unknown> {
         if (signal?.aborted) throw new RouterControlError("not-sent");
         const deadline = AbortSignal.timeout(timeoutMs);
         const requestSignal = signal ? AbortSignal.any([signal, deadline]) : deadline;
@@ -135,7 +150,10 @@ export function createRouterControlClient(options: {
                     cache: "no-store",
                     signal: requestSignal,
                 });
-                return { status: response.status, data: await readJson(response, requestSignal) };
+                return {
+                    status: response.status,
+                    data: await readJson(response, requestSignal, maxBytes),
+                };
             });
             requestSignal.throwIfAborted();
             if (status === 200) return data;
@@ -197,6 +215,33 @@ export function createRouterControlClient(options: {
                 throw new RouterControlError("uncertain");
             }
             return result;
+        },
+        // Every route the router holds, in hostname order. Each page is checked for this router's
+        // instance and epoch, and the cursor must advance, so a faulty reply cannot loop forever.
+        async listRoutes(signal?: AbortSignal) {
+            const routes: RouteRecord[] = [];
+            let after: string | undefined;
+            for (let page = 0; page < MAX_LIST_PAGES; page++) {
+                const query = new URLSearchParams({ limit: String(LIST_PAGE_ROUTES) });
+                if (after !== undefined) query.set("after", after);
+                const reply = checked(
+                    routePageSchema,
+                    await call(`v1/routes?${query}`, undefined, signal, MAX_LIST_REPLY_BYTES),
+                    "uncertain",
+                );
+                if (reply.instanceId !== authority.instanceId || reply.epoch !== authority.epoch) {
+                    throw new RouterControlError("uncertain");
+                }
+                routes.push(...reply.routes);
+                if (reply.nextCursor === null) {
+                    return { instanceId: reply.instanceId, epoch: reply.epoch, routes };
+                }
+                if (after !== undefined && reply.nextCursor <= after) {
+                    throw new RouterControlError("uncertain");
+                }
+                after = reply.nextCursor;
+            }
+            throw new RouterControlError("uncertain");
         },
         async readRoute(hostname: string, signal?: AbortSignal) {
             const host = checked(hostnameSchema, hostname, "not-sent");

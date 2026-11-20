@@ -8,6 +8,7 @@ import {
     withDeploymentRecoveryMaintenance,
 } from "@launchpad-kit/database/deployment-lock";
 import { type Kysely, sql } from "kysely";
+import { compareRouterInventory, counterProblems, type RouterView } from "./router-inventory";
 
 export const DEPLOYMENT_MIGRATION = "20261119_018_deployment_model";
 export const MODEL_TABLES = [
@@ -376,7 +377,14 @@ export async function blockRestoredModel(db: Db) {
 // model tables. The file lives on the data volume, which a restore from an older dump can replace,
 // and empty tables cannot be told from a never-used installation. The operator must attest the
 // manual reconciliation procedure every time, so the confirmation is mandatory.
-export async function clearDeploymentRecovery(db: Db, dataDir: string, attested: boolean) {
+export async function clearDeploymentRecovery(
+    db: Db,
+    dataDir: string,
+    attested: boolean,
+    // Reads the router's routes. Required once the database holds any alias: a restore can leave
+    // the router ahead of it, and clearing would let new operations reuse a generation.
+    router?: RouterView,
+) {
     if (!attested) {
         throw new DeploymentRecoveryError(
             "Clearing recovery requires --i-have-reconciled-router-and-dokku: close ingress, settle dispatched Dokku work, rotate the router epoch and credentials if a router is in use, and reconcile router and Dokku against the restored database first (docs/restore.md).",
@@ -386,6 +394,8 @@ export async function clearDeploymentRecovery(db: Db, dataDir: string, attested:
         await assertNoPendingDeploymentImport(dataDir);
         await assertNoActiveDeploymentImportBackends(connection);
         const dir = await maintenance(dataDir);
+        // Read the router while the maintenance lock excludes every model writer.
+        const inventory = router ? await router().catch(() => null) : undefined;
         await connection.transaction().execute(async (trx) => {
             await lockDeploymentRecovery(trx, true);
             const table = await sql<{
@@ -400,6 +410,31 @@ export async function clearDeploymentRecovery(db: Db, dataDir: string, attested:
                 : { rows: [] };
             if (applied.rows.length !== 1)
                 throw new DeploymentRecoveryError("Run migration 018 before recovery-clear.");
+            if (inventory === null) {
+                throw new DeploymentRecoveryError(
+                    "The router could not be read, so its counters cannot be compared. Check the router settings, epoch and credentials, then retry.",
+                );
+            }
+            if (inventory) {
+                const report = await compareRouterInventory(trx, inventory);
+                if (counterProblems(report)) {
+                    const shown = report.unknownRoutes.slice(0, 5).join(", ");
+                    throw new DeploymentRecoveryError(
+                        `The router is ahead of the restored database or holds routes Launchpad does not know (${report.behind.length} alias counters behind, ${report.unknownRoutes.length} unknown routes${shown ? `: ${shown}` : ""}). Run recovery-raise-counters, and withdraw or restore anything unknown (docs/restore.md), before recovery-clear.`,
+                    );
+                }
+            } else {
+                const anyAlias = await trx
+                    .selectFrom("app_alias")
+                    .select("id")
+                    .limit(1)
+                    .executeTakeFirst();
+                if (anyAlias) {
+                    throw new DeploymentRecoveryError(
+                        "The database holds aliases, so recovery-clear must compare the router's counters: configure the router settings (LAUNCHPAD_APPS_DOMAIN and the LAUNCHPAD_ALIAS_* settings) and retry.",
+                    );
+                }
+            }
             await trx
                 .insertInto("instance_state")
                 .values({ key: "deployment_recovery", value: "ready" })

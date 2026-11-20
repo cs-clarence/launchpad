@@ -1,7 +1,7 @@
 # P4: aliases, promotion, recovery counters and retention pins
 
 Status: **approved 2026-11-20 as written (automatic expiry stays out). P4a, P4b
-and P4c (router client, fenced persistence and the worker runner) is merged; P4d (the API and shutdown barrier) is in review. Nothing here
+and P4a to P4c are merged, P4d (the API and shutdown barrier) is in review, and P4e (recovery counters and acceptance) is built on it. Nothing here
 is authorized to run against real infrastructure.** Parent: [deployment model plan](deployment-model.md), P4. Schema
 contract: [replacement schema map](../design/deployment-cutover-schema.md). Behavior and the alias
 and operation state machines: [deployment design](../design/deployment-modes.md). Router:

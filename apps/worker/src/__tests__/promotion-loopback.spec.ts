@@ -14,6 +14,11 @@ import { createDatabase } from "@launchpad-kit/database";
 import { createTestDatabase } from "@launchpad-kit/database/testing";
 import {
     acknowledgePromotionDispatch,
+    assertModelMutationsReady,
+    blockRestoredModel,
+    clearDeploymentRecovery,
+    markDeploymentRecoveryBlocked,
+    raiseAliasCounters,
     beginPromotionStep,
     claimPromotion,
     createAlias,
@@ -581,5 +586,165 @@ describe("promotion runner against the real router", () => {
         });
         expect(await unpinned(a)).toBeInstanceOf(Date);
         expect((await client().readRoute(alias.hostname)).route).toBeNull();
+    });
+});
+
+describe("P4 worked example and restore, against the real router", () => {
+    it("runs the worked example in order: two aliases, CAS, repoint, GC race, uncertain withdrawal", async () => {
+        const { app, alias: prod, ready } = await fixture();
+        const stable = await createAlias(db.db, actor, org, app.id, { slug: "stable" }, deps());
+        const a = await ready();
+        const b = await ready();
+        const c = await ready();
+
+        // Two aliases point at the same release, and both serve it.
+        await promote(prod.id, a, "0");
+        expect(ended(await work())).toBe("succeeded");
+        await promote(stable.id, a, "0");
+        expect(ended(await work())).toBe("succeeded");
+        expect(await serves(prod.hostname)).toEqual({ status: 200, id: compactId(a) });
+        expect(await serves(stable.hostname)).toEqual({ status: 200, id: compactId(a) });
+
+        // Compare-and-swap, and an idempotent retry that makes no second operation.
+        expect(await code(promote(prod.id, b, "0"))).toBe("conflict");
+        const key = randomUUID();
+        const send = () =>
+            requestPromotion(
+                db.db,
+                actor,
+                org,
+                prod.id,
+                { targetDeploymentId: b, expectedGeneration: "1" },
+                key,
+                deps(),
+            );
+        const first = await send();
+        expect((await send()).id).toBe(first.id);
+        expect(await operations(prod.id)).toHaveLength(2);
+        expect(ended(await work())).toBe("succeeded");
+
+        // One alias moved on; the other still pins the old release, so it cannot be deleted.
+        expect(await serves(prod.hostname)).toEqual({ status: 200, id: compactId(b) });
+        expect(await unpinned(a)).toBeNull();
+        expect(await code(requestDeploymentDeletion(db.db, actor, org, a, deps()))).toBe(
+            "conflict",
+        );
+
+        // A promotion and a deletion of the same release race: exactly one can win.
+        const raced = await Promise.all([
+            code(promote(prod.id, c, "2")),
+            code(requestDeploymentDeletion(db.db, actor, org, c, deps())),
+        ]);
+        expect(raced.toSorted()).toEqual(["conflict", "ok"]);
+        if (raced[0] === "ok") {
+            expect(ended(await work())).toBe("succeeded");
+            expect(await serves(prod.hostname)).toEqual({ status: 200, id: compactId(c) });
+        }
+
+        // A withdrawal whose reply is lost: held, still pinned, then settled from the router.
+        const withdrawal = await withdraw(stable.id, "1");
+        faults.dropRouteReply = true;
+        try {
+            expect(ended(await work())).toBe("reconciliation-needed");
+        } finally {
+            faults.dropRouteReply = false;
+        }
+        expect(await aliasRow(stable.id)).toMatchObject({ state: "withdrawal-uncertain" });
+        expect((await client().readRoute(stable.hostname)).route).toMatchObject({ target: null });
+        expect(await code(requestDeploymentDeletion(db.db, actor, org, a, deps()))).toBe(
+            "conflict",
+        );
+        await supersedeOperation(
+            db.db,
+            tmp.dir,
+            { operationId: withdrawal.id, action: "withdraw", attested: true },
+            {
+                authority: { instanceId, epoch },
+                readRoute: (hostname, signal) => client().readRoute(hostname, signal),
+            },
+        );
+        expect(ended(await work())).toBe("succeeded");
+        expect(await aliasRow(stable.id)).toMatchObject({ state: "withdrawn" });
+        expect(await serves(stable.hostname)).toEqual({ status: 404, id: null });
+        expect(await unpinned(a)).toBeInstanceOf(Date);
+        expect(await code(requestDeploymentDeletion(db.db, actor, org, a, deps()))).toBe("ok");
+    });
+
+    it("refuses to reopen after a restore until counters and routes agree, then never reuses a generation", async () => {
+        const { alias, ready } = await fixture();
+        const a = await ready();
+        const b = await ready();
+        // The router moved on after the backup was taken: it is at generation 3 for this alias,
+        // while the restored database still reserves 0. (The database refuses to lower a
+        // counter, so this is the real shape of the hazard.)
+        const hostname = (
+            await db.db
+                .selectFrom("deployment")
+                .select("hostname")
+                .where("id", "=", a)
+                .executeTakeFirstOrThrow()
+        ).hostname;
+        await client().registerDeployment({ deploymentId: a, hostname });
+        await client().replaceRoute({
+            hostname: alias.hostname,
+            aliasId: alias.id,
+            operationId: randomUUID(),
+            generation: "3",
+            targetDeploymentId: a,
+        });
+        // The router also serves a route that Launchpad never heard of.
+        const strangerHost = "stranger.sites.example.net";
+        const strangerAlias = randomUUID();
+        const stranger = {
+            deploymentId: randomUUID(),
+            hostname: "stranger-deploy.sites.example.net",
+        };
+        await client().registerDeployment(stranger);
+        await client().replaceRoute({
+            hostname: strangerHost,
+            aliasId: strangerAlias,
+            operationId: randomUUID(),
+            generation: "4",
+            targetDeploymentId: stranger.deploymentId,
+        });
+        await markDeploymentRecoveryBlocked(tmp.dir);
+        await blockRestoredModel(db.db);
+        try {
+            const view = () => client().listRoutes();
+            await expect(clearDeploymentRecovery(db.db, tmp.dir, true, view)).rejects.toThrow(
+                /ahead/,
+            );
+            const raised = await raiseAliasCounters(db.db, tmp.dir, view);
+            expect(raised.raised).toBeGreaterThanOrEqual(1);
+            expect(raised.unknownRoutes).toEqual([strangerHost]);
+            expect(await aliasRow(alias.id)).toMatchObject({
+                reserved_generation: "3",
+                committed_generation: "0",
+            });
+            // Still refused: a live route Launchpad does not know. Withdraw it on the router.
+            await expect(clearDeploymentRecovery(db.db, tmp.dir, true, view)).rejects.toThrow(
+                /unknown routes/,
+            );
+            await client().replaceRoute({
+                hostname: strangerHost,
+                aliasId: strangerAlias,
+                operationId: randomUUID(),
+                generation: "5",
+                targetDeploymentId: null,
+            });
+            await clearDeploymentRecovery(db.db, tmp.dir, true, view);
+            await assertModelMutationsReady(db.db, tmp.dir);
+        } finally {
+            await db.db
+                .updateTable("instance_state")
+                .set({ value: "ready" })
+                .where("key", "=", "deployment_recovery")
+                .execute();
+        }
+        // The next promotion starts above the router's counter, so the router accepts it.
+        await promote(alias.id, b, "3");
+        expect(ended(await work())).toBe("succeeded");
+        expect((await client().readRoute(alias.hostname)).route).toMatchObject({ generation: "4" });
+        expect(await aliasRow(alias.id)).toMatchObject({ state: "bound", target_deployment_id: b });
     });
 });
