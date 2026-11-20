@@ -11,7 +11,11 @@ or prove. `restore` never contacts Dokku. Back up the target database first.
    its full 25-minute stop grace period. Wait for every Dokku operation it
    dispatched to settle; after the last legacy worker exits, wait longer than
    the longest possible remote Dokku command and the five-minute deletion lease
-   (longer for slow destroy triggers). Verify on the Dokku host that no
+   (longer for slow destroy triggers). An enabled deployment worker needs its stop
+   grace period (at least 30 seconds) and then a wait longer than one dispatch (290
+   seconds) and the five-minute lease. An interrupted deployment step or app
+   destroy comes back as `reconciliation-needed`; an interrupted image removal
+   resumes on the next claim. Verify on the Dokku host that no
    worker-started Docker/Dokku process remains. An SSH client exiting or an app
    disappearing is not proof of settlement. Make sure no other installation shares this Dokku
    host and data directory.
@@ -124,7 +128,8 @@ or prove. `restore` never contacts Dokku. Back up the target database first.
    organization owners and remove any unverified access before reopening;
    otherwise keep ingress closed. Do not assume that stopped workers prevent
    authenticated reads. Confirm revocations before reopening the private
-   ingress. Then start the idle worker if needed.
+   ingress. Keep every worker stopped until recovery is cleared in step 6 (a worker
+   with deployments off is harmless), then start enabled workers.
 5. Migration 018 unconditionally drops preview-era data, including from an old
    restored backup; inventory/cleanup must use the pre-P2b binary first
    ([cutover runbook](deployment-cutover.md)). Never manually delete a Dokku app

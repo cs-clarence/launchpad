@@ -81,7 +81,7 @@ export const createApiKeySchema = z
     });
 
 // How the instance is doing, for the operator. Counts only: no ids, names or text that came
-// from a remote system. Deployments, workers and queues return with the immutable model.
+// from a remote system. Deployments and workers report nothing here yet.
 export const statusSchema = z.strictObject({
     generatedAt: z.string().meta({ format: "date-time" }),
     dependencies: z.strictObject({ database: z.literal("ok") }),

@@ -4,10 +4,12 @@ Custom Dokku image with the `http-auth` plugin for local deployments.
 
 The controller has operator login, organizations, members, projects, optional
 email invitations and recovery, and an OpenAPI reference. The earlier preview deployment runtime was
-removed; the worker idles until the immutable app model arrives (see
-[the plan](docs/plans/deployment-model.md)). Nothing is published or deployed from this
-repository's CI. Backup and restore, quotas and a production Compose
-setup are still to come (see [the plan](docs/plans/application.md)). See
+removed. Its replacement, the immutable app model, is switched off by default
+(`LAUNCHPAD_DEPLOYMENTS`); when on, apps, uploads, deployments and manual deletion work through the API
+and an enabled worker (see [deployments](docs/deployments.md) and
+[the plan](docs/plans/deployment-model.md); aliases and promotion are not built). Nothing is published or deployed from this
+repository's CI. A production Compose
+setup and release machinery are still to come (see [the plan](docs/plans/application.md)). See
 [Controller](#controller) below, [the controller README](apps/controller/README.md) and
 [the worker README](apps/worker/README.md). The Docker commands in the earlier sections
 manage the existing Dokku engine, not the controller.
@@ -114,7 +116,7 @@ that talks to the controller. The workspace follows Pureform's Bun/Omni layout:
 ```text
 apps/
   controller/      TanStack Start + React, mounted Elysia 2 RC API, Skeleton 5
-  worker/          Idle worker (the preview runtime was removed; the app worker returns later)
+  worker/          Deployment worker (idle unless LAUNCHPAD_DEPLOYMENTS=on; builds, loads and deletes)
   cli/             Bun CLI: login, profiles, orgs, projects
   mcp/             Local stdio MCP server (read-only tools)
 packages/
@@ -155,5 +157,5 @@ Dokku); see the controller and worker READMEs for configuration and first run. N
 worker or PostgreSQL service has been added to Compose yet.
 
 See [CONTRIBUTING.md](CONTRIBUTING.md), [tooling](docs/tooling.md), and
-[package patterns](docs/patterns/README.md). Keep these docs current when setup
+[package patterns](docs/patterns/README.md), and [deployments](docs/deployments.md). Keep these docs current when setup
 or boundaries change.

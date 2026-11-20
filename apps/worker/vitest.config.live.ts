@@ -9,6 +9,9 @@ export default mergeConfig(mergeConfig(baseConfig, integrationTestConfig), {
         testTimeout: 10 * 60_000,
         hookTimeout: 5 * 60_000,
         include: ["./src/__tests__/live.spec.ts"],
-        exclude: ["./src/__tests__/deployment-worker.spec.ts"],
+        exclude: [
+            "./src/__tests__/deployment-worker.spec.ts",
+            "./src/__tests__/acceptance.spec.ts",
+        ],
     },
 } satisfies UserWorkspaceConfig);

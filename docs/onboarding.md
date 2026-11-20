@@ -18,7 +18,7 @@ invitations or other keys.
    address and assigns only the role they need: `owner`, `admin`, `deployer`
    or `viewer`. An account created through public signup is not trusted for
    email-based grants merely because signup is later turned off.
-3. The owner/admin issues an organization API key in the dashboard after a
+3. The owner/admin issues an organization API key in the dashboard (for the `app:*` deployment scopes, through the API: see [deployments](deployments.md)) after a
    fresh sign-in (last 15 minutes). Choose explicit scopes, an expiry (at most
    365 days), and optional project restrictions. For a read-only agent use
    `organization:read` and `project:read` as needed; omit

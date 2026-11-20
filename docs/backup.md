@@ -10,7 +10,8 @@ Dokku state or any preview datastore; back those up separately.
    Nothing collects archives while the preview runtime is removed, so there is
    no worker check and no stop-confirmation flag. Older-version collectors can
    still move files against the unchanged schema: stop them and wait for them
-   to exit before backing up. The current idle worker need not be stopped.
+   to exit before backing up. A worker with deployments off need not be stopped; stop an enabled worker first: a
+   snapshot taken mid-step restores as `reconciliation-needed` work.
 
     ```sh
     bun .output/admin.mjs backup /private/backups/launchpad-2026-11-18

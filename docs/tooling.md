@@ -215,7 +215,7 @@ this reference together.
 
 Root `.env.local.example` configures the existing Dokku Compose setup. The
 controller's settings (PostgreSQL, authentication, email, API docs) are documented
-in `apps/controller/README.md` and `apps/controller/.env.local.example`; the worker's SSH settings to Dokku are in `apps/worker/README.md`. Do not bake
+in `apps/controller/README.md` and `apps/controller/.env.local.example`; the worker's settings (database, Dokku SSH, proxy) are in `docs/install.md` step 6 and `apps/worker/.env.local.example`. Do not bake
 credentials into an image.
 
 `apps/controller/Dockerfile` and `apps/worker/Dockerfile` are multistage Bun image

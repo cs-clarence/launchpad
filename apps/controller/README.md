@@ -52,14 +52,14 @@ Copy `.env.local.example` to `.env.local` here and edit it; Omni loads it for `d
 back means stopping the controller and restoring the dump. Stopping management access
 never touches Dokku workloads.
 
-The idle worker opens no database; the controller checks the schema on its first request, and repeats a failed check every few
+A worker with deployments off opens no database (an enabled worker does not check the schema: start it only after `migrate --status` reports `pending: 0`); the controller checks the schema on its first request, and repeats a failed check every few
 seconds, so it recovers by itself once the database is migrated (or reachable). A database that
 is **behind** (the API answers `503 schema-mismatch`) needs `migrate`, and one
 a **newer** version already migrated needs that version or a restored backup. `migrate --status`
 lists applied and pending migrations and changes nothing (exit code 1 if any are pending or
 unknown). The controller carries its migrations, bundled so they run without the repository:
 `.output/migrations` for the controller (and the operator commands in `.output/admin.mjs`, so
-`bun .output/admin.mjs migrate` works in the image). The idle worker has no migration bundle.
+`bun .output/admin.mjs migrate` works in the image). The worker has no migration bundle.
 `LAUNCHPAD_MIGRATIONS_DIR` names another folder.
 The existing `LAUNCHPAD_DATA_DIR` directory must be mounted/available before startup;
 the controller does not create a missing mount. See [migration 018's destructive cutover](../../docs/deployment-cutover.md).
@@ -155,8 +155,7 @@ checksums. A database whose migrations are still pending can be backed up (do th
   automatically now: restore it by hand from its `.gone` name).
 - **No stop flag.** Nothing collects archives now, so `backup` has no worker check and no
   `--i-have-stopped-the-workers` option. Stop any older-version collectors and wait for them to exit
-  before backing up: their collection can race with the file copy. No stop is needed if only the
-  current idle worker is running.
+  before backing up: their collection can race with the file copy. No stop is needed if only a worker with deployments off is running; stop an enabled worker first.
 - **Keep the directory private** (it is created mode 0700). The dump holds password and API-key
   hashes **and live session tokens**: with the authentication secret they would let someone sign
   cookies, so never store the secret beside the backup. Environment files, the secret and
@@ -226,7 +225,7 @@ omni -i run admin -p @launchpad-kit/controller -a command=check-restore
 the `pg_dump`'s that wrote the backup) with the dump on its standard input and the connection
 settings in `PG*` variables. The environment files, the authentication secret and Dokku's own state
 are not in a backup: put them back yourself. Archives the data directory holds that the backup
-does not are left alone. The idle worker does not collect them; do not rely on automatic cleanup
+does not are left alone. The worker does not collect them; do not rely on automatic cleanup
 in this release. A restore killed halfway can leave `*.restore-*` temporary files beside the archives
 (delete them).
 If it was killed after the old schema was moved aside, the database may have an empty, partly
@@ -288,8 +287,7 @@ failure does not restore keys. Use operator recovery if necessary.
 whatever its scopes; an organization owner who is not the operator gets 403). It returns counts only:
 `dependencies.database` (`ok` if the request got an answer), `artifacts` (count and bytes from
 uncollected database rows, not checks that archive files exist) and `warnings` (always empty in this
-version). Workers, queues and deployments return with the immutable app model, which
-defines their own status. There is no dashboard panel for it.
+version). Workers, queues and deployments report nothing here yet. There is no dashboard panel for it.
 
 ## Apps, uploads and deployments
 
@@ -300,7 +298,7 @@ archive as `application/gzip` with a `Content-Length`), `POST /projects/{project
 project-limited key reaches only its projects and may deploy only archives uploaded through the app's project.
 While off, writes answer 503 and reads still work. A queued deployment waits for an enabled worker. Only a finished
 deployment can be deleted: a worker destroys its own Dokku app and local image, and its hostname and name stay
-reserved permanently. Promotion and aliases come later. Each operation is in the OpenAPI document.
+reserved permanently. Promotion and aliases come later. See [deployments](../../docs/deployments.md) for a worked example. Each operation is in the OpenAPI document.
 
 A deployment the worker could not confirm is `reconciliation-needed` and blocks its app. After
 checking Dokku by exact name, record what you saw with
@@ -318,5 +316,5 @@ counting toward quota and shows only as `desiredState` `deleting`; look at the d
 The preview runtime (previews, deployments, deletion and expiry, the artifact upload endpoint, the
 dashboard preview pages and the `preview:*` key scopes) was removed. Migration 018 drops the old
 tables/data unconditionally and revokes their keys. A stored key that still holds a `preview:*` scope is refused at
-authentication. The upload endpoint returned in P3b-ii, project-scoped, under `app:deploy`; see
-[the plan](../../docs/plans/deployment-p3-deploy.md).
+authentication. Uploads are project-scoped, under `app:deploy`; see
+[deployments](../../docs/deployments.md).

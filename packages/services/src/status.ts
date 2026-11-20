@@ -7,7 +7,7 @@ type Db = Kysely<Database>;
 
 // How the instance is doing, for the operator: that the database answers, and what is stored.
 // Counts only: no ids, names or text that came from a remote system. Workers, queues and
-// deployments return with the immutable model, which defines their own status.
+// deployments report nothing here yet.
 export async function getStatus(db: Db, principal: Principal) {
     if (principal.instanceRole !== "operator") {
         throw new ServiceError("forbidden", "Only the instance operator may read this.");
