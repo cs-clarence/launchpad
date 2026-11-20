@@ -1,3 +1,7 @@
+import { randomBytes, randomUUID } from "node:crypto";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { routerAnchorFromEnv, routerSessionFromEnv } from "./router-view";
 
@@ -69,5 +73,36 @@ describe("routerAnchorFromEnv", () => {
             routerEpoch: null,
             note: "unreachable",
         });
+    });
+
+    it("anchors on the configured epoch file when the router cannot be reached", async () => {
+        const dir = mkdtempSync(path.join(tmpdir(), "lp-anchor-env-"));
+        try {
+            const epoch = randomUUID();
+            const tokenFile = path.join(dir, "token");
+            const epochFile = path.join(dir, "epoch");
+            writeFileSync(tokenFile, `${randomBytes(32).toString("hex")}\n`, { mode: 0o600 });
+            writeFileSync(epochFile, `${epoch}\n`);
+            const anchor = await routerAnchorFromEnv({
+                ...routerSettings,
+                // Nothing listens here: the router is down.
+                LAUNCHPAD_ALIAS_CONTROL_URL: "http://127.0.0.1:1",
+                LAUNCHPAD_ALIAS_CONTROL_TOKEN_FILE: tokenFile,
+                LAUNCHPAD_ALIAS_ROUTER_EPOCH_FILE: epochFile,
+            });
+            expect(anchor).toEqual({ routerEpoch: epoch, note: "from-epoch-file" });
+            // A file that does not hold an epoch is no anchor.
+            writeFileSync(epochFile, "not-an-epoch\n");
+            expect(
+                await routerAnchorFromEnv({
+                    ...routerSettings,
+                    LAUNCHPAD_ALIAS_CONTROL_URL: "http://127.0.0.1:1",
+                    LAUNCHPAD_ALIAS_CONTROL_TOKEN_FILE: tokenFile,
+                    LAUNCHPAD_ALIAS_ROUTER_EPOCH_FILE: epochFile,
+                }),
+            ).toEqual({ routerEpoch: null, note: "unreachable" });
+        } finally {
+            rmSync(dir, { recursive: true, force: true });
+        }
     });
 });

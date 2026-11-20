@@ -360,6 +360,22 @@ describe("recovery counters", () => {
             }
         });
 
+        it("treats an anchor taken from the epoch file like a recorded one", async () => {
+            const alias = await aliasFixture();
+            await markDeploymentRecoveryBlocked(dataDir, {
+                routerEpoch: authority.epoch,
+                note: "from-epoch-file",
+            });
+            await blockRestoredModel(db.db);
+            expect(await readRecoveryMarker(dataDir)).toMatchObject({
+                routerEpoch: authority.epoch,
+                routerEpochNote: "from-epoch-file",
+            });
+            await expect(clearDeploymentRecovery(db.db, dataDir, true, ok(alias))).rejects.toThrow(
+                /epoch has not changed/,
+            );
+        });
+
         it("reads a version 1 or damaged marker as having no anchor", async () => {
             await fs.mkdir(path.join(dataDir, "maintenance"), { mode: 0o700 });
             const file = path.join(dataDir, "maintenance/deployment-recovery-blocked");
@@ -369,6 +385,7 @@ describe("recovery counters", () => {
             );
             expect(await readRecoveryMarker(dataDir)).toMatchObject({ routerEpoch: null });
             for (const text of [
+                '{"version":2,"restoreStartedAt":"x","routerEpoch":null,"routerEpochNote":"recorded"}',
                 "not json",
                 '{"version":3}',
                 '{"version":2,"restoreStartedAt":"x","routerEpoch":"nope","routerEpochNote":"recorded"}',

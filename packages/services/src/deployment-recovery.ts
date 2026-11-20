@@ -111,8 +111,9 @@ export interface RecoveryMarker {
     version: 2;
     restoreStartedAt: string;
     routerEpoch: string | null;
-    // Why there is no anchor: no router is configured, or it could not be read at the time.
-    routerEpochNote: "recorded" | "not-configured" | "unreachable";
+    // How the anchor was obtained ("recorded": read from the router; "from-epoch-file": the router
+    // could not be read, so the epoch the workers were configured with), or why there is none.
+    routerEpochNote: "recorded" | "from-epoch-file" | "not-configured" | "unreachable";
 }
 const EPOCH = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
@@ -139,7 +140,9 @@ export async function readRecoveryMarker(dataDir: string): Promise<RecoveryMarke
         const epoch = parsed.routerEpoch;
         if (epoch !== null && !(typeof epoch === "string" && EPOCH.test(epoch))) return null;
         const note = parsed.routerEpochNote;
-        if (note !== "recorded" && note !== "not-configured" && note !== "unreachable") return null;
+        const anchored = note === "recorded" || note === "from-epoch-file";
+        if (!anchored && note !== "not-configured" && note !== "unreachable") return null;
+        if (anchored !== (epoch !== null)) return null;
         return {
             version: 2,
             restoreStartedAt: parsed.restoreStartedAt,
@@ -166,7 +169,14 @@ export async function markDeploymentRecoveryBlocked(
         version: 2,
         restoreStartedAt: existing?.restoreStartedAt ?? new Date().toISOString(),
         routerEpoch: anchor.routerEpoch,
-        routerEpochNote: anchor.routerEpoch === null ? anchor.note : "recorded",
+        routerEpochNote:
+            anchor.routerEpoch === null
+                ? anchor.note === "recorded" || anchor.note === "from-epoch-file"
+                    ? "unreachable"
+                    : anchor.note
+                : anchor.note === "from-epoch-file"
+                  ? "from-epoch-file"
+                  : "recorded",
     };
     await writeDurableRecord(dataDir, BLOCKED, record);
 }

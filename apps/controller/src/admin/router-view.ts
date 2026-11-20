@@ -58,16 +58,29 @@ export function routerSessionFromEnv(
 }
 
 // What the recovery marker should record at the start of a restore. A router that is not configured
-// or cannot be read must not stop an emergency restore: it records no anchor and says why, and
-// recovery-clear then needs the explicit --router-epoch-unrecorded confirmation.
-export async function routerAnchorFromEnv(
-    env: Record<string, string | undefined>,
-): Promise<{ routerEpoch: string | null; note: "recorded" | "not-configured" | "unreachable" }> {
+// or cannot be read must not stop an emergency restore. If it cannot be read, the anchor is the epoch
+// in the configured epoch file (the epoch the workers were using), so rotation can still be verified;
+// only with neither is there no anchor, and recovery-clear then needs --router-epoch-unrecorded.
+export async function routerAnchorFromEnv(env: Record<string, string | undefined>): Promise<{
+    routerEpoch: string | null;
+    note: "recorded" | "from-epoch-file" | "not-configured" | "unreachable";
+}> {
     const session = routerSessionFromEnv(env);
     if (!session) return { routerEpoch: null, note: "not-configured" };
     try {
         return { routerEpoch: await session.epoch(), note: "recorded" };
     } catch {
+        try {
+            const routing = parseAppRoutingConfig(env);
+            if (routing.enabled) {
+                const epoch = readRouterCredential(routing.aliasRouterEpochFile, false);
+                if (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(epoch)) {
+                    return { routerEpoch: epoch, note: "from-epoch-file" };
+                }
+            }
+        } catch {
+            // No readable epoch file either: no anchor.
+        }
         return { routerEpoch: null, note: "unreachable" };
     }
 }
