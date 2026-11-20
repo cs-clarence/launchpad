@@ -72,3 +72,17 @@ the migrated target using the **new** admin build before replacing it; never
 bypass the target-backup requirement. The [automated drill](restore.md#repeat-the-disposable-drill) exercises
 backup → built migration → controller restart → status → fresh restore, but
 does not provision or modify Dokku.
+
+## Aliases and recovery (P4)
+
+Alias promotion is off by default and changes nothing until you set `LAUNCHPAD_ALIASES=on` on the
+controller and the worker (the worker then needs the router settings, see [install](install.md)).
+From this release `recovery-clear` reads the router whenever the router settings
+(`LAUNCHPAD_ALIAS_CONTROL_URL` and the rest) are configured for it, and refuses if the database holds any
+alias but none are configured, so an installation that has created aliases must keep the router settings on
+the host that runs `recovery-clear`. An installation that never used aliases needs nothing new. **Rolling back by restoring the pre-upgrade backup removes every promotion, withdrawal and alias
+created after that backup**: they are absent from the restored database, not queued or pinned, and
+the router may already serve them. Treat that as a restore: follow [restore](restore.md), including
+`recovery-raise-counters` and `recovery-withdraw-unknown`, before `recovery-clear`, and re-request any
+promotion you still want. Rolling back the binary without restoring leaves queued promotions
+unprocessed and their targets pinned, and reconciling is the same procedure as for a held operation.

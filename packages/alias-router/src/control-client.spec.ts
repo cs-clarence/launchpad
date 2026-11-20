@@ -58,6 +58,80 @@ describe("private router control client", () => {
         expect(await client.readRoute(write.hostname)).toEqual(withdrawn);
     });
 
+    it("lists every route, following pages and refusing a reply from another authority or a stuck cursor", async () => {
+        const { send, options, target, write } = setup();
+        const client = createRouterControlClient({ ...options, fetch: send });
+        expect((await client.listRoutes()).routes).toEqual([]);
+        await client.registerDeployment(target);
+        await client.replaceRoute(write);
+        const listed = await client.listRoutes();
+        expect(listed).toMatchObject({
+            instanceId: options.credentials.instanceId,
+            epoch: options.credentials.epoch,
+        });
+        expect(listed.routes).toHaveLength(1);
+        expect(listed.routes[0]).toMatchObject({
+            hostname: write.hostname,
+            generation: write.generation,
+        });
+
+        const route = listed.routes[0]!;
+        const page = (
+            routes: unknown[],
+            nextCursor: string | null,
+            epoch = options.credentials.epoch,
+        ) =>
+            Response.json({
+                instanceId: options.credentials.instanceId,
+                epoch,
+                routes,
+                nextCursor,
+            });
+        const fetch = vi
+            .fn<Send>()
+            .mockResolvedValueOnce(page([route], "b.sites.example.net"))
+            .mockResolvedValueOnce(page([{ ...route, hostname: "b.sites.example.net" }], null));
+        const paged = await createRouterControlClient({ ...options, fetch }).listRoutes();
+        expect(paged.routes.map((row) => row.hostname)).toEqual([
+            write.hostname,
+            "b.sites.example.net",
+        ]);
+        expect(String(fetch.mock.calls[1]![0])).toContain("after=b.sites.example.net");
+
+        const stuck = vi.fn<Send>().mockResolvedValue(page([route], "a.sites.example.net"));
+        await expect(
+            createRouterControlClient({ ...options, fetch: stuck }).listRoutes(),
+        ).rejects.toMatchObject({ kind: "uncertain" });
+        const wrongEpoch = vi.fn<Send>().mockResolvedValue(page([], null, randomUUID()));
+        await expect(
+            createRouterControlClient({ ...options, fetch: wrongEpoch }).listRoutes(),
+        ).rejects.toMatchObject({ kind: "uncertain" });
+    });
+
+    it("lists more routes than one page holds, in order and without loss", async () => {
+        const { send, options } = setup();
+        const client = createRouterControlClient({ ...options, fetch: send });
+        const hostnames: string[] = [];
+        for (let index = 0; index < 501; index++) {
+            const deployment = {
+                deploymentId: randomUUID(),
+                hostname: `d${String(index).padStart(4, "0")}.sites.example.net`,
+            };
+            const hostname = `a${String(index).padStart(4, "0")}.sites.example.net`;
+            await client.registerDeployment(deployment);
+            await client.replaceRoute({
+                hostname,
+                aliasId: randomUUID(),
+                operationId: randomUUID(),
+                generation: "1",
+                targetDeploymentId: deployment.deploymentId,
+            });
+            hostnames.push(hostname);
+        }
+        const listed = await client.listRoutes();
+        expect(listed.routes.map((row) => row.hostname)).toEqual(hostnames.toSorted());
+    }, 60_000);
+
     it("does not turn a dropped reply after commit into a refusal", async () => {
         const { options, send, target, write } = setup();
         const healthy = createRouterControlClient({ ...options, fetch: send });

@@ -22,6 +22,8 @@ export * from "./promotions";
 export { requestAppShutdown, type ShutdownBlocker } from "./app-shutdown";
 export * from "./promotion-claims";
 export * from "./router-credentials";
+export * from "./router-inventory";
+export * from "./recovery-counters";
 export * from "./deployments";
 export * from "./deployment-claims";
 export * from "./deployment-deletion";

@@ -16,11 +16,14 @@ import {
     assertPrivateControlUrl,
     clearDeploymentRecovery,
     parseAppRoutingConfig,
+    raiseAliasCounters,
+    withdrawUnknownRoute,
     readRouterCredential,
     reconcileDeployment,
     supersedeOperation,
 } from "@launchpad-kit/services";
 import { createBackup, verifyBackup } from "./backup";
+import { routerSessionFromEnv } from "./router-view";
 import { checkRestore, restoreBackup, replaceTarget } from "./restore";
 
 async function readStdin(): Promise<string> {
@@ -224,9 +227,78 @@ program
                 db,
                 path.resolve(process.env.LAUNCHPAD_DATA_DIR ?? ".data/controller"),
                 options.iHaveReconciledRouterAndDokku === true,
+                routerSessionFromEnv(process.env)?.view,
             ),
         );
         console.log("Deployment recovery cleared on the operator's attestation.");
+    });
+
+program
+    .command("recovery-raise-counters")
+    .description(
+        "After a restore, raise each alias counter to the router's generation for its hostname (never lower). Does not reopen the model",
+    )
+    .action(async () => {
+        const router = routerSessionFromEnv(process.env);
+        if (!router) {
+            throw new Error(
+                "Router settings are required (LAUNCHPAD_ALIAS_CONTROL_URL, LAUNCHPAD_APPS_DOMAIN and the other LAUNCHPAD_ALIAS_* settings).",
+            );
+        }
+        const result = await withDatabase((db) =>
+            raiseAliasCounters(
+                db,
+                path.resolve(process.env.LAUNCHPAD_DATA_DIR ?? ".data/controller"),
+                router.view,
+            ),
+        );
+        console.log(`Raised ${result.raised} alias counter(s).`);
+        if (result.unknownRoutes.length) {
+            console.log(
+                `The router serves ${result.unknownRoutes.length} route(s) Launchpad has no alias for: ${result.unknownRoutes.slice(0, 20).join(", ")}. recovery-clear refuses until each is withdrawn (recovery-withdraw-unknown) or its alias is restored.`,
+            );
+        }
+        if (result.conflicting.length) {
+            console.log(
+                `The router records ${result.conflicting.length} hostname(s) for a different alias id than the database: ${result.conflicting.slice(0, 20).join(", ")}. recovery-clear refuses until each is resolved (the router would reject that alias's writes); do not withdraw them as unknown.`,
+            );
+        }
+        if (result.unknownWithdrawn.length) {
+            console.log(
+                `The router also holds ${result.unknownWithdrawn.length} withdrawn route(s) Launchpad does not know; they serve nothing and do not block recovery-clear. Their hostnames stay reserved on the router for the old alias, so do not create an alias with the same hostname.`,
+            );
+        }
+    });
+
+program
+    .command("recovery-withdraw-unknown")
+    .description(
+        "Withdraw one live route the router serves for a hostname Launchpad has no alias for (written at the next generation). Never touches a known alias",
+    )
+    .requiredOption("--hostname <hostname>", "the exact hostname the router serves")
+    .option(
+        "--i-have-verified-the-router-by-exact-route",
+        "attest: you checked that this route is not one you want to keep",
+    )
+    .action(async (options) => {
+        if (options.iHaveVerifiedTheRouterByExactRoute !== true) {
+            throw new Error(
+                "Withdrawing a route needs --i-have-verified-the-router-by-exact-route: read the route first.",
+            );
+        }
+        const router = routerSessionFromEnv(process.env);
+        if (!router) throw new Error("Router settings are required.");
+        const result = await withDatabase((db) =>
+            withdrawUnknownRoute(
+                db,
+                path.resolve(process.env.LAUNCHPAD_DATA_DIR ?? ".data/controller"),
+                options.hostname,
+                router,
+            ),
+        );
+        console.log(
+            `Withdrew ${result.hostname} at generation ${result.generation}. Its hostname stays reserved on the router for the old alias.`,
+        );
     });
 
 program
