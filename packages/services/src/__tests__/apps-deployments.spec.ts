@@ -3,7 +3,8 @@ import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { createTestDatabase } from "@launchpad-kit/database/testing";
-import { sql } from "kysely";
+import type { Database } from "@launchpad-kit/database";
+import { type Kysely, sql } from "kysely";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import {
     addMember,
@@ -356,10 +357,14 @@ describe("creating a deployment", () => {
     });
 
     describe("against artifact collection", () => {
-        const stored = (artifact: string, digest: string) =>
+        const stored = (digest: string) =>
             fs.stat(resolveArtifactPath(dataDir, artifactStorageKey(org, digest))).then(
                 () => true,
-                () => false,
+                (error) => {
+                    // Only a missing file is "removed"; any other failure is not an answer.
+                    if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
+                    throw error;
+                },
             );
         const age = (artifact: string) =>
             sql`update artifact set created_at = now() - interval '30 days' where id = ${artifact}`.execute(
@@ -373,6 +378,51 @@ describe("creating a deployment", () => {
                     .where("id", "=", artifact)
                     .executeTakeFirstOrThrow()
             ).digest;
+        const deploymentsOf = (artifact: string) =>
+            testDb.db
+                .selectFrom("deployment")
+                .select("id")
+                .where("artifact_id", "=", artifact)
+                .execute();
+
+        // A transaction held open by the test, so an interleaving is chosen, not hoped for.
+        // `ready` rejects if the transaction fails before it is holding anything.
+        function holder(work: (trx: Kysely<Database>) => Promise<void>) {
+            let release!: () => void;
+            const hold = new Promise<void>((resolve) => (release = resolve));
+            let signal!: (pid: number) => void;
+            const readyPid = new Promise<number>((resolve) => (signal = resolve));
+            const done = testDb.db.transaction().execute(async (trx) => {
+                await work(trx);
+                const pid = (
+                    await sql<{ pid: number }>`select pg_backend_pid() as pid`.execute(trx)
+                ).rows[0]!.pid;
+                signal(pid);
+                await hold;
+            });
+            const ready = Promise.race([
+                readyPid,
+                done.then(() => {
+                    throw new Error("the holding transaction ended before it was ready");
+                }),
+            ]) as Promise<number>;
+            return { ready, release, done };
+        }
+
+        // Bounded wait until a backend is blocked by `blocker` while running a statement that
+        // mentions `fragment`: proof that the operation reached its lock wait.
+        async function waitBlocked(blocker: number, fragment: string) {
+            for (let i = 0; i < 100; i++) {
+                const rows = await sql<{ pid: number }>`
+                    select pid from pg_stat_activity
+                    where ${blocker} = any(pg_blocking_pids(pid)) and query ilike ${`%${fragment}%`}`.execute(
+                    testDb.db,
+                );
+                if (rows.rows.length > 0) return;
+                await new Promise((resolve) => setTimeout(resolve, 50));
+            }
+            throw new Error(`nothing was blocked on ${fragment}`);
+        }
 
         it("keeps an artifact that a deployment already references", async () => {
             const app = await newApp();
@@ -393,7 +443,7 @@ describe("creating a deployment", () => {
                 .where("id", "=", artifact)
                 .executeTakeFirstOrThrow();
             expect(row.collected_at).toBeNull();
-            expect(await stored(artifact, await digestOf(artifact))).toBe(true);
+            expect(await stored(await digestOf(artifact))).toBe(true);
         });
 
         it("refuses an artifact that collection already took", async () => {
@@ -402,7 +452,7 @@ describe("creating a deployment", () => {
             const digest = await digestOf(artifact);
             await age(artifact);
             await collectArtifacts(testDb.db, { dataDir, retentionSeconds: 0 });
-            expect(await stored(artifact, digest)).toBe(false);
+            expect(await stored(digest)).toBe(false);
             expect(
                 await code(
                     createDeployment(
@@ -417,82 +467,79 @@ describe("creating a deployment", () => {
             ).toBe("not-found");
         });
 
-        it("waits on a collector that holds the artifact row, then refuses what it collected", async () => {
+        it("waits for a collector that holds the artifact row, then proceeds", async () => {
             const app = await newApp();
             const artifact = await artifactFor(p1);
-            let release!: () => void;
-            const hold = new Promise<void>((resolve) => (release = resolve));
-            let locked!: () => void;
-            const ready = new Promise<void>((resolve) => (locked = resolve));
-            // A collector in the middle of its transaction: it has locked the row and will mark it
-            // collected. Without the share lock, the deployment would not wait for it.
-            const collector = testDb.db.transaction().execute(async (trx) => {
+            // A collector mid-transaction: row locked, about to mark it collected.
+            const collector = holder(async (trx) => {
                 await trx
                     .selectFrom("artifact")
                     .select("id")
                     .where("id", "=", artifact)
                     .forUpdate()
                     .execute();
-                locked();
-                await hold;
-                await trx
-                    .updateTable("artifact")
-                    .set({ collected_at: new Date() })
-                    .where("id", "=", artifact)
-                    .execute();
             });
-            await ready;
-            let settled: string | undefined;
-            const deploying = code(
-                createDeployment(
-                    testDb.db,
-                    people.dee!,
-                    org,
-                    app.id,
-                    { artifactId: artifact },
-                    deps(),
-                ),
-            ).then((outcome) => (settled = outcome));
-            await new Promise((resolve) => setTimeout(resolve, 400));
-            expect(settled).toBeUndefined();
-            release();
-            await collector;
-            await deploying;
-            expect(settled).toBe("not-found");
-            expect(
-                await testDb.db
-                    .selectFrom("deployment")
-                    .select("id")
-                    .where("artifact_id", "=", artifact)
-                    .execute(),
-            ).toEqual([]);
+            let deploying: Promise<string> | undefined;
+            try {
+                const pid = await collector.ready;
+                deploying = code(
+                    createDeployment(
+                        testDb.db,
+                        people.dee!,
+                        org,
+                        app.id,
+                        { artifactId: artifact },
+                        deps(),
+                    ),
+                );
+                // The deployment is provably waiting on the collector's row lock.
+                await waitBlocked(pid, "artifact");
+            } finally {
+                collector.release();
+                await collector.done.catch(() => {});
+            }
+            // The collector commits without collecting (the test only holds the lock); the
+            // deployment is then accepted with the artifact intact.
+            expect(await deploying).toBe("ok");
+            expect((await deploymentsOf(artifact)).length).toBe(1);
         });
 
-        it("makes a collector skip an artifact a deployment holds until it commits", async () => {
+        it("skips an artifact while a real deployment holds it, and the deployment then commits", async () => {
             const app = await newApp();
             const artifact = await artifactFor(p1);
+            const digest = await digestOf(artifact);
             await age(artifact);
-            // The deployment's own lookup, held open the way createDeployment holds it.
-            let release!: () => void;
-            const hold = new Promise<void>((resolve) => (release = resolve));
-            let locked!: () => void;
-            const ready = new Promise<void>((resolve) => (locked = resolve));
-            const deployer = testDb.db.transaction().execute(async (trx) => {
-                await trx
-                    .selectFrom("artifact")
-                    .select("id")
-                    .where("id", "=", artifact)
-                    .forShare()
-                    .execute();
-                locked();
-                await hold;
+            // Pause the real deployment after its artifact lookup: block its next step, the
+            // hostname registry read, behind a lock the test holds.
+            const gate = holder(async (trx) => {
+                await sql`lock table hostname_reservation in access exclusive mode`.execute(trx);
             });
-            await ready;
-            const result = await collectArtifacts(testDb.db, { dataDir, retentionSeconds: 0 });
-            expect(result.collected).not.toContain(artifact);
-            release();
-            await deployer;
-            expect(app.id).toBeTruthy();
+            let deploying: Promise<string> | undefined;
+            let collected: string[] = [];
+            try {
+                const pid = await gate.ready;
+                deploying = code(
+                    createDeployment(
+                        testDb.db,
+                        people.dee!,
+                        org,
+                        app.id,
+                        { artifactId: artifact },
+                        deps(),
+                    ),
+                );
+                await waitBlocked(pid, "hostname_reservation");
+                // It is past the artifact lookup now: collection must skip the artifact.
+                collected = (await collectArtifacts(testDb.db, { dataDir, retentionSeconds: 0 }))
+                    .collected;
+            } finally {
+                gate.release();
+                await gate.done.catch(() => {});
+            }
+            expect(await deploying).toBe("ok");
+            expect(collected).not.toContain(artifact);
+            expect((await deploymentsOf(artifact)).length).toBe(1);
+            expect(await stored(digest)).toBe(true);
         });
 
         it("never ends with a deployment whose archive is gone, in either interleaving", async () => {
@@ -501,7 +548,7 @@ describe("creating a deployment", () => {
                 const artifact = await artifactFor(p1);
                 const digest = await digestOf(artifact);
                 await age(artifact);
-                await Promise.allSettled([
+                const [deployed, collected] = await Promise.allSettled([
                     createDeployment(
                         testDb.db,
                         people.dee!,
@@ -512,12 +559,17 @@ describe("creating a deployment", () => {
                     ),
                     collectArtifacts(testDb.db, { dataDir, retentionSeconds: 0 }),
                 ]);
-                const deployments = await testDb.db
-                    .selectFrom("deployment")
-                    .select("id")
-                    .where("artifact_id", "=", artifact)
-                    .execute();
-                if (deployments.length > 0) expect(await stored(artifact, digest)).toBe(true);
+                expect(collected.status).toBe("fulfilled");
+                if (deployed.status === "fulfilled") {
+                    expect((await deploymentsOf(artifact)).length).toBe(1);
+                    expect(await stored(digest)).toBe(true);
+                } else {
+                    // Only a refusal, and only because collection took this very artifact.
+                    expect(deployed.reason).toBeInstanceOf(ServiceError);
+                    expect((deployed.reason as ServiceError).code).toBe("not-found");
+                    expect(await stored(digest)).toBe(false);
+                    expect(await deploymentsOf(artifact)).toEqual([]);
+                }
             }
         });
     });
