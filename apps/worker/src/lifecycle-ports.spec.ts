@@ -107,12 +107,12 @@ describe("what the worker and the Dokku adapter can do", () => {
         ]);
     });
 
-    it("runs docker with only build, save and rmi of one tag", async () => {
+    it("runs docker with only build, image inspect, save and rmi of one tag", async () => {
         const docker = await fs.readFile(path.resolve(import.meta.dirname, "docker.ts"), "utf8");
         const verbs = [
             ...new Set([...docker.matchAll(/start\(\s*\[\s*"([a-z]+)"/g)].map((m) => m[1])),
         ].sort();
-        expect(verbs).toEqual(["build", "rmi", "save"]);
+        expect(verbs).toEqual(["build", "image", "rmi", "save"]);
     });
 
     it("has no prune, volume, network, database or system command anywhere", async () => {

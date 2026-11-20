@@ -13,13 +13,14 @@ const context: DeployContext = {
     storageKey: "x",
 };
 const TAG = "launchpad/site:0f8fad5bd9cb469fa16570867728950e";
+const IMAGE = { imageTag: TAG, imageId: `sha256:${"a".repeat(64)}` };
 
-function setup(options: { loadFails?: boolean; saveFails?: boolean } = {}) {
+function setup(options: { loadFails?: boolean; saveFails?: boolean; imageId?: string } = {}) {
     const events: string[] = [];
     const dokku = {
         apps: {},
         domains: {},
-        ports: {},
+        ports: { set: async () => {} },
         git: {
             loadImage: async (app: string, tag: string, archive: AsyncIterable<Uint8Array>) => {
                 events.push(`load ${app} ${tag}`);
@@ -37,6 +38,7 @@ function setup(options: { loadFails?: boolean; saveFails?: boolean } = {}) {
         },
     } as unknown as DokkuClient;
     const docker = {
+        imageId: async () => options.imageId ?? IMAGE.imageId,
         save: () => ({
             stream: (async function* () {
                 yield Buffer.from("tar");
@@ -61,25 +63,39 @@ function setup(options: { loadFails?: boolean; saveFails?: boolean } = {}) {
 }
 
 describe("loading the image", () => {
-    it("streams the save to this app and removes the local image afterwards", async () => {
+    it("streams the recorded image to this app and leaves cleanup to deletion", async () => {
         const { ports, events } = setup();
-        await ports.loadImage(context, TAG, new AbortController().signal);
-        expect(events).toEqual([`load lp-abcde12345 ${TAG}`, `remove ${TAG}`]);
+        await ports.load(context, IMAGE, new AbortController().signal);
+        expect(events).toEqual([`load lp-abcde12345 ${TAG}`]);
     });
 
-    it("reports Dokku's own failure, and still removes the image", async () => {
+    it("reports Dokku's own failure without removing the image", async () => {
         const { ports, events } = setup({ loadFails: true });
         await expect(
-            ports.loadImage(context, TAG, new AbortController().signal),
+            ports.load(context, IMAGE, new AbortController().signal),
         ).rejects.toBeInstanceOf(DokkuError);
-        expect(events.at(-1)).toBe(`remove ${TAG}`);
+        expect(events).toEqual([`load lp-abcde12345 ${TAG}`]);
     });
 
     it("fails when docker save failed even though Dokku accepted the stream", async () => {
         const { ports } = setup({ saveFails: true });
         await expect(
-            ports.loadImage(context, TAG, new AbortController().signal),
+            ports.load(context, IMAGE, new AbortController().signal),
         ).rejects.toBeInstanceOf(DockerError);
+    });
+
+    it("refuses to load an unrecorded image or a tag from another deployment", async () => {
+        const { ports, events } = setup({ imageId: `sha256:${"b".repeat(64)}` });
+        const signal = new AbortController().signal;
+        await expect(ports.load(context, IMAGE, signal)).rejects.toThrow(/recorded image/);
+        await expect(
+            ports.load(
+                { ...context, deploymentId: "5359f724-19f4-4caf-a002-d58796c6bd75" },
+                IMAGE,
+                signal,
+            ),
+        ).rejects.toThrow(/recorded image/);
+        expect(events).toEqual([]);
     });
 });
 
@@ -91,9 +107,11 @@ describe("when Dokku refuses before reading the image", () => {
             // that holds the pipe the one that receives the stop signal.
             const bin = await fakeDocker(
                 tmp.dir,
-                `case "$1" in save) exec head -c 20000000 /dev/zero;; *) exit 0;; esac`,
+                `case "$1" in image) echo '${IMAGE.imageId}';; save) exec head -c 20000000 /dev/zero;; esac`,
             );
             const dokku = {
+                apps: {},
+                domains: {},
                 git: {
                     loadImage: async () => {
                         throw new DokkuError({
@@ -114,7 +132,7 @@ describe("when Dokku refuses before reading the image", () => {
             });
             const started = Date.now();
             await expect(
-                ports.loadImage(context, TAG, new AbortController().signal),
+                ports.load(context, IMAGE, new AbortController().signal),
             ).rejects.toBeInstanceOf(DokkuError);
             expect(Date.now() - started).toBeLessThan(8000);
         } finally {

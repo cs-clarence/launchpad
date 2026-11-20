@@ -1,6 +1,7 @@
 import { promises as fs } from "node:fs";
 import path from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { DeploymentEffectNotStarted } from "./deployment-errors";
 import { createDocker, DockerError } from "./docker";
 import { fakeDocker, tempDir } from "./testing";
 
@@ -49,11 +50,13 @@ describe("the docker vocabulary", () => {
     it("refuses a tag or directory it would not make, before running anything", async () => {
         const { docker, argv } = await recording();
         for (const tag of ["", "nginx:latest", `${TAG};ls`, "launchpad/site:ABC", `${TAG}\n`]) {
-            await expect(docker.build("/tmp/d", tag)).rejects.toThrow(/Refused/);
+            await expect(docker.build("/tmp/d", tag)).rejects.toBeInstanceOf(
+                DeploymentEffectNotStarted,
+            );
             expect(() => docker.save(tag)).toThrow(/Refused/);
         }
         for (const dir of ["relative", "/tmp/a b", "/tmp/$(id)", "-f/x", "/tmp/a;b"]) {
-            await expect(docker.build(dir, TAG)).rejects.toThrow(/Refused/);
+            await expect(docker.build(dir, TAG)).rejects.toBeInstanceOf(DeploymentEffectNotStarted);
         }
         await expect(fs.stat(argv)).rejects.toThrow();
     });
@@ -81,6 +84,16 @@ describe("the docker vocabulary", () => {
             // drained
         }
         await expect(partial.done).rejects.toBeInstanceOf(DockerError);
+    });
+
+    it("reads only a full image ID using the fixed inspection command", async () => {
+        const id = `sha256:${"a".repeat(64)}`;
+        const good = await recording(`echo '${id}'`);
+        await expect(good.docker.imageId(TAG)).resolves.toBe(id);
+        expect(await lines(good.argv)).toEqual(["image", "inspect", "--format", "{{.Id}}", TAG]);
+        const bad = await recording("echo sha256:1234");
+        await expect(bad.docker.imageId(TAG)).rejects.toBeInstanceOf(DockerError);
+        await expect(bad.docker.imageId("nginx:latest")).rejects.toThrow(/Refused/);
     });
 
     it("keeps a bounded, whole-character diagnostic however the output is chunked", async () => {

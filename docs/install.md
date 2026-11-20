@@ -43,7 +43,7 @@ the controller publicly. Those are the [separate production follow-up](plans/pro
    verify the explicit mount and volume identity yourself.
    Keep the database and admin command private. Use
    [the controller settings reference](../apps/controller/README.md#configuration)
-   for remaining values. The worker reads no settings while it is idle.
+   for remaining values. The worker does not read database or Dokku settings while deployments are off.
 4. Run `bun .output/admin.mjs migrate --status` in the controller image with
    `DATABASE_URL` set. On a fresh database, a nonzero exit with pending migrations
    is expected. Run `bun .output/admin.mjs migrate` explicitly, then run
@@ -57,11 +57,25 @@ the controller publicly. Those are the [separate production follow-up](plans/pro
    `10001`; a host-owned `0600` file with another UID will not work). The health endpoint reports
    static metadata, **not** database/Dokku readiness; use the signed-in
    operator-only `GET /api/v1/status` for runtime state.
-6. The worker is idle (the preview runtime was removed) and needs no database, Dokku or Docker
-   access; you may leave it stopped. When the app worker returns, it will need the Dokku SSH key
-   and pinned `known_hosts` mounted **read-only**, a Docker engine connection (root-equivalent
-   on the host), and a 25-minute stop grace period. Enable deployments only after private
-   [routing](access.md) and a [backup/restore rehearsal](restore.md) have been checked.
+6. Leave `LAUNCHPAD_DEPLOYMENTS=off` (the default) until private [routing](access.md)
+   and a [backup/restore rehearsal](restore.md) have been checked. Off workers can
+   stay stopped; they do not connect to PostgreSQL, Dokku or Docker. For an enabled
+   worker set `LAUNCHPAD_DEPLOYMENTS=on`, the controller's `DATABASE_URL`,
+   `LAUNCHPAD_DATA_DIR`, `LAUNCHPAD_BASE_URL`, `LAUNCHPAD_APPS_DOMAIN` and archive limits, and
+   `LAUNCHPAD_APPS_PROXY_URL` (the HTTP or HTTPS origin of the Dokku proxy as seen
+   by the worker). Set `DOKKU_SSH_HOST`, `DOKKU_SSH_KEY_PATH` and
+   `DOKKU_SSH_KNOWN_HOSTS_PATH`, mounting both files **read-only**. The SSH user
+   and port default to `dokku` and `22`. The Docker engine connection is
+   root-equivalent on its host. All enabled workers for an instance must use the
+   same engine so a replacement can load the image recorded by its predecessor.
+   `LAUNCHPAD_BASE_IMAGE` defaults to `nginx:1.27-alpine`; use a pinned digest for
+   a release. Allow at least 30 seconds for shutdown so the worker can signal
+   and reap local subprocesses. Configure a supervisor to restart the worker
+   if it exits after a stalled database operation. Each dispatch has at most 290 seconds; work that
+   cannot be confirmed by then is held for reconciliation. Provision space for
+   retained per-deployment images and scratch directories left after a forced stop;
+   never prune an active worker's engine. An interrupted effect may still be running remotely;
+   do not retry it by hand or assume stopping the worker stopped Dokku.
 
 If the status shows a schema mismatch, stop the processes, take a backup and
 follow [upgrade](upgrade.md). Do not point a second installation at the same

@@ -1,8 +1,7 @@
 # P3: deploy and delete one deployment end to end
 
-Status: **approved 2026-11-20 with the numbered decisions below. P3a is built on
-`feat/deployment-p3a-attestation`; later slices are not started. Nothing here is authorized to run
-against real infrastructure.**
+Status: **approved 2026-11-20 with the numbered decisions below. P3a and P3b are merged;
+P3c is under review. Nothing here is authorized to run against real infrastructure.**
 Parent: [deployment model plan](deployment-model.md), P3. Schema contract:
 [replacement schema map](../design/deployment-cutover-schema.md). Behavior:
 [deployment design](../design/deployment-modes.md). Slices P4 (aliases, promotion, retention
@@ -142,22 +141,39 @@ queued rows are inert; or revert.
 
 ### P3c: worker claim, lease and deploy runner
 
+P3c combines database claims, heartbeat renewal, reclaim and fenced step writes
+with the worker composition and a PostgreSQL adapter test. The worker stays idle
+unless deployments are explicitly enabled. A read-only verification step can be
+repeated after lease loss; a pending effectful step is held for reconciliation.
+The main risk is database concurrency (High): prove claims using separate
+connections against disposable PostgreSQL. There is no new migration.
+
+The runner in `apps/worker/src/deployment-runner.ts` is tested against injected
+ports before wiring the real worker. It treats ambiguous adapter failures as
+reconciliation-needed; a Docker CLI exit alone is not proof that a remote engine
+stopped working. The runtime adapter must bound database calls so shutdown can
+join the heartbeat, and must pass cancellation through to each subprocess.
+
 - Claim: `FOR UPDATE SKIP LOCKED` on the oldest runnable deployment, setting owner, attempt, fence
   and a five-minute lease; heartbeat extends it. Every state write includes deployment ID, attempt,
   fence and a live lease in its `WHERE`, so a reclaimed job's old worker updates zero rows.
 - **Time bounds and lease loss.** Every Dokku and Docker call has a deadline that ends strictly
-  inside the current lease, and a failed or late heartbeat aborts the shared signal. A call that hits its deadline while the lease is still valid is resolved by what is proven:
-  a **local** step (the Docker build) is `failed` only after the worker killed the process and
-  observed its exit; any **remote** call (Dokku over SSH, image load) whose outcome is not
-  confirmed becomes `reconciliation-needed`, exactly as for a lapsed lease. A deployment is never
-  marked `failed` while remote work may still be running. Tests cover a build killed at the
-  deadline (`failed`, exit observed) and a Dokku call timing out mid-flight (`reconciliation-needed`). Every claim and every
+  inside the current lease, and a failed or late heartbeat aborts the shared signal. An
+  unconfirmed effect is held for reconciliation. This includes Docker builds: killing and reaping
+  the local CLI does not prove an external Docker engine stopped the build. Tests cover an
+  ambiguous load and abort on loss of lease or shutdown. Every claim and every
   remote effect first calls `recordModelWriterSeen` and re-checks the recovery gate, not only a
   startup check. A check cannot make dispatch atomic, so the protocol is two layers: a watchdog
   re-reads the gate on a short interval and aborts the shared signal when it closes (in-flight
   calls end at their own deadline, at most one call per worker can finish after closure), and the
   restore/clear attestation already requires every writer to be stopped and every dispatched
-  operation settled before reopening. The race is **bounded and accepted, not eliminated**: a call may start after the gate closes but before the watchdog notices (at most one watchdog interval, configurable and short). The guarantee is that no call starts after the watchdog has detected closure, and that every writer is stopped by the operator before a restore proceeds. The test therefore closes the gate between a check and its dispatch with a deliberately delayed watchdog, asserts the in-flight call is still resolved by the timeout rule (`failed` or `reconciliation-needed`), and asserts no further call starts after detection. If no call may ever start after closure, that needs synchronization between closure and dispatch and is out of P3.
+  operation settled before reopening. The race is **bounded and accepted, not eliminated**: a
+  call may start after the gate closes but before the watchdog notices, but no call starts
+  after closure is detected. Heartbeat errors fail closed because the worker cannot recheck
+  the gate. Loss of authority leaves unconfirmed intent for reclaim. If shutdown happens after
+  intent is recorded but before dispatch, reclaim treats the effect as uncertain even if
+  nothing was sent. Preventing any dispatch after gate closure would require synchronizing
+  closure and dispatch; that is out of P3.
 - **Reclaim by recorded step** (migration 018's `step_done`/`step_pending`):
     - nothing remote was pending: resume from `step_done`;
     - a remote step was pending when the lease lapsed (create, build, load): the outcome is
@@ -166,9 +182,9 @@ queued rows are inert; or revert.
     - an app this deployment already recorded is its own, not "pre-existing".
       Only an app that exists at create time **with no recorded ownership by this deployment** is a
       hard failure.
-- Runner: for the claimed deployment only: create its fresh Dokku app, set domain and port, build,
-  record image tag and image ID, load, verify through the unique hostname, record `succeeded`.
-  Failure removes only the resources this deployment recorded and marks `failed`. No rollback or
+- Runner: for the claimed deployment only: create its fresh Dokku app, build, record image tag
+  and image ID, set domain and port, load, verify through the unique hostname, record `succeeded`.
+  Leave cleanup to guarded deletion and reconciliation in P3d. No rollback or
   reload of any other deployment: delete the `rollback` method from `DeployPorts`
   (`apps/worker/src/types.ts`, `ports.ts`), `rollback.spec.ts` and its use in `live.spec.ts`.
 - Worker composition: opens the database again (dropped in P2a), reads `parseDeploymentConfig`,

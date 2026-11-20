@@ -1,9 +1,10 @@
 import http from "node:http";
 import https from "node:https";
+import { setTimeout as delay } from "node:timers/promises";
 import { compactId } from "./template";
 
 export interface ProbeConfig {
-    // The Dokku proxy, as the worker reaches it. The preview's own name is sent as the
+    // The Dokku proxy, as the worker reaches it. The deployment's name is sent as the
     // Host header, so this needs no DNS and exercises the proxy's routing.
     proxyUrl: URL;
     timeoutMs: number;
@@ -13,11 +14,11 @@ export interface ProbeConfig {
 export function parseProxyUrl(value: string): URL {
     const url = new URL(value);
     if (url.protocol !== "http:" && url.protocol !== "https:") {
-        throw new Error("The preview proxy URL must be http or https.");
+        throw new Error("LAUNCHPAD_APPS_PROXY_URL must be http or https.");
     }
     // Only scheme, host and port are used; anything else would be silently ignored.
     if (url.username || url.password || url.search || url.hash || url.pathname !== "/") {
-        throw new Error("The preview proxy URL must be only a scheme, host and optional port.");
+        throw new Error("LAUNCHPAD_APPS_PROXY_URL must be only a scheme, host and optional port.");
     }
     return url;
 }
@@ -55,7 +56,7 @@ function once(
     });
 }
 
-// Succeeds only when the proxy answers 200 for the preview's hostname from *this*
+// Succeeds only when the proxy answers 200 for the hostname from *this*
 // deployment's image (the fixed template stamps its id on every response), so an
 // older container that is still serving does not count.
 export async function probe(
@@ -68,8 +69,8 @@ export async function probe(
         if (signal.aborted) throw new Error("The readiness probe was cancelled.");
         if (await once(config, target.hostname, target.deploymentId, signal)) return;
         if (Date.now() + config.intervalMs >= deadline) {
-            throw new Error("The preview did not become ready in time.");
+            throw new Error("The deployment did not become ready in time.");
         }
-        await new Promise((resolve) => setTimeout(resolve, config.intervalMs));
+        await delay(config.intervalMs, undefined, { signal });
     }
 }

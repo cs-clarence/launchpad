@@ -10,12 +10,11 @@
 # Two things to know when running it:
 # - Access to the Docker socket is root-equivalent on that host. Run the worker only where that
 #   is acceptable, and treat the data directory it shares with the controller as trusted.
-# - It needs time to stop: a load or a rollback can take about 24 minutes, and a stop that kills
-#   it earlier leaves that deployment held for an administrator. Stop it with
-#   `docker stop --time 1500` (or `stop_grace_period: 25m` in Compose); the image cannot set it.
+# - Use a stop grace period of at least 30 seconds so cancellation reaches local subprocesses.
+#   Stopping the worker does not prove an already dispatched Dokku operation stopped.
 # - Mount the shared /data volume as described in the controller recipe. The base images are
 #   pinned by tag and must be pinned by digest before a release. The `docker` client inside the
-#   image has no buildx plugin, so the worker's own `docker build` of a preview uses the classic
+#   image has no buildx plugin, so the worker's `docker build` uses the classic
 #   builder (a deprecation notice on stderr is expected).
 ARG BUN_VERSION=1.4.4
 ARG DOCKER_CLI_VERSION=28
@@ -46,8 +45,8 @@ ENV NODE_ENV=production LAUNCHPAD_DATA_DIR=/data LAUNCHPAD_VERSION=${LAUNCHPAD_V
 COPY --from=build --chown=root:root /app/apps/worker/dist ./dist
 USER ${LAUNCHPAD_UID}:${LAUNCHPAD_UID}
 VOLUME /data
-# Liveness only: the worker touches this file whenever its heartbeat is recorded in PostgreSQL (and
-# while idle with deployments off), so a stale file means it is stuck or cannot reach the database.
+# Liveness only: the worker touches this file after a successful queue check or lease renewal (and
+# while idle with deployments off). A stale file can also mean recovery is blocking writes.
 # It does not prove that Dokku or Docker work. Needs a writable /tmp (a tmpfs on a read-only root).
 HEALTHCHECK --interval=15s --timeout=5s --start-period=30s --retries=3 \
     CMD test -n "$(find "$LAUNCHPAD_WORKER_HEALTH_FILE" -mmin -1 2>/dev/null)"

@@ -42,7 +42,7 @@ git-ignored. Integration tests need a disposable PostgreSQL and are never part o
 
 ```sh
 omni -i run test:db:up            # disposable postgres:17-alpine on 127.0.0.1:55432 (Docker)
-omni -i run test:integration      # auth/services/controller on PostgreSQL; SDK loopback fixtures
+omni -i run test:integration      # includes PostgreSQL worker tests with fake Docker and Dokku
 omni -i run test:db:down
 ```
 

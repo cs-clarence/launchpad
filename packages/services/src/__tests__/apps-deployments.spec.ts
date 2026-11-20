@@ -5,10 +5,14 @@ import path from "node:path";
 import { createTestDatabase } from "@launchpad-kit/database/testing";
 import type { Database } from "@launchpad-kit/database";
 import { type Kysely, sql } from "kysely";
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import {
     addMember,
     collectArtifacts,
+    claimDeployment,
+    beginDeploymentStep,
+    completeDeploymentStep,
+    stopDeploymentStep,
     createApp,
     createDeployment,
     createOrganization,
@@ -22,6 +26,7 @@ import {
     markDeploymentRecoveryBlocked,
     resolveArtifactPath,
     parseDeploymentConfig,
+    renewDeploymentClaim,
     ServiceError,
     uploadArtifact,
     type AppDeps,
@@ -96,7 +101,7 @@ async function artifactFor(projectId: string, who = "dee", organizationId = org)
             organizationId,
             body,
             { contentLength: bytes.length, projectId },
-            { dataDir, limits: {} },
+            { dataDir, limits: { maxArtifacts: 100 } },
         )
     ).id;
 }
@@ -202,6 +207,280 @@ describe("deployment configuration", () => {
         if (!clamped.enabled) throw new Error("expected enabled");
         expect(clamped.defaultTtlSeconds).toBe(2 * 86_400);
     });
+});
+
+describe("worker claims", () => {
+    const fixtures: string[] = [];
+    async function enqueue() {
+        const app = await newApp();
+        const artifactId = await artifactFor(p1);
+        const deployment = await createDeployment(
+            testDb.db,
+            people.dee!,
+            org,
+            app.id,
+            { artifactId },
+            deps(),
+        );
+        fixtures.push(deployment.id);
+        return deployment;
+    }
+
+    const claim = (owner: string) => claimDeployment(testDb.db, dataDir, owner);
+    const expire = (id: string) =>
+        testDb.db
+            .updateTable("deployment")
+            .set({ lease_expires_at: new Date(0) })
+            .where("id", "=", id)
+            .execute();
+
+    afterEach(async () => {
+        const ids = fixtures.splice(0);
+        if (!ids.length) return;
+        // Keep historical rows but remove these fixtures from the runnable queue.
+        await testDb.db
+            .updateTable("deployment")
+            .set({ status: "cancelled", lease_owner: null, lease_expires_at: null })
+            .where("id", "in", ids)
+            .where("status", "in", ["queued", "preparing", "building", "deploying", "verifying"])
+            .execute();
+    });
+
+    it("lets only one concurrent worker claim the same queued deployment", async () => {
+        const queued = await enqueue();
+        const results = await Promise.all([claim("first"), claim("second")]);
+        const claims = results.filter((result) => result.kind === "claimed");
+        expect(claims).toHaveLength(1);
+        expect(claims[0]?.token).toMatchObject({ id: queued.id, attempt: 1, fence: "1" });
+        expect(results.filter((result) => result.kind === "idle")).toHaveLength(1);
+        expect(await claim("third")).toEqual({ kind: "idle" });
+    });
+
+    it("skips the locked oldest row, then claims it after release", async () => {
+        await enqueue();
+        await enqueue();
+        const [oldest, next] = await testDb.db
+            .selectFrom("deployment")
+            .select("id")
+            .where("id", "in", fixtures)
+            .orderBy("created_at")
+            .orderBy("id")
+            .execute();
+        await testDb.db.transaction().execute(async (trx) => {
+            await trx
+                .selectFrom("deployment")
+                .select("id")
+                .where("id", "=", oldest!.id)
+                .forUpdate()
+                .executeTakeFirstOrThrow();
+            expect(await claim("first")).toMatchObject({
+                kind: "claimed",
+                token: { id: next!.id },
+            });
+        });
+        expect(await claim("second")).toMatchObject({ kind: "claimed", token: { id: oldest!.id } });
+    });
+
+    it("lets parallel workers claim distinct queued deployments", async () => {
+        const first = await enqueue();
+        const second = await enqueue();
+        const results = await Promise.all([claim("first"), claim("second")]);
+        const claims = results.filter((result) => result.kind === "claimed");
+        expect(new Set(claims.map(({ token }) => token.id))).toEqual(
+            new Set([first.id, second.id]),
+        );
+        expect(claims.map(({ token }) => token.owner)).toEqual(["first", "second"]);
+    });
+
+    it("rejects both expired and superseded heartbeats and renews the current claim", async () => {
+        const queued = await enqueue();
+        const first = await claim("worker");
+        if (first.kind !== "claimed") throw new Error("Expected first claim");
+        await expire(queued.id);
+        expect(await renewDeploymentClaim(testDb.db, dataDir, first.token)).toBeNull();
+
+        // Reuse the owner so the attempt and fence, not a different owner, stop the stale write.
+        const current = await claim("worker");
+        if (current.kind !== "claimed") throw new Error("Expected replacement claim");
+        expect(current.token).toMatchObject({ id: queued.id, attempt: 2, fence: "2" });
+        expect(await renewDeploymentClaim(testDb.db, dataDir, first.token)).toBeNull();
+        const row = await testDb.db
+            .selectFrom("deployment")
+            .select("lease_expires_at")
+            .where("id", "=", queued.id)
+            .executeTakeFirstOrThrow();
+        expect(row.lease_expires_at).toEqual(current.deployment.lease_expires_at);
+        expect(await renewDeploymentClaim(testDb.db, dataDir, current.token)).toBeInstanceOf(Date);
+    });
+
+    it.each(["load", "verify"] as const)(
+        "reclaims expired work with pending %s safely",
+        async (step) => {
+            const queued = await enqueue();
+            const first = await claim("first");
+            if (first.kind !== "claimed") throw new Error("Expected first claim");
+            await testDb.db
+                .updateTable("deployment")
+                .set({
+                    step_done: step === "verify" ? "load" : "build",
+                    step_pending: step,
+                    lease_expires_at: new Date(0),
+                })
+                .where("id", "=", queued.id)
+                .execute();
+
+            const result = await claim("second");
+            if (step === "verify") {
+                expect(result).toMatchObject({
+                    kind: "claimed",
+                    deployment: { step_done: "load", step_pending: null },
+                });
+            } else {
+                expect(result).toEqual({ kind: "reconciliation-needed", id: queued.id });
+                expect(await claim("third")).toEqual({ kind: "idle" });
+                expect(
+                    await listDeploymentEvents(testDb.db, people.vic!, org, queued.id),
+                ).toMatchObject([
+                    { seq: 1, phase: "queued" },
+                    { seq: 2, phase: "reconciliation-needed" },
+                ]);
+                expect(
+                    await testDb.db
+                        .selectFrom("deployment")
+                        .select("step_pending")
+                        .where("id", "=", queued.id)
+                        .executeTakeFirstOrThrow(),
+                ).toEqual({ step_pending: "load" });
+            }
+        },
+    );
+
+    it("blocks both claims and heartbeats during recovery", async () => {
+        await enqueue();
+        const first = await claim("first");
+        if (first.kind !== "claimed") throw new Error("Expected first claim");
+        await markDeploymentRecoveryBlocked(dataDir);
+        await expect(claim("second")).rejects.toThrow(/recovery is blocked/i);
+        await expect(renewDeploymentClaim(testDb.db, dataDir, first.token)).rejects.toThrow(
+            /recovery is blocked/i,
+        );
+    });
+
+    it("commits step intent before work and finalizes only in order with the built image", async () => {
+        const job = await enqueue();
+        const claimed = await claim("worker");
+        if (claimed.kind !== "claimed") throw new Error("Expected a claim");
+        const { token } = claimed;
+        const { db } = testDb;
+        expect(await beginDeploymentStep(db, dataDir, token, "build")).toBeNull();
+        const steps = ["app", "build", "configure", "load", "verify"] as const;
+        const image = {
+            imageTag: `launchpad/site:${job.id.replaceAll("-", "")}`,
+            imageId: `sha256:${"a".repeat(64)}`,
+        };
+        for (const step of steps) {
+            expect(await beginDeploymentStep(db, dataDir, token, step)).toMatchObject({
+                step_pending: step,
+            });
+            expect(
+                await db
+                    .selectFrom("deployment")
+                    .select("step_pending")
+                    .where("id", "=", job.id)
+                    .executeTakeFirstOrThrow(),
+            ).toEqual({ step_pending: step });
+            expect(await beginDeploymentStep(db, dataDir, token, step)).toBeNull();
+            expect(
+                await completeDeploymentStep(
+                    db,
+                    dataDir,
+                    token,
+                    step === "build" ? { step, ...image } : { step },
+                ),
+            ).toMatchObject({ step_done: step, step_pending: null });
+        }
+        expect(
+            await db
+                .selectFrom("deployment")
+                .selectAll()
+                .where("id", "=", job.id)
+                .executeTakeFirstOrThrow(),
+        ).toMatchObject({
+            status: "succeeded",
+            image_tag: image.imageTag,
+            image_id: image.imageId,
+            lease_owner: null,
+            lease_expires_at: null,
+            finished_at: expect.any(Date),
+        });
+        const events = await listDeploymentEvents(db, people.vic!, org, job.id);
+        expect(events.map((event) => event.seq)).toEqual(
+            Array.from({ length: 11 }, (_, i) => i + 1),
+        );
+        expect(events.at(-1)).toMatchObject({ phase: "succeeded" });
+    });
+
+    it("rejects a delayed completion after reclaim without changing state or appending events", async () => {
+        const job = await enqueue();
+        const old = await claim("worker");
+        if (old.kind !== "claimed") throw new Error("Expected a claim");
+        const { db } = testDb;
+        for (const step of ["app", "build", "configure", "load"] as const) {
+            await beginDeploymentStep(db, dataDir, old.token, step);
+            await completeDeploymentStep(
+                db,
+                dataDir,
+                old.token,
+                step === "build"
+                    ? {
+                          step,
+                          imageTag: `launchpad/site:${job.id.replaceAll("-", "")}`,
+                          imageId: `sha256:${"b".repeat(64)}`,
+                      }
+                    : { step },
+            );
+        }
+        await beginDeploymentStep(db, dataDir, old.token, "verify");
+        await expire(job.id);
+        expect(await completeDeploymentStep(db, dataDir, old.token, { step: "verify" })).toBeNull();
+        const current = await claim("worker");
+        if (current.kind !== "claimed") throw new Error("Expected replacement claim");
+        const before = await beginDeploymentStep(db, dataDir, current.token, "verify");
+        const events = await listDeploymentEvents(db, people.vic!, org, job.id);
+        expect(await completeDeploymentStep(db, dataDir, old.token, { step: "verify" })).toBeNull();
+        expect(await stopDeploymentStep(db, dataDir, old.token, "verify", "failed")).toBeNull();
+        expect(
+            await db
+                .selectFrom("deployment")
+                .selectAll()
+                .where("id", "=", job.id)
+                .executeTakeFirstOrThrow(),
+        ).toEqual(before);
+        expect(await listDeploymentEvents(db, people.vic!, org, job.id)).toEqual(events);
+        expect(
+            await completeDeploymentStep(db, dataDir, current.token, { step: "verify" }),
+        ).toMatchObject({ status: "succeeded" });
+    });
+
+    it.each(["failed", "reconciliation-needed"] as const)(
+        "records %s and ends the lease",
+        async (outcome) => {
+            await enqueue();
+            const claimed = await claim("worker");
+            if (claimed.kind !== "claimed") throw new Error("Expected a claim");
+            const { db } = testDb;
+            await beginDeploymentStep(db, dataDir, claimed.token, "app");
+            expect(
+                await stopDeploymentStep(db, dataDir, claimed.token, "app", outcome),
+            ).toMatchObject({
+                status: outcome,
+                step_pending: outcome === "failed" ? null : "app",
+                lease_owner: null,
+                lease_expires_at: null,
+            });
+            expect(await claim("replacement")).toEqual({ kind: "idle" });
+        },
+    );
 });
 
 describe("apps", () => {

@@ -200,17 +200,15 @@ rehearses a release into `.release-dry-run/` (also a manual, read-only GitHub wo
 setting is set (`LAUNCHPAD_PREVIEW_DOMAIN`, `LAUNCHPAD_PREVIEW_PROXY_URL`,
 `LAUNCHPAD_MAX_PREVIEWS`, `LAUNCHPAD_ALLOW_NO_EXPIRY`, `LAUNCHPAD_LIFECYCLE*`), and
 the controller also checks an optional `LAUNCHPAD_APPS_DOMAIN` against `LAUNCHPAD_BASE_URL`
-(`assertCurrentSettings`, `packages/services/src/app-routing-config.ts`; the worker uses only
-`assertNoRemovedSettings` from the dependency-free `@launchpad-kit/services/removed-settings`).
+(`assertCurrentSettings`, `packages/services/src/app-routing-config.ts`).
 
-**Implemented (P3b):** `LAUNCHPAD_DEPLOYMENTS=on|off` (default off) and, when on, the apps domain,
+**Implemented (P3c):** `LAUNCHPAD_DEPLOYMENTS=on|off` (default off) and, when on, the apps domain,
 limits, TTLs and hostname template (`parseDeploymentConfig`) gate the app, upload and deployment
-routes; an invalid value stops the controller at startup. Nothing runs queued deployments yet.
+routes. An enabled worker processes queued deployments and requires the Dokku
+proxy origin (`LAUNCHPAD_APPS_PROXY_URL`); see [install](install.md#install-a-private-launchpad-instance-from-built-artifacts).
 
-**Planned, not implemented:** the rest of the deployment design: the proxy
-(`LAUNCHPAD_APPS_PROXY_URL`) and private alias control/probe settings, parsed by
-`parseAppRoutingConfig`, which nothing calls until the deployment worker arrives, and
-new app/alias permissions. See [the design](design/deployment-modes.md) and
+**Planned, not implemented:** private alias control/probe settings and alias permissions.
+See [the design](design/deployment-modes.md) and
 [routing experiment](decisions/deployment-alias-routing.md). Do not configure those
 names against the current binary; the deployment change updates examples, tasks and
 this reference together.
@@ -239,20 +237,20 @@ docker build --build-arg LAUNCHPAD_VERSION="$version" -f apps/router/Dockerfile 
 Both run as the fixed unprivileged uid 10001, hold no secret (every
 setting arrives at run time), and contain no source, env file or key. The controller image has a
 healthcheck and carries the operator commands: `bun .output/admin.mjs migrate` (and `setup`,
-`backup`, ...). The worker image still carries the `docker` client and `ssh` for future use, but its
-current runtime only idles and writes a health marker. Do not provide database credentials, Dokku keys,
-known_hosts or a Docker socket; the idle worker does not need the archive data directory either.
+`backup`, ...). The worker image carries the `docker` and `ssh` clients. Off workers
+need no connection settings or data mount; enabled workers need the database, shared
+archive mount, Docker engine, and pinned Dokku SSH credentials documented in [install](install.md).
 The controller still needs durable storage at `/data`
 (a named volume gets the image's ownership; a bind-mounted directory must be owned by 10001:10001).
 The base images are pinned by tag and must be pinned by digest before a release. A built artifact's migrations are
-bundled into `.output/migrations` (controller); the idle worker carries no migration bundle. `backup` and
+bundled into `.output/migrations` (controller); the worker does not run migrations. `backup` and
 `restore` need a `pg_dump`/`pg_restore` at least as new as the server, which the image does not
 carry: mount one and set `LAUNCHPAD_PG_DUMP` / `LAUNCHPAD_PG_RESTORE`.
 
 `omni -i run test:images -p @launchpad-kit/tooling` builds both, checks them (non-root, no secret in a
 layer, no `.env`, `.git`, key or source file, the expected files present), runs `migrate` from the
 controller image against the disposable PostgreSQL, starts the controller and waits for `/api/health`
-and a healthy healthcheck, and starts the idle worker (it logs `legacy-runtime-removed`). It also builds the router image and
+and a healthy healthcheck, and starts the worker with deployments off (it logs `deployment-worker-idle`). It also builds the router image and
 checks it end to end: unprivileged, no secret, no published port, `init` from stdin (printing only the
 epoch and refusing to reinitialize), healthy, 401 on the control plane and a fixed 404 on the data plane,
 a second router refused by the lock, a graceful stop, and `rotate` after it. `init`, `rotate` and

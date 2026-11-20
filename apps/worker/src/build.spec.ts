@@ -4,6 +4,7 @@ import { artifactStorageKey } from "@launchpad-kit/services";
 import { SITE, tarGz, type FixtureEntry } from "@launchpad-kit/services/testing";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { buildImage, sweepScratch } from "./build";
+import { DeploymentEffectNotStarted } from "./deployment-errors";
 import { createDocker } from "./docker";
 import { dockerfile, imageTagFor, nginxConf } from "./template";
 import { fakeDocker, LIMITS, tempDir } from "./testing";
@@ -79,16 +80,20 @@ describe("building the image", () => {
             [...SITE, { name: "link", type: "symlink", link: "/etc/passwd" }],
             "exit 0",
         );
-        await expect(buildImage(context, deps, signal())).rejects.toThrow();
+        await expect(buildImage(context, deps, signal())).rejects.toBeInstanceOf(
+            DeploymentEffectNotStarted,
+        );
         await expect(fs.stat(seen)).rejects.toThrow();
         expect(await fs.readdir(path.join(tmp.dir, "build"))).toEqual([]);
     });
 
     it("refuses a storage key that is not one this system wrote", async () => {
         const { context, deps } = await setup(SITE, "exit 0");
-        await expect(
-            buildImage({ ...context, storageKey: "../../etc/passwd" }, deps, signal()),
-        ).rejects.toThrow(/storage key/);
+        const build = buildImage({ ...context, storageKey: "../../etc/passwd" }, deps, signal());
+        await expect(build).rejects.toBeInstanceOf(DeploymentEffectNotStarted);
+        await expect(build).rejects.toMatchObject({
+            cause: expect.objectContaining({ message: "Not an artifact storage key." }),
+        });
     });
 });
 

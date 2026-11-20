@@ -56,7 +56,6 @@
         "kysely": "catalog:",
         "react": "catalog:",
         "react-dom": "catalog:",
-        "tldts": "catalog:",
         "zod": "catalog:",
       },
       "devDependencies": {
@@ -126,6 +125,7 @@
       "name": "@launchpad-kit/worker",
       "version": "0.0.0",
       "dependencies": {
+        "@launchpad-kit/database": "workspace:^",
         "@launchpad-kit/dokku": "workspace:^",
         "@launchpad-kit/services": "workspace:^",
         "tar": "catalog:",
