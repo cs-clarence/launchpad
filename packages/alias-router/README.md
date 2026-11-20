@@ -40,6 +40,18 @@ are their specification. `createHttpUpstream` is the real Node HTTP/HTTPS transp
 name and certificate verification use the immutable deployment hostname, and verification is never
 disabled. HTTP/1.1 only.
 
+## Private control client (P4c)
+
+The private `createRouterControlClient` registers a deployment, replaces an
+alias route, and reads it back. It uses a deadline for the request and response
+body, caps response size, refuses redirects, and checks instance and epoch on
+route replies. Use an operator-configured URL on a private control network.
+The client does not retry. `rejected` applies only to the current request; a
+timeout, lost reply, conflict, or invalid reply leaves the outcome `uncertain`.
+The worker must still read back and verify the route, including the registered
+target hostname, and probe its identity before committing a promotion or
+releasing any pins.
+
 ## Limits
 
 Single-process by design (R2 must hold an exclusive process lock); SQLite durability relies on the

@@ -66,18 +66,16 @@ export type AuthorityInput = z.infer<typeof authoritySchema>;
 export type StoreOptions = z.infer<typeof storeOptionsSchema>;
 export type DeploymentTarget = z.infer<typeof deploymentSchema>;
 export type RouteWrite = z.infer<typeof routeWriteSchema>;
-export interface RouteRecord {
-    aliasId: string;
-    hostname: string;
-    operationId: string;
-    generation: string;
-    target: DeploymentTarget | null;
-}
-export interface RouteObservation {
-    instanceId: string;
-    epoch: string;
-    route: RouteRecord | null;
-}
+const routeRecordSchema = routeWriteSchema.omit({ targetDeploymentId: true }).extend({
+    target: deploymentSchema.nullable(),
+});
+export const routeObservationSchema = z.strictObject({
+    instanceId: uuid,
+    epoch: uuid,
+    route: routeRecordSchema.nullable(),
+});
+export type RouteRecord = z.infer<typeof routeRecordSchema>;
+export type RouteObservation = z.infer<typeof routeObservationSchema>;
 export interface RoutePage {
     instanceId: string;
     epoch: string;

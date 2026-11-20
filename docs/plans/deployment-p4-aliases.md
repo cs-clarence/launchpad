@@ -95,6 +95,10 @@ reservation races, alias recreation never reusing a hostname.
 
 ### P4c: router client and promotion runner (worker)
 
+First land the private client without a runtime caller. Add fenced database
+transitions, pin release and worker integration in follow-up changes. A
+request-level refusal does not settle an earlier ambiguous write.
+
 A private router control client (in `packages/alias-router`) with typed, bounded calls that classify
 every failure as definite or uncertain (a timeout is never proof of failure). A promotion runner in
 the worker: fenced five-minute claims, intent recorded before dispatch, deadlines inside the lease,

@@ -20,6 +20,11 @@ export {
     type AuthenticatedWriter,
 } from "./store";
 export { createControlHandler, MAX_CONTROL_BODY_BYTES } from "./host/control";
+export {
+    createRouterControlClient,
+    RouterControlError,
+    type RouterControlFailure,
+} from "./control-client";
 export { canonicalHost, createDataHandler, type DataHandlerOptions } from "./host/data";
 export { parseRouterHostConfig, type Listen, type RouterHostConfig } from "./host/config";
 export {
