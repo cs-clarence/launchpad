@@ -24,7 +24,7 @@ export interface Project {
 const SOURCE = /\.(ts|tsx|mts|cts|js|mjs|cjs)$/;
 const SKIP_DIRS = new Set(["node_modules", "dist", ".output", ".tanstack", "coverage", ".omni"]);
 const BUILTINS = new Set([...builtinModules, ...builtinModules.map((m) => `node:${m}`)]);
-const IMPORT = /(?<![\w$])(?<![\w$]-)(?:from\s*|import\s*\(?\s*|require\s*\(\s*)["']([^"']+)["']/g;
+const IMPORT = /(?<![\w$])(?:from\s*|import\s*\(?\s*|require\s*\(\s*)["']([^"']+)["']/g;
 
 // The package name an import specifier points at, or null for specifiers that are
 // not packages (relative paths, built-ins, Bun and Vite virtual modules).
@@ -114,9 +114,30 @@ function scanTemplate(source: string, start: number) {
     return { out, end: i };
 }
 
+// Start offsets of quoted string literals, so an import keyword that is merely the
+// end of a string such as "recovery-ack-import" is not mistaken for code. Template
+// text is left unmarked, as before.
+function quotedSpans(code: string): [number, number][] {
+    const spans: [number, number][] = [];
+    for (let i = 0; i < code.length; i++) {
+        const c = code[i]!;
+        if (c === '"' || c === "'") {
+            let j = i + 1;
+            while (j < code.length && code[j] !== c) j += code[j] === "\\" ? 2 : 1;
+            spans.push([i, j]);
+            i = j;
+        }
+    }
+    return spans;
+}
+
 export function importedPackages(source: string): Set<string> {
     const found = new Set<string>();
-    for (const match of stripComments(source).matchAll(IMPORT)) {
+    const code = stripComments(source);
+    const spans = quotedSpans(code);
+    for (const match of code.matchAll(IMPORT)) {
+        const at = match.index!;
+        if (spans.some(([from, to]) => at > from && at < to)) continue;
         const name = packageOf(match[1]!);
         if (name) found.add(name);
     }
