@@ -59,6 +59,7 @@ export function republishRecoveryAlias(
                 "hostname",
                 "app_id",
                 "organization_id",
+                "created_by",
                 "target_deployment_id",
                 "reserved_generation",
                 "committed_generation",
@@ -140,12 +141,6 @@ export function republishRecoveryAlias(
                 superseded: 0,
             };
         }
-        const actor = await connection
-            .selectFrom("user")
-            .select("id")
-            .where("role", "=", "operator")
-            .orderBy("id")
-            .executeTakeFirstOrThrow();
         const live = BigInt(route?.generation ?? "0");
         const next = (live > reserved ? live : reserved) + 1n;
         if (next > MAX_GENERATION)
@@ -212,7 +207,9 @@ export function republishRecoveryAlias(
                     desired_target_deployment_id: target?.deploymentId ?? null,
                     expected_generation: alias.committed_generation,
                     generation,
-                    requested_by: actor.id,
+                    // The creator is retained by FK and supplies the required user
+                    // reference. The maintenance audit attributes the repair to the CLI.
+                    requested_by: alias.created_by,
                     status: "succeeded",
                     step_done: "verify",
                 })
@@ -268,6 +265,7 @@ export function republishRecoveryAlias(
                     detail: JSON.stringify({
                         generation,
                         operationId,
+                        attributedUserId: alias.created_by,
                         target: target?.deploymentId ?? null,
                         superseded: operations.map((op) => op.id),
                         routerEpochUnrecorded,

@@ -176,7 +176,9 @@ export function createDokkuClient(connection: DokkuConnection, options: DokkuCli
                     names.length > 100_000 ||
                     names.some(
                         (name) =>
-                            typeof name !== "string" || !/^[a-z0-9][a-z0-9-]{0,62}$/.test(name),
+                            // Dokku still recognizes legacy names with underscores. Inventory
+                            // is observation only; per-app commands keep their own allowlist.
+                            typeof name !== "string" || !/^[a-z0-9][a-z0-9._-]*$/.test(name),
                     ) ||
                     new Set(names).size !== names.length
                 )

@@ -178,9 +178,10 @@ or prove. `restore` never contacts Dokku. Back up the target database first.
 
     Repair blocking findings and retry. For a remaining `deployment-app-missing`,
     `deployment-domain-mismatch`, `archive-missing` or `probe-mismatch`, you may
-    repeat `--accept <code>:<resource-uuid>` for each exact current finding you
-    intend to resolve after reopening. Use the deployment UUID for app, domain, or
-    archive findings and the owner alias/deployment UUID for probe findings. This is
+    repeat `--accept <code>:<deployment-uuid>` for each app, domain, or archive
+    finding you intend to resolve after reopening. For a probe finding, use
+    `--accept probe-mismatch:alias:<uuid>` or `--accept probe-mismatch:deployment:<uuid>`.
+    This is
     audited; no flag can accept an identity/reservation alarm, router mismatch, or
     unavailable source. Medium findings are reported without blocking, except an
     ahead router generation, which must be reconciled.

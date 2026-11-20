@@ -27,7 +27,10 @@ function acceptanceKey(finding: DriftFinding): string | undefined {
     const resource = finding.resources.find((r) =>
         kind === "owner" ? r.kind === "alias" || r.kind === "deployment" : r.kind === kind,
     );
-    return resource && `${finding.code}:${resource.id}`;
+    if (!resource) return undefined;
+    return kind === "owner"
+        ? `${finding.code}:${resource.kind}:${resource.id}`
+        : `${finding.code}:${resource.id}`;
 }
 
 export function assessRecoveryEvidence(report: DriftReport, acceptedKeys: readonly string[]) {
@@ -39,7 +42,7 @@ export function assessRecoveryEvidence(report: DriftReport, acceptedKeys: readon
     const keys = new Set(acceptedKeys);
     if (keys.size !== acceptedKeys.length || acceptedKeys.some((key) => !available.has(key))) {
         throw new Error(
-            "--accept must name each current, acceptable finding exactly once (code:resource-id).",
+            "--accept must name each current, acceptable finding exactly once (code:resource-id, or probe-mismatch:alias|deployment:resource-id).",
         );
     }
     return {

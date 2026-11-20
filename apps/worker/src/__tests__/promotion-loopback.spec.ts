@@ -839,20 +839,24 @@ describe("P4 worked example and restore, against the real router", () => {
         const settings = { instanceId, appsDomain: "sites.example.net" };
         const stateFile = path.join(routerDir, `replacement-${randomUUID()}.sqlite`);
         initializeRouterState(stateFile, settings, replacementAuthority);
-        const replacement = openRouterState(stateFile, settings);
-        const server = Bun.serve({
-            hostname: "127.0.0.1",
-            port: 0,
-            fetch: createControlHandler(replacement),
-        });
-        const replacementData = Bun.serve({
-            hostname: "127.0.0.1",
-            port: 0,
-            fetch: createDataHandler(replacement, {
-                upstream: async () => new Response("unexpected target", { status: 500 }),
-            }),
-        });
+        let replacement: RouterStore | undefined;
+        let server: ReturnType<typeof Bun.serve> | undefined;
+        let replacementData: ReturnType<typeof Bun.serve> | undefined;
         try {
+            replacement = openRouterState(stateFile, settings);
+            server = Bun.serve({
+                hostname: "127.0.0.1",
+                port: 0,
+                fetch: createControlHandler(replacement),
+            });
+            replacementData = Bun.serve({
+                hostname: "127.0.0.1",
+                port: 0,
+                fetch: createDataHandler(replacement, {
+                    upstream: async () => new Response("unexpected target", { status: 500 }),
+                }),
+            });
+            const dataPort = replacementData.port;
             const control = createRouterControlClient({
                 baseUrl: new URL(`http://127.0.0.1:${server.port}`),
                 credentials: { instanceId, ...replacementAuthority },
@@ -874,7 +878,7 @@ describe("P4 worked example and restore, against the real router", () => {
                 register: control.registerDeployment,
                 replace: control.replaceRoute,
                 serves: async (hostname) => {
-                    const response = await fetch(`http://127.0.0.1:${replacementData.port}`, {
+                    const response = await fetch(`http://127.0.0.1:${dataPort}`, {
                         headers: { Host: hostname },
                         signal: AbortSignal.timeout(5000),
                     });
@@ -892,9 +896,9 @@ describe("P4 worked example and restore, against the real router", () => {
             await clearDeploymentRecovery(db.db, tmp.dir, true, view);
             await assertModelMutationsReady(db.db, tmp.dir);
         } finally {
-            await replacementData.stop(true);
-            await server.stop(true);
-            replacement.close();
+            await replacementData?.stop(true);
+            await server?.stop(true);
+            replacement?.close();
             await fs.rm(path.join(tmp.dir, "maintenance/deployment-recovery-blocked"), {
                 force: true,
             });

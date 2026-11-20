@@ -1,6 +1,6 @@
 import { promises as fs } from "node:fs";
 import path from "node:path";
-import { clearDeploymentRecovery } from "../deployment-recovery";
+import { clearDeploymentRecovery, readRecoveryMarker } from "../deployment-recovery";
 import type { RecoveryEvidence } from "../recovery-evidence";
 
 export async function ageRecoveryMarker(dataDir: string) {
@@ -10,8 +10,10 @@ export async function ageRecoveryMarker(dataDir: string) {
         throw error;
     });
     if (!info?.isFile()) return;
-    const marker = JSON.parse(await fs.readFile(file, "utf8")) as Record<string, unknown> | null;
-    if (!marker || typeof marker !== "object" || Array.isArray(marker)) return;
+    const parsed = await readRecoveryMarker(dataDir);
+    if (!parsed || parsed === "damaged") return;
+    // Preserve the original on-disk version and epoch fields.
+    const marker = JSON.parse(await fs.readFile(file, "utf8")) as Record<string, unknown>;
     marker.restoreStartedAt = "2026-01-01T00:00:00.000Z";
     await fs.writeFile(file, JSON.stringify(marker));
 }
@@ -33,10 +35,7 @@ export async function clearWithSettledFixtures(
     router?: Parameters<typeof clearDeploymentRecovery>[3],
     options?: Partial<Parameters<typeof clearDeploymentRecovery>[4]>,
 ) {
-    await ageRecoveryMarker(dataDir).catch((error) => {
-        // This test helper deliberately leaves malformed marker fixtures untouched.
-        if (!(error instanceof SyntaxError)) throw error;
-    });
+    await ageRecoveryMarker(dataDir);
     return clearDeploymentRecovery(db, dataDir, checked, router, {
         evidence: agreeingEvidence,
         ...options,

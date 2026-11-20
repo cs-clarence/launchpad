@@ -42,9 +42,28 @@ describe("recovery findings", () => {
         "owner-without-reservation",
         "stale-unpin",
     ] as const)("never accepts %s", (code) => {
-        const alarm = finding(code, code === "alias-router-ahead" ? "medium" : "high");
+        const base = finding(code, code === "alias-router-ahead" ? "medium" : "high");
+        const alarm: DriftFinding = code.startsWith("alias-")
+            ? { ...base, resources: [{ kind: "alias", id: "exact-id" }] }
+            : base;
         expect(assessRecoveryEvidence(report(alarm), []).blocking).toEqual([alarm]);
         expect(() => assessRecoveryEvidence(report(alarm), [`${code}:exact-id`])).toThrow(
+            "--accept",
+        );
+    });
+
+    it("keeps alias and deployment probe acceptances distinct when their ids collide", () => {
+        const owned = (kind: "alias" | "deployment"): DriftFinding => ({
+            ...finding("probe-mismatch"),
+            resources: [{ kind, id: "same-id" }],
+        });
+        const alias = owned("alias");
+        const deployment = owned("deployment");
+        const evidence = report(alias, deployment);
+        expect(assessRecoveryEvidence(evidence, ["probe-mismatch:alias:same-id"]).blocking).toEqual(
+            [deployment],
+        );
+        expect(() => assessRecoveryEvidence(evidence, ["probe-mismatch:same-id"])).toThrow(
             "--accept",
         );
     });

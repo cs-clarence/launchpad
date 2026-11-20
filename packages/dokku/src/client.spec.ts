@@ -379,10 +379,18 @@ describe("what a finished command means", () => {
 describe("operations that read", () => {
     it("lists all apps as JSON and reads only an exact app's vhosts", async () => {
         const { client, calls } = await setup(
-            { stdout: JSON.stringify([APP, "unrelated-site"]) },
+            { stdout: JSON.stringify([APP, "unrelated-site", "example.com", "legacy_app"]) },
             { stdout: "a.example.net *.example.org\n" },
         );
-        expect(await client.apps.list()).toEqual([APP, "unrelated-site"]);
+        expect(await client.apps.list()).toEqual([
+            APP,
+            "unrelated-site",
+            "example.com",
+            "legacy_app",
+        ]);
+        await expect(client.domains.report("example.com")).rejects.toMatchObject({
+            kind: "invalid-argument",
+        });
         expect(await client.domains.report(APP)).toEqual(["a.example.net", "*.example.org"]);
         expect(calls.map((c) => c.args)).toEqual([
             ["apps:list", "--format", "json"],
