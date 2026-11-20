@@ -476,10 +476,11 @@ describe("creating a deployment", () => {
             ).toBe("not-found");
         });
 
-        it("waits for a collector that holds the artifact row, then proceeds", async () => {
+        // A collector mid-transaction holds the artifact row; the deployment must be provably
+        // waiting on it before the collector commits, with or without having collected the row.
+        async function deployWhileCollectorHolds(collects: boolean) {
             const app = await newApp();
             const artifact = await artifactFor(p1);
-            // A collector mid-transaction: row locked, about to mark it collected.
             const collector = holder(async (trx) => {
                 await trx
                     .selectFrom("artifact")
@@ -487,6 +488,13 @@ describe("creating a deployment", () => {
                     .where("id", "=", artifact)
                     .forUpdate()
                     .execute();
+                if (collects) {
+                    await trx
+                        .updateTable("artifact")
+                        .set({ collected_at: new Date() })
+                        .where("id", "=", artifact)
+                        .execute();
+                }
             });
             let deploying: Promise<string> | undefined;
             try {
@@ -509,10 +517,19 @@ describe("creating a deployment", () => {
                 // Every started operation ends before the test does, even after a failure.
                 await deploying;
             }
-            // The collector commits without collecting (the test only holds the lock); the
-            // deployment is then accepted with the artifact intact.
-            expect(await deploying).toBe("ok");
-            expect((await deploymentsOf(artifact)).length).toBe(1);
+            return { outcome: await deploying, deployments: await deploymentsOf(artifact) };
+        }
+
+        it("waits for a collector that holds the artifact row, then proceeds if it left it", async () => {
+            const { outcome, deployments } = await deployWhileCollectorHolds(false);
+            expect(outcome).toBe("ok");
+            expect(deployments).toHaveLength(1);
+        });
+
+        it("refuses an artifact the collector took while the deployment was waiting", async () => {
+            const { outcome, deployments } = await deployWhileCollectorHolds(true);
+            expect(outcome).toBe("not-found");
+            expect(deployments).toEqual([]);
         });
 
         it("skips an artifact while a real deployment holds it, and the deployment then commits", async () => {
