@@ -43,6 +43,27 @@ describe("the lifecycle ports", () => {
     });
 });
 
+describe("removing an image", () => {
+    it("stops before calling docker once aborted, and reports a failed removal", async () => {
+        const aborted = new AbortController();
+        aborted.abort();
+        const { ports, calls } = fakes();
+        await expect(ports.removeImage("launchpad/site:a", aborted.signal)).rejects.toBeDefined();
+        expect(calls).toEqual([]);
+        const failing = createLifecyclePorts({
+            dokku: {} as DokkuClient,
+            docker: {
+                removeImage: async () => {
+                    throw new Error("busy");
+                },
+            } as unknown as Docker,
+        });
+        await expect(
+            failing.removeImage("launchpad/site:a", new AbortController().signal),
+        ).rejects.toThrow("busy");
+    });
+});
+
 describe("what the worker and the Dokku adapter can do", () => {
     const sources = async (dir: string) =>
         (await fs.readdir(dir))

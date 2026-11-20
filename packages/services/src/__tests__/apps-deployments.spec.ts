@@ -1199,7 +1199,7 @@ describe("deployment deletion", () => {
             await code(
                 requestDeploymentDeletion(testDb.db, people.dee!, otherOrg, deployment.id, deps()),
             ),
-        ).toBeDefined();
+        ).toMatch(/^(forbidden|not-found)$/);
         expect(
             await code(
                 request(deployment.id, "dee", undefined, { dataDir, settings: { enabled: false } }),
@@ -1369,6 +1369,114 @@ describe("deployment deletion", () => {
         expect(await claimDeletion(testDb.db, dataDir, "worker")).toEqual({ kind: "idle" });
     });
 
+    it("lets concurrent claimers each take a different deletion", async () => {
+        const first = await finished();
+        const second = await finished();
+        await request(first.deployment.id);
+        await request(second.deployment.id);
+        const results = await Promise.all([
+            claimDeletion(testDb.db, dataDir, "one"),
+            claimDeletion(testDb.db, dataDir, "two"),
+        ]);
+        const claims = results.filter((result) => result.kind === "claimed");
+        expect(claims).toHaveLength(2);
+        expect(new Set(claims.map((claim) => claim.deletion.deploymentId))).toEqual(
+            new Set([first.deployment.id, second.deployment.id]),
+        );
+    });
+
+    it("serializes a deletion request with a new deployment for the same app without deadlock", async () => {
+        const { app, deployment } = await finished();
+        const artifactId = await artifactFor(p1);
+        const results = await Promise.all([
+            code(request(deployment.id)),
+            code(createDeployment(testDb.db, people.dee!, org, app.id, { artifactId }, deps())),
+        ]);
+        expect(results).toEqual(["ok", "ok"]);
+        expect(await state(deployment.id)).toMatchObject({ desired_state: "deleting" });
+    });
+
+    it("does not let collection take an artifact while its deployment is being deleted", async () => {
+        const { deployment, artifactId } = await finished();
+        await testDb.db
+            .updateTable("artifact")
+            .set({ created_at: new Date(0) })
+            .where("id", "=", artifactId)
+            .execute();
+        let deleting: Promise<unknown> | undefined;
+        await collectArtifacts(testDb.db, {
+            dataDir,
+            retentionSeconds: 0,
+            afterCandidate: async (id) => {
+                if (id === artifactId) deleting = request(deployment.id);
+                await deleting;
+            },
+        });
+        expect(
+            (
+                await testDb.db
+                    .selectFrom("artifact")
+                    .select("collected_at")
+                    .where("id", "=", artifactId)
+                    .executeTakeFirstOrThrow()
+            ).collected_at,
+        ).toBeNull();
+    });
+
+    it("recovers after a lost completion: held, reconciled, then images only", async () => {
+        const { deployment } = await finished();
+        await request(deployment.id);
+        const claimed = await claimDeletion(testDb.db, dataDir, "worker");
+        if (claimed.kind !== "claimed") throw new Error("Expected a claim");
+        await beginDeletionStep(testDb.db, dataDir, claimed.token, "destroy");
+        // The destroy happened, but the worker never recorded it before its lease lapsed.
+        await testDb.db
+            .updateTable("deployment_deletion_operation")
+            .set({ lease_expires_at: new Date(0) })
+            .where("id", "=", claimed.token.id)
+            .execute();
+        expect(await claimDeletion(testDb.db, dataDir, "next")).toEqual({
+            kind: "reconciliation-needed",
+            id: claimed.token.id,
+        });
+        const race = await Promise.all([
+            reconcileDeployment(testDb.db, dataDir, {
+                deploymentId: deployment.id,
+                outcome: "succeeded",
+                attested: true,
+            }),
+            claimDeletion(testDb.db, dataDir, "racer"),
+        ]);
+        expect(race[0]).toEqual({ kind: "deletion", outcome: "succeeded" });
+        const resumed =
+            race[1].kind === "claimed" ? race[1] : await claimDeletion(testDb.db, dataDir, "racer");
+        expect(resumed).toMatchObject({ kind: "claimed", deletion: { stepDone: "destroy" } });
+    });
+
+    it("requeues a held deletion that was not destroyed, for another destroy attempt", async () => {
+        const { deployment } = await finished();
+        await request(deployment.id);
+        const claimed = await claimDeletion(testDb.db, dataDir, "worker");
+        if (claimed.kind !== "claimed") throw new Error("Expected a claim");
+        await beginDeletionStep(testDb.db, dataDir, claimed.token, "destroy");
+        await stopDeletionStep(
+            testDb.db,
+            dataDir,
+            claimed.token,
+            "destroy",
+            "reconciliation-needed",
+        );
+        await reconcileDeployment(testDb.db, dataDir, {
+            deploymentId: deployment.id,
+            outcome: "failed-clean",
+            attested: true,
+        });
+        expect(await claimDeletion(testDb.db, dataDir, "worker")).toMatchObject({
+            kind: "claimed",
+            deletion: { stepDone: null, ownsRemoteApp: true },
+        });
+    });
+
     it("blocks claims and steps during recovery", async () => {
         const { deployment } = await finished();
         await request(deployment.id);
@@ -1435,7 +1543,7 @@ describe("deployment reconcile", () => {
     }
     const reconcile = (
         deploymentId: string,
-        outcome: "succeeded" | "failed-clean" | "abandon",
+        outcome: "succeeded" | "failed-clean" | "failed-owned" | "abandon",
         attested = true,
     ) => reconcileDeployment(testDb.db, dataDir, { deploymentId, outcome, attested });
     const row = (id: string) =>
@@ -1513,6 +1621,21 @@ describe("deployment reconcile", () => {
             deps(),
         );
         expect(next.status).toBe("queued");
+    });
+
+    it("records ownership of an app a held creation left behind, so deletion can destroy it", async () => {
+        const { deployment } = await held("app", false);
+        await reconcile(deployment.id, "failed-owned");
+        expect(await row(deployment.id)).toMatchObject({
+            status: "failed",
+            step_done: "app",
+            failure_code: "reconciled-owned",
+        });
+        await requestDeploymentDeletion(testDb.db, people.dee!, org, deployment.id, deps());
+        expect(await claimDeletion(testDb.db, dataDir, "worker")).toMatchObject({
+            kind: "claimed",
+            deletion: { ownsRemoteApp: true },
+        });
     });
 
     it("refuses to mark a deployment succeeded when no image was recorded", async () => {

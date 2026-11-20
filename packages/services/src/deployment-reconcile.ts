@@ -6,13 +6,13 @@ import { ServiceError } from "./errors";
 
 type Db = Kysely<Database>;
 
-export type ReconcileOutcome = "succeeded" | "failed-clean" | "abandon";
+export type ReconcileOutcome = "succeeded" | "failed-clean" | "failed-owned" | "abandon";
 const databaseNow = sql<Date>`clock_timestamp()`;
 
 // Records what an operator observed on Dokku, by exact name, for work the worker could not
 // settle. It never calls Dokku and never destroys or creates anything remote: a deployment
 // that was held becomes settled, or a held deletion is released for the worker to continue.
-// Lock order: operation row, then deployment row (the same as the worker's deletion claim).
+// Lock order: app row, deployment row, then the operation row, as the design requires.
 export async function reconcileDeployment(
     db: Db,
     dataDir: string,
@@ -25,6 +25,24 @@ export async function reconcileDeployment(
         );
     }
     return withModelMutation(db, dataDir, async (trx) => {
+        const found = await trx
+            .selectFrom("deployment")
+            .select("app_id")
+            .where("id", "=", input.deploymentId)
+            .executeTakeFirst();
+        if (!found) throw new ServiceError("not-found", "Deployment not found.");
+        await trx
+            .selectFrom("app")
+            .select("id")
+            .where("id", "=", found.app_id)
+            .forUpdate()
+            .executeTakeFirstOrThrow();
+        const deployment = await trx
+            .selectFrom("deployment")
+            .select(["id", "organization_id", "status", "image_tag", "image_id", "step_pending"])
+            .where("id", "=", input.deploymentId)
+            .forUpdate()
+            .executeTakeFirstOrThrow();
         const operation = await trx
             .selectFrom("deployment_deletion_operation")
             .select(["id", "organization_id", "deployment_id", "step_pending"])
@@ -32,19 +50,15 @@ export async function reconcileDeployment(
             .where("status", "=", "reconciliation-needed")
             .forUpdate()
             .executeTakeFirst();
-        const deployment = await trx
-            .selectFrom("deployment")
-            .select(["id", "organization_id", "status", "image_tag", "image_id", "step_pending"])
-            .where("id", "=", input.deploymentId)
-            .forUpdate()
-            .executeTakeFirst();
-        if (!deployment) throw new ServiceError("not-found", "Deployment not found.");
 
         let kind: "deletion" | "deployment";
         if (operation) {
             kind = "deletion";
-            if (input.outcome === "abandon") {
-                throw new ServiceError("invalid", "A deletion cannot be abandoned; reconcile it.");
+            if (input.outcome !== "succeeded" && input.outcome !== "failed-clean") {
+                throw new ServiceError(
+                    "invalid",
+                    "A deletion can only be recorded as succeeded or failed-clean.",
+                );
             }
             // `succeeded`: the app is gone, so only the local image removal remains.
             // `failed-clean`: the destroy never took effect, so the worker destroys again.
@@ -88,19 +102,31 @@ export async function reconcileDeployment(
                     .executeTakeFirstOrThrow();
             } else {
                 // `failed-clean`: nothing of this deployment exists on Dokku, so nothing is
-                // recorded as owned. `abandon`: unknown; what was recorded stays recorded.
+                // recorded as owned. `failed-owned`: its app exists, so deletion may destroy it.
+                // `abandon`: unknown; what was recorded stays recorded, and a name that was never
+                // recorded as created is never destroyed by deletion.
                 await trx
                     .updateTable("deployment")
                     .set({
                         status: "failed",
                         step_pending: null,
                         ...(input.outcome === "failed-clean" ? { step_done: null } : {}),
-                        failure_code:
-                            input.outcome === "failed-clean" ? "reconciled-clean" : "abandoned",
-                        failure_message:
-                            input.outcome === "failed-clean"
-                                ? "An operator confirmed that nothing of this deployment exists."
-                                : "An operator abandoned this deployment after an unconfirmed step.",
+                        ...(input.outcome === "failed-owned" && deployment.step_pending === "app"
+                            ? { step_done: "app" as const }
+                            : {}),
+                        failure_code: {
+                            "failed-clean": "reconciled-clean",
+                            "failed-owned": "reconciled-owned",
+                            abandon: "abandoned",
+                        }[input.outcome],
+                        failure_message: {
+                            "failed-clean":
+                                "An operator confirmed that nothing of this deployment exists.",
+                            "failed-owned":
+                                "An operator confirmed that this deployment's app exists.",
+                            abandon:
+                                "An operator abandoned this deployment after an unconfirmed step.",
+                        }[input.outcome],
                         finished_at: databaseNow,
                         lease_owner: null,
                         lease_expires_at: null,

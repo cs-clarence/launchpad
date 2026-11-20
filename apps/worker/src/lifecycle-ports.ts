@@ -14,6 +14,9 @@ export function createLifecyclePorts(deps: LifecyclePortsDeps): DeletionRunnerPo
     return {
         exists: (app, signal) => deps.dokku.apps.exists(app, signal),
         destroy: (app, signal) => deps.dokku.apps.destroy(app, signal),
-        removeImage: (tag, signal) => deps.docker.removeImage(tag, signal),
+        removeImage: async (tag, signal) => {
+            signal.throwIfAborted();
+            await deps.docker.removeImage(tag, signal);
+        },
     };
 }

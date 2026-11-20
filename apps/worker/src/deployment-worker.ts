@@ -93,8 +93,11 @@ export async function workDeployments({
     }
 
     let blocked = false;
+    let turn = 0;
     while (!signal.aborted) {
         try {
+            // Alternate so a steady stream of deployments cannot starve deletions.
+            if (turn++ % 2 === 1 && (await deleteOne())) continue;
             const claim = await database(() => claimDeployment(db, dataDir, owner));
             blocked = false;
             markHealthy();

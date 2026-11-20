@@ -1,5 +1,5 @@
 import type { Database } from "@launchpad-kit/database";
-import { type Kysely, sql } from "kysely";
+import { type ExpressionBuilder, type Kysely, sql } from "kysely";
 import { requireDeploymentsOn, type AppDeps } from "./apps";
 import type { Principal } from "./authorization";
 import { appendDeploymentEvent, DEPLOYMENT_LEASE_MS } from "./deployment-claims";
@@ -15,6 +15,18 @@ const databaseNow = sql<Date>`clock_timestamp()`;
 const leaseDeadline = sql<Date>`clock_timestamp() + (${DEPLOYMENT_LEASE_MS} * interval '1 millisecond')`;
 const retryDeadline = sql<Date>`clock_timestamp() + (${RETRY_DELAY_MS} * interval '1 millisecond')`;
 const previousStep = { destroy: null, images: "destroy" } as const;
+
+// The documented order for anything that can release a pin: app row, then deployment row, then
+// operation rows (docs/design/deployment-modes.md). Heartbeats and plain step intent touch only
+// the operation row and never wait on another lock while holding it.
+async function lockApp(trx: Db, appId: string) {
+    await trx
+        .selectFrom("app")
+        .select("id")
+        .where("id", "=", appId)
+        .forUpdate()
+        .executeTakeFirstOrThrow();
+}
 
 export interface DeletionClaimToken {
     id: string;
@@ -113,82 +125,94 @@ export async function requestDeploymentDeletion(
 export async function claimDeletion(db: Db, dataDir: string, owner: string) {
     if (!owner.trim()) throw new Error("A deletion claim needs a worker identity.");
     return withModelMutation(db, dataDir, async (trx) => {
-        const candidate = await trx
+        const leaseFree = (eb: ExpressionBuilder<Database, "deployment_deletion_operation">) =>
+            eb.or([eb("lease_expires_at", "is", null), eb("lease_expires_at", "<=", databaseNow)]);
+        // Candidates are read without locks so the app and deployment can be locked first.
+        // Each is then locked and judged again, skipping any that another worker holds.
+        const candidates = await trx
             .selectFrom("deployment_deletion_operation")
-            .select(["id", "organization_id", "deployment_id", "step_pending"])
+            .select(["id", "app_id", "deployment_id"])
             .where("status", "in", ["queued", "running"])
-            .where((eb) =>
-                eb.or([
-                    eb("lease_expires_at", "is", null),
-                    eb("lease_expires_at", "<=", databaseNow),
-                ]),
-            )
+            .where(leaseFree)
             .orderBy("created_at")
             .orderBy("id")
-            .limit(1)
-            .forUpdate()
-            .skipLocked()
-            .executeTakeFirst();
-        if (!candidate) return { kind: "idle" } as const;
-        const deployment = await trx
-            .selectFrom("deployment")
-            .select(["id", "organization_id", "app_name", "step_done"])
-            .where("id", "=", candidate.deployment_id)
-            .forUpdate()
-            .executeTakeFirstOrThrow();
-        // A pending destroy may or may not have happened. Image removal can be repeated.
-        if (candidate.step_pending === "destroy") {
-            await trx
-                .updateTable("deployment_deletion_operation")
-                .set({
-                    status: "reconciliation-needed",
-                    failure_code: "lease-expired-with-pending-step",
-                    failure_message: "The previous worker left an unconfirmed deletion step.",
-                    lease_owner: null,
-                    lease_expires_at: null,
-                    updated_at: databaseNow,
-                })
-                .where("id", "=", candidate.id)
+            .limit(8)
+            .execute();
+        for (const listed of candidates) {
+            await lockApp(trx, listed.app_id);
+            const deployment = await trx
+                .selectFrom("deployment")
+                .select(["id", "organization_id", "app_name", "step_done"])
+                .where("id", "=", listed.deployment_id)
+                .forUpdate()
                 .executeTakeFirstOrThrow();
-            await appendDeploymentEvent(
-                trx,
-                deployment,
-                "deletion-reconciliation-needed",
-                "warn",
-                "The previous worker left an unconfirmed deletion step.",
-            );
-            return { kind: "reconciliation-needed", id: candidate.id } as const;
+            const candidate = await trx
+                .selectFrom("deployment_deletion_operation")
+                .select(["id", "step_pending"])
+                .where("id", "=", listed.id)
+                .where("status", "in", ["queued", "running"])
+                .where(leaseFree)
+                .forUpdate()
+                .skipLocked()
+                .executeTakeFirst();
+            if (!candidate) continue;
+            // A pending destroy may or may not have happened. Image removal can be repeated.
+            if (candidate.step_pending === "destroy") {
+                await trx
+                    .updateTable("deployment_deletion_operation")
+                    .set({
+                        status: "reconciliation-needed",
+                        failure_code: "lease-expired-with-pending-step",
+                        failure_message: "The previous worker left an unconfirmed deletion step.",
+                        lease_owner: null,
+                        lease_expires_at: null,
+                        updated_at: databaseNow,
+                    })
+                    .where("id", "=", candidate.id)
+                    .executeTakeFirstOrThrow();
+                await appendDeploymentEvent(
+                    trx,
+                    deployment,
+                    "deletion-reconciliation-needed",
+                    "warn",
+                    "The previous worker left an unconfirmed deletion step.",
+                );
+                return { kind: "reconciliation-needed", id: candidate.id } as const;
+            }
+            const operation = await trx
+                .updateTable("deployment_deletion_operation")
+                .set((eb) => ({
+                    status: "running",
+                    attempt: eb("attempt", "+", 1),
+                    fence: sql<string>`fence + 1`,
+                    lease_owner: owner,
+                    lease_expires_at: leaseDeadline,
+                    step_pending: null,
+                    failure_code: null,
+                    failure_message: null,
+                    updated_at: databaseNow,
+                }))
+                .where("id", "=", candidate.id)
+                .returningAll()
+                .executeTakeFirstOrThrow();
+            return {
+                kind: "claimed",
+                token: {
+                    id: operation.id,
+                    owner,
+                    attempt: operation.attempt,
+                    fence: operation.fence,
+                } satisfies DeletionClaimToken,
+                deletion: {
+                    deploymentId: deployment.id,
+                    appName: deployment.app_name,
+                    // A name that was already taken was never this deployment's app.
+                    ownsRemoteApp: deployment.step_done !== null,
+                    stepDone: operation.step_done,
+                },
+            } as const;
         }
-        const operation = await trx
-            .updateTable("deployment_deletion_operation")
-            .set((eb) => ({
-                status: "running",
-                attempt: eb("attempt", "+", 1),
-                fence: sql<string>`fence + 1`,
-                lease_owner: owner,
-                lease_expires_at: leaseDeadline,
-                step_pending: null,
-                updated_at: databaseNow,
-            }))
-            .where("id", "=", candidate.id)
-            .returningAll()
-            .executeTakeFirstOrThrow();
-        return {
-            kind: "claimed",
-            token: {
-                id: operation.id,
-                owner,
-                attempt: operation.attempt,
-                fence: operation.fence,
-            } satisfies DeletionClaimToken,
-            deletion: {
-                deploymentId: deployment.id,
-                appName: deployment.app_name,
-                // A name that was already taken was never this deployment's app.
-                ownsRemoteApp: deployment.step_done !== null,
-                stepDone: operation.step_done,
-            },
-        } as const;
+        return { kind: "idle" } as const;
     });
 }
 
@@ -196,9 +220,26 @@ function withLockedClaim<T>(
     db: Db,
     dataDir: string,
     token: DeletionClaimToken,
+    // Finalizing or holding a deletion can release a pin, so it takes the full chain.
+    chain: boolean,
     run: (trx: Db, update: ReturnType<typeof fencedUpdate>) => Promise<T>,
 ) {
     return withModelMutation(db, dataDir, async (trx) => {
+        if (chain) {
+            const ids = await trx
+                .selectFrom("deployment_deletion_operation")
+                .select(["app_id", "deployment_id"])
+                .where("id", "=", token.id)
+                .executeTakeFirst();
+            if (!ids) return null;
+            await lockApp(trx, ids.app_id);
+            await trx
+                .selectFrom("deployment")
+                .select("id")
+                .where("id", "=", ids.deployment_id)
+                .forUpdate()
+                .executeTakeFirstOrThrow();
+        }
         const row = await trx
             .selectFrom("deployment_deletion_operation")
             .select("id")
@@ -222,7 +263,7 @@ function fencedUpdate(trx: Db, token: DeletionClaimToken) {
 }
 
 export function renewDeletionClaim(db: Db, dataDir: string, token: DeletionClaimToken) {
-    return withLockedClaim(db, dataDir, token, async (_trx, update) => {
+    return withLockedClaim(db, dataDir, token, false, async (_trx, update) => {
         const renewed = await update
             .set({ lease_expires_at: leaseDeadline, updated_at: databaseNow })
             .returning("lease_expires_at")
@@ -238,7 +279,7 @@ export function beginDeletionStep(
     step: DeletionStep,
 ) {
     const previous = previousStep[step];
-    return withLockedClaim(db, dataDir, token, (_trx, update) =>
+    return withLockedClaim(db, dataDir, token, false, (_trx, update) =>
         update
             .set({ step_pending: step, updated_at: databaseNow })
             .where("step_pending", "is", null)
@@ -258,7 +299,7 @@ export function completeDeletionStep(
     step: DeletionStep,
 ) {
     const last = step === "images";
-    return withLockedClaim(db, dataDir, token, async (trx, update) => {
+    return withLockedClaim(db, dataDir, token, last, async (trx, update) => {
         const row = await update
             .set({
                 step_done: step,
@@ -267,6 +308,8 @@ export function completeDeletionStep(
                 ...(last
                     ? {
                           status: "succeeded" as const,
+                          failure_code: null,
+                          failure_message: null,
                           finished_at: databaseNow,
                           lease_owner: null,
                           lease_expires_at: null,
@@ -306,7 +349,7 @@ export function stopDeletionStep(
     outcome: "retry" | "reconciliation-needed",
 ) {
     const retry = outcome === "retry";
-    return withLockedClaim(db, dataDir, token, async (trx, update) => {
+    return withLockedClaim(db, dataDir, token, !retry, async (trx, update) => {
         const row = await update
             .set({
                 status: retry ? "queued" : "reconciliation-needed",

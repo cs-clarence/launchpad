@@ -63,12 +63,18 @@ export async function runDeletion(
                 if (signal.aborted || !(await store.begin("destroy"))) return "authority-lost";
                 try {
                     await dispatch((effect) => ports.destroy(context.appName, effect));
+                } catch (error) {
+                    if (error instanceof AuthorityLost || signal.aborted) return "authority-lost";
+                    return stop("destroy", neverSent(error) ? "retry" : "reconciliation-needed");
+                }
+                // The destroy was sent, so nothing short of an observed absence settles it.
+                try {
                     if (await dispatch((effect) => ports.exists(context.appName, effect))) {
                         return stop("destroy", "reconciliation-needed");
                     }
                 } catch (error) {
                     if (error instanceof AuthorityLost || signal.aborted) return "authority-lost";
-                    return stop("destroy", neverSent(error) ? "retry" : "reconciliation-needed");
+                    return stop("destroy", "reconciliation-needed");
                 }
             } else if (signal.aborted || !(await store.begin("destroy"))) {
                 return "authority-lost";

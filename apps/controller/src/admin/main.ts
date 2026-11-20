@@ -232,15 +232,22 @@ program
     .requiredOption("--deployment <id>", "the deployment's ID")
     .requiredOption(
         "--outcome <outcome>",
-        "succeeded (it serves its recorded image), failed-clean (nothing of it exists; for a deletion, the app was not destroyed), or abandon (a deployment only)",
+        "succeeded (it serves its recorded image), failed-clean (nothing of it exists; for a deletion, the app was not destroyed), failed-owned (its app exists and deletion may destroy it; a deployment only), or abandon (a deployment only; nothing unrecorded is ever destroyed)",
     )
     .option(
         "--i-have-verified-dokku-by-exact-name",
         "attest: you checked Dokku for this deployment's exact app name and image",
     )
     .action(async (options) => {
-        if (!["succeeded", "failed-clean", "abandon"].includes(options.outcome)) {
-            throw new Error("--outcome must be succeeded, failed-clean or abandon.");
+        if (!["succeeded", "failed-clean", "failed-owned", "abandon"].includes(options.outcome)) {
+            throw new Error("--outcome must be succeeded, failed-clean, failed-owned or abandon.");
+        }
+        if (
+            !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
+                options.deployment,
+            )
+        ) {
+            throw new Error("--deployment must be a deployment ID (a UUID).");
         }
         const result = await withDatabase((db) =>
             reconcileDeployment(
@@ -248,7 +255,11 @@ program
                 path.resolve(process.env.LAUNCHPAD_DATA_DIR ?? ".data/controller"),
                 {
                     deploymentId: options.deployment,
-                    outcome: options.outcome as "succeeded" | "failed-clean" | "abandon",
+                    outcome: options.outcome as
+                        | "succeeded"
+                        | "failed-clean"
+                        | "failed-owned"
+                        | "abandon",
                     attested: options.iHaveVerifiedDokkuByExactName === true,
                 },
             ),

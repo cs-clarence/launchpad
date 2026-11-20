@@ -100,6 +100,26 @@ describe("deletion runner", () => {
         expect(f.ports.removeImage).not.toHaveBeenCalled();
     });
 
+    it("holds the deletion when the read that confirms a destroy fails", async () => {
+        const f = fixture();
+        f.ports.exists
+            .mockImplementationOnce(async () => true)
+            .mockRejectedValueOnce(
+                new DokkuError({ kind: "trust", operation: "apps:exists", message: "untrusted" }),
+            );
+        expect(await run(f)).toBe("reconciliation-needed");
+        expect(f.store.stop).toHaveBeenCalledWith("destroy", "reconciliation-needed");
+        expect(f.ports.removeImage).not.toHaveBeenCalled();
+    });
+
+    it("does not complete a destroy it cannot record, and leaves the image alone", async () => {
+        const f = fixture();
+        f.store.complete.mockResolvedValueOnce(null);
+        expect(await run(f)).toBe("authority-lost");
+        expect(f.ports.destroy).toHaveBeenCalledOnce();
+        expect(f.ports.removeImage).not.toHaveBeenCalled();
+    });
+
     it("resumes at image removal after a recorded destroy and retries a failed removal", async () => {
         const f = fixture();
         f.ports.removeImage.mockRejectedValueOnce(new Error("busy"));

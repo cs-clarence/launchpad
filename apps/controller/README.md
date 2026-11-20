@@ -302,11 +302,15 @@ While off, writes answer 503 and reads still work. A queued deployment waits for
 deployment can be deleted: a worker destroys its own Dokku app and local image, and its hostname and name stay
 reserved permanently. Promotion and aliases come later. Each operation is in the OpenAPI document.
 
-A deployment (or deletion) the worker could not confirm is `reconciliation-needed` and blocks its app. After
+A deployment the worker could not confirm is `reconciliation-needed` and blocks its app. After
 checking Dokku by exact name, record what you saw with
 `bun .output/admin.mjs deployment-reconcile --deployment <id> --outcome succeeded|failed-clean|abandon --i-have-verified-dokku-by-exact-name`.
-It never calls Dokku and is audited; `succeeded` needs a recorded image, and a deletion cannot be abandoned.
-For a deletion, `succeeded` means the app is gone and `failed-clean` means it was not destroyed.
+It never calls Dokku and is audited; `succeeded` needs a recorded image. Use `failed-owned` when a held app
+creation actually left its app on Dokku, so a later deletion can destroy it; after `failed-clean` or `abandon`
+deletion never destroys a name that was not recorded as created. For a deletion, only `succeeded` (the app is
+gone) and `failed-clean` (it was not destroyed) are allowed. A held deletion does not block the app, but it keeps
+counting toward quota and shows only as `desiredState` `deleting`; look at the deployment's events for
+`deletion-reconciliation-needed`.
 
 ## Removed: preview deployment
 
