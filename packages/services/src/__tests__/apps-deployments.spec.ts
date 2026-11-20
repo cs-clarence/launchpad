@@ -10,6 +10,7 @@ import {
     addMember,
     collectArtifacts,
     claimDeployment,
+    reconcileDeployment,
     claimDeletion,
     beginDeletionStep,
     completeDeletionStep,
@@ -1410,5 +1411,131 @@ describe("deployment deletion", () => {
         expect(await collected()).toBeNull();
         await collectArtifacts(testDb.db, { dataDir, retentionSeconds: 0 });
         expect(await collected()).toBeInstanceOf(Date);
+    });
+});
+
+describe("deployment reconcile", () => {
+    async function held(pending: string, image = true) {
+        const app = await newApp();
+        const artifactId = await artifactFor(p1);
+        const deployment = await createDeployment(
+            testDb.db,
+            people.dee!,
+            org,
+            app.id,
+            { artifactId },
+            deps(),
+        );
+        await sql`update deployment set status = 'reconciliation-needed', step_pending = ${pending},
+            step_done = ${pending === "app" ? null : "app"},
+            image_tag = ${image ? `launchpad/site:${deployment.id.replaceAll("-", "")}` : null},
+            image_id = ${image ? `sha256:${"e".repeat(64)}` : null}
+            where id = ${deployment.id}`.execute(testDb.db);
+        return { app, artifactId, deployment };
+    }
+    const reconcile = (
+        deploymentId: string,
+        outcome: "succeeded" | "failed-clean" | "abandon",
+        attested = true,
+    ) => reconcileDeployment(testDb.db, dataDir, { deploymentId, outcome, attested });
+    const row = (id: string) =>
+        testDb.db
+            .selectFrom("deployment")
+            .selectAll()
+            .where("id", "=", id)
+            .executeTakeFirstOrThrow();
+
+    it("needs the attestation and a held deployment", async () => {
+        const { deployment } = await held("load");
+        await expect(reconcile(deployment.id, "failed-clean", false)).rejects.toThrow(/exact-name/);
+        expect(await code(reconcile(randomUUID(), "failed-clean"))).toBe("not-found");
+        expect((await row(deployment.id)).status).toBe("reconciliation-needed");
+        const fresh = await newApp();
+        const artifact = await artifactFor(p1);
+        const queued = await createDeployment(
+            testDb.db,
+            people.dee!,
+            org,
+            fresh.id,
+            { artifactId: artifact },
+            deps(),
+        );
+        expect(await code(reconcile(queued.id, "abandon"))).toBe("conflict");
+    });
+
+    it("unblocks the app with each outcome and records an audited event", async () => {
+        const succeeded = await held("verify");
+        expect(await reconcile(succeeded.deployment.id, "succeeded")).toEqual({
+            kind: "deployment",
+            outcome: "succeeded",
+        });
+        expect(await row(succeeded.deployment.id)).toMatchObject({
+            status: "succeeded",
+            step_done: "verify",
+            step_pending: null,
+            finished_at: expect.any(Date),
+        });
+        const clean = await held("app");
+        await reconcile(clean.deployment.id, "failed-clean");
+        expect(await row(clean.deployment.id)).toMatchObject({
+            status: "failed",
+            step_done: null,
+            step_pending: null,
+            failure_code: "reconciled-clean",
+        });
+        const abandoned = await held("load");
+        await reconcile(abandoned.deployment.id, "abandon");
+        expect(await row(abandoned.deployment.id)).toMatchObject({
+            status: "failed",
+            step_done: "app",
+            failure_code: "abandoned",
+        });
+        expect(
+            (await listDeploymentEvents(testDb.db, people.vic!, org, abandoned.deployment.id)).at(
+                -1,
+            ),
+        ).toMatchObject({ phase: "reconciled" });
+        expect(
+            await testDb.db
+                .selectFrom("audit_event")
+                .select("detail")
+                .where("action", "=", "deployment.reconciled")
+                .where("target_id", "=", abandoned.deployment.id)
+                .executeTakeFirstOrThrow(),
+        ).toEqual({ detail: "kind=deployment;outcome=abandon" });
+        // The app can deploy again.
+        const next = await createDeployment(
+            testDb.db,
+            people.dee!,
+            org,
+            clean.app.id,
+            { artifactId: await artifactFor(p1) },
+            deps(),
+        );
+        expect(next.status).toBe("queued");
+    });
+
+    it("refuses to mark a deployment succeeded when no image was recorded", async () => {
+        const { deployment } = await held("build", false);
+        expect(await code(reconcile(deployment.id, "succeeded"))).toBe("conflict");
+        expect((await row(deployment.id)).status).toBe("reconciliation-needed");
+    });
+
+    it("releases a held deletion for the worker, never abandons it", async () => {
+        const { deployment } = await held("verify");
+        await reconcile(deployment.id, "succeeded");
+        await requestDeploymentDeletion(testDb.db, people.dee!, org, deployment.id, deps());
+        const claim = await claimDeletion(testDb.db, dataDir, "worker");
+        if (claim.kind !== "claimed") throw new Error("Expected a claim");
+        await beginDeletionStep(testDb.db, dataDir, claim.token, "destroy");
+        await stopDeletionStep(testDb.db, dataDir, claim.token, "destroy", "reconciliation-needed");
+        expect(await code(reconcile(deployment.id, "abandon"))).toBe("invalid");
+        await reconcile(deployment.id, "succeeded");
+        const next = await claimDeletion(testDb.db, dataDir, "worker");
+        expect(next).toMatchObject({ kind: "claimed", deletion: { stepDone: "destroy" } });
+        if (next.kind !== "claimed") throw new Error("Expected a claim");
+        await beginDeletionStep(testDb.db, dataDir, next.token, "images");
+        await completeDeletionStep(testDb.db, dataDir, next.token, "images");
+        expect(await row(deployment.id)).toMatchObject({ desired_state: "deleted" });
     });
 });

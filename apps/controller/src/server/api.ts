@@ -17,6 +17,7 @@ import {
     createDeployment,
     getApp,
     getDeployment,
+    requestDeploymentDeletion,
     listApps,
     listDeploymentEvents,
     listDeployments,
@@ -712,6 +713,26 @@ export function createApi(deps: {
                                 params.deploymentId,
                                 key?.projectIds,
                             ),
+                    ),
+            )
+            .delete(
+                "/v1/organizations/:orgId/deployments/:deploymentId",
+                { detail: docs.deleteDeployment },
+                ({ request, set, params }) =>
+                    respond(
+                        request,
+                        set,
+                        { organizationId: params.orgId, scope: "app:delete" },
+                        (p, key) =>
+                            requestDeploymentDeletion(
+                                db,
+                                p,
+                                params.orgId,
+                                params.deploymentId,
+                                deployments,
+                                key?.projectIds,
+                            ),
+                        202,
                     ),
             )
             .get(

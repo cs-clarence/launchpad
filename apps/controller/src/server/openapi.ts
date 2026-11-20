@@ -6,6 +6,7 @@ import {
     artifactSchema,
     createAppSchema,
     createDeploymentSchema,
+    deploymentDeletionSchema,
     deploymentEventSchema,
     deploymentSchema,
     acceptInvitationSchema,
@@ -450,6 +451,16 @@ export const docs = {
         path: ["orgId", "deploymentId"],
         ok: { description: "The deployment.", schema: deploymentSchema },
         errors: [401, 403, 404],
+    }),
+    deleteDeployment: operation({
+        keys: true,
+        tags: ["Deployments"],
+        summary: "Delete a deployment",
+        description:
+            "Deployers and above; a key needs `app:delete`. Queues the deletion of one finished deployment and returns at once. A worker destroys the deployment's own remote app and local image; reads then show `desiredState` `deleting`, then `deleted`. Its hostname and remote name stay reserved permanently. An unfinished, reconciliation-needed or already-deleting deployment is refused. Needs deployments to be on.",
+        path: ["orgId", "deploymentId"],
+        ok: { status: 202, description: "Queued.", schema: deploymentDeletionSchema },
+        errors: [401, 403, 404, 409, 503],
     }),
     listDeploymentEvents: operation({
         keys: true,

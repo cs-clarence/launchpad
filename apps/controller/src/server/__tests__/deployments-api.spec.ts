@@ -11,6 +11,7 @@ import {
     createApiKey,
     createOrganization,
     createProject,
+    deploymentDeletionSchema,
     deploymentEventSchema,
     deploymentSchema,
     errorSchema,
@@ -140,6 +141,9 @@ beforeAll(async () => {
     await issue("deployer", ["app:deploy"]);
     await issue("only-p1", ["app:read", "app:deploy"], [p1]);
     await issue("only-p2", ["app:read", "app:deploy"], [p2]);
+    await issue("deleter", ["app:read", "app:deploy", "app:delete"]);
+    await issue("deleter-p2", ["app:read", "app:delete"], [p2]);
+    await issue("remover", ["app:delete"]);
     const config = loadAuthConfig({
         LAUNCHPAD_AUTH_SECRET: "test-secret-".repeat(4),
         LAUNCHPAD_BASE_URL: "http://localhost:3000",
@@ -182,6 +186,7 @@ describe("apps and deployments over HTTP", () => {
             ["GET", `${base()}/apps/${app}/deployments`, "app:read"],
             ["GET", `${base()}/deployments/${randomUUID()}`, "app:read"],
             ["GET", `${base()}/deployments/${randomUUID()}/events`, "app:read"],
+            ["DELETE", `${base()}/deployments/${randomUUID()}`, "app:delete"],
         ];
         for (const [method, route, needs] of routes) {
             const anonymous = await call(
@@ -396,5 +401,41 @@ describe("apps and deployments over HTTP", () => {
         expect(has("/apps/{appId}/deployments", "get")).toBe(true);
         expect(has("/deployments/{deploymentId}", "get")).toBe(true);
         expect(has("/deployments/{deploymentId}/events", "get")).toBe(true);
+        expect(has("/deployments/{deploymentId}", "delete")).toBe(true);
+    });
+
+    it("queues a deletion only for a finished deployment, within the key's scope and projects", async () => {
+        const app = (await newApp()).json.id;
+        const artifact = (await upload("full", p1)).json.id;
+        const queued = await call(api, "full", "POST", `${base()}/apps/${app}/deployments`, {
+            body: { artifactId: artifact },
+        });
+        const deployment = deploymentSchema.parse(await queued.json());
+        const route = `${base()}/deployments/${deployment.id}`;
+        // Unfinished work cannot be deleted.
+        expect((await call(api, "deleter", "DELETE", route)).status).toBe(409);
+        await sql`update deployment set status = 'failed', finished_at = now(), step_done = 'app'
+            where id = ${deployment.id}`.execute(testDb.db);
+        // Another project's key cannot see it, and the off switch refuses before anything changes.
+        expect((await call(api, "deleter-p2", "DELETE", route)).status).toBe(404);
+        expect((await call(offApi, "deleter", "DELETE", route)).status).toBe(503);
+        expect(
+            deploymentSchema.parse(await (await call(api, "reader", "GET", route)).json())
+                .desiredState,
+        ).toBe("active");
+        const accepted = await call(api, "deleter", "DELETE", route);
+        expect(accepted.status).toBe(202);
+        expect(deploymentDeletionSchema.parse(await accepted.json())).toMatchObject({
+            deploymentId: deployment.id,
+            status: "queued",
+        });
+        expect((await call(api, "deleter", "DELETE", route)).status).toBe(409);
+        expect(
+            deploymentSchema.parse(await (await call(api, "reader", "GET", route)).json())
+                .desiredState,
+        ).toBe("deleting");
+        expect(
+            (await call(api, "remover", "DELETE", `${base()}/deployments/${randomUUID()}`)).status,
+        ).toBe(404);
     });
 });

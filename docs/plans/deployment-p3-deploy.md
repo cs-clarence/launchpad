@@ -1,7 +1,7 @@
 # P3: deploy and delete one deployment end to end
 
-Status: **approved 2026-11-20 with the numbered decisions below. P3a and P3b are merged;
-P3c is under review. Nothing here is authorized to run against real infrastructure.**
+Status: **approved 2026-11-20 with the numbered decisions below. P3a through P3c are merged;
+P3d is under review. Nothing here is authorized to run against real infrastructure.**
 Parent: [deployment model plan](deployment-model.md), P3. Schema contract:
 [replacement schema map](../design/deployment-cutover-schema.md). Behavior:
 [deployment design](../design/deployment-modes.md). Slices P4 (aliases, promotion, retention
