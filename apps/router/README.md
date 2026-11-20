@@ -31,8 +31,8 @@ The command reads and checks that exact alias, then queues a correction above
 the database and router counters. It neither changes the route nor releases
 pins; a worker must verify the correction. If the alias or router reports an
 unrecognized target, stop and investigate rather than editing counters by hand.
-Use HTTPS or loopback for router control; non-loopback private HTTP requires
-`LAUNCHPAD_ALIAS_CONTROL_PRIVATE_NETWORK=1`.
+The admin command sends the control token only over HTTPS, or HTTP on loopback; put a TLS
+endpoint in front of a private router control address.
 
 `init` and `rotate` read the **same settings as `serve`**, including the listen and upstream
 variables (they are validated but unused there), so one environment serves all three commands.

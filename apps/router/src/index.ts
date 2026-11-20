@@ -136,28 +136,49 @@ async function main(): Promise<void> {
             const { isModelPrimary, withDeploymentRecoveryMaintenance } =
                 await import("@launchpad-kit/database/deployment-lock");
             const db = createDatabase(url, { max: 1, connectionTimeout: 5 });
+            const budget = AbortSignal.timeout(30_000);
+            // The budget must also end a query PostgreSQL accepted but never answers.
+            const deadline = new Promise<never>((_, reject) =>
+                budget.addEventListener("abort", () => reject(budget.reason), { once: true }),
+            );
+            let committed: string | undefined;
+            const maintenance = withDeploymentRecoveryMaintenance(
+                db,
+                async (connection) => {
+                    if (!(await isModelPrimary(connection))) {
+                        throw new SecretError(
+                            "Managed rotation requires the primary deployment model database.",
+                        );
+                    }
+                    committed = rotateRouter(config, token);
+                    return committed;
+                },
+                budget,
+            );
+            maintenance.catch(() => {});
             try {
-                epoch = await withDeploymentRecoveryMaintenance(
-                    db,
-                    async (connection) => {
-                        if (!(await isModelPrimary(connection))) {
-                            throw new SecretError(
-                                "Managed rotation requires the primary deployment model database.",
-                            );
-                        }
-                        return rotateRouter(config, token);
-                    },
-                    AbortSignal.timeout(30_000),
-                );
+                epoch = await Promise.race([maintenance, deadline]);
             } catch (error) {
+                if (committed !== undefined) {
+                    // The router already changed epoch; only releasing the lock failed. Report
+                    // the epoch (not a secret) so the credentials can be updated, then exit.
+                    process.stderr.write(
+                        "warning: the epoch was rotated but releasing the maintenance lock failed; update the worker epoch and token before resuming.\n",
+                    );
+                    process.stdout.write(`${committed}\n`, () => process.exit(0));
+                    return;
+                }
                 if (error instanceof Error && error.name === "TimeoutError") {
                     throw new SecretError(
-                        "Timed out waiting for exclusive router maintenance; pause model writers and retry.",
+                        "Timed out waiting for exclusive router maintenance; pause model writers, check database connectivity, and retry.",
                     );
                 }
                 throw error;
             } finally {
-                await db.destroy();
+                await Promise.race([
+                    db.destroy().catch(() => {}),
+                    new Promise<void>((resolve) => setTimeout(resolve, 2000)),
+                ]);
             }
         }
         process.stdout.write(`${epoch}\n`);

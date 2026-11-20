@@ -257,6 +257,34 @@ describe("promotion claims and finalization", () => {
                 .executeTakeFirstOrThrow()
         ).last_unpinned_at;
 
+    // Hold the app row on another connection so finalization blocks after its readback.
+    async function holdAppLock(appId: string) {
+        const locked = Promise.withResolvers<void>();
+        const release = Promise.withResolvers<void>();
+        const done = testDb.db.transaction().execute(async (trx) => {
+            await trx.selectFrom("app").select("id").where("id", "=", appId).forUpdate().execute();
+            locked.resolve();
+            await release.promise;
+        });
+        await locked.promise;
+        return {
+            async release() {
+                release.resolve();
+                await done;
+            },
+        };
+    }
+    async function waitForRowLockWait() {
+        for (let attempt = 0; attempt < 200; attempt++) {
+            const { rows } = await sql<{ waiting: string }>`
+                select count(*)::text as waiting from pg_stat_activity
+                where datname = current_database() and wait_event_type = 'Lock'`.execute(testDb.db);
+            if (rows[0]!.waiting !== "0") return;
+            await new Promise<void>((resolve) => setTimeout(resolve, 25));
+        }
+        throw new Error("Finalization never waited for the row lock.");
+    }
+
     it("holds lost dispatch without reissuing it or releasing its target", async () => {
         const { alias, ready } = await fixture();
         const target = await ready();
@@ -490,34 +518,38 @@ describe("promotion claims and finalization", () => {
         expect(await code(deleteDeployment(target))).toBe("ok");
     });
 
-    it("excludes managed rotation from router verification through finalization", async () => {
+    it("excludes managed rotation from router verification through commit", async () => {
         const { alias, ready } = await fixture();
         await promote(alias.id, await ready(), "0");
         const job = await claim(alias.id);
         await verifying(job);
-        const entered = Promise.withResolvers<void>();
-        const release = Promise.withResolvers<void>();
-        const finalized = finalizePromotion(testDb.db, dataDir, job.token, authority, async () => {
-            entered.resolve();
-            await release.promise;
-            return observation(job);
-        });
-        await entered.promise;
-        const timeout = AbortSignal.timeout(100);
+        const hold = await holdAppLock(job.operation.app_id);
+        let released = false;
         try {
+            // Readback returns at once; finalization then waits for the row lock before commit.
+            const finalized = finalizePromotion(
+                testDb.db,
+                dataDir,
+                job.token,
+                authority,
+                async () => observation(job),
+            );
+            await waitForRowLockWait();
             await expect(
                 withDeploymentRecoveryMaintenance(
                     testDb.db,
                     async () => {
-                        throw new Error("Rotation entered before finalization.");
+                        throw new Error("Rotation entered before finalization committed.");
                     },
-                    timeout,
+                    AbortSignal.timeout(100),
                 ),
             ).rejects.toMatchObject({ name: "TimeoutError" });
+            released = true;
+            await hold.release();
+            expect(await finalized).toEqual({ id: job.token.id });
         } finally {
-            release.resolve();
+            if (!released) await hold.release();
         }
-        expect(await finalized).toEqual({ id: job.token.id });
         await withDeploymentRecoveryMaintenance(testDb.db, async (connection) => {
             expect(
                 await connection
@@ -621,17 +653,26 @@ describe("promotion claims and finalization", () => {
         const job = await claim(alias.id);
         await verifying(job);
         const seen = observation(job);
-        const read = Promise.withResolvers<void>();
-        const finalized = finalizePromotion(testDb.db, dataDir, job.token, authority, async () => {
-            read.resolve();
-            return seen;
-        });
-        await read.promise;
-        // Let the service take its snapshot while it is still waiting on PostgreSQL.
-        await new Promise<void>((resolve) => setImmediate(resolve));
-        seen.epoch = randomUUID();
-        seen.route!.target!.hostname = "different.sites.example.net";
-        expect(await finalized).toEqual({ id: job.token.id });
+        const hold = await holdAppLock(job.operation.app_id);
+        let released = false;
+        try {
+            const finalized = finalizePromotion(
+                testDb.db,
+                dataDir,
+                job.token,
+                authority,
+                async () => seen,
+            );
+            // Finalization has its snapshot and is still blocked before commit.
+            await waitForRowLockWait();
+            seen.epoch = randomUUID();
+            seen.route!.target!.hostname = "different.sites.example.net";
+            released = true;
+            await hold.release();
+            expect(await finalized).toEqual({ id: job.token.id });
+        } finally {
+            if (!released) await hold.release();
+        }
         expect(await operations(alias.id)).toMatchObject([
             { observed_epoch: authority.epoch, observed_target_deployment_id: target },
         ]);

@@ -45,12 +45,16 @@ export async function withDeploymentRecoveryMaintenance<T>(
     });
 }
 
-// Catalog-only check: the rotation role needs CONNECT but no model table privileges.
+// Catalog-only check: the rotation role needs CONNECT but no schema or table privileges, so it
+// reads pg_catalog directly rather than resolving names through the public schema.
 export async function isModelPrimary(db: Db) {
     const { rows } = await sql<{ ready: boolean }>`
-        select not pg_is_in_recovery()
-          and to_regclass('public.instance_state') is not null
-          and to_regclass('public.promotion_operation') is not null as ready
+        select not pg_is_in_recovery() and (
+            select count(*) from pg_catalog.pg_class c
+            join pg_catalog.pg_namespace n on n.oid = c.relnamespace
+            where n.nspname = 'public' and c.relkind = 'r'
+              and c.relname in ('instance_state', 'promotion_operation')
+        ) = 2 as ready
     `.execute(db);
     return rows[0]?.ready === true;
 }

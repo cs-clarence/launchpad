@@ -102,8 +102,10 @@ request-level refusal does not settle an earlier ambiguous write.
 The database transition slice parks an expired claim with pending dispatch.
 It can reclaim a recorded dispatch for read-only verification, never for a
 second dispatch. Finalization compares the router readback with the expected
-instance, epoch and recorded route; the worker must also probe the served
-identity before calling it. It settles the corrective chain and records the
+instance, epoch and recorded route. The worker performs the fresh route readback
+and the served-identity probe inside the finalization callback, after the shared
+recovery lock is held (a bounded exception to the rule against network calls
+inside transactions). It settles the corrective chain and records the
 last pin release in the same transaction. Until worker wiring lands, no
 runtime caller claims or finalizes these operations.
 

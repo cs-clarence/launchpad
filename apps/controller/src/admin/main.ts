@@ -278,14 +278,8 @@ program
         const routing = parseAppRoutingConfig(process.env);
         if (!routing.enabled) throw new Error("Router settings are required.");
         const url = routing.aliasControlUrl;
-        if (
-            url.protocol !== "https:" &&
-            !["127.0.0.1", "[::1]"].includes(url.hostname) &&
-            process.env.LAUNCHPAD_ALIAS_CONTROL_PRIVATE_NETWORK !== "1"
-        ) {
-            throw new Error(
-                "Router control requires HTTPS, loopback, or explicit private-network opt-in.",
-            );
+        if (url.protocol !== "https:" && !["127.0.0.1", "[::1]"].includes(url.hostname)) {
+            throw new Error("Router control requires HTTPS, or HTTP only on loopback.");
         }
         const authority = {
             instanceId: routing.aliasInstanceId,
