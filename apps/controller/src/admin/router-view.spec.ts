@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { routerAnchorFromEnv, routerSessionFromEnv } from "./router-view";
+import { recoveryAnchorNotice, routerAnchorFromEnv, routerSessionFromEnv } from "./router-view";
 
 // An installation that never used aliases has deployments on and an apps domain, but no router
 // settings. recovery-clear must treat that as "no router", not fail before it reaches the service.
@@ -108,5 +108,27 @@ describe("routerAnchorFromEnv", () => {
         } finally {
             rmSync(dir, { recursive: true, force: true });
         }
+    });
+});
+
+describe("recoveryAnchorNotice", () => {
+    const base = { version: 2 as const, restoreStartedAt: "2026-01-01T00:00:00.000Z" };
+    it("follows the marker that was kept, so a retry that read the router still warns about a file anchor", () => {
+        // The first run anchored on the epoch file; a retry read the router fine but the marker keeps the first.
+        const kept = {
+            ...base,
+            routerEpoch: randomUUID(),
+            routerEpochNote: "from-epoch-file" as const,
+        };
+        expect(recoveryAnchorNotice(kept)).toMatch(/configured epoch file/);
+        expect(recoveryAnchorNotice({ ...kept, routerEpochNote: "recorded" })).toBeNull();
+        expect(
+            recoveryAnchorNotice({ ...base, routerEpoch: null, routerEpochNote: "unreachable" }),
+        ).toMatch(/router could not be read/);
+        expect(
+            recoveryAnchorNotice({ ...base, routerEpoch: null, routerEpochNote: "not-configured" }),
+        ).toMatch(/no router is configured/);
+        expect(recoveryAnchorNotice("damaged")).toMatch(/damaged/);
+        expect(recoveryAnchorNotice(null)).toBeNull();
     });
 });

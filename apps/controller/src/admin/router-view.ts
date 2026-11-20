@@ -3,6 +3,7 @@ import {
     assertPrivateControlUrl,
     parseAppRoutingConfig,
     readRouterCredential,
+    type RecoveryMarker,
     type RouterAnchor,
     type RouterView,
 } from "@launchpad-kit/services";
@@ -89,4 +90,20 @@ export async function routerAnchorFromEnv(
         }
         return { routerEpoch: null, note: "unreachable" };
     }
+}
+
+// What to tell the operator after a restore, from the marker that is actually on disk: a retry keeps
+// the first anchor, so this must not follow whatever the retry happened to read.
+export function recoveryAnchorNotice(marker: RecoveryMarker | "damaged" | null): string | null {
+    if (marker === "damaged") {
+        return "The recovery marker is damaged; recovery-clear will need --router-epoch-unrecorded.";
+    }
+    if (!marker) return null;
+    if (marker.routerEpoch === null) {
+        return `No router epoch was recorded (${marker.routerEpochNote === "unreachable" ? "the router could not be read" : "no router is configured"}); recovery-clear will need --router-epoch-unrecorded.`;
+    }
+    if (marker.routerEpochNote === "from-epoch-file") {
+        return "The router could not be read, so the anchor is the epoch in the configured epoch file; recovery-clear will need --router-epoch-unrecorded to confirm the rotation.";
+    }
+    return null;
 }
