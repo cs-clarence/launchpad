@@ -973,9 +973,25 @@ describe("P4 worked example and restore, against the real router", () => {
                 /alias-route-missing/,
             );
             // Only an unservable target may be withdrawn; a serving one must be republished.
+            const missingApp = async () => false;
             await expect(
-                republishRecoveryAlias(db.db, tmp.dir, alias.id, router(true), false, true),
+                republishRecoveryAlias(db.db, tmp.dir, alias.id, router(true), false, missingApp),
             ).rejects.toThrow(/still serves/);
+            await expect(
+                republishRecoveryAlias(
+                    db.db,
+                    tmp.dir,
+                    alias.id,
+                    router(false),
+                    false,
+                    async () => true,
+                ),
+            ).rejects.toThrow(/app still exists/);
+            await expect(
+                republishRecoveryAlias(db.db, tmp.dir, alias.id, router(false), false, async () => {
+                    throw new Error("Dokku unavailable");
+                }),
+            ).rejects.toThrow(/Dokku unavailable/);
             expect((await control.readRoute(alias.hostname)).route).toBeNull();
             expect(await aliasRow(alias.id)).toMatchObject({ state: "bound" });
 
@@ -985,7 +1001,15 @@ describe("P4 worked example and restore, against the real router", () => {
                 alias.id,
                 router(false),
                 false,
-                true,
+                async (appName) => {
+                    const row = await db.db
+                        .selectFrom("deployment")
+                        .select("app_name")
+                        .where("id", "=", target)
+                        .executeTakeFirstOrThrow();
+                    expect(appName).toBe(row.app_name);
+                    return false;
+                },
             );
             expect(repaired).toMatchObject({ generation: "2", changed: true });
             expect((await control.readRoute(alias.hostname)).route).toMatchObject({
@@ -1013,7 +1037,7 @@ describe("P4 worked example and restore, against the real router", () => {
             expect(JSON.parse(audit.detail!)).toMatchObject({ withdrawnUnservableTarget: target });
             // Nothing is left to withdraw, and the repair itself never opened the gate.
             await expect(
-                republishRecoveryAlias(db.db, tmp.dir, alias.id, router(false), false, true),
+                republishRecoveryAlias(db.db, tmp.dir, alias.id, router(false), false, missingApp),
             ).rejects.toThrow(/committed target/);
             await expect(assertModelMutationsReady(db.db, tmp.dir)).rejects.toThrow(/blocked/);
             await clearDeploymentRecovery(db.db, tmp.dir, true, view);

@@ -300,7 +300,7 @@ program
     )
     .option(
         "--withdraw-unservable-target",
-        "audited override: the committed target cannot serve (for example its Dokku app is gone), so withdraw the alias instead; refused if it still serves",
+        "audited override: withdraw the alias only if its committed Dokku app is gone and the target is not served",
     )
     .action(async (options) => {
         const env = process.env;
@@ -324,7 +324,9 @@ program
                         (target?.deploymentId ?? null),
                 },
                 options.routerEpochUnrecorded === true,
-                options.withdrawUnservableTarget === true,
+                options.withdrawUnservableTarget === true
+                    ? (appName) => dokkuFromEnv(env).apps.exists(appName)
+                    : undefined,
             ),
         );
         console.log(

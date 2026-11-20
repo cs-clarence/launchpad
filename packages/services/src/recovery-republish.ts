@@ -37,8 +37,9 @@ export function republishRecoveryAlias(
     // The restored committed target cannot serve (for example its Dokku app is gone). Instead of
     // republishing it, write a tombstone, verify nothing is served, and record a withdrawal. This
     // overrides the restored database's committed target, so it is never the default.
-    withdrawUnservableTarget = false,
+    committedAppExists?: (appName: string) => Promise<boolean>,
 ) {
+    const withdrawUnservableTarget = committedAppExists !== undefined;
     return withDeploymentRecoveryMaintenance(db, async (connection) => {
         await assertNoPendingDeploymentImport(dataDir);
         await assertNoActiveDeploymentImportBackends(connection);
@@ -129,10 +130,10 @@ export function republishRecoveryAlias(
             .orderBy("generation")
             .limit(1)
             .executeTakeFirst();
-        if (withdrawUnservableTarget) {
+        if (committedAppExists) {
             const committedTarget = await connection
                 .selectFrom("deployment")
-                .select(["id", "hostname"])
+                .select(["id", "hostname", "app_name"])
                 .where("id", "=", previousTarget!)
                 .executeTakeFirstOrThrow();
             // A target that still serves must be republished, never withdrawn.
@@ -144,6 +145,13 @@ export function republishRecoveryAlias(
             ) {
                 throw new DeploymentRecoveryError(
                     "The committed target still serves; republish it without --withdraw-unservable-target.",
+                );
+            }
+            // A proxy failure could be transient. Only an authoritative exact-name
+            // Dokku read can establish that the app is gone; read errors propagate.
+            if ((await committedAppExists(committedTarget.app_name)) !== false) {
+                throw new DeploymentRecoveryError(
+                    "The committed Dokku app still exists; repair it and republish instead.",
                 );
             }
         }
