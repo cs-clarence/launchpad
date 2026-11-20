@@ -20,6 +20,7 @@ export * from "./apps";
 export * from "./aliases";
 export * from "./promotions";
 export * from "./promotion-claims";
+export * from "./router-credentials";
 export * from "./deployments";
 export * from "./deployment-claims";
 export * from "./deployment-deletion";

@@ -127,6 +127,7 @@
       "name": "@launchpad-kit/worker",
       "version": "0.0.0",
       "dependencies": {
+        "@launchpad-kit/alias-router": "workspace:^",
         "@launchpad-kit/database": "workspace:^",
         "@launchpad-kit/dokku": "workspace:^",
         "@launchpad-kit/services": "workspace:^",

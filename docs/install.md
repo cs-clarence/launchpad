@@ -76,6 +76,17 @@ the controller publicly. Those are the [separate production follow-up](plans/pro
    retained per-deployment images and scratch directories left after a forced stop;
    never prune an active worker's engine. An interrupted effect may still be running remotely;
    do not retry it by hand or assume stopping the worker stopped Dokku. See [deployments](deployments.md) for the API and reconcile commands.
+   Aliases are a separate switch. With `LAUNCHPAD_ALIASES=off` (the default) the worker never
+   reads router settings or contacts the router. With `LAUNCHPAD_ALIASES=on` the worker also
+   needs `LAUNCHPAD_ALIAS_INSTANCE_ID`, `LAUNCHPAD_ALIAS_CONTROL_URL` (HTTPS, or HTTP only on
+   loopback), `LAUNCHPAD_ALIAS_PROBE_URL` (the router's data plane), and read-only files for
+   `LAUNCHPAD_ALIAS_CONTROL_TOKEN_FILE` (mode 0600, owned by the worker's user) and
+   `LAUNCHPAD_ALIAS_ROUTER_EPOCH_FILE`. The token file must be a regular file (not a symlink) owned by the worker's user with no group or
+   other access; a Kubernetes or Docker secret mounted as a symlink or root-owned 0444 is refused.
+   The worker re-reads both files for each promotion, so
+   after an offline router rotation update them before resuming workers (see the
+   [router guide](../apps/router/README.md)). A promotion is held, never retried, when the router's
+   reply is lost; an operator then runs `promotion-reconcile` after reading the router.
 
 If the status shows a schema mismatch, stop the processes, take a backup and
 follow [upgrade](upgrade.md). Do not point a second installation at the same

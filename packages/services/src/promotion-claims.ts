@@ -1,6 +1,6 @@
 import type { Database, PromotionOperationTable } from "@launchpad-kit/database";
 import { type Kysely, type Selectable, sql } from "kysely";
-import { DEPLOYMENT_LEASE_MS } from "./deployment-claims";
+import { appendDeploymentEvent, DEPLOYMENT_LEASE_MS } from "./deployment-claims";
 import { withModelMutation } from "./deployment-recovery";
 import { isDeploymentPinned } from "./pins";
 
@@ -178,13 +178,15 @@ function withClaim<T>(
     dataDir: string,
     token: PromotionClaimToken,
     run: (trx: Db) => Promise<T>,
+    // A run that must lock deployment rows takes the operation lock itself, after them.
+    lockOperationFirst = true,
 ) {
     return withModelMutation(db, dataDir, async (trx) => {
         const parents = await lockParents(trx, token.id);
         if (!parents || parents.alias.reserved_generation !== parents.operation.generation)
             return null;
         // Evaluate expiry after waiting for the row, not against an earlier snapshot.
-        await lockOperation(trx, token.id);
+        if (lockOperationFirst) await lockOperation(trx, token.id);
         return run(trx);
     });
 }
@@ -256,8 +258,14 @@ export function holdPromotion(db: Db, dataDir: string, token: PromotionClaimToke
     return withClaim(db, dataDir, token, async (trx) => {
         const operation = await fenced(trx, token)
             .set(heldValues())
+            // Before any dispatch only a corrective operation may be held: an original one is
+            // failed instead, but a chain's tip must stay for the operator to extend.
             .where((eb) =>
-                eb.or([eb("step_pending", "=", "dispatch"), eb("step_done", "=", "dispatch")]),
+                eb.or([
+                    eb("step_pending", "=", "dispatch"),
+                    eb("step_done", "=", "dispatch"),
+                    eb("supersedes_operation_id", "is not", null),
+                ]),
             )
             .returningAll()
             .executeTakeFirst();
@@ -265,6 +273,106 @@ export function holdPromotion(db: Db, dataDir: string, token: PromotionClaimToke
         await markAliasUncertain(trx, operation);
         return { id: operation.id };
     });
+}
+
+// A definite refusal: the router rejected a request whose effect cannot have applied. Only an
+// original (non-corrective) operation may fail; a corrective one must stay held, because failing
+// the tip of a chain would leave its held ancestors with nothing left to supersede. Restores the
+// alias to its previous stable state and releases the requested target's pin if nothing else
+// holds it.
+export function failPromotion(
+    db: Db,
+    dataDir: string,
+    token: PromotionClaimToken,
+    code: string,
+    message: string,
+) {
+    return withClaim(
+        db,
+        dataDir,
+        token,
+        async (trx) => {
+            const operation = await trx
+                .selectFrom("promotion_operation")
+                .selectAll()
+                .where("id", "=", token.id)
+                .executeTakeFirst();
+            if (!operation || operation.supersedes_operation_id !== null) return null;
+            const ids = [
+                ...new Set(
+                    [
+                        operation.desired_target_deployment_id,
+                        operation.previous_target_deployment_id,
+                    ].filter((id): id is string => id !== null),
+                ),
+            ];
+            const deployments = ids.length
+                ? await trx
+                      .selectFrom("deployment")
+                      .select(["id", "organization_id"])
+                      .where("id", "in", ids)
+                      .orderBy("id")
+                      .forUpdate()
+                      .execute()
+                : [];
+            await lockOperation(trx, token.id);
+            const failed = await fenced(trx, token)
+                .set({
+                    status: "failed",
+                    step_pending: null,
+                    lease_owner: null,
+                    lease_expires_at: null,
+                    failure_code: code,
+                    failure_message: message.slice(0, 500),
+                    finished_at: now,
+                    updated_at: now,
+                })
+                .where("status", "=", "applying")
+                .where("step_done", "is", null)
+                .where("supersedes_operation_id", "is", null)
+                .returning("id")
+                .executeTakeFirst();
+            if (!failed) return null;
+            const alias = await trx
+                .selectFrom("app_alias")
+                .select(["target_deployment_id"])
+                .where("id", "=", operation.alias_id)
+                .executeTakeFirstOrThrow();
+            await trx
+                .updateTable("app_alias")
+                .set({ state: alias.target_deployment_id ? "bound" : "unbound", updated_at: now })
+                .where("id", "=", operation.alias_id)
+                .where("state", "in", ["binding", "withdrawing"])
+                .returning("id")
+                .executeTakeFirstOrThrow();
+            for (const deployment of deployments) {
+                if (!(await isDeploymentPinned(trx, deployment.id))) {
+                    await trx
+                        .updateTable("deployment")
+                        .set({ last_unpinned_at: now, updated_at: now })
+                        .where("id", "=", deployment.id)
+                        .returning("id")
+                        .executeTakeFirstOrThrow();
+                }
+            }
+            if (operation.desired_target_deployment_id) {
+                const target = deployments.find(
+                    ({ id }) => id === operation.desired_target_deployment_id,
+                );
+                if (target) {
+                    await appendDeploymentEvent(
+                        trx,
+                        target,
+                        "promotion-failed",
+                        "error",
+                        "The alias promotion was refused by the router.",
+                    );
+                }
+            }
+            return failed;
+        },
+        false,
+    );
 }
 
 export interface PromotionReadback {

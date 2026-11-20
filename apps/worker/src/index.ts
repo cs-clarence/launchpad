@@ -4,6 +4,8 @@ import { createDatabase } from "@launchpad-kit/database";
 import { createDokkuClient } from "@launchpad-kit/dokku";
 import {
     artifactLimitsFromEnv,
+    parseAliasConfig,
+    parseAppRoutingConfig,
     parseDeploymentConfig,
     resolveLimits,
 } from "@launchpad-kit/services";
@@ -11,6 +13,7 @@ import { workDeployments } from "./deployment-worker";
 import { createDocker } from "./docker";
 import { DEFAULT_HEALTH_TOUCH_MS, createHealthMarker, healthFileFromEnv } from "./health";
 import { createLifecyclePorts } from "./lifecycle-ports";
+import { createPromotionPorts } from "./promotion-ports";
 import { createDeployPorts } from "./ports";
 import { DEFAULT_BASE_IMAGE, checkBaseImage } from "./template";
 import { parseProxyUrl } from "./verify";
@@ -55,6 +58,15 @@ async function main() {
                 intervalMs: 2000,
             },
         });
+        // Aliases are switched separately. With them off the worker never reads router settings
+        // and never contacts the router; with them on every router setting must be valid.
+        let promotionPorts: ReturnType<typeof createPromotionPorts> | undefined;
+        if (parseAliasConfig(process.env).enabled) {
+            const routing = parseAppRoutingConfig(process.env);
+            if (!routing.enabled)
+                throw new Error("Router settings are required when aliases are on.");
+            promotionPorts = createPromotionPorts({ settings: routing });
+        }
         const db = createDatabase(databaseUrl, {
             max: 2,
             connectionTimeout: 5,
@@ -69,6 +81,7 @@ async function main() {
                 owner: randomUUID(),
                 ports,
                 deletionPorts,
+                promotionPorts,
                 shutdown: shutdown.signal,
                 markHealthy,
                 log,

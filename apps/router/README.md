@@ -23,10 +23,10 @@ router verification through commit. Update the worker epoch and token files befo
 resuming work. `--standalone` is only for isolated routers with no Launchpad model
 users and must never be used on managed state.
 
-If the worker parks an operation with `alias-generation-mismatch`, use
-`launchpad-admin promotion-repair-generation --operation <id> --target <deployment-id>
+If the worker parks an operation (`route-outcome-unknown` or `alias-generation-mismatch`), use
+`launchpad-admin promotion-reconcile --operation <id> --target <deployment-id>
 --i-have-verified-the-router-by-exact-route` (or `--withdraw` for an uncertain
-withdrawal). Point the admin at the authoritative router and model database.
+withdrawal; `promotion-repair-generation` is the same command). Point the admin at the authoritative router and model database.
 The command reads and checks that exact alias, then queues a correction above
 the database and router counters. It neither changes the route nor releases
 pins; a worker must verify the correction. If the alias or router reports an
