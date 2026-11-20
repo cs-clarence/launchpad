@@ -143,7 +143,8 @@ exposing membership APIs.
 
 Milestone 2 scopes use the service actions `organization:read`, `member:read`,
 `project:read`, `project:create` and `project:delete` (reserved until its endpoint
-exists). Later preview/log actions will extend that list. Membership/key administration requires
+exists). P3 adds `app:read`, `app:deploy` and `app:delete`; promotion and alias scopes follow
+in P4 (the dashboard key form offers them in P6). Membership/key administration requires
 dedicated elevated permissions and browser-session reauthentication as needed.
 Keys cannot mint more powerful keys or bypass project restrictions.
 

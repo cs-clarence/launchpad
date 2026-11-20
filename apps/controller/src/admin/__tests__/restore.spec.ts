@@ -45,6 +45,7 @@ let restoreTool = "";
 let backupDir = "";
 let owner: Principal;
 let org = "";
+let projectId = "";
 let counter = 0;
 const digests: string[] = [];
 const targets: Awaited<ReturnType<typeof createTestDatabase>>[] = [];
@@ -61,7 +62,7 @@ const upload = async (content: string) => {
                 controller.close();
             },
         }),
-        { contentLength: bytes.length },
+        { contentLength: bytes.length, projectId },
         { dataDir: sourceData, limits: {} },
     );
 };
@@ -139,6 +140,7 @@ beforeAll(async () => {
         )
     ).id;
     owner = { userId: annId, instanceRole: "user" };
+    projectId = (await createProject(source.db, owner, org, { name: "Seed", slug: "seed" })).id;
     for (const name of ["one", "two", "three"]) digests.push((await upload(name)).digest);
     backupDir = path.join(work, "backup");
     await createBackup({

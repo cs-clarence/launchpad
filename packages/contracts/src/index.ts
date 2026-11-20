@@ -16,6 +16,9 @@ export const API_KEY_SCOPES = [
     "project:read",
     "project:create",
     "project:delete",
+    "app:read",
+    "app:deploy",
+    "app:delete",
 ] as const;
 export type ApiKeyScopeName = (typeof API_KEY_SCOPES)[number];
 
@@ -50,6 +53,17 @@ export const nameSchema = z
     .refine((value) => !/[\p{Cc}\p{Cf}]/u.test(value), "contains control characters");
 
 export const createProjectSchema = z.object({ name: nameSchema, slug: slugSchema });
+
+export const createAppSchema = z.object({ slug: slugSchema });
+
+export const createDeploymentSchema = z.object({
+    artifactId: z.uuid(),
+    spa: z.boolean().optional(),
+    ttl: durationSchema.optional().meta({
+        description:
+            "How long the deployment is kept, such as 7d. Defaults to the instance default and cannot exceed the instance maximum.",
+    }),
+});
 
 export const createApiKeySchema = z
     .object({

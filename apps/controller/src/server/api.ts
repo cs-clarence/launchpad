@@ -167,6 +167,7 @@ export function createApi(deps: {
         "delivery-failed": 502,
         "too-large": 413,
         timeout: 408,
+        unavailable: 503,
     } as const;
 
     async function execute(

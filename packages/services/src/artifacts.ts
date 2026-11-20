@@ -160,11 +160,16 @@ export async function uploadArtifact(
     principal: Principal,
     organizationId: string,
     body: ReadableStream<Uint8Array> | null,
-    meta: { contentLength: number | null },
+    // `restrictTo` is an API key's project allow-list (null or absent: every project).
+    meta: { contentLength: number | null; projectId: string; restrictTo?: string[] | null },
     deps: ArtifactDeps,
     signal?: AbortSignal,
 ): Promise<UploadedArtifact> {
     await requireMembership(db, principal, organizationId, "app:deploy");
+    if (meta.restrictTo && !meta.restrictTo.includes(meta.projectId)) {
+        throw new ServiceError("not-found", "Project not found.");
+    }
+    await requireProject(db, organizationId, meta.projectId);
     const limits = resolveLimits(deps.limits);
     if (!body) throw new ServiceError("invalid", "The request has no body.");
     if (meta.contentLength !== null && meta.contentLength > limits.maxUploadBytes) {
@@ -203,6 +208,7 @@ export async function uploadArtifact(
             summary,
             deps,
             limits,
+            meta.projectId,
         );
     } finally {
         releaseUploadSlot(organizationId);
@@ -275,6 +281,7 @@ async function finalize(
     summary: { entryCount: number; expandedBytes: number },
     deps: ArtifactDeps,
     limits: ArtifactLimits,
+    projectId: string,
 ): Promise<UploadedArtifact> {
     const key = artifactStorageKey(organizationId, digest);
     const final = resolveArtifactPath(deps.dataDir, key);
@@ -297,7 +304,7 @@ async function finalize(
         reused,
     });
 
-    return db.transaction().execute(async (trx) => {
+    const store = async (trx: Db): Promise<UploadedArtifact> => {
         // One finalizer per organization: the quota and the digest check cannot race.
         // The lock is per owner directory, the same one the orphan sweep takes before it
         // removes a file there, so a sweep never deletes an archive stored under it.
@@ -409,5 +416,30 @@ async function finalize(
             if (!existed) await fs.rm(final, { force: true });
             throw error;
         }
+    };
+    return db.transaction().execute(async (trx) => {
+        const stored = await store(trx);
+        // Every project an artifact was uploaded through, including a re-upload of known bytes:
+        // a restricted key may deploy it only into one of them.
+        await trx
+            .insertInto("artifact_project")
+            .values({
+                artifact_id: stored.id,
+                organization_id: organizationId,
+                project_id: projectId,
+            })
+            .onConflict((oc) => oc.columns(["artifact_id", "project_id"]).doNothing())
+            .execute();
+        return stored;
     });
+}
+
+async function requireProject(db: Db, organizationId: string, projectId: string) {
+    const project = await db
+        .selectFrom("project")
+        .select("id")
+        .where("id", "=", projectId)
+        .where("organization_id", "=", organizationId)
+        .executeTakeFirst();
+    if (!project) throw new ServiceError("not-found", "Project not found.");
 }

@@ -135,6 +135,77 @@ export function assertCurrentSettings(env: Env): void {
     assertSeparateDomains(appsDomain, managementOrigin(required(env, "LAUNCHPAD_BASE_URL")));
 }
 
+export interface DeploymentConfig {
+    enabled: true;
+    appsDomain: string;
+    deploymentTemplate: HostnameTemplate;
+    defaultTtlSeconds: number;
+    maxTtlSeconds: number;
+    maxApps: number;
+    maxDeploymentsPerApp: number;
+    maxDeployments: number;
+}
+
+export type DeploymentSettings = DeploymentConfig | { enabled: false };
+
+// What creating a deployment needs, and no more: the router, proxy and alias settings belong to
+// aliases and the worker. `LAUNCHPAD_DEPLOYMENTS` is the off switch: anything but `on` is off,
+// and while off nothing else is read, so an unconfigured installation starts as before. Once it
+// is `on` every setting must be valid, and the removed names stay refused.
+export function parseDeploymentConfig(env: Env): DeploymentSettings {
+    assertCurrentSettings(env);
+    const switchValue = env.LAUNCHPAD_DEPLOYMENTS;
+    if (switchValue === undefined || switchValue === "" || switchValue === "off") {
+        return { enabled: false };
+    }
+    if (switchValue !== "on") {
+        throw new Error('LAUNCHPAD_DEPLOYMENTS must be "on" or "off".');
+    }
+    const appsDomain = required(env, "LAUNCHPAD_APPS_DOMAIN");
+    const duration = (name: string, fallback: number, max: number) => {
+        const raw = env[name];
+        if (raw === undefined || raw === "") return fallback;
+        const seconds = parseDuration(raw);
+        if (seconds === null || seconds <= 0 || seconds > max) {
+            throw new Error(`${name} must be a positive duration of at most ${max / DAY}d.`);
+        }
+        return seconds;
+    };
+    const maxTtlSeconds = duration("LAUNCHPAD_MAX_TTL", 30 * DAY, 365 * DAY);
+    const defaultTtlSeconds = duration(
+        "LAUNCHPAD_DEFAULT_TTL",
+        Math.min(7 * DAY, maxTtlSeconds),
+        maxTtlSeconds,
+    );
+    const maxApps = integer(env, "LAUNCHPAD_MAX_APPS", 10, 100_000);
+    const maxDeploymentsPerApp = integer(env, "LAUNCHPAD_MAX_DEPLOYMENTS_PER_APP", 20, 1000);
+    const maxDeployments = integer(env, "LAUNCHPAD_MAX_DEPLOYMENTS", 100, 100_000);
+    if (maxDeploymentsPerApp > maxDeployments) {
+        throw new Error(
+            "LAUNCHPAD_MAX_DEPLOYMENTS_PER_APP cannot exceed LAUNCHPAD_MAX_DEPLOYMENTS.",
+        );
+    }
+    let deploymentTemplate: HostnameTemplate;
+    try {
+        deploymentTemplate = parseHostnameTemplate(
+            env.LAUNCHPAD_DEPLOYMENT_HOSTNAME_TEMPLATE || DEFAULT_DEPLOYMENT_TEMPLATE,
+            appsDomain,
+        );
+    } catch (error) {
+        throw new Error(`LAUNCHPAD_DEPLOYMENT_HOSTNAME_TEMPLATE: ${(error as Error).message}`);
+    }
+    return {
+        enabled: true,
+        appsDomain,
+        deploymentTemplate,
+        defaultTtlSeconds,
+        maxTtlSeconds,
+        maxApps,
+        maxDeploymentsPerApp,
+        maxDeployments,
+    };
+}
+
 export function parseAppRoutingConfig(env: Env): AppRoutingSettings {
     assertNoRemovedSettings(env);
     if (env.LAUNCHPAD_APPS_DOMAIN === undefined || env.LAUNCHPAD_APPS_DOMAIN === "") {

@@ -126,6 +126,13 @@ export interface ArtifactTable {
     collected_at: Date | null;
 }
 
+export interface ArtifactProjectTable {
+    artifact_id: string;
+    organization_id: string;
+    project_id: string;
+    created_at: Generated<Date>;
+}
+
 export interface AppTable {
     id: Generated<string>;
     organization_id: string;
@@ -327,6 +334,7 @@ export interface Database {
     organization_invitation: InvitationTable;
     api_key: ApiKeyTable;
     artifact: ArtifactTable;
+    artifact_project: ArtifactProjectTable;
     app: AppTable;
     deployment: DeploymentTable;
     app_deployment_event: AppDeploymentEventTable;
