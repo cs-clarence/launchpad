@@ -224,50 +224,72 @@ const code = (promise: Promise<unknown>) =>
         (error) => (error instanceof ServiceError ? error.code : `unexpected: ${error}`),
     );
 
-describe("the worked acceptance example", () => {
+// The scenario is one ordered story: each step builds on the state the last one left, so it
+// runs as a single test, with the failing step named in the error.
+async function step(name: string, run: () => Promise<void>) {
+    try {
+        await run();
+    } catch (error) {
+        if (error instanceof Error) error.message = `${name}: ${error.message}`;
+        throw error;
+    }
+}
+
+it("runs the worked acceptance example in order", { timeout: 120_000 }, async () => {
     let a = "";
     let b = "";
 
-    it("deploys the same artifact twice into two independent apps and hostnames", async () => {
-        const artifact = await upload(SITE);
-        artifactX = artifact;
-        // Two simultaneous deploys to one app: exactly one is accepted.
-        const raced = await Promise.all(
-            [1, 2].map(() =>
-                createDeployment(source.db, actor, org, app, { artifactId: artifact }, deps()).then(
-                    (deployment) => deployment,
-                    (error: unknown) => error,
+    await step(
+        "deploys the same artifact twice into two independent apps and hostnames",
+        async () => {
+            const artifact = await upload(SITE);
+            artifactX = artifact;
+            // Two simultaneous deploys to one app: exactly one is accepted.
+            const raced = await Promise.all(
+                [1, 2].map(() =>
+                    createDeployment(
+                        source.db,
+                        actor,
+                        org,
+                        app,
+                        { artifactId: artifact },
+                        deps(),
+                    ).then(
+                        (deployment) => deployment,
+                        (error: unknown) => error,
+                    ),
                 ),
-            ),
-        );
-        const refused = raced.filter((result) => result instanceof ServiceError);
-        expect(refused).toHaveLength(1);
-        expect((refused[0] as ServiceError).code).toBe("conflict");
-        a = (raced.find((result) => !(result instanceof ServiceError)) as { id: string }).id;
-        await work();
-        expect(await row(a)).toMatchObject({ status: "succeeded", step_done: "verify" });
-        b = (await createDeployment(source.db, actor, org, app, { artifactId: artifact }, deps()))
-            .id;
-        await work();
-        const [first, second] = [await row(a), await row(b)];
-        expect(second).toMatchObject({ status: "succeeded" });
-        expect(new Set([first.app_name, second.app_name]).size).toBe(2);
-        expect(new Set([first.hostname, second.hostname]).size).toBe(2);
-        for (const deployment of [first, second]) {
-            expect(deployment.app_name).toMatch(/^lp-[a-z0-9]{10}$/);
-            expect(deployment.image_id).toMatch(/^sha256:[0-9a-f]{64}$/);
-            expect(deployment.image_tag).toBe(`launchpad/site:${compactId(deployment.id)}`);
-        }
-        expect(new Set([first.image_id, second.image_id]).size).toBe(2);
-        for (const deployment of [first, second]) {
-            expect(dokkuApps.get(deployment.app_name)).toMatchObject({
-                hostname: deployment.hostname,
-                loaded: deployment.image_tag,
-            });
-        }
-    });
+            );
+            const refused = raced.filter((result) => result instanceof ServiceError);
+            expect(refused).toHaveLength(1);
+            expect((refused[0] as ServiceError).code).toBe("conflict");
+            a = (raced.find((result) => !(result instanceof ServiceError)) as { id: string }).id;
+            await work();
+            expect(await row(a)).toMatchObject({ status: "succeeded", step_done: "verify" });
+            b = (
+                await createDeployment(source.db, actor, org, app, { artifactId: artifact }, deps())
+            ).id;
+            await work();
+            const [first, second] = [await row(a), await row(b)];
+            expect(second).toMatchObject({ status: "succeeded" });
+            expect(new Set([first.app_name, second.app_name]).size).toBe(2);
+            expect(new Set([first.hostname, second.hostname]).size).toBe(2);
+            for (const deployment of [first, second]) {
+                expect(deployment.app_name).toMatch(/^lp-[a-z0-9]{10}$/);
+                expect(deployment.image_id).toMatch(/^sha256:[0-9a-f]{64}$/);
+                expect(deployment.image_tag).toBe(`launchpad/site:${compactId(deployment.id)}`);
+            }
+            expect(new Set([first.image_id, second.image_id]).size).toBe(2);
+            for (const deployment of [first, second]) {
+                expect(dokkuApps.get(deployment.app_name)).toMatchObject({
+                    hostname: deployment.hostname,
+                    loaded: deployment.image_tag,
+                });
+            }
+        },
+    );
 
-    it("fails a bad artifact having touched only its own resources", async () => {
+    await step("fails a bad artifact having touched only its own resources", async () => {
         const before = structuredClone(Object.fromEntries(dokkuApps));
         const logStart = remoteLog.length;
         // It passed validation at upload, then the stored archive was damaged: the worker
@@ -294,75 +316,86 @@ describe("the worked acceptance example", () => {
         }
     });
 
-    it("refuses to delete unfinished or held deployments, and reconcile unblocks the app", async () => {
-        const artifact = await upload([...SITE, { name: "next.txt", content: "next" }]);
-        const d = (
-            await createDeployment(source.db, actor, org, app, { artifactId: artifact }, deps())
-        ).id;
-        expect(await code(requestDeploymentDeletion(source.db, actor, org, d, deps()))).toBe(
-            "conflict",
-        );
-        // A load whose reply is lost is uncertain: the deployment is held, never retried.
-        failNextLoad = true;
-        await work("reconciliation-needed");
-        expect(await row(d)).toMatchObject({
-            status: "reconciliation-needed",
-            step_pending: "load",
-        });
-        expect(await code(requestDeploymentDeletion(source.db, actor, org, d, deps()))).toBe(
-            "conflict",
-        );
-        expect(
-            await code(
-                createDeployment(source.db, actor, org, app, { artifactId: artifact }, deps()),
-            ),
-        ).toBe("conflict");
-        await reconcileDeployment(source.db, tmp.dir, {
-            deploymentId: d,
-            outcome: "failed-clean",
-            attested: true,
-        });
-        expect(await row(d)).toMatchObject({ status: "failed", failure_code: "reconciled-clean" });
-    });
+    await step(
+        "refuses to delete unfinished or held deployments, and reconcile unblocks the app",
+        async () => {
+            const artifact = await upload([...SITE, { name: "next.txt", content: "next" }]);
+            const d = (
+                await createDeployment(source.db, actor, org, app, { artifactId: artifact }, deps())
+            ).id;
+            expect(await code(requestDeploymentDeletion(source.db, actor, org, d, deps()))).toBe(
+                "conflict",
+            );
+            // A load whose reply is lost is uncertain: the deployment is held, never retried.
+            failNextLoad = true;
+            await work("reconciliation-needed");
+            expect(await row(d)).toMatchObject({
+                status: "reconciliation-needed",
+                step_pending: "load",
+            });
+            expect(await code(requestDeploymentDeletion(source.db, actor, org, d, deps()))).toBe(
+                "conflict",
+            );
+            expect(
+                await code(
+                    createDeployment(source.db, actor, org, app, { artifactId: artifact }, deps()),
+                ),
+            ).toBe("conflict");
+            // Its app exists on Dokku (only the load reply was lost), so the operator records ownership.
+            expect(dokkuApps.has((await row(d)).app_name)).toBe(true);
+            await reconcileDeployment(source.db, tmp.dir, {
+                deploymentId: d,
+                outcome: "failed-owned",
+                attested: true,
+            });
+            expect(await row(d)).toMatchObject({
+                status: "failed",
+                failure_code: "reconciled-owned",
+            });
+        },
+    );
 
-    it("deletes B: its app and exact image go, its row stays and its names stay reserved", async () => {
-        const target = await row(b);
-        const tags = [a, b].map((id) => `launchpad/site:${compactId(id)}`);
-        expect(tags.every((tag) => localImages.has(tag))).toBe(true);
-        await requestDeploymentDeletion(source.db, actor, org, b, deps());
-        expect(await code(requestDeploymentDeletion(source.db, actor, org, b, deps()))).toBe(
-            "conflict",
-        );
-        const logStart = remoteLog.length;
-        await work();
-        expect(new Set(remoteLog.slice(logStart).map((line) => line.split(" ")[1]))).toEqual(
-            new Set([target.app_name]),
-        );
-        expect(dokkuApps.has(target.app_name)).toBe(false);
-        expect(localImages.has(tags[1]!)).toBe(false);
-        expect(localImages.has(tags[0]!)).toBe(true);
-        expect(await row(b)).toMatchObject({ desired_state: "deleted" });
-        expect(await row(a)).toMatchObject({ status: "succeeded", desired_state: "active" });
-        expect(dokkuApps.has((await row(a)).app_name)).toBe(true);
-        expect(
-            await source.db
-                .selectFrom("hostname_reservation")
-                .select("released_at")
-                .where("hostname", "=", target.hostname)
-                .executeTakeFirstOrThrow(),
-        ).toEqual({ released_at: null });
-        expect(
-            await source.db
-                .selectFrom("dokku_name_reservation")
-                .select("released_at")
-                .where("app_name", "=", target.app_name)
-                .executeTakeFirstOrThrow(),
-        ).toEqual({ released_at: null });
-        const shown = await getDeployment(source.db, actor, org, b);
-        expect(shown).toMatchObject({ desiredState: "deleted" });
-    });
+    await step(
+        "deletes B: its app and exact image go, its row stays and its names stay reserved",
+        async () => {
+            const target = await row(b);
+            const tags = [a, b].map((id) => `launchpad/site:${compactId(id)}`);
+            expect(tags.every((tag) => localImages.has(tag))).toBe(true);
+            await requestDeploymentDeletion(source.db, actor, org, b, deps());
+            expect(await code(requestDeploymentDeletion(source.db, actor, org, b, deps()))).toBe(
+                "conflict",
+            );
+            const logStart = remoteLog.length;
+            await work();
+            expect(new Set(remoteLog.slice(logStart).map((line) => line.split(" ")[1]))).toEqual(
+                new Set([target.app_name]),
+            );
+            expect(dokkuApps.has(target.app_name)).toBe(false);
+            expect(localImages.has(tags[1]!)).toBe(false);
+            expect(localImages.has(tags[0]!)).toBe(true);
+            expect(await row(b)).toMatchObject({ desired_state: "deleted" });
+            expect(await row(a)).toMatchObject({ status: "succeeded", desired_state: "active" });
+            expect(dokkuApps.has((await row(a)).app_name)).toBe(true);
+            expect(
+                await source.db
+                    .selectFrom("hostname_reservation")
+                    .select("released_at")
+                    .where("hostname", "=", target.hostname)
+                    .executeTakeFirstOrThrow(),
+            ).toEqual({ released_at: null });
+            expect(
+                await source.db
+                    .selectFrom("dokku_name_reservation")
+                    .select("released_at")
+                    .where("app_name", "=", target.app_name)
+                    .executeTakeFirstOrThrow(),
+            ).toEqual({ released_at: null });
+            const shown = await getDeployment(source.db, actor, org, b);
+            expect(shown).toMatchObject({ desiredState: "deleted" });
+        },
+    );
 
-    it("refuses model mutations after a restore until the operator attests", async () => {
+    await step("refuses model mutations after a restore until the operator attests", async () => {
         await markDeploymentRecoveryBlocked(tmp.dir);
         await blockRestoredModel(source.db);
         await expect(

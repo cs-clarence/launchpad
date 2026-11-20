@@ -13,8 +13,9 @@ or prove. `restore` never contacts Dokku. Back up the target database first.
    the longest possible remote Dokku command and the five-minute deletion lease
    (longer for slow destroy triggers). An enabled deployment worker needs its stop
    grace period (at least 30 seconds) and then a wait longer than one dispatch (290
-   seconds) and the five-minute lease; an interrupted effect comes back as
-   `reconciliation-needed`. Verify on the Dokku host that no
+   seconds) and the five-minute lease. An interrupted deployment step or app
+   destroy comes back as `reconciliation-needed`; an interrupted image removal
+   resumes on the next claim. Verify on the Dokku host that no
    worker-started Docker/Dokku process remains. An SSH client exiting or an app
    disappearing is not proof of settlement. Make sure no other installation shares this Dokku
    host and data directory.
