@@ -210,7 +210,8 @@ proxy origin (`LAUNCHPAD_APPS_PROXY_URL`); see [install](install.md#install-a-pr
 **Implemented (P4a):** `LAUNCHPAD_ALIASES=on|off` (default off; needs deployments on),
 `LAUNCHPAD_MAX_ALIASES_PER_APP` (5), `LAUNCHPAD_MAX_ALIASES` (50) and
 `LAUNCHPAD_ALIAS_HOSTNAME_TEMPLATE` (`parseAliasConfig`) gate creating and reading aliases. The scopes
-`app:promote` and `app:alias:manage` exist; promotion is not built.
+`app:promote` and `app:alias:manage` exist; promotion is not built. When promotion lands (P4c),
+turning aliases on will also require the router settings.
 
 **Planned, not implemented:** private alias control/probe settings and the router client.
 See [the design](design/deployment-modes.md) and

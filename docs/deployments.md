@@ -15,7 +15,7 @@ deployment; quotas limit apps and retained deployments (`LAUNCHPAD_MAX_APPS`,
 (`POST /apps/{appId}/aliases` with `{"slug":"prod"}`, `app:alias:manage`, needs `LAUNCHPAD_ALIASES=on`)
 but point at nothing yet: promotion and automatic expiry are not built.
 
-Keys need `app:read`, `app:deploy` or `app:delete`. The dashboard key form does not offer these scopes yet:
+Keys need `app:read`, `app:deploy`, `app:delete` or `app:alias:manage`. The dashboard key form does not offer these scopes yet:
 an owner or admin signed in fresh issues the key through `POST /api/v1/organizations/{orgId}/api-keys` (see
 [the controller README](../apps/controller/README.md)). A key never exceeds its creator's role (viewer reads;
 deployer creates apps, deploys and deletes). A project-limited key reaches only its projects and may deploy

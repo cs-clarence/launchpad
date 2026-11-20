@@ -445,6 +445,11 @@ describe("apps and deployments over HTTP", () => {
         expect((await call(api, "aliaser-p2", "GET", `${base()}/aliases/${alias.id}`)).status).toBe(
             404,
         );
+        // A deploy-capable key without the alias scope is refused, and a bad id is a 404.
+        expect((await call(api, "full", "POST", route, { body: { slug: "x" } })).status).toBe(403);
+        expect((await call(api, "reader", "GET", `${base()}/apps/not-a-uuid/aliases`)).status).toBe(
+            404,
+        );
         // Reads still work while aliases are off.
         expect((await call(offApi, "reader", "GET", route)).status).toBe(200);
     });

@@ -435,7 +435,7 @@ export const docs = {
         tags: ["Aliases"],
         summary: "Create an alias",
         description:
-            "Deployers and above; a key needs `app:alias:manage` and, if project-limited, the app's project. An alias is a stable hostname of its own for an app, created unbound (it answers 404 and points at no deployment). Its hostname is permanent and never reused. Refused at the per-app and per-organization alias limits. Needs deployments and aliases to be on. Routing a deployment to it comes later.",
+            "Deployers and above; a key needs `app:alias:manage` and, if project-limited, the app's project. An alias is a stable hostname of its own for an app, created unbound (it points at no deployment, and routes nowhere until the router lands). Its hostname is permanent and never reused. Refused at the per-app and per-organization alias limits. Needs deployments and aliases to be on. Routing a deployment to it comes later.",
         path: ["orgId", "appId"],
         body: createAliasSchema,
         ok: { status: 201, description: "Created.", schema: aliasSchema },

@@ -166,7 +166,7 @@ describe("aliases", () => {
         expect(await code(getAlias(testDb.db, people.dee!, org, "not-a-uuid"))).toBe("not-found");
     });
 
-    it("enforces the per-app and per-organization limits, even under a race", async () => {
+    it("enforces the per-app limit under a race", async () => {
         const app = await newApp();
         const limits = { LAUNCHPAD_MAX_ALIASES_PER_APP: "2", LAUNCHPAD_MAX_ALIASES: "1000" };
         const results = await Promise.all(
@@ -175,6 +175,40 @@ describe("aliases", () => {
         expect(results.filter((result) => result === "ok")).toHaveLength(2);
         expect(results.filter((result) => result === "conflict")).toHaveLength(2);
         expect(await listAliases(testDb.db, people.dee!, org, app.id)).toHaveLength(2);
+    });
+
+    it("enforces the organization limit across different apps under a race", async () => {
+        const live = Number(
+            (
+                await testDb.db
+                    .selectFrom("app_alias")
+                    .select((eb) => eb.fn.countAll<string>().as("n"))
+                    .where("organization_id", "=", org)
+                    .where("state", "<>", "withdrawn")
+                    .executeTakeFirstOrThrow()
+            ).n,
+        );
+        const limits = {
+            LAUNCHPAD_MAX_ALIASES_PER_APP: "1",
+            LAUNCHPAD_MAX_ALIASES: String(live + 2),
+        };
+        const apps = await Promise.all([newApp(), newApp(), newApp(), newApp()]);
+        const results = await Promise.all(
+            apps.map((app) => code(create(app.id, "race", "dee", limits))),
+        );
+        expect(results.filter((result) => result === "ok")).toHaveLength(2);
+        expect(results.filter((result) => result === "conflict")).toHaveLength(2);
+    });
+
+    it("answers a malformed app id and an unusable slug with client errors", async () => {
+        expect(await code(create("not-a-uuid"))).toBe("not-found");
+        expect(await code(listAliases(testDb.db, people.dee!, org, "not-a-uuid"))).toBe(
+            "not-found",
+        );
+        const app = await newApp();
+        // A template that starts with the slug cannot render this slug as a valid label.
+        const template = { LAUNCHPAD_ALIAS_HOSTNAME_TEMPLATE: "{slug}-{id}-view" };
+        expect(await code(create(app.id, "ab--x", "dee", template))).toBe("invalid");
     });
 
     it("counts only live aliases against the limit", async () => {
@@ -190,9 +224,21 @@ describe("aliases", () => {
             .execute();
         const next = await create(app.id, "one", "dee", limits);
         expect(next.hostname).not.toBe(first.hostname);
+        const reservation = await testDb.db
+            .selectFrom("hostname_reservation")
+            .select(["owner_id", "released_at"])
+            .where("hostname", "=", first.hostname)
+            .executeTakeFirstOrThrow();
+        expect(reservation).toEqual({ owner_id: first.id, released_at: null });
+        await expect(
+            testDb.db
+                .deleteFrom("hostname_reservation")
+                .where("hostname", "=", first.hostname)
+                .execute(),
+        ).rejects.toThrow();
     });
 
-    it("is refused when aliases or deployments are off, and while recovery is blocked", async () => {
+    it("is refused when aliases are off, and while recovery is blocked", async () => {
         const app = await newApp();
         const off = { LAUNCHPAD_ALIASES: "off" };
         expect(await code(create(app.id, "p", "dee", off))).toBe("unavailable");

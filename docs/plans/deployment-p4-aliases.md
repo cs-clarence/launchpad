@@ -38,8 +38,9 @@ verification beyond the counter checks (P5), and the Dokku rehearsal (P7).
    withdraw). Deployer role and above, as for deploy and delete. Keys need the scope; project
    limits apply; no mapping from older scopes.
 2. **Switch.** `LAUNCHPAD_ALIASES=on|off` (default off), valid only with `LAUNCHPAD_DEPLOYMENTS=on`.
-   Turning it on requires the router settings that `parseAppRoutingConfig` already defines
-   (`LAUNCHPAD_APPS_PROXY_URL`, alias control and probe URLs, instance ID, token and epoch files).
+   P4a needs only the switch, limits and hostname template. From P4c, turning it on also requires
+   the router settings that `parseAppRoutingConfig` already defines (`LAUNCHPAD_APPS_PROXY_URL`, alias
+   control and probe URLs, instance ID, token and epoch files), and the upgrade notes say so.
    Off: alias writes answer 503, reads work, the worker never contacts the router.
 3. **Idempotency.** Every promotion or withdrawal request needs an `Idempotency-Key` header (1 to
    128 characters). The same key with the same payload returns the same operation; the same key with
@@ -124,4 +125,4 @@ real router on loopback. Update install, restore, upgrade, tooling and the deplo
 
 Each slice: `omni -i run check test build test:integration` on disposable PostgreSQL (stopped
 afterwards); image, upgrade and package gates where touched; independent read-only review before each
-push; CodeRabbit and CI before merge. Awaiting approval of the decisions above before P4a starts.
+push; CodeRabbit and CI before merge.

@@ -6,7 +6,8 @@ import type { AliasConfig, AliasSettings } from "./app-routing-config";
 import type { Principal } from "./authorization";
 import { withModelMutation } from "./deployment-recovery";
 import { isUniqueViolation, ServiceError } from "./errors";
-import { allocateHostname } from "./hostname-template";
+import { allocateHostname, HostnameTemplateError } from "./hostname-template";
+import { isUuid } from "./ids";
 import { parseInput, recordAudit, requireMembership } from "./organizations";
 
 type Db = Kysely<Database>;
@@ -60,6 +61,7 @@ export async function createAlias(
 ) {
     await requireMembership(db, principal, organizationId, "app:alias:manage");
     const config = requireAliasesOn(deps);
+    if (!isUuid(appId)) throw new ServiceError("not-found", "App not found.");
     const data = parseInput(createAliasSchema, input);
     try {
         return await withModelMutation(db, deps.dataDir, async (trx) => {
@@ -93,16 +95,25 @@ export async function createAlias(
             if ((await count("organization_id", organizationId)) >= config.maxAliases) {
                 throw new ServiceError("conflict", "This organization has too many aliases.");
             }
-            const { hostname } = await allocateHostname({
-                template: config.aliasTemplate,
-                slug: data.slug,
-                isTaken: async (name) =>
-                    !!(await trx
-                        .selectFrom("hostname_reservation")
-                        .select("hostname")
-                        .where("hostname", "=", name)
-                        .executeTakeFirst()),
-            });
+            let hostname: string;
+            try {
+                ({ hostname } = await allocateHostname({
+                    template: config.aliasTemplate,
+                    slug: data.slug,
+                    isTaken: async (name) =>
+                        !!(await trx
+                            .selectFrom("hostname_reservation")
+                            .select("hostname")
+                            .where("hostname", "=", name)
+                            .executeTakeFirst()),
+                }));
+            } catch (error) {
+                // A slug the chosen template cannot turn into a valid hostname is the caller's.
+                if (error instanceof HostnameTemplateError) {
+                    throw new ServiceError("invalid", error.message);
+                }
+                throw error;
+            }
             const alias = await trx
                 .insertInto("app_alias")
                 .values({
@@ -154,6 +165,7 @@ export async function listAliases(
     restrictTo?: string[] | null,
 ) {
     await requireMembership(db, principal, organizationId, "app:read");
+    if (!isUuid(appId)) throw new ServiceError("not-found", "App not found.");
     const app = await db
         .selectFrom("app")
         .select("project_id")
@@ -183,7 +195,7 @@ export async function getAlias(
     restrictTo?: string[] | null,
 ) {
     await requireMembership(db, principal, organizationId, "app:read");
-    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(aliasId)) {
+    if (!isUuid(aliasId)) {
         throw new ServiceError("not-found", "Alias not found.");
     }
     const row = await db
