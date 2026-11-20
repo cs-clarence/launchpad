@@ -164,7 +164,8 @@ or prove. `restore` never contacts Dokku. Back up the target database first.
     recovery stays blocked. Once you have checked the Dokku host, run
     `recovery-republish-alias --alias <uuid> --withdraw-unservable-target`. This
     **overrides the restored database's committed target**: it refuses if the target
-    still serves, writes a tombstone above both generation fences, verifies the exact
+    still serves (a 404, or a 502-504 with no deployment identity, counts as not
+    serving; an unreachable, redirected or otherwise unexpected answer refuses), writes a tombstone above both generation fences, verifies the exact
     tombstone and that nothing is served, then records a withdrawal, releases the
     alias hostname reservation and unpins the target. It is audited with the
     withdrawn target and the old deployment stays in history.

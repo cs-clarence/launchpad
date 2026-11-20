@@ -34,6 +34,7 @@ import {
     readDriftProbes,
     readDriftRouter,
     readRepublishProbe,
+    readUnservableProbe,
 } from "./drift";
 import { recoveryAnchorNotice, routerAnchorFromEnv, routerSessionFromEnv } from "./router-view";
 import { checkRestore, restoreBackup, replaceTarget } from "./restore";
@@ -315,7 +316,11 @@ program
                 {
                     ...router,
                     serves: async (hostname, target) =>
-                        (await readRepublishProbe(env.LAUNCHPAD_ALIAS_PROBE_URL, hostname)) ===
+                        (await (
+                            options.withdrawUnservableTarget === true && target !== null
+                                ? readUnservableProbe
+                                : readRepublishProbe
+                        )(env.LAUNCHPAD_ALIAS_PROBE_URL, hostname)) ===
                         (target?.deploymentId ?? null),
                 },
                 options.routerEpochUnrecorded === true,

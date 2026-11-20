@@ -10,7 +10,14 @@ import {
 import { createRouterControlClient } from "@launchpad-kit/alias-router/control-client";
 import type { DriftDatabase } from "@launchpad-kit/services";
 import { describe, expect, it } from "vitest";
-import { collectDrift, driftCommandExitCode, readDriftProbes, readDriftRouter } from "../drift";
+import {
+    collectDrift,
+    driftCommandExitCode,
+    readDriftProbes,
+    readDriftRouter,
+    readRepublishProbe,
+    readUnservableProbe,
+} from "../drift";
 import { routerSessionFromEnv } from "../router-view";
 
 const empty: DriftDatabase = {
@@ -153,6 +160,40 @@ describe("drift reads through the real loopback router", () => {
             await expect(
                 readDriftProbes({ LAUNCHPAD_ALIAS_PROBE_URL: "http://127.0.0.1:1" }, db),
             ).rejects.toThrow();
+        } finally {
+            await server.stop(true);
+        }
+    });
+
+    it("treats a proxy with no upstream as serving nothing, and anything ambiguous as an error", async () => {
+        let status = 503;
+        let identity: string | null = null;
+        const server = Bun.serve({
+            hostname: "127.0.0.1",
+            port: 0,
+            fetch: () =>
+                new Response(null, {
+                    status,
+                    headers: identity ? { "x-launchpad-deployment": identity } : {},
+                }),
+        });
+        const origin = `http://127.0.0.1:${server.port}`;
+        const host = "view-prod.sites.example.net";
+        try {
+            for (status of [502, 503, 504]) {
+                expect(await readUnservableProbe(origin, host)).toBeNull();
+                // The republish probe stays strict: an upstream failure is not a verified withdrawal.
+                await expect(readRepublishProbe(origin, host)).rejects.toThrow();
+            }
+            // A proxy that stamps an identity is serving something: not an absent upstream.
+            identity = randomUUID().replaceAll("-", "");
+            status = 503;
+            await expect(readUnservableProbe(origin, host)).rejects.toThrow();
+            identity = null;
+            for (status of [500, 401, 302]) {
+                await expect(readUnservableProbe(origin, host)).rejects.toThrow();
+            }
+            await expect(readUnservableProbe("http://127.0.0.1:1", host)).rejects.toThrow();
         } finally {
             await server.stop(true);
         }

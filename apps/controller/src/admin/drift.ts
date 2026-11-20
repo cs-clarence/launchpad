@@ -133,6 +133,7 @@ function identity(
     hostname: string,
     signal: AbortSignal,
     requireFixed404 = false,
+    upstreamFailureIsAbsent = false,
 ): Promise<string | null> {
     return new Promise((resolve, reject) => {
         const request = (url.protocol === "https:" ? https : http).request(
@@ -149,6 +150,14 @@ function identity(
                 const header = response.headers["x-launchpad-deployment"];
                 response.destroy();
                 if (response.statusCode === 404 && (!requireFixed404 || header === undefined))
+                    return resolve(null);
+                // A proxy with no working upstream (the app is gone) answers 502-504 and never
+                // stamps a deployment identity. Any other status stays ambiguous and rejects.
+                if (
+                    upstreamFailureIsAbsent &&
+                    [502, 503, 504].includes(response.statusCode ?? 0) &&
+                    header === undefined
+                )
                     return resolve(null);
                 if (response.statusCode !== 200) return reject(new Error("Probe unavailable."));
                 if (header === undefined) {
@@ -173,6 +182,13 @@ function identity(
 
 export function readRepublishProbe(value: string | undefined, hostname: string) {
     return identity(probeOrigin(value), hostname, AbortSignal.timeout(5000), true);
+}
+
+// For deciding whether a committed target can still serve: like the republish probe, but a proxy
+// answering 502-504 without an identity header counts as "serves nothing". Unreachable, redirected
+// or otherwise unexpected answers still fail closed.
+export function readUnservableProbe(value: string | undefined, hostname: string) {
+    return identity(probeOrigin(value), hostname, AbortSignal.timeout(5000), true, true);
 }
 
 // Uses configured proxy origins, not uploaded content or per-record target URLs.
