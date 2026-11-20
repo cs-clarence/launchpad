@@ -608,6 +608,20 @@ describe("corrective operations", () => {
         expect(await code(deleteDeployment(first))).toBe("conflict");
     });
 
+    it("accepts an uppercase target and remembers every target of a long chain", async () => {
+        const { alias, previous, first, operation } = await held();
+        let current = operation.id;
+        // Many corrections back to the prior target: the original target must stay a valid outcome.
+        for (let i = 0; i < 12; i += 1) {
+            const next = await correct(current, "bind", previous.toUpperCase());
+            await hold(next.operationId);
+            current = next.operationId;
+        }
+        const last = await correct(current, "bind", first.toUpperCase());
+        expect(last.generation).toBe("15");
+        expect((await operations(alias.id)).length).toBe(14);
+    });
+
     it("permits only the outcomes the design allows", async () => {
         const { alias, first, operation, ready } = await held();
         const unrelated = await ready();

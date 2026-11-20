@@ -338,6 +338,13 @@ export async function supersedeOperation(
         );
     }
     if (!isUuid(input.operationId)) throw new ServiceError("not-found", "Operation not found.");
+    if (input.targetDeploymentId !== undefined) {
+        if (!isUuid(input.targetDeploymentId)) {
+            throw new ServiceError("invalid", "The target is not a deployment ID.");
+        }
+        // PostgreSQL returns lowercase ids, so compare and store the normalized form.
+        input = { ...input, targetDeploymentId: input.targetDeploymentId.toLowerCase() };
+    }
     if ((input.action === "bind") !== (input.targetDeploymentId !== undefined)) {
         throw new ServiceError("invalid", "A bind needs a target; a withdrawal has none.");
     }
@@ -398,26 +405,22 @@ export async function supersedeOperation(
         // A held bind may end at its target or at the prior stable target; a held withdrawal may
         // end withdrawn or back at the prior target. A corrective operation inherits the options of
         // the whole chain it extends, so the targets are those of every operation in it.
-        const chainTargets = new Set<string | null>();
-        let cursor: string | null = held.id;
-        for (let depth = 0; cursor && depth < 100; depth++) {
-            const link: {
-                previous: string | null;
-                desired: string | null;
-                parent: string | null;
-            } = await trx
-                .selectFrom("promotion_operation")
-                .select([
-                    "previous_target_deployment_id as previous",
-                    "desired_target_deployment_id as desired",
-                    "supersedes_operation_id as parent",
-                ])
-                .where("id", "=", cursor)
-                .executeTakeFirstOrThrow();
-            chainTargets.add(link.previous);
-            chainTargets.add(link.desired);
-            cursor = link.parent;
-        }
+        // The whole chain, however long: a recursive walk up the supersession links.
+        const chain = await sql<{ previous: string | null; desired: string | null }>`
+            with recursive chain as (
+                select id, previous_target_deployment_id, desired_target_deployment_id,
+                    supersedes_operation_id
+                from promotion_operation where id = ${held.id}
+                union all
+                select o.id, o.previous_target_deployment_id, o.desired_target_deployment_id,
+                    o.supersedes_operation_id
+                from promotion_operation o join chain c on o.id = c.supersedes_operation_id
+            )
+            select previous_target_deployment_id as previous,
+                desired_target_deployment_id as desired from chain`.execute(trx);
+        const chainTargets = new Set<string | null>(
+            chain.rows.flatMap((row) => [row.previous, row.desired]),
+        );
         const allowed =
             input.action === "withdraw"
                 ? alias.state === "withdrawal-uncertain"
