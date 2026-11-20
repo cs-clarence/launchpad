@@ -363,6 +363,34 @@ exit 0
         );
     });
 
+    it("keeps the import record and skips rollback when cancellation cannot prove importer exit", async () => {
+        const target = await emptyTarget();
+        await target.migrate();
+        const hang = path.join(work, "pg_restore_hang.sh");
+        await fs.writeFile(
+            hang,
+            `#!/bin/sh\ncase "$*" in *--list*|*--schema-only*) exec ${restoreTool} "$@";; esac\nexec sleep 30\n`,
+            { mode: 0o700 },
+        );
+        const options = restoreOptions(target, {
+            replaceDatabase: replaceTarget(target.url),
+            pgRestore: hang,
+        });
+        const deadline = new AbortController();
+        setTimeout(() => deadline.abort(), 700);
+        await expect(restoreBackup({ ...options, signal: deadline.signal })).rejects.toThrow();
+        await expect(restoreBackup(options)).rejects.toThrow(/previous pg_restore/);
+        await expect(
+            fs.stat(path.join(options.dataDir, "maintenance/deployment-import-in-progress")),
+        ).resolves.toBeTruthy();
+        await acknowledgeDeploymentImport(
+            target.db,
+            options.dataDir,
+            replaceTarget(target.url),
+            true,
+        );
+    });
+
     it("refuses a second restore while a crashed admin's importer wrapper can still connect", async () => {
         const target = await emptyTarget();
         await target.migrate();
@@ -385,9 +413,9 @@ for i in $(seq 1 400); do
 done
 if [ -e "${release}" ]; then
     ${restoreTool} "$@" < "${heldDump}"
-    echo "$?" > "${finished}"
+    echo "$?" > "${finished}.tmp" && mv "${finished}.tmp" "${finished}"
 else
-    echo "124" > "${finished}"
+    echo "124" > "${finished}.tmp" && mv "${finished}.tmp" "${finished}"
 fi
 `,
             { mode: 0o700 },

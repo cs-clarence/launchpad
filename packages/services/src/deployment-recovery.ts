@@ -201,6 +201,14 @@ export async function beginDeploymentImport(
     return record;
 }
 
+// Only for failures before pg_restore is spawned, when no importer can exist.
+export async function abandonDeploymentImport(dataDir: string) {
+    const dir = await maintenance(dataDir);
+    if (!dir) return;
+    await fs.rm(path.join(dir, IMPORT), { force: true });
+    await syncDirectory(dir);
+}
+
 async function readImportRecord(dataDir: string): Promise<DeploymentImportRecord> {
     const dir = await maintenance(dataDir);
     if (!dir) throw new DeploymentRecoveryError("No pending import record exists.");

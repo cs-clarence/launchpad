@@ -43,8 +43,10 @@ describe("deployment model recovery gate", () => {
             release = resolve;
         });
         let connected!: () => void;
-        const ready = new Promise<void>((resolve) => {
+        let failSetup!: (error: unknown) => void;
+        const ready = new Promise<void>((resolve, reject) => {
             connected = resolve;
+            failSetup = reject;
         });
         const importer = source.db.connection().execute(async (connection) => {
             await sql`select set_config('application_name', ${record.applicationName}, false)`.execute(
@@ -57,6 +59,7 @@ describe("deployment model recovery gate", () => {
                 await sql`reset application_name`.execute(connection);
             }
         });
+        importer.catch(failSetup);
         try {
             await ready;
             await expect(
@@ -121,24 +124,33 @@ describe("deployment model recovery gate", () => {
             await held;
         });
         await ready;
-        // Keep the unfixed blocking implementation from hanging the whole suite.
-        const fallback = setTimeout(() => release(), 500);
+        // The writer keeps its lock; a blocking acquisition fails this watchdog instead.
+        let watchdog: ReturnType<typeof setTimeout> | undefined;
+        const stuck = new Promise<never>((_, reject) => {
+            watchdog = setTimeout(
+                () => reject(new Error("watchdog: maintenance lock wait never settled")),
+                2000,
+            );
+        });
         let called = false;
         try {
             await expect(
-                withDeploymentRecoveryMaintenance(
-                    source.db,
-                    async () => {
-                        called = true;
-                        await markDeploymentRecoveryBlocked(dataDir);
-                    },
-                    AbortSignal.timeout(50),
-                ),
-            ).rejects.toThrow();
+                Promise.race([
+                    stuck,
+                    withDeploymentRecoveryMaintenance(
+                        source.db,
+                        async () => {
+                            called = true;
+                            await markDeploymentRecoveryBlocked(dataDir);
+                        },
+                        AbortSignal.timeout(50),
+                    ),
+                ]),
+            ).rejects.toThrow(/abort|timeout|timed out/i);
             expect(called).toBe(false);
             await expect(fs.stat(marker())).rejects.toMatchObject({ code: "ENOENT" });
         } finally {
-            clearTimeout(fallback);
+            clearTimeout(watchdog);
             release();
             await writer;
         }

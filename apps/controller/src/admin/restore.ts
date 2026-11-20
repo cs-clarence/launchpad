@@ -13,6 +13,7 @@ import {
     assertNoPendingDeploymentImport,
     assertNoActiveDeploymentImportBackends,
     beginDeploymentImport,
+    abandonDeploymentImport,
     finishDeploymentImport,
 } from "@launchpad-kit/services";
 import { type Kysely, sql } from "kysely";
@@ -362,22 +363,37 @@ export async function restoreBackup(options: RestoreOptions): Promise<RestoreRes
                     }
                 }
 
+                // Persist the importer guard before touching `public`, so a failure to write it
+                // leaves the live schema in place. Nothing has been spawned until runPgRestore.
+                const importer = await beginDeploymentImport(options.dataDir, target).catch(
+                    async (error) => {
+                        await abandonDeploymentImport(options.dataDir);
+                        throw error;
+                    },
+                );
+
                 // The old data is moved aside, not dropped: a restore that fails (or does not load what
                 // the backup holds) puts it back, and it is dropped only once the new data checks out.
                 const aside = `launchpad_replaced_${Date.now()}`;
-                options.signal?.throwIfAborted();
-                if (populated) {
-                    await db.transaction().execute(async (trx) => {
-                        // Do not wait behind a session that still holds the schema.
-                        await sql`set local lock_timeout = '10s'`.execute(trx);
-                        await sql.raw(`alter schema public rename to ${aside}`).execute(trx);
-                        if (!createsPublic) await sql`create schema public`.execute(trx);
-                    });
-                } else if (createsPublic) {
-                    // The empty database's own `public` makes way for the one the dump creates.
-                    await sql`drop schema if exists public`.execute(db);
-                } else {
-                    await sql`create schema if not exists public`.execute(db);
+                try {
+                    options.signal?.throwIfAborted();
+                    if (populated) {
+                        await db.transaction().execute(async (trx) => {
+                            // Do not wait behind a session that still holds the schema.
+                            await sql`set local lock_timeout = '10s'`.execute(trx);
+                            await sql.raw(`alter schema public rename to ${aside}`).execute(trx);
+                            if (!createsPublic) await sql`create schema public`.execute(trx);
+                        });
+                    } else if (createsPublic) {
+                        // The empty database's own `public` makes way for the one the dump creates.
+                        await sql`drop schema if exists public`.execute(db);
+                    } else {
+                        await sql`create schema if not exists public`.execute(db);
+                    }
+                } catch (error) {
+                    // No importer has started: the guard can be withdrawn.
+                    await abandonDeploymentImport(options.dataDir);
+                    throw error;
                 }
                 const putBack = async () => {
                     await db.transaction().execute(async (trx) => {
@@ -388,8 +404,8 @@ export async function restoreBackup(options: RestoreOptions): Promise<RestoreRes
                     });
                 };
                 try {
-                    const importer = await beginDeploymentImport(options.dataDir, target);
                     let importFailure: unknown;
+                    let cancelled = false;
                     try {
                         await runPgRestore(
                             options,
@@ -398,19 +414,22 @@ export async function restoreBackup(options: RestoreOptions): Promise<RestoreRes
                         );
                     } catch (error) {
                         importFailure = error;
+                        // Cancellation stops the wrapper, not necessarily the importer behind it.
+                        cancelled = options.signal?.aborted === true;
                         throw error;
                     } finally {
-                        // runPgRestore observes the child's close event on success/error.
                         // A dead admin cannot reach here, so its durable guard remains.
-                        try {
-                            await finishDeploymentImport(db, options.dataDir, importer);
-                        } catch (exitError) {
-                            if (importFailure) {
-                                throw new RestoreError(
-                                    `Import failed (${String(importFailure)}); exit verification also failed (${String(exitError)}).`,
-                                );
+                        if (!cancelled) {
+                            try {
+                                await finishDeploymentImport(db, options.dataDir, importer);
+                            } catch (exitError) {
+                                if (importFailure) {
+                                    throw new RestoreError(
+                                        `Import failed (${String(importFailure)}); exit verification also failed (${String(exitError)}).`,
+                                    );
+                                }
+                                throw exitError;
                             }
-                            throw exitError;
                         }
                     }
                     await verifyRestored(db, manifest);

@@ -185,7 +185,11 @@ Restoring is a procedure, not one command. The current step-by-step
       database second.
     - Replacing moves the old `public` schema aside, restores into a new one, checks that the
       result holds exactly the migrations and live archives the backup records, and only then drops
-      the old schema. If the restore fails or does not check out, the old data is put back.
+      the old schema. If the restore fails or does not check out, the old data is put back, except
+      when the importer's exit cannot be verified (including after cancellation): then no rollback
+      is attempted and the import record stays. Keep ingress closed, preserve the saved
+      `launchpad_replaced_*` schema and follow the
+      [crashed-import recovery](../../docs/restore.md#recover-a-crashed-importer-before-retrying).
       Everything in the `public` schema is replaced; other schemas are not touched. A backup is
       taken of `public` only, and a dump that would create another schema or an extension is refused;
       so is a replace while views, foreign keys or column defaults in other schemas depend on
