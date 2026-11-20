@@ -23,7 +23,7 @@ import {
     acknowledgePromotionDispatch,
     assertModelMutationsReady,
     blockRestoredModel,
-    clearDeploymentRecovery,
+    republishRecoveryAlias,
     markDeploymentRecoveryBlocked,
     raiseAliasCounters,
     withdrawUnknownRoute,
@@ -46,7 +46,11 @@ import {
     type Principal,
 } from "@launchpad-kit/services";
 import { SITE, tarGz } from "@launchpad-kit/services/testing";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import {
+    ageRecoveryMarker,
+    clearWithSettledFixtures as clearDeploymentRecovery,
+} from "@launchpad-kit/services/testing/recovery";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { workDeployments } from "../deployment-worker";
 import { createPromotionPorts } from "../promotion-ports";
 import { compactId } from "../template";
@@ -98,7 +102,9 @@ const code = (promise: Promise<unknown>) =>
         (error) => (error instanceof ServiceError ? error.code : `unexpected: ${error}`),
     );
 
-beforeAll(async () => {
+beforeEach(async () => {
+    routeWrites.length = 0;
+    Object.assign(faults, { dropRouteReply: false, delayRouteReplyMs: 0, rejectRouteWrite: false });
     tmp = await tempDir();
     db = await createTestDatabase();
     await db.migrate();
@@ -173,7 +179,7 @@ beforeAll(async () => {
     project = (await createProject(db.db, operator, org, { name: "Site", slug: "site" })).id;
 });
 
-afterAll(async () => {
+afterEach(async () => {
     await controlServer?.stop(true);
     await dataServer?.stop(true);
     store?.close();
@@ -682,8 +688,9 @@ describe("P4 worked example and restore, against the real router", () => {
         const { alias, ready } = await fixture();
         const a = await ready();
         const b = await ready();
+        const unfinished = await promote(alias.id, b, "0");
         // The router moved on after the backup was taken: it is at generation 3 for this alias,
-        // while the restored database still reserves 0. (The database refuses to lower a
+        // while the restored database still reserves 1. (The database refuses to lower a
         // counter, so this is the real shape of the hazard.)
         const hostname = (
             await db.db
@@ -756,6 +763,44 @@ describe("P4 worked example and restore, against the real router", () => {
                     },
                 }),
             ).toEqual({ hostname: strangerHost, generation: "5" });
+            await expect(clearDeploymentRecovery(db.db, tmp.dir, true, view)).rejects.toThrow(
+                /alias-target-conflict/,
+            );
+            await ageRecoveryMarker(tmp.dir);
+            const router = {
+                observe: (hostname: string) => client().readRoute(hostname),
+                register: (target: { deploymentId: string; hostname: string }) =>
+                    client().registerDeployment(target),
+                replace: (write: Parameters<ReturnType<typeof client>["replaceRoute"]>[0]) =>
+                    client().replaceRoute(write),
+                serves: async (hostname: string) => (await serves(hostname)).status === 404,
+            };
+            await expect(
+                republishRecoveryAlias(db.db, tmp.dir, alias.id, {
+                    ...router,
+                    serves: async () => false,
+                }),
+            ).rejects.toThrow(/did not verify/);
+            const operation = () =>
+                db.db
+                    .selectFrom("promotion_operation")
+                    .select(["status", "desired_target_deployment_id"])
+                    .where("id", "=", unfinished.id)
+                    .executeTakeFirstOrThrow();
+            expect(await operation()).toMatchObject({
+                status: "queued",
+                desired_target_deployment_id: b,
+            });
+            await expect(assertModelMutationsReady(db.db, tmp.dir)).rejects.toThrow(/blocked/);
+            const repaired = await republishRecoveryAlias(db.db, tmp.dir, alias.id, router);
+            expect(repaired).toMatchObject({ generation: "5", changed: true, superseded: 1 });
+            expect(await operation()).toMatchObject({
+                status: "superseded",
+                desired_target_deployment_id: b,
+            });
+            expect(await republishRecoveryAlias(db.db, tmp.dir, alias.id, router)).toMatchObject({
+                changed: false,
+            });
             await clearDeploymentRecovery(db.db, tmp.dir, true, view);
             await assertModelMutationsReady(db.db, tmp.dir);
         } finally {
@@ -769,9 +814,95 @@ describe("P4 worked example and restore, against the real router", () => {
                 .execute();
         }
         // The next promotion starts above the router's counter, so the router accepts it.
-        await promote(alias.id, b, "3");
+        await promote(alias.id, b, "5");
         expect(ended(await work())).toBe("succeeded");
-        expect((await client().readRoute(alias.hostname)).route).toMatchObject({ generation: "4" });
+        expect((await client().readRoute(alias.hostname)).route).toMatchObject({ generation: "6" });
         expect(await aliasRow(alias.id)).toMatchObject({ state: "bound", target_deployment_id: b });
+    });
+
+    it("reconstructs a missing tombstone on an offline-bootstrapped replacement router", async () => {
+        const { alias, ready } = await fixture();
+        const target = await ready();
+        await promote(alias.id, target, "0");
+        expect(ended(await work())).toBe("succeeded");
+        await withdraw(alias.id, "1");
+        expect(ended(await work())).toBe("succeeded");
+        expect(await aliasRow(alias.id)).toMatchObject({ state: "withdrawn" });
+
+        await markDeploymentRecoveryBlocked(tmp.dir, { routerEpoch: epoch, note: "recorded" });
+        await blockRestoredModel(db.db);
+        await ageRecoveryMarker(tmp.dir);
+        const replacementAuthority = {
+            epoch: randomUUID(),
+            token: randomBytes(32).toString("hex"),
+        };
+        const settings = { instanceId, appsDomain: "sites.example.net" };
+        const stateFile = path.join(routerDir, `replacement-${randomUUID()}.sqlite`);
+        initializeRouterState(stateFile, settings, replacementAuthority);
+        const replacement = openRouterState(stateFile, settings);
+        const server = Bun.serve({
+            hostname: "127.0.0.1",
+            port: 0,
+            fetch: createControlHandler(replacement),
+        });
+        const replacementData = Bun.serve({
+            hostname: "127.0.0.1",
+            port: 0,
+            fetch: createDataHandler(replacement, {
+                upstream: async () => new Response("unexpected target", { status: 500 }),
+            }),
+        });
+        try {
+            const control = createRouterControlClient({
+                baseUrl: new URL(`http://127.0.0.1:${server.port}`),
+                credentials: { instanceId, ...replacementAuthority },
+            });
+            const view = () => control.listRoutes();
+            await expect(clearDeploymentRecovery(db.db, tmp.dir, true, view)).rejects.toThrow(
+                /alias-route-missing/,
+            );
+            const restarted = createDatabase(db.url);
+            try {
+                await expect(assertModelMutationsReady(restarted, tmp.dir)).rejects.toThrow(
+                    /blocked/,
+                );
+            } finally {
+                await restarted.destroy();
+            }
+            const repaired = await republishRecoveryAlias(db.db, tmp.dir, alias.id, {
+                observe: control.readRoute,
+                register: control.registerDeployment,
+                replace: control.replaceRoute,
+                serves: async (hostname) => {
+                    const response = await fetch(`http://127.0.0.1:${replacementData.port}`, {
+                        headers: { Host: hostname },
+                        signal: AbortSignal.timeout(5000),
+                    });
+                    await response.body?.cancel();
+                    return (
+                        response.status === 404 && !response.headers.has("x-launchpad-deployment")
+                    );
+                },
+            });
+            expect(repaired).toMatchObject({ generation: "3", changed: true });
+            expect((await control.readRoute(alias.hostname)).route).toMatchObject({
+                generation: "3",
+                target: null,
+            });
+            await clearDeploymentRecovery(db.db, tmp.dir, true, view);
+            await assertModelMutationsReady(db.db, tmp.dir);
+        } finally {
+            await replacementData.stop(true);
+            await server.stop(true);
+            replacement.close();
+            await fs.rm(path.join(tmp.dir, "maintenance/deployment-recovery-blocked"), {
+                force: true,
+            });
+            await db.db
+                .updateTable("instance_state")
+                .set({ value: "ready" })
+                .where("key", "=", "deployment_recovery")
+                .execute();
+        }
     });
 });

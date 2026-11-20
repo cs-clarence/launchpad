@@ -4,6 +4,7 @@ import {
     parseAppRoutingConfig,
     readRouterCredential,
     type RecoveryMarker,
+    type RecoveryRepublishRouter,
     type RouterAnchor,
     type RouterView,
 } from "@launchpad-kit/services";
@@ -19,6 +20,7 @@ export interface RouterSession {
     // The router's active epoch (not a secret).
     epoch(): Promise<string>;
     withdraw(route: { aliasId: string; hostname: string; generation: string }): Promise<void>;
+    republish?: Omit<RecoveryRepublishRouter, "serves">;
 }
 
 export function routerSessionFromEnv(
@@ -44,6 +46,12 @@ export function routerSessionFromEnv(
     return {
         view: async () => client().listRoutes(AbortSignal.timeout(120_000)),
         epoch: async () => client().readEpoch(AbortSignal.timeout(15_000)),
+        republish: {
+            observe: async (hostname) => client().readRoute(hostname, AbortSignal.timeout(15_000)),
+            register: async (target) =>
+                client().registerDeployment(target, AbortSignal.timeout(15_000)),
+            replace: async (write) => client().replaceRoute(write, AbortSignal.timeout(15_000)),
+        },
         async withdraw(route) {
             await client().replaceRoute(
                 {
@@ -96,7 +104,7 @@ export async function routerAnchorFromEnv(
 // the first anchor, so this must not follow whatever the retry happened to read.
 export function recoveryAnchorNotice(marker: RecoveryMarker | "damaged" | null): string | null {
     if (marker === "damaged") {
-        return "The recovery marker is damaged; recovery-clear will need --router-epoch-unrecorded.";
+        return "The recovery marker is damaged; repeat the documented restore with all writers stopped.";
     }
     if (!marker) return null;
     if (marker.routerEpoch === null) {

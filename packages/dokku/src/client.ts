@@ -144,8 +144,45 @@ export function createDokkuClient(connection: DokkuConnection, options: DokkuCli
         return result;
     }
 
+    function invalidRead(operation: string): never {
+        throw new DokkuError({
+            kind: "failed",
+            operation,
+            mutating: false,
+            message: `Dokku ${operation} returned an incomplete or unexpected answer.`,
+        });
+    }
+
     return {
         apps: {
+            list: async (signal?: AbortSignal): Promise<string[]> => {
+                // JSON distinguishes an empty host from a warning/error printed as text.
+                const result = await execute(
+                    "apps:list",
+                    false,
+                    ["apps:list", "--format", "json"],
+                    "quick",
+                    { signal },
+                );
+                if (result.truncated) invalidRead("apps:list");
+                let names: unknown;
+                try {
+                    names = JSON.parse(result.stdout);
+                } catch {
+                    invalidRead("apps:list");
+                }
+                if (
+                    !Array.isArray(names) ||
+                    names.length > 100_000 ||
+                    names.some(
+                        (name) =>
+                            typeof name !== "string" || !/^[a-z0-9][a-z0-9-]{0,62}$/.test(name),
+                    ) ||
+                    new Set(names).size !== names.length
+                )
+                    invalidRead("apps:list");
+                return names as string[];
+            },
             create: async (app: string, signal?: AbortSignal) => {
                 const name = appName("apps:create", app, pattern);
                 await execute("apps:create", true, ["apps:create", name], "mutate", { signal });
@@ -181,6 +218,29 @@ export function createDokkuClient(connection: DokkuConnection, options: DokkuCli
             },
         },
         domains: {
+            report: async (app: string, signal?: AbortSignal): Promise<string[]> => {
+                const name = appName("domains:report", app, pattern);
+                const result = await execute(
+                    "domains:report",
+                    false,
+                    ["domains:report", name, "--domains-app-vhosts"],
+                    "quick",
+                    { signal },
+                );
+                if (result.truncated) invalidRead("domains:report");
+                const domains =
+                    result.stdout.trim() === "" ? [] : result.stdout.trim().split(/\s+/);
+                // Dokku also permits wildcard, single-label and "_" vhosts. They do not
+                // match our generated hostname, but are legitimate observations.
+                if (
+                    domains.some(
+                        (domain) => !/^(?=.{1,253}$)[a-z0-9_*-]+(?:\.[a-z0-9_*-]+)*$/.test(domain),
+                    )
+                ) {
+                    invalidRead("domains:report");
+                }
+                return domains;
+            },
             set: async (app: string, host: string, signal?: AbortSignal) => {
                 const name = appName("domains:set", app, pattern);
                 const domain = hostname("domains:set", host);

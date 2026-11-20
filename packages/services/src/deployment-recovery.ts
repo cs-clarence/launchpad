@@ -8,7 +8,16 @@ import {
     withDeploymentRecoveryMaintenance,
 } from "@launchpad-kit/database/deployment-lock";
 import { type Kysely, sql } from "kysely";
-import { compareRouterInventory, counterProblems, type RouterView } from "./router-inventory";
+import { compareDrift } from "./drift/compare";
+import { readDriftDatabase } from "./drift/read-database";
+import type { SourceRead } from "./drift/types";
+import { assessRecoveryEvidence, type RecoveryEvidence } from "./recovery-evidence";
+import {
+    compareRouterInventory,
+    counterProblems,
+    toDriftRouter,
+    type RouterView,
+} from "./router-inventory";
 
 export const DEPLOYMENT_MIGRATION = "20261119_018_deployment_model";
 export const MODEL_TABLES = [
@@ -153,7 +162,11 @@ export async function readRecoveryMarker(
         return "damaged";
     }
     if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) return "damaged";
-    if (typeof parsed.restoreStartedAt !== "string") return "damaged";
+    if (
+        typeof parsed.restoreStartedAt !== "string" ||
+        !Number.isFinite(Date.parse(parsed.restoreStartedAt))
+    )
+        return "damaged";
     if (parsed.version === 1) {
         return {
             version: 2,
@@ -486,30 +499,58 @@ export async function blockRestoredModel(db: Db) {
         throw new DeploymentRecoveryError("Restored model recovery gate could not be blocked.");
 }
 
-// Interim rule (P3a, until P5 verifies reconciliation): never consult the writer-seen file or the
-// model tables. The file lives on the data volume, which a restore from an older dump can replace,
-// and empty tables cannot be told from a never-used installation. The operator must attest the
-// manual reconciliation procedure every time, so the confirmation is mandatory.
+const WORKER_STOP_GRACE_MS = 25 * 60_000;
+
+export function requireRecoveryGrace(marker: RecoveryMarker | null | "damaged") {
+    const started = marker && marker !== "damaged" ? Date.parse(marker.restoreStartedAt) : NaN;
+    if (!Number.isFinite(started)) {
+        throw new DeploymentRecoveryError(
+            "Recovery has no valid restore start time. Repeat the documented restore with all writers stopped.",
+        );
+    }
+    if (Date.now() - started < WORKER_STOP_GRACE_MS) {
+        throw new DeploymentRecoveryError(
+            "Wait at least 25 minutes from the recorded restore start before clearing recovery.",
+        );
+    }
+}
+
+async function requiredEvidence<T>(name: string, read: () => Promise<T>): Promise<SourceRead<T>> {
+    try {
+        return { status: "ok", data: await read() };
+    } catch (cause) {
+        throw new DeploymentRecoveryError(
+            `Recovery cannot verify ${name}; its requested source was unavailable.`,
+            { cause },
+        );
+    }
+}
+
 export async function clearDeploymentRecovery(
     db: Db,
     dataDir: string,
-    attested: boolean,
+    checkedDokkuHost: boolean,
     // Reads the router's routes. Required once the database holds any alias: a restore can leave
     // the router ahead of it, and clearing would let new operations reuse a generation.
-    router?: RouterView,
+    router: RouterView | undefined,
     // The restore recorded no router epoch (v1 marker, router down or unconfigured at the time):
     // the operator then confirms the rotation by hand, and it is audited.
-    options: { routerEpochUnrecorded?: boolean } = {},
+    options: {
+        evidence: RecoveryEvidence;
+        routerEpochUnrecorded?: boolean;
+        accept?: readonly string[];
+    },
 ) {
-    if (!attested) {
+    if (!checkedDokkuHost) {
         throw new DeploymentRecoveryError(
-            "Clearing recovery requires --i-have-reconciled-router-and-dokku: close ingress, settle dispatched Dokku work, rotate the router epoch and credentials if a router is in use, and reconcile router and Dokku against the restored database first (docs/restore.md).",
+            "Clearing recovery requires --i-have-checked-the-dokku-host: confirm that no Dokku work dispatched before restore is still running (docs/restore.md).",
         );
     }
     return withDeploymentRecoveryMaintenance(db, async (connection) => {
         await assertNoPendingDeploymentImport(dataDir);
         await assertNoActiveDeploymentImportBackends(connection);
         const dir = await maintenance(dataDir);
+        const marker = await readRecoveryMarker(dataDir);
         // Read the router while the maintenance lock excludes every model writer.
         let unreadable = "";
         const inventory = router
@@ -521,8 +562,8 @@ export async function clearDeploymentRecovery(
                       return null;
                   })
             : undefined;
-        await connection.transaction().execute(async (trx) => {
-            await lockDeploymentRecovery(trx, true);
+        const epochAudit = await (async () => {
+            const trx = connection;
             const table = await sql<{
                 present: boolean;
             }>`select to_regclass('public.launchpad_migration') is not null as present`.execute(
@@ -541,7 +582,6 @@ export async function clearDeploymentRecovery(
                 );
             }
             let epochAudit = "";
-            const marker = await readRecoveryMarker(dataDir);
             const damaged = marker === "damaged";
             const anchor = marker && marker !== "damaged" ? marker.routerEpoch : null;
             // Nothing is known about any router: damaged, or written before anchors existed.
@@ -623,6 +663,59 @@ export async function clearDeploymentRecovery(
                     );
                 }
             }
+            return epochAudit;
+        })();
+        requireRecoveryGrace(marker);
+        const snapshot = await readDriftDatabase(connection);
+        const [dokku, archives, probe] = await Promise.all([
+            requiredEvidence("Dokku", () => options.evidence.dokku(snapshot)),
+            requiredEvidence("stored archives", () => options.evidence.archives(snapshot)),
+            options.evidence.probe
+                ? requiredEvidence("served identities", () => options.evidence.probe!(snapshot))
+                : Promise.resolve({ status: "skipped", reason: "Not configured." } as const),
+        ]);
+        const report = compareDrift({
+            db: snapshot,
+            dokku,
+            archives,
+            probe,
+            router: inventory
+                ? { status: "ok", data: toDriftRouter(inventory) }
+                : { status: "skipped", reason: "No router in use." },
+            config: {
+                expectedEpoch: inventory?.epoch ?? "",
+                appNamePattern: /^lp-[a-z0-9]{10}$/,
+                now: new Date(),
+                recovery: true,
+            },
+        });
+        const { accepted, blocking } = assessRecoveryEvidence(report, options.accept ?? []);
+        if (blocking.length) {
+            const first = blocking
+                .slice(0, 10)
+                .map(
+                    (f) =>
+                        `${f.code} (${f.resources.map((r) => `${r.kind}:${r.id}`).join(", ")}): ${f.action}`,
+                )
+                .join("\n");
+            throw new DeploymentRecoveryError(
+                `Recovery is blocked by ${blocking.length} finding(s):\n${first}`,
+            );
+        }
+        if (inventory && router) {
+            const latest = await requiredEvidence("router authority", router);
+            if (
+                latest.status !== "ok" ||
+                latest.data.epoch !== inventory.epoch ||
+                latest.data.instanceId !== inventory.instanceId
+            ) {
+                throw new DeploymentRecoveryError(
+                    "The router authority changed during verification; retry recovery-clear.",
+                );
+            }
+        }
+        await connection.transaction().execute(async (trx) => {
+            await lockDeploymentRecovery(trx, true);
             await trx
                 .insertInto("instance_state")
                 .values({ key: "deployment_recovery", value: "ready" })
@@ -638,9 +731,24 @@ export async function clearDeploymentRecovery(
                     target_type: "instance",
                     target_id: "self",
                     organization_id: null,
-                    detail: `attested=reconciled-router-and-dokku${epochAudit}`,
+                    detail: `attested=checked-dokku-host${epochAudit}`,
                 })
                 .execute();
+            if (accepted.length) {
+                await trx
+                    .insertInto("audit_event")
+                    .values(
+                        accepted.map(({ key, finding }) => ({
+                            actor: "operator-cli",
+                            action: "deployment.recovery-finding-accepted",
+                            target_type: "instance",
+                            target_id: "self",
+                            organization_id: null,
+                            detail: JSON.stringify({ key, finding }),
+                        })),
+                    )
+                    .execute();
+            }
         });
         // Commit ready first: failure or a crash here keeps the file and therefore stays blocked.
         if (dir) {
@@ -649,5 +757,6 @@ export async function clearDeploymentRecovery(
             });
             await syncDirectory(dir);
         }
+        return report;
     });
 }

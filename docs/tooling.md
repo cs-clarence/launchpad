@@ -224,6 +224,14 @@ shutdown (P4d).
 [restore](restore.md)). Their router client lists routes through the control endpoint and
 checks instance and epoch on every page.
 
+**Implemented (P5b):** `launchpad-admin drift` reads two consistent database
+snapshots around the external reads and feeds the pure drift comparer. It checks
+archives, Dokku's allowlisted `apps:list` / exact-name `domains:report`, and all
+router pages (tombstones included); served-identity probes are opt-in. It never
+repairs anything or reopens the recovery gate. See [operator usage and exit
+statuses](drift.md). `recovery-clear` and `recovery-republish-alias` use the same
+inventory readers under the exclusive maintenance lock; see the [restore runbook](restore.md).
+
 **Planned, not implemented:** automatic retention expiry.
 See [the design](design/deployment-modes.md) and
 [routing experiment](decisions/deployment-alias-routing.md). Do not configure those

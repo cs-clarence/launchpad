@@ -61,8 +61,8 @@ describe("the vocabulary", () => {
                 Object.entries(client).map(([k, v]) => [k, Object.keys(v).toSorted()]),
             ),
         ).toEqual({
-            apps: ["create", "destroy", "exists"],
-            domains: ["set"],
+            apps: ["create", "destroy", "exists", "list"],
+            domains: ["report", "set"],
             git: ["loadImage"],
             ports: ["set"],
             ps: ["report"],
@@ -146,6 +146,7 @@ describe("refused input", () => {
                 () => client.apps.exists(name),
                 () => client.apps.destroy(name),
                 () => client.domains.set(name, "a.example.com"),
+                () => client.domains.report(name),
                 () => client.ports.set(name, "http:80:80"),
                 () => client.ps.report(name),
                 () => client.git.loadImage(name, "a:b", (async function* () {})()),
@@ -376,6 +377,44 @@ describe("what a finished command means", () => {
 });
 
 describe("operations that read", () => {
+    it("lists all apps as JSON and reads only an exact app's vhosts", async () => {
+        const { client, calls } = await setup(
+            { stdout: JSON.stringify([APP, "unrelated-site"]) },
+            { stdout: "a.example.net *.example.org\n" },
+        );
+        expect(await client.apps.list()).toEqual([APP, "unrelated-site"]);
+        expect(await client.domains.report(APP)).toEqual(["a.example.net", "*.example.org"]);
+        expect(calls.map((c) => c.args)).toEqual([
+            ["apps:list", "--format", "json"],
+            ["domains:report", APP, "--domains-app-vhosts"],
+        ]);
+        expect(calls.every((c) => c.timeoutMs === 15_000 && c.maxOutputBytes === 65536)).toBe(true);
+    });
+
+    it.each(["", "warning", "{}", '["bad;name"]', '["same","same"]'])(
+        "refuses an invalid app inventory: %j",
+        async (stdout) => {
+            const { client } = await setup({ stdout });
+            expect(await caught(client.apps.list())).toMatchObject({
+                kind: "failed",
+                mutating: false,
+            });
+        },
+    );
+
+    it("accepts empty inventories but never a truncated successful read", async () => {
+        const { client } = await setup(
+            { stdout: "[]" },
+            { stdout: "" },
+            { stdout: "[]", truncated: true },
+            { stdout: "a.example.net", truncated: true },
+        );
+        expect(await client.apps.list()).toEqual([]);
+        expect(await client.domains.report(APP)).toEqual([]);
+        await expect(client.apps.list()).rejects.toThrow("incomplete");
+        await expect(client.domains.report(APP)).rejects.toThrow("incomplete");
+    });
+
     it("exists is false only when Dokku says the app does not exist", async () => {
         const current = await setup({ exitCode: 20, stderr: ` !     App ${APP} does not exist` });
         expect(await current.client.apps.exists(APP)).toBe(false);

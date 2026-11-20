@@ -37,6 +37,14 @@ the same `safeOutput` redaction/control stripping as the CLI (client-core).
 Operator status is `getStatus` in `packages/services/src/status.ts` behind session-only
 `GET /api/v1/status` (database readiness and stored artifacts only).
 
+Operator-only drift collection lives in `apps/controller/src/admin/drift.ts`.
+`packages/services/src/drift/read-database.ts` takes bounded, repeatable-read,
+read-only snapshots; the existing pure comparer stays in `drift/compare.ts`.
+The advisory admin adapter reads external sources between snapshots and drops unstable
+findings. `deployment-recovery.ts` instead verifies under the exclusive maintenance
+lock, with acceptance policy in `recovery-evidence.ts`; `recovery-republish.ts`
+repairs a single exact route and records its verified operation. See [operator usage](../drift.md).
+
 The health endpoint reports static metadata, not PostgreSQL/Dokku readiness.
 Key administration is a dedicated organization-page component in
 `apps/controller/src/components/api-keys.tsx`. It imports only browser-safe
@@ -59,7 +67,7 @@ and inventory are removed. `Database` describes the new physical tables;
 artifact collection pins `deployment`, and `check-restore` reports
 immutable deployment identities. The recovery gate is
 `packages/services/src/deployment-recovery.ts`: shared/exclusive advisory locks,
-fsynced external marker/writer record and the audited attestation `recovery-clear` requires.
+fsynced external marker/writer record, verified evidence and an audited host check.
 Only model mutations use that gate; organization/auth/key administration stays available.
 
 Operator login, organizations, members and projects exist, but

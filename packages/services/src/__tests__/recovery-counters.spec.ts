@@ -7,7 +7,6 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
     assertModelMutationsReady,
     blockRestoredModel,
-    clearDeploymentRecovery,
     createAlias,
     createApp,
     createOrganization,
@@ -21,6 +20,7 @@ import {
     type AliasDeps,
     type RouterInventory,
 } from "../index";
+import { clearWithSettledFixtures as clearDeploymentRecovery } from "../testing/recovery";
 
 // The restore hazard behind P4e: a database restored from an older backup can be behind the
 // router's per-hostname counters, or the router can hold a route the database never heard of.
@@ -205,7 +205,7 @@ describe("recovery counters", () => {
         await blocked();
         const view = async () =>
             inventory([
-                route(alias, "6"),
+                route(alias, "6", null),
                 route({ id: randomUUID(), hostname: "old.sites.example.net" }, "3", null),
             ]);
         await expect(clearDeploymentRecovery(db.db, dataDir, true, view)).rejects.toThrow(/ahead/);
@@ -274,7 +274,7 @@ describe("recovery counters", () => {
 
     describe("the router epoch anchor", () => {
         const ok = (alias: { id: string; hostname: string }) => async () =>
-            inventory([route(alias, "0")]);
+            inventory([route(alias, "0", null)]);
 
         it("refuses while the router is still on the epoch recorded when the restore began", async () => {
             const alias = await aliasFixture();
@@ -303,7 +303,7 @@ describe("recovery counters", () => {
             expect(audit).toEqual([
                 {
                     detail: expect.stringMatching(
-                        /^attested=reconciled-router-and-dokku;router-epoch=changed;anchor=[0-9a-f-]{36};current=[0-9a-f-]{36}$/,
+                        /^attested=checked-dokku-host;router-epoch=changed;anchor=[0-9a-f-]{36};current=[0-9a-f-]{36}$/,
                     ),
                 },
             ]);
@@ -329,7 +329,7 @@ describe("recovery counters", () => {
                 .execute();
             expect(audit).toEqual([
                 {
-                    detail: "attested=reconciled-router-and-dokku;router-epoch=unrecorded-confirmed",
+                    detail: "attested=checked-dokku-host;router-epoch=unrecorded-confirmed",
                 },
             ]);
         });
@@ -397,7 +397,7 @@ describe("recovery counters", () => {
             );
         });
 
-        it("names a damaged marker, and audits the confirmation as such", async () => {
+        it("refuses a damaged marker even with the epoch confirmation", async () => {
             const alias = await aliasFixture();
             await blockRestoredModel(db.db);
             await fs.mkdir(path.join(dataDir, "maintenance"), { recursive: true, mode: 0o700 });
@@ -408,19 +408,12 @@ describe("recovery counters", () => {
             await expect(clearDeploymentRecovery(db.db, dataDir, true, ok(alias))).rejects.toThrow(
                 /marker is damaged/,
             );
-            await clearDeploymentRecovery(db.db, dataDir, true, ok(alias), {
-                routerEpochUnrecorded: true,
-            });
-            const audit = await db.db
-                .selectFrom("audit_event")
-                .select("detail")
-                .where("action", "=", "deployment.recovery-cleared")
-                .execute();
-            expect(audit).toEqual([
-                {
-                    detail: "attested=reconciled-router-and-dokku;router-epoch=marker-damaged-confirmed",
-                },
-            ]);
+            await expect(
+                clearDeploymentRecovery(db.db, dataDir, true, ok(alias), {
+                    routerEpochUnrecorded: true,
+                }),
+            ).rejects.toThrow(/no valid restore start time/);
+            await expect(assertModelMutationsReady(db.db, dataDir)).rejects.toThrow(/blocked/);
         });
 
         it("treats a symlink at the marker path as damaged, and refuses to record a malformed epoch", async () => {
@@ -529,19 +522,11 @@ describe("recovery counters", () => {
             await expect(clearDeploymentRecovery(db.db, dataDir, true)).rejects.toThrow(
                 /marker is damaged/,
             );
-            await clearDeploymentRecovery(db.db, dataDir, true, undefined, {
-                routerEpochUnrecorded: true,
-            });
-            const audit = await db.db
-                .selectFrom("audit_event")
-                .select("detail")
-                .where("action", "=", "deployment.recovery-cleared")
-                .execute();
-            expect(audit).toEqual([
-                {
-                    detail: "attested=reconciled-router-and-dokku;router-epoch=marker-damaged-confirmed",
-                },
-            ]);
+            await expect(
+                clearDeploymentRecovery(db.db, dataDir, true, undefined, {
+                    routerEpochUnrecorded: true,
+                }),
+            ).rejects.toThrow(/no valid restore start time/);
         });
 
         it("reads a version 1 or damaged marker as having no anchor", async () => {

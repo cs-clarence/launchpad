@@ -1,5 +1,6 @@
 import type { Database } from "@launchpad-kit/database";
 import type { Kysely } from "kysely";
+import type { RouterRead } from "./drift/types";
 
 type Db = Kysely<Database>;
 
@@ -17,6 +18,19 @@ export interface RouterInventory {
     }[];
 }
 export type RouterView = () => Promise<RouterInventory>;
+
+export function toDriftRouter(inventory: RouterInventory): RouterRead {
+    return {
+        epoch: inventory.epoch,
+        routes: inventory.routes.map((r) => ({
+            hostname: r.hostname,
+            generation: BigInt(r.generation),
+            operationId: r.operationId,
+            targetDeploymentId: r.target?.deploymentId ?? null,
+            targetHostname: r.target?.hostname ?? null,
+        })),
+    };
+}
 
 export interface CounterReport {
     // Aliases whose reserved counter is below the router's generation for their hostname.

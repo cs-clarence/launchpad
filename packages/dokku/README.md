@@ -19,10 +19,17 @@ await dokku.apps.create("lp-abcde12345");
 
 ## What it can do
 
-`apps.create | exists | destroy`, `domains.set`, `ports.set`, `git.loadImage` (streams a
+`apps.create | exists | destroy | list`, `domains.set | report`, `ports.set`, `git.loadImage` (streams a
 `docker save` archive to `git:load-image`) and `ps.report`. **There is deliberately no
 generic command runner**: a new operation is a new validated function in `client.ts`,
 and the package exports none (a test pins the exported surface). The real `SshTransport` is not exported either: with it a caller could send commands the client would never build. Only the `Transport` types are, so a fake can be injected.
+
+The drift reader uses two read-only operations: `apps.list()` sends the fixed
+`apps:list --format json` (including unrelated names), and `domains.report(app)`
+sends `domains:report <exact-name> --domains-app-vhosts`. Their output shapes follow
+Dokku 0.38.34; malformed or truncated replies fail, never become an empty inventory.
+Both use the quick timeout and output bound. Listing does not authorize mutations
+or domain reads outside the client's configured app-name pattern.
 
 ## Why it is safe to call
 

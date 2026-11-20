@@ -37,6 +37,10 @@
                 "development": "./src/testing/tar-fixtures.ts",
                 "default": "./src/testing/tar-fixtures.ts"
             }
+        },
+        "./testing/recovery": {
+            "types": "./src/testing/recovery.ts",
+            "default": "./src/testing/recovery.ts"
         }
     },
     "scripts": {

@@ -46,6 +46,7 @@ export interface DriftAlias {
 export interface DriftOperation {
     id: string;
     aliasId: string;
+    generation?: bigint;
     status:
         | "queued"
         | "applying"
@@ -86,6 +87,7 @@ export interface RouterRead {
         operationId: string | null;
         // null is a tombstone.
         targetDeploymentId: string | null;
+        targetHostname?: string | null;
     }[];
 }
 
@@ -102,6 +104,8 @@ export interface DriftConfig {
     // Limits which Dokku apps are considered. It is never evidence of ownership.
     appNamePattern: RegExp;
     now: Date;
+    // While model writers are fenced, compare committed routes even for in-flight aliases.
+    recovery?: boolean;
 }
 
 export interface DriftInput {

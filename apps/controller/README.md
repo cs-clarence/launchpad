@@ -207,8 +207,9 @@ Restoring is a procedure, not one command. The current step-by-step
 4. Follow the [restore guide](../../docs/restore.md) for restricted maintenance startup,
    credential reconciliation and `recovery-clear`. Model mutations remain blocked by an
    fsynced external marker even if the restored dump said `ready`. Clearing always
-   requires `recovery-clear --i-have-reconciled-router-and-dokku`, an audited operator attestation
-   that does not consult the model tables or the writer record. Never remove these files manually.
+   requires `recovery-clear --i-have-checked-the-dokku-host` after the 25-minute stop
+   grace, plus verified database, archive, Dokku and applicable router evidence.
+   Never remove these files manually.
    A crashed import also retains `deployment-import-in-progress`; another restore and clear
    refuse until the exact importer/wrappers and database backend have exited and an explicit
    `recovery-ack-import --i-have-stopped-the-importer` is durably audited. Custom PostgreSQL

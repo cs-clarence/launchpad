@@ -99,6 +99,7 @@ export function compareDrift(input: DriftInput): DriftReport {
 
     // Operations first: a stuck one is a finding, an unfinished one makes its alias in flight.
     const busyAliases = new Set<string>();
+    const oldestOpenGeneration = new Map<string, bigint>();
     for (const op of db.operations) {
         const unfinished = UNFINISHED.has(op.status);
         // Once dispatched, a missing or expired lease means the outcome is unknown, not that the
@@ -114,6 +115,11 @@ export function compareDrift(input: DriftInput): DriftReport {
             busyAliases.add(op.aliasId);
         } else if (unfinished) {
             busyAliases.add(op.aliasId);
+        }
+        if (op.generation !== undefined && (unfinished || op.status === "reconciliation-needed")) {
+            const oldest = oldestOpenGeneration.get(op.aliasId);
+            if (oldest === undefined || op.generation < oldest)
+                oldestOpenGeneration.set(op.aliasId, op.generation);
         }
     }
     // An alias is in flight while it is in a transitional state or has an unfinished operation. A
@@ -216,12 +222,16 @@ export function compareDrift(input: DriftInput): DriftReport {
         }
         const routes = new Map(router.routes.map((r) => [r.hostname, r]));
         for (const a of db.aliases) {
-            if (busyAliases.has(a.id)) continue;
+            if (busyAliases.has(a.id) && !config.recovery) continue;
             const route = routes.get(a.hostname);
             const ref = [{ kind: "alias", id: a.id } as const];
             // A bound alias needs its route and a withdrawn one its tombstone, which keeps the
             // withdrawal fence; only a never-bound alias may have no router row at all.
-            if (a.state === "bound" || a.state === "withdrawn") {
+            if (
+                config.recovery
+                    ? a.committedGeneration > 0n
+                    : a.state === "bound" || a.state === "withdrawn"
+            ) {
                 if (!route) {
                     findings.push(finding("alias-route-missing", ref));
                 } else if (route.generation > a.committedGeneration) {
@@ -242,20 +252,33 @@ export function compareDrift(input: DriftInput): DriftReport {
                     );
                 } else if (
                     route.targetDeploymentId !== a.targetDeploymentId ||
+                    (config.recovery &&
+                        a.targetDeploymentId !== null &&
+                        route.targetHostname !== deployments.get(a.targetDeploymentId)?.hostname) ||
                     (route.operationId !== null &&
                         a.lastOperationId !== null &&
                         route.operationId !== a.lastOperationId)
                 ) {
                     findings.push(finding("alias-target-conflict", ref));
                 }
-            } else if (route && route.targetDeploymentId !== null) {
+            } else if (
+                route &&
+                (route.targetDeploymentId !== null ||
+                    (config.recovery &&
+                        (route.generation > a.reservedGeneration ||
+                            route.generation >=
+                                (oldestOpenGeneration.get(a.id) ?? route.generation + 1n))))
+            ) {
                 // Unbound or withdrawn, yet the router still serves something.
                 findings.push(finding("alias-target-conflict", ref));
             }
         }
         const owned = new Set(db.aliases.map((a) => a.hostname));
         for (const route of router.routes) {
-            if (!owned.has(route.hostname))
+            if (
+                !owned.has(route.hostname) &&
+                (!config.recovery || route.targetDeploymentId !== null)
+            )
                 findings.push(
                     finding("router-unknown-route", [{ kind: "router-route", id: route.hostname }]),
                 );
@@ -288,11 +311,13 @@ export function compareDrift(input: DriftInput): DriftReport {
                 expected.set(d.hostname, { id: d.id, owner: { kind: "deployment", id: d.id } });
         // A bound alias serves its target; an unbound or withdrawn one serves nothing (null).
         for (const a of db.aliases) {
-            if (busyAliases.has(a.id)) continue;
+            if (busyAliases.has(a.id) && !config.recovery) continue;
             const owner: ResourceRef = { kind: "alias", id: a.id };
-            if (a.state === "bound" && a.targetDeploymentId !== null)
+            if (config.recovery) {
                 expected.set(a.hostname, { id: a.targetDeploymentId, owner });
-            if (a.state === "unbound" || a.state === "withdrawn")
+            } else if (a.state === "bound" && a.targetDeploymentId !== null)
+                expected.set(a.hostname, { id: a.targetDeploymentId, owner });
+            else if (a.state === "unbound" || a.state === "withdrawn")
                 expected.set(a.hostname, { id: null, owner });
         }
         for (const result of probe.results) {
@@ -345,12 +370,17 @@ function fingerprint(db: DriftDatabase) {
                 d.status,
                 d.referencedByAliasIds.join(","),
                 d.inUncertainChain,
+                d.everPinned,
+                d.artifactKey,
                 d.lastUnpinnedAt?.toISOString(),
             ].join("|"),
         );
     }
     for (const o of db.operations)
-        map.set(`operation:${o.id}`, [o.status, o.aliasId, o.dispatched].join("|"));
+        map.set(
+            `operation:${o.id}`,
+            [o.status, o.aliasId, o.dispatched, o.leaseExpiresAt?.toISOString()].join("|"),
+        );
     return map;
 }
 

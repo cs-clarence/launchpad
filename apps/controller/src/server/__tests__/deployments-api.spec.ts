@@ -609,7 +609,7 @@ describe("apps and deployments over HTTP", () => {
         ).toBe(404);
     });
 
-    it("answers a malformed id with 404 and a blocked recovery gate with 503 on deletion", async () => {
+    it("blocks every model-mutating HTTP route with 503 while keeping reads available", async () => {
         expect(
             (await call(api, "deleter", "DELETE", `${base()}/deployments/not-a-uuid`)).status,
         ).toBe(404);
@@ -619,18 +619,50 @@ describe("apps and deployments over HTTP", () => {
             body: { artifactId: artifact },
         });
         const deployment = deploymentSchema.parse(await queued.json());
-        await sql`update deployment set status = 'failed', finished_at = now()
+        await sql`update deployment set status = 'succeeded', finished_at = now(),
+            step_done = 'verify', image_tag = 'launchpad/site:fixture', image_id = ${`sha256:${"a".repeat(64)}`}
             where id = ${deployment.id}`.execute(testDb.db);
+        const alias = aliasSchema.parse(
+            await (
+                await call(api, "aliaser", "POST", `${base()}/apps/${app}/aliases`, {
+                    body: { slug: "prod" },
+                })
+            ).json(),
+        );
         await markDeploymentRecoveryBlocked(dataDir);
         try {
-            const blocked = await call(
-                api,
-                "deleter",
-                "DELETE",
-                `${base()}/deployments/${deployment.id}`,
-            );
-            expect(blocked.status).toBe(503);
-            expect(errorSchema.parse(await blocked.json()).code).toBe("unavailable");
+            const routes: [string, string, string, Parameters<typeof call>[4]?][] = [
+                ["full", "POST", `/projects/${p1}/artifacts`, { raw: archive() }],
+                ["full", "POST", `/projects/${p1}/apps`, { body: { slug: "blocked" } }],
+                ["full", "POST", `/apps/${app}/deployments`, { body: { artifactId: artifact } }],
+                ["deleter", "DELETE", `/deployments/${deployment.id}`],
+                ["aliaser", "POST", `/apps/${app}/aliases`, { body: { slug: "blocked" } }],
+                [
+                    "promoter",
+                    "POST",
+                    `/aliases/${alias.id}/promotions`,
+                    {
+                        body: { targetDeploymentId: deployment.id, expectedGeneration: "0" },
+                        headers: { "idempotency-key": randomUUID() },
+                    },
+                ],
+                [
+                    "aliaser",
+                    "DELETE",
+                    `/aliases/${alias.id}`,
+                    {
+                        body: { expectedGeneration: "0" },
+                        headers: { "idempotency-key": randomUUID() },
+                    },
+                ],
+                ["shutdowner", "DELETE", `/apps/${app}`],
+            ];
+            for (const [key, method, route, input] of routes) {
+                const blocked = await call(api, key, method, `${base()}${route}`, input);
+                expect(blocked.status, `${method} ${route}`).toBe(503);
+                expect(errorSchema.parse(await blocked.json()).code).toBe("unavailable");
+            }
+            expect((await call(api, "reader", "GET", `${base()}/apps/${app}`)).status).toBe(200);
         } finally {
             await fs.rm(path.join(dataDir, "maintenance"), { recursive: true, force: true });
         }

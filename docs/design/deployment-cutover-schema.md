@@ -237,9 +237,16 @@ back an empty registry and stale generations while the router and Dokku keep the
       still on it, and needs the audited `--router-epoch-unrecorded` when none was recorded. A rerun after an
       interrupted restore keeps the first anchor and start time; a marker that is damaged or of an unknown
       version reads as having no anchor.
-    - **P5 replacement.** P5 adds tombstone comparison, protection of unknown routed targets and
-      Dokku reconciliation, replaces the attestation with that verification, and removes the flag
-      in the same PR.
+    - **Verified recovery (P5).** Clear holds the exclusive maintenance lock while it compares the
+      restored model, reservation integrity, Dokku app/domain inventory, archives, and the
+      applicable router and served identities. It compares committed routes and required
+      tombstones even for aliases with unfinished operations. Exact acceptance is limited to
+      the external findings listed in the [restore runbook](../restore.md); missing evidence and
+      router/identity registry conflicts cannot be accepted. Clear waits for the 25-minute stop
+      grace and requires the narrow Dokku-host confirmation, not the interim attestation.
+      Explicit republish writes and verifies the restored target above both generation fences
+      before it commits the repair and settles any superseded chain. It leaves an already
+      matching chain alone. A damaged timestamp requires another restore; it cannot waive the wait.
 - **Older dumps.** There is no backup floor. An older dump restores, is migrated forward, and
   018 drops its preview tables again; the marker is written like any restore.
 
@@ -271,7 +278,7 @@ On disposable PostgreSQL, from the frozen schema-014 fixture and from an empty d
 - The upgrade drill and the built images run the new migration, and the drill asserts the
   four preview tables and `worker_heartbeat` are gone afterwards.
 - An old dump restored over a database that already holds model rows writes the marker.
-- `recovery-clear` refuses without `--i-have-reconciled-router-and-dokku` on an empty database
+- The interim P3a `recovery-clear` refused without `--i-have-reconciled-router-and-dokku` on an empty database
   with no writer record, on one with the record, and on a populated one; with the flag it clears
   in each case, audits only the attested fact and removes the marker last (P3a). The
   `model-writer-seen` record is still written, fsynced before the first model mutation or remote
