@@ -1,6 +1,6 @@
 # P5: verified restore reconciliation and drift
 
-Status: **proposed, awaiting approval. Nothing here is built.** Parent: [deployment model plan](deployment-model.md), P5.
+Status: **approved 2026-11-20 as written (all five decisions). Nothing here is built yet.** Parent: [deployment model plan](deployment-model.md), P5.
 Recovery design: [schema map](../design/deployment-cutover-schema.md#restore-and-the-recovery-gate). Drift design:
 [deployment design](../design/deployment-modes.md) ("Drift detection"; the pure comparer is `packages/services/src/drift`).
 P4 is merged: `recovery-clear` already compares the router's counters and unknown routes.
@@ -53,7 +53,7 @@ P4 is merged: `recovery-clear` already compares the router's counters and unknow
    router bootstrapped offline, never an HTTP epoch reset), and repeated interrupted recovery. Docs: restore, install,
    upgrade, tooling, design status.
 
-## Decisions to approve
+## Decisions (approved as written)
 
 1. **What replaces the attestation.** A human must still confirm what no program can see: that no Dokku operation
    dispatched by a pre-restore writer is still running. I propose removing the broad flag and requiring (a) at least
