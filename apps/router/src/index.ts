@@ -150,6 +150,9 @@ async function main(): Promise<void> {
                             "Managed rotation requires the primary deployment model database.",
                         );
                     }
+                    // Nothing awaits between this check and the synchronous rotation, so a
+                    // rotation can never commit after the command has reported a timeout.
+                    budget.throwIfAborted();
                     committed = rotateRouter(config, token);
                     return committed;
                 },
