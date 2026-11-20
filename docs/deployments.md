@@ -13,9 +13,10 @@ redeployed in place, and a failed one never touches another. An app has at most 
 deployment; quotas limit apps and retained deployments (`LAUNCHPAD_MAX_APPS`,
 `LAUNCHPAD_MAX_DEPLOYMENTS_PER_APP`, `LAUNCHPAD_MAX_DEPLOYMENTS`). Aliases can be created
 (`POST /apps/{appId}/aliases` with `{"slug":"prod"}`, `app:alias:manage`, needs `LAUNCHPAD_ALIASES=on`)
-but point at nothing yet: promotion and automatic expiry are not built.
+and then pointed at any succeeded deployment of the same app (see [Promote](#promote-an-alias)).
+Automatic expiry is not built: nothing deletes a deployment unless you ask.
 
-Keys need `app:read`, `app:deploy`, `app:delete` or `app:alias:manage`. The dashboard key form does not offer these scopes yet:
+Keys need `app:read`, `app:deploy`, `app:delete`, `app:promote` or `app:alias:manage`. The dashboard key form does not offer these scopes yet:
 an owner or admin signed in fresh issues the key through `POST /api/v1/organizations/{orgId}/api-keys` (see
 [the controller README](../apps/controller/README.md)). A key never exceeds its creator's role (viewer reads;
 deployer creates apps, deploys and deletes). A project-limited key reaches only its projects and may deploy
@@ -47,6 +48,62 @@ curl -sS -H "$H" "$API/deployments/<deployment>/events?after=0"
 
 The response carries the deployment's own `hostname`; point DNS (or your private routing, see
 [access](access.md)) at the Dokku proxy. `failed`, `cancelled` and `succeeded` deployments can be deleted.
+
+## Promote an alias
+
+An alias is a stable hostname of its own. It points at nothing until you promote a deployment to it, and
+promotion never happens implicitly. This needs `LAUNCHPAD_ALIASES=on` on the controller **and** the worker, which also
+needs the router settings ([install](install.md) step 6).
+
+```sh
+# 1. Create the alias once (it starts unbound: a fixed 404).
+curl -sS -H "$H" -H 'content-type: application/json' -d '{"slug":"prod"}' "$API/apps/<app>/aliases"
+
+# 2. Point it at a succeeded deployment. Idempotency-Key is required; expectedGeneration is the
+#    alias's reservedGeneration that you last read ("0" for a new alias). 202, status "queued".
+curl -sS -H "$H" -H 'content-type: application/json' -H 'Idempotency-Key: release-42' \
+  -d '{"targetDeploymentId":"<deployment>","expectedGeneration":"0"}' \
+  "$API/aliases/<alias>/promotions"
+
+# 3. Follow it. Status goes queued, applying, verifying, succeeded.
+curl -sS -H "$H" "$API/aliases/<alias>/operations"      # newest generation first
+curl -sS -H "$H" "$API/aliases/<alias>"                  # state, targetDeploymentId, generations
+```
+
+A key needs `app:promote`; withdrawing needs `app:alias:manage`, and the two are not interchangeable.
+The same `Idempotency-Key` with the same body returns the same operation; with a different body it is a 409.
+A stale `expectedGeneration` is a 409 as well: read the alias again. To roll back, promote an older
+deployment. The worker sends the route to the router, reads it back, probes the alias hostname for the
+deployment's identity, and only then commits. Traffic can switch as soon as the route is sent, before the
+operation reaches `succeeded`; until it settles, both the previous and the new target stay pinned and cannot
+be deleted. Withdraw an alias (its hostname then answers a fixed 404 and stays reserved):
+
+```sh
+curl -sS -X DELETE -H "$H" -H 'content-type: application/json' -H 'Idempotency-Key: retire-1' \
+  -d '{"expectedGeneration":"3"}' "$API/aliases/<alias>"   # 202
+```
+
+If the router's reply is lost or late, the operation becomes `reconciliation-needed` and the alias
+`binding-uncertain` or `withdrawal-uncertain`: it refuses new requests and keeps its targets pinned. Read the
+router, then record what you found; the command re-reads the exact route and queues a correction:
+
+```sh
+bun .output/admin.mjs promotion-reconcile --operation <id> --target <deployment> \
+  --i-have-verified-the-router-by-exact-route          # or --withdraw
+```
+
+## Shut down an app
+
+```sh
+curl -sS -X DELETE -H "$H" "$API/apps/<app>"   # 202; repeat it to continue
+```
+
+Admins and owners only; a key needs all of `app:delete`, `app:alias:manage` and `app:promote`. The app stops
+accepting deployments and promotions, every bound alias is withdrawn, and **only after the worker has
+verified every route is gone** is each deployment deleted. Nothing is destroyed while a route is live or
+uncertain. The response lists what was queued and what still blocks it (`blockedBy`); repeat the request until
+it answers 404, which for an app whose shutdown you started means it is finished (a deleted app is no longer
+readable). Its identity, hostnames and Dokku names stay reserved forever.
 
 ## Delete
 

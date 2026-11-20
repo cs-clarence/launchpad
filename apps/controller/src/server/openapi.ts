@@ -5,6 +5,7 @@ import {
     appSchema,
     artifactSchema,
     aliasSchema,
+    appShutdownSchema,
     createAliasSchema,
     createAppSchema,
     createDeploymentSchema,
@@ -34,6 +35,9 @@ import {
     okSchema,
     organizationSummarySchema,
     projectSchema,
+    promoteAliasSchema,
+    promotionOperationSchema,
+    withdrawAliasSchema,
 } from "@launchpad-kit/services";
 import { z } from "zod";
 
@@ -54,7 +58,7 @@ const ERRORS = {
     409: "The change conflicts with existing data.",
     413: "The upload is larger than the allowed size.",
     422: "The request body is invalid.",
-    503: "Deployments are turned off, or not available on this instance.",
+    503: "Deployments or aliases are turned off, or not available on this instance.",
 } as const;
 
 interface Operation {
@@ -67,6 +71,8 @@ interface Operation {
     path?: string[];
     query?: { name: string; description: string }[];
     idempotent?: boolean;
+    // A required key with no expiry: the retry guard of a state-changing alias request.
+    idempotencyRequired?: boolean;
     body?: z.ZodType;
     rawBody?: { contentType: string; description: string };
     ok: { status?: number; description: string; schema?: z.ZodType };
@@ -107,6 +113,18 @@ export function operation(op: Operation): DocumentDecoration {
                 description: q.description,
                 schema: { type: "string" },
             })),
+            ...(op.idempotencyRequired
+                ? [
+                      {
+                          name: "Idempotency-Key",
+                          in: "header" as const,
+                          required: true,
+                          description:
+                              "1 to 128 printable characters, scoped to you and the alias. The same key with the same request returns the same operation; the same key with a different request is a conflict. A key is never forgotten.",
+                          schema: { type: "string" },
+                      },
+                  ]
+                : []),
             ...(op.idempotent
                 ? [
                       {
@@ -459,6 +477,50 @@ export const docs = {
         path: ["orgId", "aliasId"],
         ok: { description: "The alias.", schema: aliasSchema },
         errors: [401, 403, 404],
+    }),
+    promoteAlias: operation({
+        keys: true,
+        tags: ["Aliases"],
+        summary: "Point an alias at a deployment",
+        description:
+            "Deployers and above; a key needs `app:promote` and, if project-limited, the app's project. Requires an `Idempotency-Key`. `expectedGeneration` is the alias's `reservedGeneration` you last read; the request fails with 409 if it moved (compare-and-swap). The target must be a succeeded, undeleted deployment of the same app. Returns 202 at once with the operation; a worker sends the route to the router, reads it back, probes the hostname for that deployment, and only then commits (`GET .../operations` shows `status`). A lost reply leaves the operation `reconciliation-needed`: the alias is uncertain and refuses new requests until an operator reconciles it. Rolling back is another promotion to an older deployment. Needs deployments and aliases to be on.",
+        path: ["orgId", "aliasId"],
+        idempotencyRequired: true,
+        body: promoteAliasSchema,
+        ok: { status: 202, description: "Queued.", schema: promotionOperationSchema },
+        errors: [401, 403, 404, 409, 422, 503],
+    }),
+    withdrawAlias: operation({
+        keys: true,
+        tags: ["Aliases"],
+        summary: "Withdraw an alias",
+        description:
+            "Deployers and above; a key needs `app:alias:manage`. Requires an `Idempotency-Key` and a JSON body with `expectedGeneration`. Queues the withdrawal of the alias's route: afterwards its hostname answers a fixed 404. The hostname stays reserved permanently and cannot be bound again. Returns 202 with the operation. Needs deployments and aliases to be on.",
+        path: ["orgId", "aliasId"],
+        idempotencyRequired: true,
+        body: withdrawAliasSchema,
+        ok: { status: 202, description: "Queued.", schema: promotionOperationSchema },
+        errors: [401, 403, 404, 409, 422, 503],
+    }),
+    listAliasOperations: operation({
+        keys: true,
+        tags: ["Aliases"],
+        summary: "List an alias's operations",
+        description:
+            "A key needs `app:read`. Newest generation first: each promotion, withdrawal and correction, with its status. Generations are decimal strings.",
+        path: ["orgId", "aliasId"],
+        ok: { description: "Operations.", schema: z.array(promotionOperationSchema) },
+        errors: [401, 403, 404],
+    }),
+    shutdownApp: operation({
+        keys: true,
+        tags: ["Apps"],
+        summary: "Shut down an app",
+        description:
+            "Admins and owners; a key needs all of `app:delete`, `app:alias:manage` and `app:promote`. Destructive and resumable: the app stops accepting deployments and promotions, every alias route is withdrawn and verified, and only then is each deployment deleted. Returns 202 with what was queued and what still blocks it (`blockedBy`); repeat the request to continue; once the app is deleted the same request answers 404, which is how a caller sees that it finished. Nothing is destroyed while a route is live or uncertain. Identity, hostnames and names stay reserved permanently. A deployment queued but never started is cancelled. Refused with 503 if a route still needs withdrawing while aliases are off. Needs deployments to be on.",
+        path: ["orgId", "appId"],
+        ok: { status: 202, description: "Accepted.", schema: appShutdownSchema },
+        errors: [401, 403, 404, 409, 503],
     }),
     createDeployment: operation({
         keys: true,

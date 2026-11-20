@@ -26,6 +26,7 @@ export {
     artifactSchema,
     appSchema,
     aliasSchema,
+    appShutdownSchema,
     generationSchema,
     promoteAliasSchema,
     promotionOperationSchema,

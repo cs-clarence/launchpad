@@ -1064,6 +1064,10 @@ describe("OpenAPI reference", () => {
         "get /api/v1/organizations/{orgId}/aliases/{aliasId}",
         "get /api/v1/organizations/{orgId}/apps/{appId}/aliases",
         "post /api/v1/organizations/{orgId}/apps/{appId}/aliases",
+        "delete /api/v1/organizations/{orgId}/aliases/{aliasId}",
+        "post /api/v1/organizations/{orgId}/aliases/{aliasId}/promotions",
+        "get /api/v1/organizations/{orgId}/aliases/{aliasId}/operations",
+        "delete /api/v1/organizations/{orgId}/apps/{appId}",
         "get /api/v1/organizations/{orgId}/deployments/{deploymentId}",
         "get /api/v1/organizations/{orgId}/deployments/{deploymentId}/events",
     ];

@@ -441,24 +441,23 @@ unreadable or invalid. Credential material is never included in diagnostics.
 
 All paths below are relative to `/api/v1/organizations/{orgId}`.
 
-| Method/path                                                         | Purpose                                                                                                                      |
-| ------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
-| `POST /projects/{projectId}/apps`                                   | Create a stable app identity; body `{ "slug": "website" }`. No deployment mode or implicit alias.                            |
-| `GET /apps` / `GET /apps/{appId}`                                   | Apps and alias summaries, including committed targets and pending routing state.                                             |
-| `POST /apps/{appId}/aliases`                                        | Create a generated alias from a slug such as `production` or `staging`. It starts unbound; binding is an explicit promotion. |
-| `GET /apps/{appId}/aliases` / `GET /apps/{appId}/aliases/{aliasId}` | List/read independent aliases and their routing state.                                                                       |
-| `DELETE /apps/{appId}/aliases/{aliasId}`                            | Asynchronously withdraw a route; keep its current target pinned until withdrawal is confirmed.                               |
-| `POST /apps/{appId}/deployments`                                    | Deploy once; body `{ "artifactId": "...", "spa": false }`. Returns 202 and job ID.                                           |
-| `GET /apps/{appId}/deployments`                                     | All release candidates/history; production status is derived from alias references.                                          |
-| `GET /deployments/{deploymentId}` / `/events`                       | Existing job status/events plus unique URL, retention and alias references.                                                  |
-| `POST /apps/{appId}/promotions`                                     | Body `{ "aliasId": "...", "deploymentId": "...", "expectedGeneration": "3" }`; returns 202 and promotion operation ID.       |
-| `GET /apps/{appId}/promotions`                                      | Promotion and rollback history.                                                                                              |
-| `GET /promotions/{operationId}`                                     | Pending/succeeded/failed/reconciliation-needed outcome.                                                                      |
-| `POST /deployments/{deploymentId}/extend`                           | Extend retention for an unaliased deployment.                                                                                |
-| `DELETE /deployments/{deploymentId}`                                | Guarded async deletion; refuses any protected target.                                                                        |
-| `DELETE /apps/{appId}`                                              | Explicit destructive app shutdown; must withdraw and verify all routes before deleting referenced deployments.               |
+| Method/path                                                         | Purpose                                                                                                                       |
+| ------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
+| `POST /projects/{projectId}/apps`                                   | Create a stable app identity; body `{ "slug": "website" }`. No deployment mode or implicit alias.                             |
+| `GET /apps` / `GET /apps/{appId}`                                   | Apps and alias summaries, including committed targets and pending routing state.                                              |
+| `POST /apps/{appId}/aliases`                                        | Create a generated alias from a slug such as `production` or `staging`. It starts unbound; binding is an explicit promotion.  |
+| `GET /apps/{appId}/aliases` / `GET /apps/{appId}/aliases/{aliasId}` | List/read independent aliases and their routing state.                                                                        |
+| `POST /apps/{appId}/deployments`                                    | Deploy once; body `{ "artifactId": "...", "spa": false }`. Returns 202 and job ID.                                            |
+| `GET /apps/{appId}/deployments`                                     | All release candidates/history; production status is derived from alias references.                                           |
+| `GET /deployments/{deploymentId}` / `/events`                       | Existing job status/events plus unique URL, retention and alias references.                                                   |
+| `POST /aliases/{aliasId}/promotions`                                | Body `{ "targetDeploymentId": "...", "expectedGeneration": "3" }`, required `Idempotency-Key`; returns 202 and the operation. |
+| `DELETE /aliases/{aliasId}`                                         | Body `{ "expectedGeneration": "3" }`, required `Idempotency-Key`; withdraws the route (202).                                  |
+| `GET /aliases/{aliasId}/operations`                                 | Promotion, withdrawal and correction history, newest generation first, with each status.                                      |
+| `POST /deployments/{deploymentId}/extend`                           | Extend retention for an unaliased deployment.                                                                                 |
+| `DELETE /deployments/{deploymentId}`                                | Guarded async deletion; refuses any protected target.                                                                         |
+| `DELETE /apps/{appId}`                                              | Explicit destructive app shutdown; must withdraw and verify all routes before deleting referenced deployments.                |
 
-Rollback is another `POST /apps/{appId}/promotions` selecting the same alias and an older deployment;
+Rollback is another `POST /aliases/{aliasId}/promotions` with an older deployment;
 do not introduce a separate divergent rollback pipeline.
 
 Promotion requests support idempotency and compare-and-swap alias generation.

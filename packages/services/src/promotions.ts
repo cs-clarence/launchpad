@@ -10,10 +10,14 @@ import { isUniqueViolation, ServiceError } from "./errors";
 import { isUuid } from "./ids";
 import { parseInput, recordAudit, requireMembership } from "./organizations";
 import { boundedPromotionEvidence, type PromotionReadback } from "./promotion-claims";
+import {
+    MAX_GENERATION,
+    reservePromotionOperation,
+    type PromotionWanted,
+} from "./promotion-reserve";
 
 type Db = Kysely<Database>;
 
-const MAX_GENERATION = 9223372036854775807n;
 const STABLE = ["unbound", "bound"] as const;
 
 const OPERATION_COLUMNS = [
@@ -48,13 +52,6 @@ function checkKey(key: string | undefined): string {
     return key;
 }
 
-interface Request {
-    action: "bind" | "withdraw";
-    target: string | null;
-    expected: string;
-    key: string;
-}
-
 // One operation is requested here and nothing is dispatched: the intent, the compare-and-swap on
 // the alias's reserved generation, the pins and the idempotent retry all commit together, under
 // the documented lock order (app row, alias row, deployment rows by id, then operation rows).
@@ -66,7 +63,7 @@ async function request(
     deps: AliasDeps,
     restrictTo: string[] | null | undefined,
     scope: "app:promote" | "app:alias:manage",
-    wanted: Request,
+    wanted: PromotionWanted,
 ) {
     await requireMembership(db, principal, organizationId, scope);
     requireAliasesOn(deps);
@@ -79,16 +76,18 @@ async function request(
             .select(["app_alias.app_id as appId", "app.project_id as projectId"])
             .where("app_alias.id", "=", aliasId)
             .where("app_alias.organization_id", "=", organizationId)
-            .where("app.state", "=", "active")
+            .where("app.state", "<>", "deleted")
             .executeTakeFirst();
         if (!found || (restrictTo && !restrictTo.includes(found.projectId))) {
             throw new ServiceError("not-found", "Alias not found.");
         }
+        // A shutting-down app still replays what it already recorded; it refuses anything new
+        // (checked after the replay lookup below).
         const lockedApp = await trx
             .selectFrom("app")
-            .select("id")
+            .select(["id", "state"])
             .where("id", "=", found.appId)
-            .where("state", "=", "active")
+            .where("state", "<>", "deleted")
             .forUpdate()
             .executeTakeFirst();
         if (!lockedApp) throw new ServiceError("not-found", "Alias not found.");
@@ -136,6 +135,7 @@ async function request(
             }
             return shape(existing);
         }
+        if (lockedApp.state !== "active") throw new ServiceError("not-found", "Alias not found.");
 
         if (!STABLE.includes(alias.state as (typeof STABLE)[number])) {
             throw new ServiceError(
@@ -150,10 +150,6 @@ async function request(
                 "conflict",
                 "The alias changed since you read it; read it again.",
             );
-        }
-        const next = BigInt(alias.reserved_generation) + 1n;
-        if (next > MAX_GENERATION) {
-            throw new ServiceError("conflict", "This alias has no generations left.");
         }
         if (wanted.action === "bind") {
             const target = deployments.find((deployment) => deployment.id === wanted.target);
@@ -175,72 +171,20 @@ async function request(
             }
         }
 
-        let operation;
-        try {
-            operation = await trx
-                .insertInto("promotion_operation")
-                .values({
-                    organization_id: organizationId,
-                    app_id: found.appId,
-                    alias_id: aliasId,
-                    action: wanted.action,
-                    idempotency_key: wanted.key,
-                    previous_target_deployment_id: alias.target_deployment_id,
-                    desired_target_deployment_id: wanted.target,
-                    expected_generation: wanted.expected,
-                    generation: next.toString(),
-                    requested_by: principal.userId,
-                })
-                .returning("id")
-                .executeTakeFirstOrThrow();
-        } catch (error) {
-            if (isUniqueViolation(error)) {
-                throw new ServiceError(
-                    "conflict",
-                    "The alias changed or has an operation in progress; read it again.",
-                );
-            }
-            throw error;
-        }
-        await trx
-            .updateTable("app_alias")
-            .set({
-                state: wanted.action === "bind" ? "binding" : "withdrawing",
-                reserved_generation: next.toString(),
-                updated_at: sql<Date>`clock_timestamp()`,
-            })
-            .where("id", "=", aliasId)
-            .executeTakeFirstOrThrow();
-        if (wanted.target) {
-            // The target is pinned from here until the operation is resolved.
-            await trx
-                .updateTable("deployment")
-                .set({ last_unpinned_at: null, updated_at: sql<Date>`clock_timestamp()` })
-                .where("id", "=", wanted.target)
-                .executeTakeFirstOrThrow();
-            await appendDeploymentEvent(
-                trx,
-                { id: wanted.target, organization_id: organizationId },
-                "promotion-requested",
-                "info",
-                "Promotion requested.",
-            );
-        }
-        await recordAudit(trx, {
-            actor: principal,
-            action:
-                wanted.action === "bind"
-                    ? "alias.promotion-requested"
-                    : "alias.withdrawal-requested",
-            targetType: "alias",
-            targetId: aliasId,
+        const operationId = await reservePromotionOperation(
+            trx,
+            principal,
             organizationId,
-        });
+            found.appId,
+            aliasId,
+            alias,
+            wanted,
+        );
         return shape(
             await trx
                 .selectFrom("promotion_operation")
                 .select([...OPERATION_COLUMNS])
-                .where("id", "=", operation.id)
+                .where("id", "=", operationId)
                 .executeTakeFirstOrThrow(),
         );
     });
@@ -257,6 +201,7 @@ export async function requestPromotion(
     restrictTo?: string[] | null,
 ) {
     await requireMembership(db, principal, organizationId, "app:promote");
+    requireAliasesOn(deps);
     const key = checkKey(idempotencyKey);
     const data = parseInput(promoteAliasSchema, input);
     return request(db, principal, organizationId, aliasId, deps, restrictTo, "app:promote", {
@@ -278,6 +223,7 @@ export async function requestWithdrawal(
     restrictTo?: string[] | null,
 ) {
     await requireMembership(db, principal, organizationId, "app:alias:manage");
+    requireAliasesOn(deps);
     const key = checkKey(idempotencyKey);
     const data = parseInput(withdrawAliasSchema, input);
     return request(db, principal, organizationId, aliasId, deps, restrictTo, "app:alias:manage", {

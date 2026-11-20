@@ -223,6 +223,29 @@ export const promotionOperationSchema = z.strictObject({
     finishedAt: timestamp.nullable(),
 });
 
+export const appShutdownSchema = z.strictObject({
+    appId: z.uuid(),
+    state: z.enum(["active", "shutting-down", "deleted"]),
+    withdrawalsQueued: z.number().int().min(0),
+    deletionsQueued: z.number().int().min(0),
+    blockedBy: z
+        .array(
+            z.enum([
+                "aliases-disabled",
+                "alias-in-progress",
+                "alias-needs-reconciliation",
+                "deployment-unfinished",
+                "deployment-needs-reconciliation",
+                "deployment-deleting",
+                "deletion-needs-reconciliation",
+            ]),
+        )
+        .meta({
+            description:
+                "Why the shutdown cannot finish yet. Repeat the request to continue once these clear; nothing is destroyed while a route is still live or uncertain.",
+        }),
+});
+
 export const aliasSchema = z.strictObject({
     id: z.uuid(),
     appId: z.uuid(),

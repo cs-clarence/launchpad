@@ -19,7 +19,11 @@ import {
     getAlias,
     getApp,
     listAliases,
+    listAliasOperations,
     getDeployment,
+    requestAppShutdown,
+    requestPromotion,
+    requestWithdrawal,
     requestDeploymentDeletion,
     listApps,
     listDeploymentEvents,
@@ -722,6 +726,98 @@ export function createApi(deps: {
                         set,
                         { organizationId: params.orgId, scope: "app:read" },
                         (p, key) => getAlias(db, p, params.orgId, params.aliasId, key?.projectIds),
+                    ),
+            )
+            .post(
+                "/v1/organizations/:orgId/aliases/:aliasId/promotions",
+                { detail: docs.promoteAlias },
+                async ({ request, set, params }) => {
+                    const input = await body(request);
+                    return respond(
+                        request,
+                        set,
+                        { organizationId: params.orgId, scope: "app:promote" },
+                        (p, key) =>
+                            requestPromotion(
+                                db,
+                                p,
+                                params.orgId,
+                                params.aliasId,
+                                input,
+                                request.headers.get("idempotency-key") ?? undefined,
+                                aliasDeps,
+                                key?.projectIds,
+                            ),
+                        202,
+                    );
+                },
+            )
+            .delete(
+                "/v1/organizations/:orgId/aliases/:aliasId",
+                { detail: docs.withdrawAlias },
+                async ({ request, set, params }) => {
+                    const input = await body(request);
+                    return respond(
+                        request,
+                        set,
+                        { organizationId: params.orgId, scope: "app:alias:manage" },
+                        (p, key) =>
+                            requestWithdrawal(
+                                db,
+                                p,
+                                params.orgId,
+                                params.aliasId,
+                                input,
+                                request.headers.get("idempotency-key") ?? undefined,
+                                aliasDeps,
+                                key?.projectIds,
+                            ),
+                        202,
+                    );
+                },
+            )
+            .get(
+                "/v1/organizations/:orgId/aliases/:aliasId/operations",
+                { detail: docs.listAliasOperations },
+                ({ request, set, params }) =>
+                    respond(
+                        request,
+                        set,
+                        { organizationId: params.orgId, scope: "app:read" },
+                        (p, key) =>
+                            listAliasOperations(
+                                db,
+                                p,
+                                params.orgId,
+                                params.aliasId,
+                                key?.projectIds,
+                            ),
+                    ),
+            )
+            .delete(
+                "/v1/organizations/:orgId/apps/:appId",
+                { detail: docs.shutdownApp },
+                ({ request, set, params }) =>
+                    respond(
+                        request,
+                        set,
+                        { organizationId: params.orgId, scope: "app:delete" },
+                        (p, key) => {
+                            // There is no scope for shutdown itself: a key needs all three.
+                            if (key) {
+                                requireKeyAccess(key, params.orgId, "app:alias:manage");
+                                requireKeyAccess(key, params.orgId, "app:promote");
+                            }
+                            return requestAppShutdown(
+                                db,
+                                p,
+                                params.orgId,
+                                params.appId,
+                                aliasDeps,
+                                key?.projectIds,
+                            );
+                        },
+                        202,
                     ),
             )
             .post(
