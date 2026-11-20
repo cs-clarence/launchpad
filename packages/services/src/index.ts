@@ -19,6 +19,7 @@ export * from "./app-routing-config";
 export * from "./apps";
 export * from "./aliases";
 export * from "./promotions";
+export * from "./app-shutdown";
 export * from "./promotion-claims";
 export * from "./router-credentials";
 export * from "./deployments";

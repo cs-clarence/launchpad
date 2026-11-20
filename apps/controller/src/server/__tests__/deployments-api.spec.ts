@@ -13,12 +13,14 @@ import {
     createProject,
     deploymentDeletionSchema,
     aliasSchema,
+    appShutdownSchema,
     deploymentEventSchema,
     deploymentSchema,
     errorSchema,
     markDeploymentRecoveryBlocked,
     parseAliasConfig,
     parseDeploymentConfig,
+    promotionOperationSchema,
     type Principal,
 } from "@launchpad-kit/services";
 import { SITE, tarGz } from "@launchpad-kit/services/testing";
@@ -149,6 +151,9 @@ beforeAll(async () => {
     await issue("remover", ["app:delete"]);
     await issue("aliaser", ["app:read", "app:alias:manage"]);
     await issue("aliaser-p2", ["app:read", "app:alias:manage"], [p2]);
+    await issue("promoter", ["app:read", "app:promote"]);
+    await issue("promoter-p2", ["app:read", "app:promote"], [p2]);
+    await issue("shutdowner", ["app:read", "app:delete", "app:alias:manage", "app:promote"]);
     const config = loadAuthConfig({
         LAUNCHPAD_AUTH_SECRET: "test-secret-".repeat(4),
         LAUNCHPAD_BASE_URL: "http://localhost:3000",
@@ -196,6 +201,10 @@ describe("apps and deployments over HTTP", () => {
             ["POST", `${base()}/apps/${app}/aliases`, "app:alias:manage"],
             ["GET", `${base()}/apps/${app}/aliases`, "app:read"],
             ["GET", `${base()}/aliases/${randomUUID()}`, "app:read"],
+            ["POST", `${base()}/aliases/${randomUUID()}/promotions`, "app:promote"],
+            ["DELETE", `${base()}/aliases/${randomUUID()}`, "app:alias:manage"],
+            ["GET", `${base()}/aliases/${randomUUID()}/operations`, "app:read"],
+            ["DELETE", `${base()}/apps/${app}`, "app:delete"],
         ];
         for (const [method, route, needs] of routes) {
             const anonymous = await call(
@@ -414,6 +423,10 @@ describe("apps and deployments over HTTP", () => {
         expect(has("/apps/{appId}/aliases", "post")).toBe(true);
         expect(has("/apps/{appId}/aliases", "get")).toBe(true);
         expect(has("/aliases/{aliasId}", "get")).toBe(true);
+        expect(has("/aliases/{aliasId}/promotions", "post")).toBe(true);
+        expect(has("/aliases/{aliasId}", "delete")).toBe(true);
+        expect(has("/aliases/{aliasId}/operations", "get")).toBe(true);
+        expect(has("/apps/{appId}", "delete")).toBe(true);
     });
 
     it("creates, lists and reads aliases within the key's scope and projects", async () => {
@@ -452,6 +465,132 @@ describe("apps and deployments over HTTP", () => {
         );
         // Reads still work while aliases are off.
         expect((await call(offApi, "reader", "GET", route)).status).toBe(200);
+    });
+
+    it("promotes, withdraws and lists operations with separate scopes and an idempotency key", async () => {
+        const app = (await newApp()).json.id;
+        const route = `${base()}/apps/${app}/aliases`;
+        const first = aliasSchema.parse(
+            await (await call(api, "aliaser", "POST", route, { body: { slug: "prod" } })).json(),
+        );
+        const second = aliasSchema.parse(
+            await (await call(api, "aliaser", "POST", route, { body: { slug: "stable" } })).json(),
+        );
+        const artifact = (await upload("full", p1)).json.id;
+        const deployment = deploymentSchema.parse(
+            await (
+                await call(api, "full", "POST", `${base()}/apps/${app}/deployments`, {
+                    body: { artifactId: artifact },
+                })
+            ).json(),
+        );
+        await sql`update deployment set status = 'succeeded', finished_at = now(), step_done = 'verify',
+            image_tag = ${`launchpad/site:${deployment.id.replaceAll("-", "")}`},
+            image_id = ${`sha256:${"f".repeat(64)}`} where id = ${deployment.id}`.execute(
+            testDb.db,
+        );
+        const promote = `${base()}/aliases/${first.id}/promotions`;
+        const body = { targetDeploymentId: deployment.id, expectedGeneration: "0" };
+
+        // A key is required, and each action needs its own scope.
+        expect((await call(api, "promoter", "POST", promote, { body })).status).toBe(422);
+        const key = { "idempotency-key": "release-1" };
+        expect((await call(api, "aliaser", "POST", promote, { body, headers: key })).status).toBe(
+            403,
+        );
+        expect((await call(api, "full", "POST", promote, { body, headers: key })).status).toBe(403);
+        expect(
+            (await call(api, "promoter-p2", "POST", promote, { body, headers: key })).status,
+        ).toBe(404);
+        expect(
+            (await call(offApi, "promoter", "POST", promote, { body, headers: key })).status,
+        ).toBe(503);
+
+        const accepted = await call(api, "promoter", "POST", promote, { body, headers: key });
+        expect(accepted.status).toBe(202);
+        const operation = promotionOperationSchema.parse(await accepted.json());
+        expect(operation).toMatchObject({
+            aliasId: first.id,
+            action: "bind",
+            status: "queued",
+            generation: "1",
+            desiredTargetDeploymentId: deployment.id,
+        });
+        // A retry returns the same operation; the same key for a different request is a conflict.
+        const replay = await call(api, "promoter", "POST", promote, { body, headers: key });
+        expect(promotionOperationSchema.parse(await replay.json()).id).toBe(operation.id);
+        expect(
+            (
+                await call(api, "promoter", "POST", promote, {
+                    body: { ...body, expectedGeneration: "5" },
+                    headers: key,
+                })
+            ).status,
+        ).toBe(409);
+        // The alias now has an operation in progress, and a promote key cannot withdraw.
+        expect(
+            (
+                await call(api, "promoter", "DELETE", `${base()}/aliases/${first.id}`, {
+                    body: { expectedGeneration: "1" },
+                    headers: { "idempotency-key": "w-1" },
+                })
+            ).status,
+        ).toBe(403);
+        expect(
+            (
+                await call(api, "aliaser", "DELETE", `${base()}/aliases/${first.id}`, {
+                    body: { expectedGeneration: "1" },
+                    headers: { "idempotency-key": "w-1" },
+                })
+            ).status,
+        ).toBe(409);
+
+        // Withdrawal of a bound alias is queued, and operations are listed newest first.
+        await sql`update app_alias set state = 'bound', target_deployment_id = ${deployment.id},
+            committed_generation = 1, reserved_generation = 1 where id = ${second.id}`.execute(
+            testDb.db,
+        );
+        const withdrawal = await call(api, "aliaser", "DELETE", `${base()}/aliases/${second.id}`, {
+            body: { expectedGeneration: "1" },
+            headers: { "idempotency-key": "w-2" },
+        });
+        expect(withdrawal.status).toBe(202);
+        expect(promotionOperationSchema.parse(await withdrawal.json())).toMatchObject({
+            action: "withdraw",
+            status: "queued",
+            generation: "2",
+            desiredTargetDeploymentId: null,
+        });
+        const listed = z
+            .array(promotionOperationSchema)
+            .parse(
+                await (
+                    await call(api, "reader", "GET", `${base()}/aliases/${first.id}/operations`)
+                ).json(),
+            );
+        expect(listed.map((row) => row.id)).toEqual([operation.id]);
+        expect(
+            (await call(api, "promoter-p2", "GET", `${base()}/aliases/${first.id}/operations`))
+                .status,
+        ).toBe(404);
+
+        // Shutdown needs all three scopes; with routes in progress it destroys nothing.
+        expect((await call(api, "deleter", "DELETE", `${base()}/apps/${app}`)).status).toBe(403);
+        const shutdown = await call(api, "shutdowner", "DELETE", `${base()}/apps/${app}`);
+        expect(shutdown.status).toBe(202);
+        expect(appShutdownSchema.parse(await shutdown.json())).toMatchObject({
+            appId: app,
+            state: "shutting-down",
+            deletionsQueued: 0,
+            blockedBy: ["alias-in-progress"],
+        });
+        expect(
+            (
+                await call(api, "full", "POST", `${base()}/apps/${app}/deployments`, {
+                    body: { artifactId: artifact },
+                })
+            ).status,
+        ).toBe(404);
     });
 
     it("answers a malformed id with 404 and a blocked recovery gate with 503 on deletion", async () => {

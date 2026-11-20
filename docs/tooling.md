@@ -216,10 +216,10 @@ proxy origin (`LAUNCHPAD_APPS_PROXY_URL`); see [install](install.md#install-a-pr
 (`parseAppRoutingConfig`: `LAUNCHPAD_ALIAS_INSTANCE_ID`, `LAUNCHPAD_ALIAS_CONTROL_URL`,
 `LAUNCHPAD_ALIAS_PROBE_URL`, `LAUNCHPAD_ALIAS_CONTROL_TOKEN_FILE`,
 `LAUNCHPAD_ALIAS_ROUTER_EPOCH_FILE`, `LAUNCHPAD_APPS_PROXY_URL`) and runs queued promotions
-through the private router client. The controller has no HTTP route for a promotion yet; P4d adds
-the API.
+through the private router client. The controller exposes promotion, withdrawal, operation reads and app
+shutdown (P4d).
 
-**Planned, not implemented:** the promotion API and app shutdown (P4d).
+**Planned, not implemented:** automatic retention expiry.
 See [the design](design/deployment-modes.md) and
 [routing experiment](decisions/deployment-alias-routing.md). Do not configure those
 names against the current binary; the deployment change updates examples, tasks and

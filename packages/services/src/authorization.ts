@@ -19,6 +19,7 @@ export type OrganizationAction =
     | "app:delete"
     | "app:promote"
     | "app:alias:manage"
+    | "app:shutdown"
     | "apikey:manage";
 
 const VIEWER: OrganizationAction[] = [
@@ -37,6 +38,9 @@ const DEPLOYER: OrganizationAction[] = [
 ];
 const ADMIN: OrganizationAction[] = [
     ...DEPLOYER,
+    // Destroys every deployment of an app. A key also needs app:delete, app:promote and
+    // app:alias:manage (there is no scope for this action of its own).
+    "app:shutdown",
     "member:manage",
     "project:delete",
     "apikey:manage",

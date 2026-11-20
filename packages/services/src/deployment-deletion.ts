@@ -1,5 +1,6 @@
 import type { Database } from "@launchpad-kit/database";
 import { type ExpressionBuilder, type Kysely, sql } from "kysely";
+import { finishShutdownIfDone } from "./app-shutdown";
 import { requireDeploymentsOn, type AppDeps } from "./apps";
 import type { Principal } from "./authorization";
 import { appendDeploymentEvent, DEPLOYMENT_LEASE_MS } from "./deployment-claims";
@@ -354,6 +355,8 @@ export function completeDeletionStep(
                 .where("id", "=", deployment.id)
                 .executeTakeFirstOrThrow();
             await appendDeploymentEvent(trx, deployment, "deleted", "info", "Deleted.");
+            // The app row is locked here (the chain), so the last deletion can settle a shutdown.
+            await finishShutdownIfDone(trx, row.app_id);
         }
         return row;
     });
