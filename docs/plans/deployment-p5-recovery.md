@@ -22,8 +22,10 @@ P4 is merged: `recovery-clear` already compares the router's counters and unknow
 
 1. **P5a: epoch anchor.** `restore` records the router's current epoch (not a secret) in the recovery marker (version 2).
    `recovery-clear` refuses unless the router's epoch now differs from it, so a rotation made after the backup but before
-   the restore cannot pass for one made during recovery. A version-1 marker, or one recorded while the router was
-   unreachable, has no anchor: clear then needs an explicit, audited `--router-epoch-unrecorded` (see decision 2).
+   the restore cannot pass for one made during recovery. If the router cannot be read when the restore begins, the
+   anchor is the epoch in the configured epoch file (the epoch the workers were using), so rotation can still be
+   verified. Only when neither is available (no router configured then, an unreadable file, a version-1 marker) is
+   there no anchor: clear then needs an explicit, audited `--router-epoch-unrecorded` (see decision 2).
 2. **P5b: readers and `launchpad-admin drift`.** Read-only readers for the database snapshot (taken twice, findings
    that changed between the reads are dropped), the router (every page, tombstones included), the stored archives,
    optionally an identity probe, and Dokku through two new allowlisted reads (`apps:list`, `domains:report`). They feed
@@ -60,9 +62,11 @@ P4 is merged: `recovery-clear` already compares the router's counters and unknow
    25 minutes since the marker's `restoreStartedAt` (the worker's documented stop grace, checked by the command) and
    (b) one narrow flag, `--i-have-checked-the-dokku-host`, for the host check in the runbook. Alternative: keep the
    existing flag unchanged. Say which.
-2. **Restore with the router unreachable.** `restore` still proceeds (a restore is an emergency) and records no anchor;
-   `recovery-clear` then needs `--router-epoch-unrecorded`, audited, and still compares everything else. Alternative:
-   refuse to restore until the router answers.
+2. **Restore with the router unreachable.** `restore` still proceeds (a restore is an emergency) and anchors on the
+   configured epoch file instead. Only if that is unavailable too does it record no anchor; `recovery-clear` then
+   needs `--router-epoch-unrecorded`, which is a human attestation that the router was rotated (nothing can prove it
+   without an anchor), audited, and still compares everything else. Alternative: refuse to restore until the router
+   answers.
 3. **The restored database is authoritative.** `recovery-republish-alias` overwrites the router's disagreeing route with
    the database's, so a promotion made after the backup is undone (it was already lost by restoring). Alternative: also
    offer adopting the router's route into the database.
