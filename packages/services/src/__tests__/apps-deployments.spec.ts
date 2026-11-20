@@ -417,6 +417,84 @@ describe("creating a deployment", () => {
             ).toBe("not-found");
         });
 
+        it("waits on a collector that holds the artifact row, then refuses what it collected", async () => {
+            const app = await newApp();
+            const artifact = await artifactFor(p1);
+            let release!: () => void;
+            const hold = new Promise<void>((resolve) => (release = resolve));
+            let locked!: () => void;
+            const ready = new Promise<void>((resolve) => (locked = resolve));
+            // A collector in the middle of its transaction: it has locked the row and will mark it
+            // collected. Without the share lock, the deployment would not wait for it.
+            const collector = testDb.db.transaction().execute(async (trx) => {
+                await trx
+                    .selectFrom("artifact")
+                    .select("id")
+                    .where("id", "=", artifact)
+                    .forUpdate()
+                    .execute();
+                locked();
+                await hold;
+                await trx
+                    .updateTable("artifact")
+                    .set({ collected_at: new Date() })
+                    .where("id", "=", artifact)
+                    .execute();
+            });
+            await ready;
+            let settled: string | undefined;
+            const deploying = code(
+                createDeployment(
+                    testDb.db,
+                    people.dee!,
+                    org,
+                    app.id,
+                    { artifactId: artifact },
+                    deps(),
+                ),
+            ).then((outcome) => (settled = outcome));
+            await new Promise((resolve) => setTimeout(resolve, 400));
+            expect(settled).toBeUndefined();
+            release();
+            await collector;
+            await deploying;
+            expect(settled).toBe("not-found");
+            expect(
+                await testDb.db
+                    .selectFrom("deployment")
+                    .select("id")
+                    .where("artifact_id", "=", artifact)
+                    .execute(),
+            ).toEqual([]);
+        });
+
+        it("makes a collector skip an artifact a deployment holds until it commits", async () => {
+            const app = await newApp();
+            const artifact = await artifactFor(p1);
+            await age(artifact);
+            // The deployment's own lookup, held open the way createDeployment holds it.
+            let release!: () => void;
+            const hold = new Promise<void>((resolve) => (release = resolve));
+            let locked!: () => void;
+            const ready = new Promise<void>((resolve) => (locked = resolve));
+            const deployer = testDb.db.transaction().execute(async (trx) => {
+                await trx
+                    .selectFrom("artifact")
+                    .select("id")
+                    .where("id", "=", artifact)
+                    .forShare()
+                    .execute();
+                locked();
+                await hold;
+            });
+            await ready;
+            const result = await collectArtifacts(testDb.db, { dataDir, retentionSeconds: 0 });
+            expect(result.collected).not.toContain(artifact);
+            release();
+            await deployer;
+            expect(app.id).toBeTruthy();
+        });
+
         it("never ends with a deployment whose archive is gone, in either interleaving", async () => {
             for (let i = 0; i < 5; i++) {
                 const app = await newApp();
