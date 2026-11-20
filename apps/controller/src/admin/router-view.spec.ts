@@ -128,6 +128,13 @@ describe("recoveryAnchorNotice", () => {
         expect(
             recoveryAnchorNotice({ ...base, routerEpoch: null, routerEpochNote: "not-configured" }),
         ).toMatch(/no router is configured/);
+        expect(
+            recoveryAnchorNotice({
+                ...base,
+                routerEpoch: null,
+                routerEpochNote: "history-unknown",
+            }),
+        ).toMatch(/not known whether a router was in use/);
         expect(recoveryAnchorNotice("damaged")).toMatch(/damaged/);
         expect(recoveryAnchorNotice(null)).toBeNull();
     });

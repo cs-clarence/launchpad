@@ -109,11 +109,13 @@ async function exists(dir: string | null, name: string) {
 // from, or why there is none. The union keeps the two from disagreeing.
 export type RouterAnchor =
     | { routerEpoch: string; note: "recorded" | "from-epoch-file" }
-    | { routerEpoch: null; note: "not-configured" | "unreachable" };
+    | { routerEpoch: null; note: "not-configured" | "unreachable" | "history-unknown" };
 
 export type RecoveryMarker = { version: 2; restoreStartedAt: string } & {
     routerEpoch: RouterAnchor["routerEpoch"];
     // "predates-anchor" is how a version 1 marker reads: it says nothing about any router.
+    // "history-unknown" is what a retry writes over one (or over a damaged marker) that found no
+    // router either, so the unknown provenance survives the rewrite.
     routerEpochNote: RouterAnchor["note"] | "predates-anchor";
 };
 const EPOCH = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
@@ -174,7 +176,10 @@ export async function readRecoveryMarker(
             routerEpochNote: note,
         };
     }
-    if (epoch === null && (note === "not-configured" || note === "unreachable")) {
+    if (
+        epoch === null &&
+        (note === "not-configured" || note === "unreachable" || note === "history-unknown")
+    ) {
         return {
             version: 2,
             restoreStartedAt: parsed.restoreStartedAt,
@@ -197,13 +202,17 @@ export async function markDeploymentRecoveryBlocked(
     }
     const found = await readRecoveryMarker(dataDir);
     const existing = found && found !== "damaged" ? found : null;
-    // A retry that merely finds no router configured must not erase that one was unreachable
-    // earlier; a valid epoch still strengthens an unanchored marker.
+    // A retry that merely finds no router configured must not erase what an earlier run knew: that
+    // a router was unreachable, or that nothing was known (a version 1 or damaged marker). A valid
+    // epoch still strengthens an unanchored marker.
+    const earlier = found === "damaged" ? "history-unknown" : existing?.routerEpochNote;
     const note =
-        anchor.routerEpoch === null &&
-        anchor.note === "not-configured" &&
-        existing?.routerEpochNote === "unreachable"
-            ? "unreachable"
+        anchor.routerEpoch === null && anchor.note === "not-configured"
+            ? earlier === "unreachable"
+                ? "unreachable"
+                : earlier === "predates-anchor" || earlier === "history-unknown"
+                  ? "history-unknown"
+                  : anchor.note
             : anchor.note;
     const record: RecoveryMarker =
         existing && existing.routerEpoch !== null
@@ -536,7 +545,10 @@ export async function clearDeploymentRecovery(
             const damaged = marker === "damaged";
             const anchor = marker && marker !== "damaged" ? marker.routerEpoch : null;
             // Nothing is known about any router: damaged, or written before anchors existed.
-            const unknown = damaged || marker?.routerEpochNote === "predates-anchor";
+            const unknown =
+                damaged ||
+                marker?.routerEpochNote === "predates-anchor" ||
+                marker?.routerEpochNote === "history-unknown";
             const fromFile =
                 marker !== null &&
                 marker !== "damaged" &&
@@ -595,7 +607,7 @@ export async function clearDeploymentRecovery(
                         throw new DeploymentRecoveryError(
                             damaged
                                 ? "The recovery marker is damaged, so it is not known whether a router was in use. After rotating any router, repeat with --router-epoch-unrecorded to confirm it yourself."
-                                : "The recovery marker predates router anchoring, so it is not known whether a router was in use. After rotating any router, repeat with --router-epoch-unrecorded to confirm it yourself.",
+                                : "It is not known whether a router was in use (the recovery marker predates router anchoring, or an earlier run could not tell). After rotating any router, repeat with --router-epoch-unrecorded to confirm it yourself.",
                         );
                     }
                     epochAudit = `;router-epoch=${damaged ? "marker-damaged-confirmed" : "unrecorded-confirmed"}`;

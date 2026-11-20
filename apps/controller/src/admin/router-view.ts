@@ -100,7 +100,13 @@ export function recoveryAnchorNotice(marker: RecoveryMarker | "damaged" | null):
     }
     if (!marker) return null;
     if (marker.routerEpoch === null) {
-        return `No router epoch was recorded (${marker.routerEpochNote === "unreachable" ? "the router could not be read" : "no router is configured"}); recovery-clear will need --router-epoch-unrecorded.`;
+        const why =
+            marker.routerEpochNote === "unreachable"
+                ? "the router could not be read"
+                : marker.routerEpochNote === "not-configured"
+                  ? "no router is configured"
+                  : "it is not known whether a router was in use";
+        return `No router epoch was recorded (${why}); recovery-clear will need --router-epoch-unrecorded.`;
     }
     if (marker.routerEpochNote === "from-epoch-file") {
         return "The router could not be read, so the anchor is the epoch in the configured epoch file; recovery-clear will need --router-epoch-unrecorded to confirm the rotation.";

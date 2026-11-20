@@ -476,6 +476,40 @@ describe("recovery counters", () => {
             });
         });
 
+        it("keeps unknown history across a retry that finds no router, and lets an epoch strengthen it", async () => {
+            await fs.mkdir(path.join(dataDir, "maintenance"), { recursive: true, mode: 0o700 });
+            const file = path.join(dataDir, "maintenance/deployment-recovery-blocked");
+            for (const text of [
+                '{"version":1,"restoreStartedAt":"2026-01-01T00:00:00.000Z"}\n',
+                "garbage",
+            ]) {
+                await fs.writeFile(file, text);
+                await markDeploymentRecoveryBlocked(dataDir, {
+                    routerEpoch: null,
+                    note: "not-configured",
+                });
+                expect(await readRecoveryMarker(dataDir)).toMatchObject({
+                    routerEpoch: null,
+                    routerEpochNote: "history-unknown",
+                });
+                // And again: still unknown, not weakened to "not configured".
+                await markDeploymentRecoveryBlocked(dataDir, {
+                    routerEpoch: null,
+                    note: "not-configured",
+                });
+                expect(await readRecoveryMarker(dataDir)).toMatchObject({
+                    routerEpochNote: "history-unknown",
+                });
+            }
+            await blockRestoredModel(db.db);
+            await expect(clearDeploymentRecovery(db.db, dataDir, true)).rejects.toThrow(
+                /not known whether a router was in use/,
+            );
+            const epoch = randomUUID();
+            await markDeploymentRecoveryBlocked(dataDir, { routerEpoch: epoch, note: "recorded" });
+            expect(await readRecoveryMarker(dataDir)).toMatchObject({ routerEpoch: epoch });
+        });
+
         it("needs the flag on the no-router path for a version 1 or damaged marker", async () => {
             await blockRestoredModel(db.db);
             await fs.mkdir(path.join(dataDir, "maintenance"), { recursive: true, mode: 0o700 });
@@ -488,7 +522,7 @@ describe("recovery counters", () => {
                 routerEpochNote: "predates-anchor",
             });
             await expect(clearDeploymentRecovery(db.db, dataDir, true)).rejects.toThrow(
-                /predates router anchoring/,
+                /not known whether a router was in use/,
             );
             await fs.writeFile(file, "null");
             expect(await readRecoveryMarker(dataDir)).toBe("damaged");
