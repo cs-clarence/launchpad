@@ -425,7 +425,7 @@ LAUNCHPAD_ALIAS_HOSTNAME_TEMPLATE=view-{slug}-{id}
 | `LAUNCHPAD_MAX_APPS`                                      | 10 per organization.                                                                                                                                                                  |
 | `LAUNCHPAD_MAX_DEPLOYMENTS_PER_APP`                       | 20 retained/allocated instances, including failed resources awaiting cleanup.                                                                                                         |
 | `LAUNCHPAD_MAX_DEPLOYMENTS`                               | 100 per organization, including allocation reservations.                                                                                                                              |
-| `LAUNCHPAD_MAX_ALIASES_PER_APP` / `LAUNCHPAD_MAX_ALIASES` | 10 per app / 100 per organization; withdrawing/uncertain aliases count until terminal.                                                                                                |
+| `LAUNCHPAD_MAX_ALIASES_PER_APP` / `LAUNCHPAD_MAX_ALIASES` | 5 per app / 50 per organization; withdrawing/uncertain aliases count until terminal.                                                                                                  |
 
 This is a coordinated pre-release configuration break: reject old
 `LAUNCHPAD_PREVIEW_DOMAIN`, `LAUNCHPAD_PREVIEW_PROXY_URL`,

@@ -269,7 +269,7 @@ Authenticated organization pages and server-function responses are `no-store`.
 An owner or admin issues organization API keys from the API (`POST
 /api/v1/organizations/{orgId}/api-keys`, signed in). The secret is shown once. Automation
 sends `Authorization: Bearer lp_…`. A key is limited to its organization, to the scopes it
-was given (`organization:read`, `member:read`, `project:read`, `project:create`, the reserved `project:delete`, and `app:read`, `app:deploy`, `app:delete`), optionally to named projects, and never exceeds
+was given (`organization:read`, `member:read`, `project:read`, `project:create`, the reserved `project:delete`, and `app:read`, `app:deploy`, `app:delete`, `app:promote`, `app:alias:manage`), optionally to named projects, and never exceeds
 its creator's current role; it stops working when it expires, is revoked, or its creator
 leaves the organization. Keys cannot manage keys, members, invitations or organizations.
 
@@ -294,11 +294,11 @@ version). Workers, queues and deployments report nothing here yet. There is no d
 With `LAUNCHPAD_DEPLOYMENTS=on`, under `/api/v1/organizations/{orgId}`: `POST /projects/{projectId}/artifacts` (the
 archive as `application/gzip` with a `Content-Length`), `POST /projects/{projectId}/apps`, `GET /apps`, `GET /apps/{appId}`,
 `POST /apps/{appId}/deployments` (202, queued), `GET /apps/{appId}/deployments`, `GET /deployments/{deploymentId}` and
-`/events`, and `DELETE /deployments/{deploymentId}` (202). Keys need `app:read`, `app:deploy` or `app:delete`; a
+`/events`, and `DELETE /deployments/{deploymentId}` (202). Keys need `app:read`, `app:deploy`, `app:delete` or `app:alias:manage`; a
 project-limited key reaches only its projects and may deploy only archives uploaded through the app's project.
 While off, writes answer 503 and reads still work. A queued deployment waits for an enabled worker. Only a finished
 deployment can be deleted: a worker destroys its own Dokku app and local image, and its hostname and name stay
-reserved permanently. Promotion and aliases come later. See [deployments](../../docs/deployments.md) for a worked example. Each operation is in the OpenAPI document.
+reserved permanently. With `LAUNCHPAD_ALIASES=on` (needs deployments on), `POST /apps/{appId}/aliases`, `GET /apps/{appId}/aliases` and `GET /aliases/{aliasId}` create and read aliases: a permanent hostname per alias, created unbound (it routes nowhere yet; the router's fixed 404 comes later). Pointing an alias at a deployment (promotion) is not built yet, and `app:promote` has no operation yet. Limits: `LAUNCHPAD_MAX_ALIASES_PER_APP` (5) and `LAUNCHPAD_MAX_ALIASES` (50). See [deployments](../../docs/deployments.md) for a worked example. Each operation is in the OpenAPI document.
 
 A deployment the worker could not confirm is `reconciliation-needed` and blocks its app. After
 checking Dokku by exact name, record what you saw with

@@ -4,6 +4,8 @@ import {
     acceptedInvitationSchema,
     appSchema,
     artifactSchema,
+    aliasSchema,
+    createAliasSchema,
     createAppSchema,
     createDeploymentSchema,
     deploymentDeletionSchema,
@@ -181,6 +183,11 @@ export function openApiPlugin(enabled: boolean) {
                 {
                     name: "Deployments",
                     description: "Queued, immutable deployments of an uploaded archive.",
+                },
+                {
+                    name: "Aliases",
+                    description:
+                        "Stable hostnames an app can point at a deployment (not routed yet).",
                 },
                 { name: "API keys", description: "Organization-owned automation keys." },
                 { name: "Operations", description: "Instance health, for the operator." },
@@ -421,6 +428,36 @@ export const docs = {
         description: "A key needs `app:read`.",
         path: ["orgId", "appId"],
         ok: { description: "The app.", schema: appSchema },
+        errors: [401, 403, 404],
+    }),
+    createAlias: operation({
+        keys: true,
+        tags: ["Aliases"],
+        summary: "Create an alias",
+        description:
+            "Deployers and above; a key needs `app:alias:manage` and, if project-limited, the app's project. An alias is a stable hostname of its own for an app, created unbound (it points at no deployment, and routes nowhere until the router lands). Its hostname is permanent and never reused. Refused at the per-app and per-organization alias limits. Needs deployments and aliases to be on. Routing a deployment to it comes later.",
+        path: ["orgId", "appId"],
+        body: createAliasSchema,
+        ok: { status: 201, description: "Created.", schema: aliasSchema },
+        errors: [401, 403, 404, 409, 422, 503],
+    }),
+    listAliases: operation({
+        keys: true,
+        tags: ["Aliases"],
+        summary: "List an app's aliases",
+        description:
+            "A key needs `app:read`. Oldest first, including withdrawn aliases. Generations are decimal strings.",
+        path: ["orgId", "appId"],
+        ok: { description: "Aliases.", schema: z.array(aliasSchema) },
+        errors: [401, 403, 404],
+    }),
+    getAlias: operation({
+        keys: true,
+        tags: ["Aliases"],
+        summary: "Read an alias",
+        description: "A key needs `app:read`.",
+        path: ["orgId", "aliasId"],
+        ok: { description: "The alias.", schema: aliasSchema },
         errors: [401, 403, 404],
     }),
     createDeployment: operation({

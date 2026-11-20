@@ -1,6 +1,7 @@
 import { createAuth, createMailer, loadAuthConfig } from "@launchpad-kit/auth";
 import { assertSchemaCurrent, createDatabase } from "@launchpad-kit/database";
 import {
+    parseAliasConfig,
     parseDeploymentConfig,
     requireModelDataDirectory,
     sweepStaleUploads,
@@ -41,6 +42,7 @@ function compose() {
     // `LAUNCHPAD_DEPLOYMENTS` is off unless set; invalid settings stop the process at startup
     // (see startup-settings.ts), so a parse failure here only repeats that for a bare import.
     const deployments = { dataDir, settings: parseDeploymentConfig(process.env) };
+    const aliases = parseAliasConfig(process.env);
     // A crash mid-upload leaves a staged file behind; clear the old ones at startup.
     void sweepStaleUploads(dataDir).catch((error) =>
         console.error("Could not sweep stale uploads", error),
@@ -53,10 +55,11 @@ function compose() {
         invitations,
         artifacts,
         deployments,
+        aliases,
         // Serves the OpenAPI document and Scalar reference; set to "false" to remove them.
         docs: process.env.LAUNCHPAD_API_DOCS !== "false",
     });
-    return { config, db, auth, api, invitations, features, artifacts, deployments };
+    return { config, db, auth, api, invitations, features, artifacts, deployments, aliases };
 }
 
 let runtime: ReturnType<typeof compose> | undefined;

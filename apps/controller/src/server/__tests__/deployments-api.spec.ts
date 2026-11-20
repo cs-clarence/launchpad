@@ -12,10 +12,12 @@ import {
     createOrganization,
     createProject,
     deploymentDeletionSchema,
+    aliasSchema,
     deploymentEventSchema,
     deploymentSchema,
     errorSchema,
     markDeploymentRecoveryBlocked,
+    parseAliasConfig,
     parseDeploymentConfig,
     type Principal,
 } from "@launchpad-kit/services";
@@ -145,6 +147,8 @@ beforeAll(async () => {
     await issue("deleter", ["app:read", "app:deploy", "app:delete"]);
     await issue("deleter-p2", ["app:read", "app:delete"], [p2]);
     await issue("remover", ["app:delete"]);
+    await issue("aliaser", ["app:read", "app:alias:manage"]);
+    await issue("aliaser-p2", ["app:read", "app:alias:manage"], [p2]);
     const config = loadAuthConfig({
         LAUNCHPAD_AUTH_SECRET: "test-secret-".repeat(4),
         LAUNCHPAD_BASE_URL: "http://localhost:3000",
@@ -163,6 +167,7 @@ beforeAll(async () => {
         ...common,
         artifacts: { dataDir, limits: { maxUploadBytes: 64 * 1024 } },
         deployments: { dataDir, settings: parseDeploymentConfig(env) },
+        aliases: parseAliasConfig({ ...env, LAUNCHPAD_ALIASES: "on" }),
     });
     offApi = createApi({
         ...common,
@@ -188,6 +193,9 @@ describe("apps and deployments over HTTP", () => {
             ["GET", `${base()}/deployments/${randomUUID()}`, "app:read"],
             ["GET", `${base()}/deployments/${randomUUID()}/events`, "app:read"],
             ["DELETE", `${base()}/deployments/${randomUUID()}`, "app:delete"],
+            ["POST", `${base()}/apps/${app}/aliases`, "app:alias:manage"],
+            ["GET", `${base()}/apps/${app}/aliases`, "app:read"],
+            ["GET", `${base()}/aliases/${randomUUID()}`, "app:read"],
         ];
         for (const [method, route, needs] of routes) {
             const anonymous = await call(
@@ -403,6 +411,47 @@ describe("apps and deployments over HTTP", () => {
         expect(has("/deployments/{deploymentId}", "get")).toBe(true);
         expect(has("/deployments/{deploymentId}/events", "get")).toBe(true);
         expect(has("/deployments/{deploymentId}", "delete")).toBe(true);
+        expect(has("/apps/{appId}/aliases", "post")).toBe(true);
+        expect(has("/apps/{appId}/aliases", "get")).toBe(true);
+        expect(has("/aliases/{aliasId}", "get")).toBe(true);
+    });
+
+    it("creates, lists and reads aliases within the key's scope and projects", async () => {
+        const app = (await newApp()).json.id;
+        const route = `${base()}/apps/${app}/aliases`;
+        const created = await call(api, "aliaser", "POST", route, { body: { slug: "prod" } });
+        expect(created.status).toBe(201);
+        const alias = aliasSchema.parse(await created.json());
+        expect(alias).toMatchObject({ state: "unbound", reservedGeneration: "0" });
+        expect((await call(api, "aliaser", "POST", route, { body: { slug: "prod" } })).status).toBe(
+            409,
+        );
+        expect((await call(api, "aliaser", "POST", route, { body: { slug: "BAD" } })).status).toBe(
+            422,
+        );
+        // Another project's key cannot see the app, and the off switch refuses before any change.
+        expect((await call(api, "aliaser-p2", "POST", route, { body: { slug: "x" } })).status).toBe(
+            404,
+        );
+        expect((await call(offApi, "aliaser", "POST", route, { body: { slug: "x" } })).status).toBe(
+            503,
+        );
+        const listed = z
+            .array(aliasSchema)
+            .parse(await (await call(api, "reader", "GET", route)).json());
+        expect(listed.map((a) => a.id)).toEqual([alias.id]);
+        const read = await call(api, "reader", "GET", `${base()}/aliases/${alias.id}`);
+        expect(aliasSchema.parse(await read.json())).toEqual(alias);
+        expect((await call(api, "aliaser-p2", "GET", `${base()}/aliases/${alias.id}`)).status).toBe(
+            404,
+        );
+        // A deploy-capable key without the alias scope is refused, and a bad id is a 404.
+        expect((await call(api, "full", "POST", route, { body: { slug: "x" } })).status).toBe(403);
+        expect((await call(api, "reader", "GET", `${base()}/apps/not-a-uuid/aliases`)).status).toBe(
+            404,
+        );
+        // Reads still work while aliases are off.
+        expect((await call(offApi, "reader", "GET", route)).status).toBe(200);
     });
 
     it("answers a malformed id with 404 and a blocked recovery gate with 503 on deletion", async () => {

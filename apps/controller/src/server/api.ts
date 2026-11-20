@@ -13,9 +13,12 @@ import {
     type ApiKeyPrincipal,
     type ApiKeyScope,
     authenticateApiKey,
+    createAlias,
     createApp,
     createDeployment,
+    getAlias,
     getApp,
+    listAliases,
     getDeployment,
     requestDeploymentDeletion,
     listApps,
@@ -23,6 +26,8 @@ import {
     listDeployments,
     resolveLimits,
     uploadArtifact,
+    type AliasDeps,
+    type AliasSettings,
     type AppDeps,
     type ArtifactDeps,
     createApiKey,
@@ -109,10 +114,12 @@ export function createApi(deps: {
     // refuse with 503, exactly as when deployments are off.
     artifacts?: ArtifactDeps;
     deployments?: AppDeps;
+    aliases?: AliasSettings;
 }) {
     const { auth, db, origin, invitations } = deps;
     const artifacts = deps.artifacts ?? { dataDir: "", limits: {} };
     const deployments: AppDeps = deps.deployments ?? { dataDir: "", settings: { enabled: false } };
+    const aliasDeps: AliasDeps = { ...deployments, aliases: deps.aliases ?? { enabled: false } };
     // Resolved once, so a bad limit fails at startup, not on the first upload.
     const uploadLimit = resolveLimits(artifacts.limits).maxUploadBytes;
     const withDocs = deps.docs ?? false;
@@ -670,6 +677,51 @@ export function createApi(deps: {
                         set,
                         { organizationId: params.orgId, scope: "app:read" },
                         (p, key) => getApp(db, p, params.orgId, params.appId, key?.projectIds),
+                    ),
+            )
+            .post(
+                "/v1/organizations/:orgId/apps/:appId/aliases",
+                { detail: docs.createAlias },
+                async ({ request, set, params }) => {
+                    const input = await body(request);
+                    return respond(
+                        request,
+                        set,
+                        { organizationId: params.orgId, scope: "app:alias:manage" },
+                        (p, key) =>
+                            createAlias(
+                                db,
+                                p,
+                                params.orgId,
+                                params.appId,
+                                input,
+                                aliasDeps,
+                                key?.projectIds,
+                            ),
+                        201,
+                    );
+                },
+            )
+            .get(
+                "/v1/organizations/:orgId/apps/:appId/aliases",
+                { detail: docs.listAliases },
+                ({ request, set, params }) =>
+                    respond(
+                        request,
+                        set,
+                        { organizationId: params.orgId, scope: "app:read" },
+                        (p, key) => listAliases(db, p, params.orgId, params.appId, key?.projectIds),
+                    ),
+            )
+            .get(
+                "/v1/organizations/:orgId/aliases/:aliasId",
+                { detail: docs.getAlias },
+                ({ request, set, params }) =>
+                    respond(
+                        request,
+                        set,
+                        { organizationId: params.orgId, scope: "app:read" },
+                        (p, key) => getAlias(db, p, params.orgId, params.aliasId, key?.projectIds),
                     ),
             )
             .post(

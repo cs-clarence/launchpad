@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { assertCurrentSettings, parseAppRoutingConfig } from "./app-routing-config";
+import {
+    assertCurrentSettings,
+    parseAliasConfig,
+    parseAppRoutingConfig,
+} from "./app-routing-config";
 import { assertNoRemovedSettings } from "./removed-settings";
 
 const valid = {
@@ -30,7 +34,7 @@ describe("parseAppRoutingConfig", () => {
         expect([config.maxApps, config.maxDeployments, config.maxDeploymentsPerApp]).toEqual([
             10, 100, 20,
         ]);
-        expect([config.maxAliases, config.maxAliasesPerApp]).toEqual([100, 10]);
+        expect([config.maxAliases, config.maxAliasesPerApp]).toEqual([50, 5]);
         expect(config.deploymentTemplate.source).toBe("{slug}-{id}-preview");
         expect(config.aliasTemplate.source).toBe("view-{slug}-{id}");
         expect(config.aliasControlTokenFile).toBe("/run/secrets/alias_token");
@@ -244,5 +248,43 @@ describe("assertCurrentSettings", () => {
         expect(() =>
             assertCurrentSettings(env("http://localhost:3000", "sites.example.net")),
         ).toThrow("https origin");
+    });
+});
+
+describe("parseAliasConfig", () => {
+    const on = {
+        LAUNCHPAD_DEPLOYMENTS: "on",
+        LAUNCHPAD_BASE_URL: "https://control.example.com",
+        LAUNCHPAD_APPS_DOMAIN: "sites.example.net",
+    };
+
+    it("is off, and reads nothing else, unless switched on", () => {
+        expect(parseAliasConfig(on)).toEqual({ enabled: false });
+        expect(parseAliasConfig({ ...on, LAUNCHPAD_ALIASES: "off" })).toEqual({ enabled: false });
+        expect(() => parseAliasConfig({ ...on, LAUNCHPAD_ALIASES: "yes" })).toThrow(
+            /"on" or "off"/,
+        );
+    });
+
+    it("needs deployments to be on", () => {
+        expect(() =>
+            parseAliasConfig({ ...on, LAUNCHPAD_DEPLOYMENTS: "off", LAUNCHPAD_ALIASES: "on" }),
+        ).toThrow("needs LAUNCHPAD_DEPLOYMENTS=on");
+    });
+
+    it("applies defaults and validates limits and the template", () => {
+        const config = parseAliasConfig({ ...on, LAUNCHPAD_ALIASES: "on" });
+        if (!config.enabled) throw new Error("expected enabled");
+        expect([config.maxAliasesPerApp, config.maxAliases]).toEqual([5, 50]);
+        expect(config.aliasTemplate.source).toBe("view-{slug}-{id}");
+        const bad = (extra: Record<string, string>) => () =>
+            parseAliasConfig({ ...on, LAUNCHPAD_ALIASES: "on", ...extra });
+        expect(bad({ LAUNCHPAD_MAX_ALIASES_PER_APP: "0" })).toThrow("positive integer");
+        expect(bad({ LAUNCHPAD_MAX_ALIASES_PER_APP: "60", LAUNCHPAD_MAX_ALIASES: "50" })).toThrow(
+            "cannot exceed",
+        );
+        expect(bad({ LAUNCHPAD_ALIAS_HOSTNAME_TEMPLATE: "no-placeholders" })).toThrow(
+            "LAUNCHPAD_ALIAS_HOSTNAME_TEMPLATE",
+        );
     });
 });

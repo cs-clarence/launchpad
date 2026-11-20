@@ -19,6 +19,8 @@ export const API_KEY_SCOPES = [
     "app:read",
     "app:deploy",
     "app:delete",
+    "app:promote",
+    "app:alias:manage",
 ] as const;
 export type ApiKeyScopeName = (typeof API_KEY_SCOPES)[number];
 
@@ -55,6 +57,8 @@ export const nameSchema = z
 export const createProjectSchema = z.object({ name: nameSchema, slug: slugSchema });
 
 export const createAppSchema = z.object({ slug: slugSchema });
+
+export const createAliasSchema = z.object({ slug: slugSchema });
 
 export const createDeploymentSchema = z.object({
     artifactId: z.uuid(),
@@ -173,6 +177,26 @@ export const appSchema = z.strictObject({
     projectId: z.uuid(),
     slug: z.string(),
     state: z.enum(["active", "shutting-down", "deleted"]),
+    createdAt: timestamp,
+});
+
+export const aliasSchema = z.strictObject({
+    id: z.uuid(),
+    appId: z.uuid(),
+    slug: z.string(),
+    hostname: z.string().meta({ description: "The alias's own permanent hostname." }),
+    state: z.enum([
+        "unbound",
+        "bound",
+        "binding",
+        "binding-uncertain",
+        "withdrawing",
+        "withdrawal-uncertain",
+        "withdrawn",
+    ]),
+    targetDeploymentId: z.uuid().nullable(),
+    reservedGeneration: z.string().regex(/^(0|[1-9]\d*)$/),
+    committedGeneration: z.string().regex(/^(0|[1-9]\d*)$/),
     createdAt: timestamp,
 });
 

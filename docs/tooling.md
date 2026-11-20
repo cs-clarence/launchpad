@@ -207,7 +207,13 @@ limits, TTLs and hostname template (`parseDeploymentConfig`) gate the app, uploa
 routes. An enabled worker processes queued deployments and requires the Dokku
 proxy origin (`LAUNCHPAD_APPS_PROXY_URL`); see [install](install.md#install-a-private-launchpad-instance-from-built-artifacts).
 
-**Planned, not implemented:** private alias control/probe settings and alias permissions.
+**Implemented (P4a):** `LAUNCHPAD_ALIASES=on|off` (default off; needs deployments on),
+`LAUNCHPAD_MAX_ALIASES_PER_APP` (5), `LAUNCHPAD_MAX_ALIASES` (50) and
+`LAUNCHPAD_ALIAS_HOSTNAME_TEMPLATE` (`parseAliasConfig`) gate creating aliases; reading them keeps working while the switch is off. The scopes
+`app:promote` and `app:alias:manage` exist; promotion is not built. When promotion lands (P4c),
+turning aliases on will also require the router settings.
+
+**Planned, not implemented:** private alias control/probe settings and the router client.
 See [the design](design/deployment-modes.md) and
 [routing experiment](decisions/deployment-alias-routing.md). Do not configure those
 names against the current binary; the deployment change updates examples, tasks and
