@@ -14,6 +14,8 @@ import {
 // copy of the token file (it is refused if another user owns it).
 export interface RouterSession {
     view: RouterView;
+    // The router's active epoch (not a secret).
+    epoch(): Promise<string>;
     withdraw(route: { aliasId: string; hostname: string; generation: string }): Promise<void>;
 }
 
@@ -39,6 +41,7 @@ export function routerSessionFromEnv(
         });
     return {
         view: async () => client().listRoutes(AbortSignal.timeout(120_000)),
+        epoch: async () => client().readEpoch(AbortSignal.timeout(15_000)),
         async withdraw(route) {
             await client().replaceRoute(
                 {
@@ -52,4 +55,19 @@ export function routerSessionFromEnv(
             );
         },
     };
+}
+
+// What the recovery marker should record at the start of a restore. A router that is not configured
+// or cannot be read must not stop an emergency restore: it records no anchor and says why, and
+// recovery-clear then needs the explicit --router-epoch-unrecorded confirmation.
+export async function routerAnchorFromEnv(
+    env: Record<string, string | undefined>,
+): Promise<{ routerEpoch: string | null; note: "recorded" | "not-configured" | "unreachable" }> {
+    const session = routerSessionFromEnv(env);
+    if (!session) return { routerEpoch: null, note: "not-configured" };
+    try {
+        return { routerEpoch: await session.epoch(), note: "recorded" };
+    } catch {
+        return { routerEpoch: null, note: "unreachable" };
+    }
 }

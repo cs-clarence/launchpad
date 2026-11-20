@@ -186,7 +186,11 @@ describe("deployment model recovery gate", () => {
     it("keeps an external marker authoritative over a restored ready row", async () => {
         await markDeploymentRecoveryBlocked(dataDir);
         expect((await fs.stat(marker())).mode & 0o777).toBe(0o600);
-        expect(JSON.parse(await fs.readFile(marker(), "utf8"))).toMatchObject({ version: 1 });
+        expect(JSON.parse(await fs.readFile(marker(), "utf8"))).toMatchObject({
+            version: 2,
+            routerEpoch: null,
+            routerEpochNote: "not-configured",
+        });
         await expect(assertModelMutationsReady(source.db, dataDir)).rejects.toThrow(/blocked/);
         // Read-only operator administration remains usable during recovery.
         expect(

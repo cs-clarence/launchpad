@@ -13,6 +13,7 @@ import {
     createOrganization,
     createProject,
     markDeploymentRecoveryBlocked,
+    readRecoveryMarker,
     parseAliasConfig,
     parseDeploymentConfig,
     raiseAliasCounters,
@@ -103,8 +104,13 @@ const route = (
 });
 const aliasRow = (id: string) =>
     db.db.selectFrom("app_alias").selectAll().where("id", "=", id).executeTakeFirstOrThrow();
-const blocked = async () => {
-    await markDeploymentRecoveryBlocked(dataDir);
+// The restore recorded an epoch the router has since moved off (authority.epoch differs), as it
+// would after a rotation.
+const blocked = async (anchor: string | null = randomUUID()) => {
+    await markDeploymentRecoveryBlocked(
+        dataDir,
+        anchor ? { routerEpoch: anchor, note: "recorded" } : undefined,
+    );
     await blockRestoredModel(db.db);
 };
 
@@ -264,5 +270,112 @@ describe("recovery counters", () => {
             .where("action", "=", "deployment.unknown-route-withdrawn")
             .execute();
         expect(audit).toEqual([{ detail: "hostname=stranger.sites.example.net;generation=7" }]);
+    });
+
+    describe("the router epoch anchor", () => {
+        const ok = (alias: { id: string; hostname: string }) => async () =>
+            inventory([route(alias, "0")]);
+
+        it("refuses while the router is still on the epoch recorded when the restore began", async () => {
+            const alias = await aliasFixture();
+            await blocked(authority.epoch);
+            await expect(clearDeploymentRecovery(db.db, dataDir, true, ok(alias))).rejects.toThrow(
+                /epoch has not changed since the restore began/,
+            );
+            await expect(assertModelMutationsReady(db.db, dataDir)).rejects.toThrow(/blocked/);
+            // The unrecorded flag does not override a recorded anchor.
+            await expect(
+                clearDeploymentRecovery(db.db, dataDir, true, ok(alias), {
+                    routerEpochUnrecorded: true,
+                }),
+            ).rejects.toThrow(/epoch has not changed/);
+        });
+
+        it("clears once it has been rotated, and audits that the epoch changed", async () => {
+            const alias = await aliasFixture();
+            await blocked(randomUUID());
+            await clearDeploymentRecovery(db.db, dataDir, true, ok(alias));
+            const audit = await db.db
+                .selectFrom("audit_event")
+                .select("detail")
+                .where("action", "=", "deployment.recovery-cleared")
+                .execute();
+            expect(audit).toEqual([
+                { detail: "attested=reconciled-router-and-dokku;router-epoch=changed" },
+            ]);
+        });
+
+        it("needs the explicit flag when the restore recorded no epoch, and audits it", async () => {
+            const alias = await aliasFixture();
+            await blocked(null);
+            expect(await readRecoveryMarker(dataDir)).toMatchObject({
+                routerEpoch: null,
+                routerEpochNote: "not-configured",
+            });
+            await expect(clearDeploymentRecovery(db.db, dataDir, true, ok(alias))).rejects.toThrow(
+                /recorded no router epoch/,
+            );
+            await clearDeploymentRecovery(db.db, dataDir, true, ok(alias), {
+                routerEpochUnrecorded: true,
+            });
+            const audit = await db.db
+                .selectFrom("audit_event")
+                .select("detail")
+                .where("action", "=", "deployment.recovery-cleared")
+                .execute();
+            expect(audit).toEqual([
+                {
+                    detail: "attested=reconciled-router-and-dokku;router-epoch=unrecorded-confirmed",
+                },
+            ]);
+        });
+
+        it("keeps the first anchor and start time when an interrupted restore runs again", async () => {
+            const first = randomUUID();
+            await markDeploymentRecoveryBlocked(dataDir, { routerEpoch: first, note: "recorded" });
+            const before = await readRecoveryMarker(dataDir);
+            await markDeploymentRecoveryBlocked(dataDir, {
+                routerEpoch: randomUUID(),
+                note: "recorded",
+            });
+            expect(await readRecoveryMarker(dataDir)).toEqual(before);
+            // A marker with no anchor yet is replaced by one that has it, keeping the start time.
+            const other = await fs.mkdtemp(path.join(os.tmpdir(), "lp-anchor-"));
+            try {
+                await markDeploymentRecoveryBlocked(other, {
+                    routerEpoch: null,
+                    note: "unreachable",
+                });
+                const bare = await readRecoveryMarker(other);
+                await markDeploymentRecoveryBlocked(other, {
+                    routerEpoch: first,
+                    note: "recorded",
+                });
+                expect(await readRecoveryMarker(other)).toMatchObject({
+                    routerEpoch: first,
+                    restoreStartedAt: bare!.restoreStartedAt,
+                });
+            } finally {
+                await fs.rm(other, { recursive: true, force: true });
+            }
+        });
+
+        it("reads a version 1 or damaged marker as having no anchor", async () => {
+            await fs.mkdir(path.join(dataDir, "maintenance"), { mode: 0o700 });
+            const file = path.join(dataDir, "maintenance/deployment-recovery-blocked");
+            await fs.writeFile(
+                file,
+                '{"version":1,"restoreStartedAt":"2026-01-01T00:00:00.000Z"}\n',
+            );
+            expect(await readRecoveryMarker(dataDir)).toMatchObject({ routerEpoch: null });
+            for (const text of [
+                "not json",
+                '{"version":3}',
+                '{"version":2,"restoreStartedAt":"x","routerEpoch":"nope","routerEpochNote":"recorded"}',
+            ]) {
+                await fs.writeFile(file, text);
+                expect(await readRecoveryMarker(dataDir)).toBeNull();
+            }
+        });
     });
 });

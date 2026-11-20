@@ -232,6 +232,11 @@ back an empty registry and stale generations while the router and Dokku keep the
       `recovery-raise-counters` raises counters with `GREATEST` under the alias row lock while the gate
       is set, never lowers one (the database also refuses it), leaves `committed_generation` alone
       and audits the count. The attestation is still required.
+    - **Epoch anchor (P5a, built).** The recovery marker is version 2: it records the router's active
+      epoch (or none, with the reason) when the restore begins. `recovery-clear` refuses while the router is
+      still on it, and needs the audited `--router-epoch-unrecorded` when none was recorded. A rerun after an
+      interrupted restore keeps the first anchor and start time; a marker that is damaged or of an unknown
+      version reads as having no anchor.
     - **P5 replacement.** P5 adds tombstone comparison, protection of unknown routed targets and
       Dokku reconciliation, replaces the attestation with that verification, and removes the flag
       in the same PR.

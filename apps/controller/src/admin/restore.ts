@@ -37,6 +37,9 @@ export interface RestoreOptions {
     pgRestore?: string;
     // Optional bounded drill cancellation; production CLI normally lets a restore complete.
     signal?: AbortSignal;
+    // The router's active epoch read just before the restore (see routerAnchorFromEnv), recorded in
+    // the recovery marker so recovery-clear can verify it changed. Omitted: not configured.
+    routerAnchor?: Parameters<typeof markDeploymentRecoveryBlocked>[1];
 }
 
 export interface RestoreResult {
@@ -331,7 +334,7 @@ export async function restoreBackup(options: RestoreOptions): Promise<RestoreRes
                 options.signal?.throwIfAborted();
                 // This binary knows 018 even when a migration-folder override or the
                 // backup contains only older migrations.
-                await markDeploymentRecoveryBlocked(options.dataDir);
+                await markDeploymentRecoveryBlocked(options.dataDir, options.routerAnchor);
                 for (const artifact of toCopy) {
                     options.signal?.throwIfAborted();
                     const target = resolveArtifactPath(options.dataDir, artifact.storageKey);

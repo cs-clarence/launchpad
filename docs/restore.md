@@ -163,7 +163,12 @@ or prove. `restore` never contacts Dokku. Back up the target database first.
    database, and (4) are clearing only now. The command now also compares the router: it refuses
    while any alias counter is below the router's generation, while the router serves a route
    Launchpad does not know (a route that serves nothing does not block), when the router cannot be
-   read (the message says why), and when the database holds aliases but no router is configured. If the
+   read (the message says why), and when the router's epoch has not changed since the restore began: `restore` records
+   the router's active epoch (not a secret) in the recovery marker before it changes anything, and `recovery-clear`
+   requires the router to be on a different one, so an unrotated router cannot pass. If the router was unreachable or
+   unconfigured when the restore ran (the restore still proceeds and says so), or the marker predates this check,
+   rotate the router yourself and pass `--router-epoch-unrecorded`; that is audited. It also refuses when the
+   database holds aliases but no router is configured. If the
    control URL is not set at all, no router is read: an installation that has ever used aliases must
    keep the router settings on the host that runs `recovery-clear`. Targets and Dokku are
    still your attestation; P5 replaces it with verified reconciliation ([recovery design](design/deployment-cutover-schema.md#restore-and-the-recovery-gate)).

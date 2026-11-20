@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { routerSessionFromEnv } from "./router-view";
+import { routerAnchorFromEnv, routerSessionFromEnv } from "./router-view";
 
 // An installation that never used aliases has deployments on and an apps domain, but no router
 // settings. recovery-clear must treat that as "no router", not fail before it reaches the service.
@@ -55,5 +55,19 @@ describe("routerSessionFromEnv", () => {
         );
         expect(failure?.message).toBe("Could not read the configured router credential file.");
         expect(failure?.message).not.toContain("alias_token");
+    });
+});
+
+describe("routerAnchorFromEnv", () => {
+    it("records no anchor, and says why, when there is no router or it cannot be read", async () => {
+        expect(await routerAnchorFromEnv(deploymentsOnly)).toEqual({
+            routerEpoch: null,
+            note: "not-configured",
+        });
+        // Configured, but the credential files cannot be read: an emergency restore still proceeds.
+        expect(await routerAnchorFromEnv(routerSettings)).toEqual({
+            routerEpoch: null,
+            note: "unreachable",
+        });
     });
 });

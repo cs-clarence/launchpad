@@ -105,12 +105,70 @@ async function exists(dir: string | null, name: string) {
     }
 }
 
-// A restored ready row cannot clear this file: it lives outside the database dump.
-export async function markDeploymentRecoveryBlocked(dataDir: string) {
-    await writeDurableRecord(dataDir, BLOCKED, {
-        version: 1,
-        restoreStartedAt: new Date().toISOString(),
-    });
+// What the recovery marker records. The router epoch is not a secret: it is the router's active
+// epoch at the moment the restore began, so recovery-clear can verify it has changed since.
+export interface RecoveryMarker {
+    version: 2;
+    restoreStartedAt: string;
+    routerEpoch: string | null;
+    // Why there is no anchor: no router is configured, or it could not be read at the time.
+    routerEpochNote: "recorded" | "not-configured" | "unreachable";
+}
+const EPOCH = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+
+// Reads the marker if it is a well-formed version 1 or 2 record. Anything else (absent, corrupt,
+// unknown version) reads as no anchor: the file still blocks, and clear then needs the explicit flag.
+export async function readRecoveryMarker(dataDir: string): Promise<RecoveryMarker | null> {
+    const dir = await maintenance(dataDir);
+    if (!dir) return null;
+    try {
+        const parsed = JSON.parse(await fs.readFile(path.join(dir, BLOCKED), "utf8")) as Record<
+            string,
+            unknown
+        >;
+        if (typeof parsed.restoreStartedAt !== "string") return null;
+        if (parsed.version === 1) {
+            return {
+                version: 2,
+                restoreStartedAt: parsed.restoreStartedAt,
+                routerEpoch: null,
+                routerEpochNote: "not-configured",
+            };
+        }
+        if (parsed.version !== 2) return null;
+        const epoch = parsed.routerEpoch;
+        if (epoch !== null && !(typeof epoch === "string" && EPOCH.test(epoch))) return null;
+        const note = parsed.routerEpochNote;
+        if (note !== "recorded" && note !== "not-configured" && note !== "unreachable") return null;
+        return {
+            version: 2,
+            restoreStartedAt: parsed.restoreStartedAt,
+            routerEpoch: epoch,
+            routerEpochNote: note,
+        };
+    } catch {
+        return null;
+    }
+}
+
+// A restored ready row cannot clear this file: it lives outside the database dump. A rerun after an
+// interrupted restore keeps the first anchor and start time: they mark when the writers stopped.
+export async function markDeploymentRecoveryBlocked(
+    dataDir: string,
+    anchor: { routerEpoch: string | null; note: RecoveryMarker["routerEpochNote"] } = {
+        routerEpoch: null,
+        note: "not-configured",
+    },
+) {
+    const existing = await readRecoveryMarker(dataDir);
+    if (existing && existing.routerEpoch !== null) return;
+    const record: RecoveryMarker = {
+        version: 2,
+        restoreStartedAt: existing?.restoreStartedAt ?? new Date().toISOString(),
+        routerEpoch: anchor.routerEpoch,
+        routerEpochNote: anchor.routerEpoch === null ? anchor.note : "recorded",
+    };
+    await writeDurableRecord(dataDir, BLOCKED, record);
 }
 
 async function writeDurableRecord(dataDir: string, name: string, record: unknown) {
@@ -384,6 +442,9 @@ export async function clearDeploymentRecovery(
     // Reads the router's routes. Required once the database holds any alias: a restore can leave
     // the router ahead of it, and clearing would let new operations reuse a generation.
     router?: RouterView,
+    // The restore recorded no router epoch (v1 marker, router down or unconfigured at the time):
+    // the operator then confirms the rotation by hand, and it is audited.
+    options: { routerEpochUnrecorded?: boolean } = {},
 ) {
     if (!attested) {
         throw new DeploymentRecoveryError(
@@ -424,7 +485,25 @@ export async function clearDeploymentRecovery(
                     `The router could not be read (${unreadable}), so its counters cannot be compared. Check that the router is running, and the router settings, epoch and token files, then retry.`,
                 );
             }
+            let epochAudit = "";
             if (inventory) {
+                // The anchor is the router's epoch when the restore began. A router still on it was
+                // not rotated, so a delayed pre-restore write would still be accepted.
+                const anchor = (await readRecoveryMarker(dataDir))?.routerEpoch ?? null;
+                if (anchor !== null && inventory.epoch === anchor) {
+                    throw new DeploymentRecoveryError(
+                        "The router's epoch has not changed since the restore began, so a delayed pre-restore write could still land. Stop the router, rotate its epoch and credentials (docs/restore.md), update the epoch and token files, then retry.",
+                    );
+                }
+                if (anchor === null && !options.routerEpochUnrecorded) {
+                    throw new DeploymentRecoveryError(
+                        "The restore recorded no router epoch (the router was unreachable or unconfigured then, or the marker predates this check), so the rotation cannot be verified. After rotating the router, repeat with --router-epoch-unrecorded to confirm it yourself.",
+                    );
+                }
+                epochAudit =
+                    anchor === null
+                        ? ";router-epoch=unrecorded-confirmed"
+                        : ";router-epoch=changed";
                 const report = await compareRouterInventory(trx, inventory);
                 if (counterProblems(report)) {
                     const shown = report.unknownRoutes.slice(0, 5).join(", ");
@@ -460,7 +539,7 @@ export async function clearDeploymentRecovery(
                     target_type: "instance",
                     target_id: "self",
                     organization_id: null,
-                    detail: "attested=reconciled-router-and-dokku",
+                    detail: `attested=reconciled-router-and-dokku${epochAudit}`,
                 })
                 .execute();
         });

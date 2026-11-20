@@ -1,6 +1,6 @@
 # P5: verified restore reconciliation and drift
 
-Status: **approved 2026-11-20 as written (all five decisions). Nothing here is built yet.** Parent: [deployment model plan](deployment-model.md), P5.
+Status: **approved 2026-11-20 as written (all five decisions). P5a is built; the rest is not.** Parent: [deployment model plan](deployment-model.md), P5.
 Recovery design: [schema map](../design/deployment-cutover-schema.md#restore-and-the-recovery-gate). Drift design:
 [deployment design](../design/deployment-modes.md) ("Drift detection"; the pure comparer is `packages/services/src/drift`).
 P4 is merged: `recovery-clear` already compares the router's counters and unknown routes.

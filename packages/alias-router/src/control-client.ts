@@ -216,6 +216,18 @@ export function createRouterControlClient(options: {
             }
             return result;
         },
+        // The router's active epoch, which is not a secret: one tiny authenticated read.
+        async readEpoch(signal?: AbortSignal) {
+            const reply = checked(
+                routePageSchema,
+                await call("v1/routes?limit=1", undefined, signal, MAX_LIST_REPLY_BYTES),
+                "uncertain",
+            );
+            if (reply.instanceId !== authority.instanceId) {
+                throw new RouterControlError("uncertain");
+            }
+            return reply.epoch;
+        },
         // Every route the router holds, in hostname order. Each page is checked for this router's
         // instance and epoch, and the cursor must advance, so a faulty reply cannot loop forever.
         async listRoutes(signal?: AbortSignal) {
