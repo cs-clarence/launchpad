@@ -7,6 +7,7 @@ import { sql } from "kysely";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import {
     addMember,
+    collectArtifacts,
     createApp,
     createDeployment,
     createOrganization,
@@ -350,6 +351,33 @@ describe("creating a deployment", () => {
             .where("id", "=", short.id)
             .executeTakeFirstOrThrow();
         expect(stored.preview_expires_at.getTime() - Date.now()).toBeLessThan(3_700_000);
+    });
+
+    it("is never collected from under a deployment that references it", async () => {
+        const app = await newApp();
+        const artifact = await artifactFor(p1);
+        // Make the artifact eligible for collection, then race a deployment against collection.
+        await sql`update artifact set created_at = now() - interval '30 days' where id = ${artifact}`.execute(
+            testDb.db,
+        );
+        const [deployed, collected] = await Promise.allSettled([
+            createDeployment(testDb.db, people.dee!, org, app.id, { artifactId: artifact }, deps()),
+            collectArtifacts(testDb.db, { dataDir, retentionSeconds: 0 }),
+        ]);
+        const row = await testDb.db
+            .selectFrom("artifact")
+            .select("collected_at")
+            .where("id", "=", artifact)
+            .executeTakeFirstOrThrow();
+        if (deployed.status === "fulfilled") {
+            // The deployment won: the artifact is still stored and was not collected.
+            expect(row.collected_at).toBeNull();
+        } else {
+            // Collection won: the deployment was refused, never accepted without its archive.
+            expect(deployed.reason).toBeInstanceOf(ServiceError);
+            expect(row.collected_at).not.toBeNull();
+        }
+        expect(collected.status).toBe("fulfilled");
     });
 
     it("refuses a second unfinished deployment and allows one after it finishes", async () => {

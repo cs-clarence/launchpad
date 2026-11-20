@@ -96,6 +96,10 @@ export async function createDeployment(
                 .where("id", "=", data.artifactId)
                 .where("organization_id", "=", organizationId)
                 .where("collected_at", "is", null)
+                // Held to commit: collection locks the row FOR UPDATE and re-judges it, so it either
+                // waits for this deployment and sees it, or has already collected the row, which
+                // this lookup then rejects.
+                .forShare()
                 .executeTakeFirst();
             if (!artifact) throw new ServiceError("not-found", "Artifact not found.");
             if (restrictTo) {
@@ -162,7 +166,7 @@ export async function createDeployment(
                     app_name: appName,
                     hostname,
                     requested_by: principal.userId,
-                    preview_expires_at: sql<Date>`now() + make_interval(secs => ${ttlSeconds})`,
+                    preview_expires_at: sql<Date>`clock_timestamp() + make_interval(secs => ${ttlSeconds})`,
                 })
                 .returning(["id"])
                 .executeTakeFirstOrThrow();
