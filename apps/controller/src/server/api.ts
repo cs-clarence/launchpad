@@ -13,8 +13,20 @@ import {
     type ApiKeyPrincipal,
     type ApiKeyScope,
     authenticateApiKey,
+    createApp,
+    createDeployment,
+    getApp,
+    getDeployment,
+    listApps,
+    listDeploymentEvents,
+    listDeployments,
+    resolveLimits,
+    uploadArtifact,
+    type AppDeps,
+    type ArtifactDeps,
     createApiKey,
     listApiKeys,
+    requireDeploymentsOn,
     requireKeyAccess,
     revokeApiKey,
     createInvitation,
@@ -40,6 +52,13 @@ import { docs, openApiPlugin } from "./openapi";
 
 // Anything larger than the limit is refused before it is read.
 export { MAX_BODY_BYTES } from "./limits";
+
+// The only request that may carry a large body: a project's archive upload.
+// Exact, like the router: anything else keeps the small limit, which fails safe.
+const ARTIFACT_UPLOAD = /^\/api\/v1\/organizations\/[^/]+\/projects\/[^/]+\/artifacts$/;
+function isArtifactUpload(method: string, path: string) {
+    return method === "POST" && ARTIFACT_UPLOAD.test(path);
+}
 
 // A fetch handler only: the parent TanStack Start server owns the listener.
 // The path from the same `request.url` string Elysia routes on, so the guard and
@@ -84,8 +103,16 @@ export function createApi(deps: {
     db: Kysely<Database>;
     origin: string;
     invitations: InvitationDeps;
+    // Uploaded archives and deployments. Absent (as in the adapter's unit tests) the routes
+    // refuse with 503, exactly as when deployments are off.
+    artifacts?: ArtifactDeps;
+    deployments?: AppDeps;
 }) {
     const { auth, db, origin, invitations } = deps;
+    const artifacts = deps.artifacts ?? { dataDir: "", limits: {} };
+    const deployments: AppDeps = deps.deployments ?? { dataDir: "", settings: { enabled: false } };
+    // Resolved once, so a bad limit fails at startup, not on the first upload.
+    const uploadLimit = resolveLimits(artifacts.limits).maxUploadBytes;
     const withDocs = deps.docs ?? false;
     const emailOf = (request: Request) =>
         request
@@ -270,8 +297,11 @@ export function createApi(deps: {
             // origin: SameSite alone does not stop a sibling host of the same site.
             .onRequest(async ({ request }) => {
                 const path = rawPath(request);
-                // Every body is small JSON until uploads return with the app model.
-                const problem = framingProblem(request, MAX_BODY_BYTES);
+                // Only the archive upload may be large; every other body is small JSON.
+                const problem = framingProblem(
+                    request,
+                    isArtifactUpload(request.method, path) ? uploadLimit : MAX_BODY_BYTES,
+                );
                 if (problem) return framingResponse(problem);
                 const auth = authPath(path);
                 if (
@@ -533,6 +563,197 @@ export function createApi(deps: {
                 ({ request, set, params }) =>
                     respond(request, set, null, (p) =>
                         revokeApiKey(db, p, params.orgId, params.keyId),
+                    ),
+            )
+            .post(
+                "/v1/organizations/:orgId/projects/:projectId/artifacts",
+                { detail: docs.uploadArtifact },
+                ({ request, set, params }) =>
+                    respond(
+                        request,
+                        set,
+                        { organizationId: params.orgId, scope: "app:deploy" },
+                        async (p, key) => {
+                            // A project-limited key reaches only its own projects, even to upload.
+                            if (key) {
+                                requireKeyAccess(key, params.orgId, "app:deploy", params.projectId);
+                            }
+                            const type = (request.headers.get("content-type") ?? "")
+                                .split(";")[0]!
+                                .trim()
+                                .toLowerCase();
+                            if (
+                                ![
+                                    "application/gzip",
+                                    "application/x-gzip",
+                                    "application/octet-stream",
+                                ].includes(type)
+                            ) {
+                                throw new ServiceError(
+                                    "invalid",
+                                    "Send the archive as application/gzip.",
+                                );
+                            }
+                            // An archive is only for a deployment and counts toward the
+                            // organization's ceiling: none are taken while deployments are off.
+                            // (The switch answers before the project is looked up, unlike createApp.)
+                            requireDeploymentsOn(deployments.settings);
+                            const length = request.headers.get("content-length");
+                            return uploadArtifact(
+                                db,
+                                p,
+                                params.orgId,
+                                request.body,
+                                {
+                                    contentLength: length === null ? null : Number(length),
+                                    projectId: params.projectId,
+                                    restrictTo: key?.projectIds,
+                                },
+                                artifacts,
+                                request.signal,
+                            );
+                        },
+                        201,
+                    ),
+            )
+            .post(
+                "/v1/organizations/:orgId/projects/:projectId/apps",
+                { detail: docs.createApp },
+                async ({ request, set, params }) => {
+                    const input = await body(request);
+                    return respond(
+                        request,
+                        set,
+                        { organizationId: params.orgId, scope: "app:deploy" },
+                        (p, key) =>
+                            createApp(
+                                db,
+                                p,
+                                params.orgId,
+                                params.projectId,
+                                input,
+                                deployments,
+                                key?.projectIds,
+                            ),
+                        201,
+                    );
+                },
+            )
+            .get(
+                "/v1/organizations/:orgId/apps",
+                { detail: docs.listApps },
+                ({ request, set, params }) =>
+                    respond(
+                        request,
+                        set,
+                        { organizationId: params.orgId, scope: "app:read" },
+                        (p, key) => listApps(db, p, params.orgId, key?.projectIds),
+                    ),
+            )
+            .get(
+                "/v1/organizations/:orgId/apps/:appId",
+                { detail: docs.getApp },
+                ({ request, set, params }) =>
+                    respond(
+                        request,
+                        set,
+                        { organizationId: params.orgId, scope: "app:read" },
+                        (p, key) => getApp(db, p, params.orgId, params.appId, key?.projectIds),
+                    ),
+            )
+            .post(
+                "/v1/organizations/:orgId/apps/:appId/deployments",
+                { detail: docs.createDeployment },
+                async ({ request, set, params }) => {
+                    const input = await body(request);
+                    return respond(
+                        request,
+                        set,
+                        { organizationId: params.orgId, scope: "app:deploy" },
+                        (p, key) =>
+                            createDeployment(
+                                db,
+                                p,
+                                params.orgId,
+                                params.appId,
+                                input,
+                                deployments,
+                                key?.projectIds,
+                            ),
+                        202,
+                    );
+                },
+            )
+            .get(
+                "/v1/organizations/:orgId/apps/:appId/deployments",
+                { detail: docs.listDeployments },
+                ({ request, set, params }) =>
+                    respond(
+                        request,
+                        set,
+                        { organizationId: params.orgId, scope: "app:read" },
+                        (p, key) =>
+                            listDeployments(db, p, params.orgId, params.appId, key?.projectIds),
+                    ),
+            )
+            .get(
+                "/v1/organizations/:orgId/deployments/:deploymentId",
+                { detail: docs.getDeployment },
+                ({ request, set, params }) =>
+                    respond(
+                        request,
+                        set,
+                        { organizationId: params.orgId, scope: "app:read" },
+                        (p, key) =>
+                            getDeployment(
+                                db,
+                                p,
+                                params.orgId,
+                                params.deploymentId,
+                                key?.projectIds,
+                            ),
+                    ),
+            )
+            .get(
+                "/v1/organizations/:orgId/deployments/:deploymentId/events",
+                { detail: docs.listDeploymentEvents },
+                ({ request, set, params, query }) =>
+                    respond(
+                        request,
+                        set,
+                        { organizationId: params.orgId, scope: "app:read" },
+                        async (p, key) => {
+                            const number = (value: unknown, name: string) => {
+                                if (value === undefined) return undefined;
+                                if (
+                                    typeof value !== "string" ||
+                                    !/^\d{1,10}$/.test(value) ||
+                                    Number(value) > 2_147_483_647
+                                ) {
+                                    throw new ServiceError(
+                                        "invalid",
+                                        `${name} must be an integer from 0 to 2147483647.`,
+                                    );
+                                }
+                                return Number(value);
+                            };
+                            const limit = number(query.limit, "limit");
+                            if (limit !== undefined && (limit < 1 || limit > 500)) {
+                                throw new ServiceError("invalid", "limit must be 1 to 500.");
+                            }
+                            const events = await listDeploymentEvents(
+                                db,
+                                p,
+                                params.orgId,
+                                params.deploymentId,
+                                {
+                                    afterSeq: number(query.after, "after"),
+                                    limit,
+                                },
+                                key?.projectIds,
+                            );
+                            return events.map((event) => ({ ...event, seq: String(event.seq) }));
+                        },
                     ),
             )
             .get("/v1/status", { detail: docs.getStatus }, ({ request, set }) =>

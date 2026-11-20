@@ -99,6 +99,8 @@ const tableCount = async (db: Awaited<ReturnType<typeof createTestDatabase>>["db
 beforeAll(async () => {
     work = await fs.mkdtemp(path.join(os.tmpdir(), "launchpad-restore-"));
     sourceData = path.join(work, "source-data");
+    // The shared data directory is a mount: uploads never create it.
+    await fs.mkdir(sourceData, { recursive: true });
     dump = path.join(work, "pg_dump.sh");
     restoreTool = path.join(work, "pg_restore.sh");
     await fs.writeFile(dump, `#!/bin/sh\n${tool("pg_dump")}\n`, { mode: 0o700 });

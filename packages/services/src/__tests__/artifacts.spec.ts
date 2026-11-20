@@ -3,7 +3,7 @@ import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { createTestDatabase } from "@launchpad-kit/database/testing";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import {
     addMember,
     artifactStorageKey,
@@ -284,6 +284,61 @@ describe("who may upload", () => {
             .where("created_by", "=", people.gone!.userId)
             .execute();
         expect(rows).toHaveLength(0);
+    });
+});
+
+describe("upload storage", () => {
+    it.each(["tmp", "artifacts"])(
+        "does not recreate a mount lost before creating %s",
+        async (child) => {
+            const root = await fs.mkdtemp(path.join(dataDir, "upload-mount-"));
+            const saved = `${root}-saved`;
+            const bytes = site([{ name: `lost-${child}.txt`, content: "mount lost" }]);
+            const mkdir = fs.mkdir.bind(fs);
+            const mock = vi.spyOn(fs, "mkdir").mockImplementation(async (directory, options) => {
+                const target = path.join(root, child);
+                if (directory === target || String(directory).startsWith(`${target}${path.sep}`)) {
+                    await fs.rename(root, saved);
+                }
+                return mkdir(directory, options);
+            });
+            try {
+                expect(
+                    await code(
+                        uploadArtifact(
+                            testDb.db,
+                            people.dee!,
+                            org,
+                            stream(bytes),
+                            { contentLength: bytes.length, projectId },
+                            { dataDir: root, limits: {} },
+                        ),
+                    ),
+                ).toBe("unavailable");
+                await expect(fs.stat(root)).rejects.toMatchObject({ code: "ENOENT" });
+            } finally {
+                mock.mockRestore();
+                await fs.rm(root, { recursive: true, force: true });
+                await fs.rm(saved, { recursive: true, force: true });
+            }
+        },
+    );
+
+    it("never creates a missing data directory", async () => {
+        const missing = path.join(dataDir, "not-mounted");
+        const bytes = site([{ name: "missing.txt", content: "m" }]);
+        const outcome = await code(
+            uploadArtifact(
+                testDb.db,
+                people.dee!,
+                org,
+                stream(bytes),
+                { contentLength: bytes.length, projectId },
+                { dataDir: missing, limits: {} },
+            ),
+        );
+        expect(outcome).toBe("unavailable");
+        await expect(fs.stat(missing)).rejects.toMatchObject({ code: "ENOENT" });
     });
 });
 

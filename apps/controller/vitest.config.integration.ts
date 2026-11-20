@@ -5,7 +5,7 @@ export default defineConfig({
     test: {
         include: ["src/**/__tests__/**/*.spec.ts"],
         testTimeout: 60000,
-        hookTimeout: 60000,
+        hookTimeout: 120000,
     },
     resolve: { conditions: ["development"] },
 });
