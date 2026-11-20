@@ -1,6 +1,7 @@
 # P4: aliases, promotion, recovery counters and retention pins
 
-Status: **proposed, awaiting approval of the decisions below. Nothing here is authorized to run
+Status: **approved 2026-11-20 as written (automatic expiry stays out). P4a is built on
+`feat/deployment-p4a-aliases`; later slices are not started. Nothing here is authorized to run
 against real infrastructure.** Parent: [deployment model plan](deployment-model.md), P4. Schema
 contract: [replacement schema map](../design/deployment-cutover-schema.md). Behavior and the alias
 and operation state machines: [deployment design](../design/deployment-modes.md). Router:

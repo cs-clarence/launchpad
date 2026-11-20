@@ -206,6 +206,46 @@ export function parseDeploymentConfig(env: Env): DeploymentSettings {
     };
 }
 
+export interface AliasConfig {
+    enabled: true;
+    aliasTemplate: HostnameTemplate;
+    maxAliasesPerApp: number;
+    maxAliases: number;
+}
+
+export type AliasSettings = AliasConfig | { enabled: false };
+
+// What creating an alias needs. `LAUNCHPAD_ALIASES` is off unless set to `on`, and while off
+// nothing else is read. It needs deployments to be on: aliases point at deployments. The router
+// settings (proxy, control and probe URLs, instance ID, credentials) belong to the worker that
+// dispatches promotions and are validated there, not by this narrow parser.
+export function parseAliasConfig(env: Env): AliasSettings {
+    const deployments = parseDeploymentConfig(env);
+    const switchValue = env.LAUNCHPAD_ALIASES;
+    if (switchValue === undefined || switchValue === "" || switchValue === "off") {
+        return { enabled: false };
+    }
+    if (switchValue !== "on") throw new Error('LAUNCHPAD_ALIASES must be "on" or "off".');
+    if (!deployments.enabled) {
+        throw new Error("LAUNCHPAD_ALIASES=on needs LAUNCHPAD_DEPLOYMENTS=on.");
+    }
+    const maxAliasesPerApp = integer(env, "LAUNCHPAD_MAX_ALIASES_PER_APP", 5, 1000);
+    const maxAliases = integer(env, "LAUNCHPAD_MAX_ALIASES", 50, 100_000);
+    if (maxAliasesPerApp > maxAliases) {
+        throw new Error("LAUNCHPAD_MAX_ALIASES_PER_APP cannot exceed LAUNCHPAD_MAX_ALIASES.");
+    }
+    let aliasTemplate: HostnameTemplate;
+    try {
+        aliasTemplate = parseHostnameTemplate(
+            env.LAUNCHPAD_ALIAS_HOSTNAME_TEMPLATE || DEFAULT_ALIAS_TEMPLATE,
+            deployments.appsDomain,
+        );
+    } catch (error) {
+        throw new Error(`LAUNCHPAD_ALIAS_HOSTNAME_TEMPLATE: ${(error as Error).message}`);
+    }
+    return { enabled: true, aliasTemplate, maxAliasesPerApp, maxAliases };
+}
+
 export function parseAppRoutingConfig(env: Env): AppRoutingSettings {
     assertNoRemovedSettings(env);
     if (env.LAUNCHPAD_APPS_DOMAIN === undefined || env.LAUNCHPAD_APPS_DOMAIN === "") {
@@ -230,8 +270,8 @@ export function parseAppRoutingConfig(env: Env): AppRoutingSettings {
         }
         rollbackRetentionSeconds = seconds;
     }
-    const maxAliasesPerApp = integer(env, "LAUNCHPAD_MAX_ALIASES_PER_APP", 10, 1000);
-    const maxAliases = integer(env, "LAUNCHPAD_MAX_ALIASES", 100, 100_000);
+    const maxAliasesPerApp = integer(env, "LAUNCHPAD_MAX_ALIASES_PER_APP", 5, 1000);
+    const maxAliases = integer(env, "LAUNCHPAD_MAX_ALIASES", 50, 100_000);
     const maxDeploymentsPerApp = integer(env, "LAUNCHPAD_MAX_DEPLOYMENTS_PER_APP", 20, 1000);
     const maxDeployments = integer(env, "LAUNCHPAD_MAX_DEPLOYMENTS", 100, 100_000);
     if (maxAliasesPerApp > maxAliases) {

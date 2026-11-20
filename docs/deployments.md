@@ -11,8 +11,9 @@ An **app** belongs to a project. Each **deployment** is a new immutable release:
 app (`lp-` and ten characters), its own hostname, and one recorded image identity. A deployment is never
 redeployed in place, and a failed one never touches another. An app has at most one unfinished
 deployment; quotas limit apps and retained deployments (`LAUNCHPAD_MAX_APPS`,
-`LAUNCHPAD_MAX_DEPLOYMENTS_PER_APP`, `LAUNCHPAD_MAX_DEPLOYMENTS`). Aliases, promotion and automatic
-expiry are not built.
+`LAUNCHPAD_MAX_DEPLOYMENTS_PER_APP`, `LAUNCHPAD_MAX_DEPLOYMENTS`). Aliases can be created
+(`POST /apps/{appId}/aliases` with `{"slug":"prod"}`, `app:alias:manage`, needs `LAUNCHPAD_ALIASES=on`)
+but point at nothing yet: promotion and automatic expiry are not built.
 
 Keys need `app:read`, `app:deploy` or `app:delete`. The dashboard key form does not offer these scopes yet:
 an owner or admin signed in fresh issues the key through `POST /api/v1/organizations/{orgId}/api-keys` (see
