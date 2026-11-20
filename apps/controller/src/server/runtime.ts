@@ -1,10 +1,6 @@
 import { createAuth, createMailer, loadAuthConfig } from "@launchpad-kit/auth";
 import { assertSchemaCurrent, createDatabase } from "@launchpad-kit/database";
-import {
-    assertCurrentSettings,
-    requireModelDataDirectory,
-    type InvitationDeps,
-} from "@launchpad-kit/services";
+import { requireModelDataDirectory, type InvitationDeps } from "@launchpad-kit/services";
 import path from "node:path";
 import { createApi } from "./api";
 
@@ -19,7 +15,6 @@ function requireEnv(name: string): string {
 // Composed on first use so importing the module (build, tests, route
 // generation) never reads configuration or opens a connection.
 function compose() {
-    assertCurrentSettings(process.env);
     const config = loadAuthConfig(process.env);
     const db = createDatabase(requireEnv("DATABASE_URL"));
     const mailer = createMailer(config);

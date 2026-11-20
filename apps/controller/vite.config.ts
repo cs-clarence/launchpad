@@ -50,6 +50,7 @@ export default defineConfig({
         tanstackStart(),
         nitro({
             preset: "bun",
+            plugins: ["./src/server/startup-settings.ts"],
             publicAssets: [{ dir: scalarDir, baseURL: "/_scalar", maxAge: 60 * 60 * 24 * 365 }],
             // Pages carry invitation and reset tokens in their URL; never leak them
             // through the Referer header. The dashboard may not be framed

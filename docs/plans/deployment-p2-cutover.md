@@ -258,8 +258,8 @@ disposable PostgreSQL is torn down.
 
 Branch `feat/deployment-p2c-config`, based on the P2b merge `f07d3bc`.
 
-- `assertCurrentSettings` (`packages/services/src/app-routing-config.ts`) runs at controller
-  composition; the worker runs only `assertNoRemovedSettings`, imported from the dependency-free
+- `assertCurrentSettings` (`packages/services/src/app-routing-config.ts`) runs from a Nitro startup plugin
+  (`apps/controller/src/server/startup-settings.ts`), before the controller accepts requests; the worker runs only `assertNoRemovedSettings`, imported from the dependency-free
   sub-path `@launchpad-kit/services/removed-settings` so the idle bundle stays small (the whole
   barrel grew it from about 1.5 KB to 475 KB). Together they refuse `LAUNCHPAD_PREVIEW_DOMAIN`, `LAUNCHPAD_PREVIEW_PROXY_URL`,
   `LAUNCHPAD_MAX_PREVIEWS`, `LAUNCHPAD_ALLOW_NO_EXPIRY` and any non-empty `LAUNCHPAD_LIFECYCLE*` name,
