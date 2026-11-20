@@ -10,9 +10,11 @@ down migration. Rehearse on disposable infrastructure first: the checked-in
    deployments off stops at once; an enabled worker needs its stop grace period (at least 30 seconds),
    then the same settlement wait as [restore, step 1](restore.md): longer than one
    290-second dispatch and the five-minute lease, and no worker-started Docker or
-   Dokku process left on the Dokku host. An interrupted effect may be unconfirmed. Only
-   after that, look for `reconciliation-needed` deployments and use `deployment-reconcile`
-   (it records an observation and never calls Dokku); never retry by hand. For a pre-P2a worker, complete the legacy worker
+   Dokku process left on the Dokku host. An interrupted effect may be unconfirmed, but its
+   status changes only when a worker next claims it after its lease lapses. After the
+   upgraded worker has restarted and had time to claim (a few minutes), look for
+   `reconciliation-needed` deployments (and `deletion-reconciliation-needed` events) and use
+   `deployment-reconcile`; it records an observation and never calls Dokku. Never retry by hand. For a pre-P2a worker, complete the legacy worker
    grace-period and dispatched Dokku operation settlement checks in
    [restore, step 1](restore.md) **before taking the backup**. A worker exiting
    does not prove that its remote destroy finished.
