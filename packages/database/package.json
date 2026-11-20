@@ -16,6 +16,10 @@
                 "default": "./src/index.ts"
             }
         },
+        "./deployment-lock": {
+            "types": "./src/deployment-lock.ts",
+            "default": "./src/deployment-lock.ts"
+        },
         "./testing": {
             "types": "./src/testing.ts",
             "import": {

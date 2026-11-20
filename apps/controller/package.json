@@ -16,6 +16,7 @@
     "dependencies": {
         "@commander-js/extra-typings": "catalog:",
         "@elysia/openapi": "catalog:",
+        "@launchpad-kit/alias-router": "workspace:^",
         "@launchpad-kit/auth": "workspace:^",
         "@launchpad-kit/contracts": "workspace:^",
         "@launchpad-kit/database": "workspace:^",

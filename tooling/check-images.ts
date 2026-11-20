@@ -568,7 +568,7 @@ async function main() {
         }
         // Once stopped the lock is free (a stop releases it), so rotation can run and starts a new epoch.
         const rotated = await oneOff(
-            ["rotate", "--token-stdin"],
+            ["rotate", "--standalone", "--token-stdin"],
             `${randomBytes(32).toString("hex")}\n`,
         );
         const rotatedEpoch = rotated.out.trim();

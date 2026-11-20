@@ -11,7 +11,8 @@
         "test:integration": "bun --bun vitest run --config vitest.config.integration.ts"
     },
     "dependencies": {
-        "@launchpad-kit/alias-router": "workspace:^"
+        "@launchpad-kit/alias-router": "workspace:^",
+        "@launchpad-kit/database": "workspace:^"
     },
     "devDependencies": {
         "@launchpad-kit/tsconfig": "workspace:^",

@@ -4,14 +4,19 @@ import os from "node:os";
 import path from "node:path";
 import { createTestDatabase } from "@launchpad-kit/database/testing";
 import { sql } from "kysely";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import {
+    acknowledgePromotionDispatch,
     addMember,
+    beginPromotionStep,
+    claimPromotion,
     createAlias,
     createApp,
     createDeployment,
     createOrganization,
     createProject,
+    finalizePromotion,
+    holdPromotion,
     listAliasOperations,
     listDeploymentEvents,
     parseAliasConfig,
@@ -19,12 +24,15 @@ import {
     requestDeploymentDeletion,
     requestPromotion,
     requestWithdrawal,
+    renewPromotionClaim,
     ServiceError,
     supersedeOperation,
     uploadArtifact,
+    withDeploymentRecoveryMaintenance,
     type AliasDeps,
     type Principal,
 } from "../index";
+import type { PromotionClaimToken, PromotionReadback } from "../promotion-claims";
 import { SITE, tarGz } from "../testing/tar-fixtures";
 
 let testDb: Awaited<ReturnType<typeof createTestDatabase>>;
@@ -165,11 +173,12 @@ const operations = (aliasId: string) =>
         .selectFrom("promotion_operation")
         .selectAll()
         .where("alias_id", "=", aliasId)
+        .orderBy("generation")
         .execute();
 const deleteDeployment = (id: string) =>
     requestDeploymentDeletion(testDb.db, people.dee!, org, id, deps());
 
-beforeAll(async () => {
+async function setupDatabase() {
     dataDir = await fs.mkdtemp(path.join(os.tmpdir(), "launchpad-promotions-"));
     testDb = await createTestDatabase();
     await testDb.migrate();
@@ -186,13 +195,545 @@ beforeAll(async () => {
     await addMember(testDb.db, people.ann!, org, { email: "vic@example.com", role: "viewer" });
     p1 = (await createProject(testDb.db, people.ann!, org, { name: "One", slug: "one" })).id;
     p2 = (await createProject(testDb.db, people.ann!, org, { name: "Two", slug: "two" })).id;
-});
-afterAll(async () => {
-    await testDb.destroy();
-    await fs.rm(dataDir, { recursive: true, force: true });
+}
+async function teardownDatabase() {
+    try {
+        await testDb?.destroy();
+    } finally {
+        if (dataDir) await fs.rm(dataDir, { recursive: true, force: true });
+    }
+}
+
+describe("promotion claims and finalization", () => {
+    beforeEach(setupDatabase);
+    afterEach(teardownDatabase);
+    const authority = { instanceId: randomUUID(), epoch: randomUUID() };
+    async function claim(aliasId: string) {
+        const result = await claimPromotion(testDb.db, dataDir, "worker");
+        if (result.kind !== "claimed") throw new Error(`Expected a claim, got ${result.kind}`);
+        expect(result.alias.id).toBe(aliasId);
+        return result;
+    }
+    const dispatch = (token: PromotionClaimToken) =>
+        beginPromotionStep(testDb.db, dataDir, token, "dispatch");
+    const ack = (token: PromotionClaimToken) =>
+        acknowledgePromotionDispatch(testDb.db, dataDir, token);
+    const verify = (token: PromotionClaimToken) =>
+        beginPromotionStep(testDb.db, dataDir, token, "verify");
+    const expire = (id: string) =>
+        testDb.db
+            .updateTable("promotion_operation")
+            .set({ lease_expires_at: new Date(0) })
+            .where("id", "=", id)
+            .execute();
+
+    function observation(job: Awaited<ReturnType<typeof claim>>): PromotionReadback {
+        return {
+            ...authority,
+            route: {
+                aliasId: job.alias.id,
+                hostname: job.alias.hostname,
+                operationId: job.operation.id,
+                generation: job.operation.generation,
+                target: job.target
+                    ? { deploymentId: job.target.id, hostname: job.target.hostname }
+                    : null,
+            },
+        };
+    }
+    async function verifying(job: Awaited<ReturnType<typeof claim>>) {
+        expect(await dispatch(job.token)).toEqual({ id: job.token.id });
+        expect(await ack(job.token)).toEqual({ id: job.token.id });
+        expect(await verify(job.token)).toEqual({ id: job.token.id });
+    }
+    const finish = (job: Awaited<ReturnType<typeof claim>>, seen = observation(job)) =>
+        finalizePromotion(testDb.db, dataDir, job.token, authority, async () => seen);
+    const unpinned = async (id: string) =>
+        (
+            await testDb.db
+                .selectFrom("deployment")
+                .select("last_unpinned_at")
+                .where("id", "=", id)
+                .executeTakeFirstOrThrow()
+        ).last_unpinned_at;
+
+    // Hold the app row on another connection so finalization blocks after its readback.
+    async function holdAppLock(appId: string) {
+        const locked = Promise.withResolvers<void>();
+        const release = Promise.withResolvers<void>();
+        const done = testDb.db.transaction().execute(async (trx) => {
+            await trx.selectFrom("app").select("id").where("id", "=", appId).forUpdate().execute();
+            locked.resolve();
+            await release.promise;
+        });
+        await locked.promise;
+        return {
+            async release() {
+                release.resolve();
+                await done;
+            },
+        };
+    }
+    async function waitForRowLockWait() {
+        for (let attempt = 0; attempt < 200; attempt++) {
+            const { rows } = await sql<{ waiting: string }>`
+                select count(*)::text as waiting from pg_stat_activity
+                where datname = current_database() and wait_event_type = 'Lock'`.execute(testDb.db);
+            if (rows[0]!.waiting !== "0") return;
+            await new Promise<void>((resolve) => setTimeout(resolve, 25));
+        }
+        throw new Error("Finalization never waited for the row lock.");
+    }
+
+    it("holds lost dispatch without reissuing it or releasing its target", async () => {
+        const { alias, ready } = await fixture();
+        const target = await ready();
+        await promote(alias.id, target, "0");
+        const job = await claim(alias.id);
+        expect(await ack(job.token)).toBeNull();
+        expect(await dispatch(job.token)).not.toBeNull();
+        await expire(job.token.id);
+        expect(await claimPromotion(testDb.db, dataDir, "worker")).toEqual({
+            kind: "reconciliation-needed",
+            id: job.token.id,
+        });
+        expect(await claimPromotion(testDb.db, dataDir, "worker")).toEqual({ kind: "idle" });
+        expect(await aliasRow(alias.id)).toMatchObject({ state: "binding-uncertain" });
+        expect(await code(deleteDeployment(target))).toBe("conflict");
+        expect(await ack(job.token)).toBeNull();
+    });
+
+    it("resumes readback and rejects a stale worker's actual finalization write", async () => {
+        const { alias, ready } = await fixture();
+        const target = await ready();
+        await promote(alias.id, target, "0");
+        const old = await claim(alias.id);
+        await verifying(old);
+        await expire(old.token.id);
+        const current = await claim(alias.id);
+        expect(current.token).toMatchObject({ id: old.token.id, attempt: 2, fence: "2" });
+        expect(current.operation).toMatchObject({ step_done: "dispatch", step_pending: null });
+        expect(await dispatch(current.token)).toBeNull();
+        expect(await verify(current.token)).not.toBeNull();
+        const before = await operations(alias.id);
+        expect(await finish(old)).toBeNull();
+        expect(await renewPromotionClaim(testDb.db, dataDir, old.token)).toBeNull();
+        expect(await operations(alias.id)).toEqual(before);
+        expect(await aliasRow(alias.id)).toMatchObject({ committed_generation: "0" });
+        expect(await finish(current)).toEqual({ id: current.token.id });
+    });
+
+    it("refuses the current token after expiry, without needing a replacement claim", async () => {
+        const { alias, ready } = await fixture();
+        await promote(alias.id, await ready(), "0");
+        const job = await claim(alias.id);
+        const { token } = job;
+        expect(await holdPromotion(testDb.db, dataDir, token)).toBeNull();
+        await expire(token.id);
+        let before = await operations(alias.id);
+        expect(await dispatch(token)).toBeNull();
+        expect(await renewPromotionClaim(testDb.db, dataDir, token)).toBeNull();
+        expect(await operations(alias.id)).toEqual(before);
+        const second = await claim(alias.id);
+        expect(await dispatch(second.token)).not.toBeNull();
+        await expire(second.token.id);
+        before = await operations(alias.id);
+        expect(await ack(second.token)).toBeNull();
+        expect(await holdPromotion(testDb.db, dataDir, second.token)).toBeNull();
+        expect(await operations(alias.id)).toEqual(before);
+        expect(await claimPromotion(testDb.db, dataDir, "worker")).toMatchObject({
+            kind: "reconciliation-needed",
+            id: second.token.id,
+        });
+
+        const fresh = await fixture();
+        await promote(fresh.alias.id, await fresh.ready(), "0");
+        const verifyingJob = await claim(fresh.alias.id);
+        await verifying(verifyingJob);
+        await expire(verifyingJob.token.id);
+        before = await operations(fresh.alias.id);
+        expect(await finish(verifyingJob)).toBeNull();
+        expect(await operations(fresh.alias.id)).toEqual(before);
+        expect(await aliasRow(fresh.alias.id)).toMatchObject({ committed_generation: "0" });
+        const retry = await claim(fresh.alias.id);
+        expect(await verify(retry.token)).not.toBeNull();
+        expect(await finish(retry)).not.toBeNull();
+    });
+
+    it("parks a generation mismatch without hiding the next runnable operation", async () => {
+        const bad = await fixture();
+        const target = await bad.ready();
+        const operation = await promote(bad.alias.id, target, "0");
+        await testDb.db
+            .updateTable("app_alias")
+            .set({ reserved_generation: "2" })
+            .where("id", "=", bad.alias.id)
+            .execute();
+        const before = await aliasRow(bad.alias.id);
+        const next = await fixture();
+        const queued = await promote(next.alias.id, await next.ready(), "0");
+        expect(await claimPromotion(testDb.db, dataDir, "worker")).toEqual({
+            kind: "reconciliation-needed",
+            id: operation.id,
+        });
+        expect(await operations(bad.alias.id)).toMatchObject([
+            {
+                status: "reconciliation-needed",
+                failure_code: "alias-generation-mismatch",
+            },
+        ]);
+        expect(await aliasRow(bad.alias.id)).toEqual(before);
+        expect(await code(deleteDeployment(target))).toBe("conflict");
+        const job = await claim(next.alias.id);
+        expect(job.token.id).toBe(queued.id);
+        await verifying(job);
+        expect(await finish(job)).not.toBeNull();
+        const repairInput = {
+            operationId: operation.id,
+            action: "bind" as const,
+            targetDeploymentId: target,
+            attested: true,
+        };
+        expect(await code(supersedeOperation(testDb.db, dataDir, repairInput))).toBe("conflict");
+        const seen: PromotionReadback = {
+            ...authority,
+            route: {
+                aliasId: bad.alias.id,
+                hostname: bad.alias.hostname,
+                operationId: operation.id,
+                generation: "8",
+                target: { deploymentId: target, hostname: "wrong.sites.example.net" },
+            },
+        };
+        const repair = { authority, readRoute: async () => seen };
+        const deployment = await testDb.db
+            .selectFrom("deployment")
+            .select("hostname")
+            .where("id", "=", target)
+            .executeTakeFirstOrThrow();
+        const route = {
+            ...seen.route!,
+            operationId: randomUUID(),
+            target: { deploymentId: target, hostname: deployment.hostname },
+        };
+        for (const refused of [
+            seen, // unexpected target hostname and conflicting recorded operation
+            { ...seen, instanceId: randomUUID(), route },
+            { ...seen, epoch: randomUUID(), route },
+            { ...seen, route: { ...route, aliasId: randomUUID() } },
+            { ...seen, route: { ...route, hostname: "wrong.sites.example.net" } },
+            { ...seen, route: { ...route, operationId: operation.id } },
+            { ...seen, route: { ...route, target: null } },
+            {
+                ...seen,
+                route: { ...route, target: { ...route.target, deploymentId: randomUUID() } },
+            },
+        ]) {
+            expect(
+                await code(
+                    supersedeOperation(testDb.db, dataDir, repairInput, {
+                        ...repair,
+                        readRoute: async () => refused,
+                    }),
+                ),
+            ).toBe("conflict");
+        }
+        await expect(
+            supersedeOperation(testDb.db, dataDir, repairInput, {
+                ...repair,
+                readRoute: async () => {
+                    throw new Error("Router unavailable.");
+                },
+            }),
+        ).rejects.toThrow("Router unavailable.");
+        expect(await aliasRow(bad.alias.id)).toEqual(before);
+        expect(await operations(bad.alias.id)).toMatchObject([
+            { id: operation.id, status: "reconciliation-needed", superseded_by_operation_id: null },
+        ]);
+        seen.route = route;
+        const fixed = await supersedeOperation(testDb.db, dataDir, repairInput, repair);
+        expect(fixed.generation).toBe("9");
+        expect(await aliasRow(bad.alias.id)).toMatchObject({
+            state: "binding-uncertain",
+            committed_generation: "0",
+            reserved_generation: "9",
+        });
+        expect(await code(deleteDeployment(target))).toBe("conflict");
+        const audit = await testDb.db
+            .selectFrom("audit_event")
+            .select("detail")
+            .where("action", "=", "alias.operation-superseded")
+            .where("target_id", "=", bad.alias.id)
+            .executeTakeFirstOrThrow();
+        expect(audit.detail).toContain(
+            `observedGeneration=8;observedOperation=${route.operationId};observedTarget=${target}`,
+        );
+        const correction = await claim(bad.alias.id);
+        expect(correction.token.id).toBe(fixed.operationId);
+        await verifying(correction);
+        expect(await finish(correction)).not.toBeNull();
+        expect(await operations(bad.alias.id)).toMatchObject([
+            { id: operation.id, status: "superseded" },
+            { id: fixed.operationId, status: "succeeded" },
+        ]);
+    });
+
+    it("repairs a withdrawal above the database counter and keeps the pin until verified", async () => {
+        const { alias, ready } = await fixture();
+        const target = await ready();
+        await promote(alias.id, target, "0");
+        const bound = await claim(alias.id);
+        await verifying(bound);
+        expect(await finish(bound)).not.toBeNull();
+        const withdrawal = await withdraw(alias.id, "1");
+        await testDb.db
+            .updateTable("app_alias")
+            .set({ reserved_generation: "4" })
+            .where("id", "=", alias.id)
+            .execute();
+        expect(await claimPromotion(testDb.db, dataDir, "worker")).toEqual({
+            kind: "reconciliation-needed",
+            id: withdrawal.id,
+        });
+        const input = { operationId: withdrawal.id, action: "withdraw" as const, attested: true };
+        expect(
+            await code(
+                supersedeOperation(testDb.db, dataDir, input, {
+                    authority,
+                    readRoute: async () => ({ ...authority, route: null }),
+                }),
+            ),
+        ).toBe("conflict");
+        const result = await supersedeOperation(testDb.db, dataDir, input, {
+            authority,
+            readRoute: async () => observation(bound),
+        });
+        expect(result.generation).toBe("5");
+        expect(await aliasRow(alias.id)).toMatchObject({ state: "withdrawal-uncertain" });
+        expect(await code(deleteDeployment(target))).toBe("conflict");
+        const correction = await claim(alias.id);
+        await verifying(correction);
+        expect(await finish(correction)).not.toBeNull();
+        expect(await unpinned(target)).toBeInstanceOf(Date);
+        expect(await code(deleteDeployment(target))).toBe("ok");
+    });
+
+    it("excludes managed rotation from router verification through commit", async () => {
+        const { alias, ready } = await fixture();
+        await promote(alias.id, await ready(), "0");
+        const job = await claim(alias.id);
+        await verifying(job);
+        const hold = await holdAppLock(job.operation.app_id);
+        let released = false;
+        try {
+            // Readback returns at once; finalization then waits for the row lock before commit.
+            const finalized = finalizePromotion(
+                testDb.db,
+                dataDir,
+                job.token,
+                authority,
+                async () => observation(job),
+            );
+            await waitForRowLockWait();
+            await expect(
+                withDeploymentRecoveryMaintenance(
+                    testDb.db,
+                    async () => {
+                        throw new Error("Rotation entered before finalization committed.");
+                    },
+                    AbortSignal.timeout(100),
+                ),
+            ).rejects.toMatchObject({ name: "TimeoutError" });
+            released = true;
+            await hold.release();
+            expect(await finalized).toEqual({ id: job.token.id });
+        } finally {
+            if (!released) await hold.release();
+        }
+        await withDeploymentRecoveryMaintenance(testDb.db, async (connection) => {
+            expect(
+                await connection
+                    .selectFrom("app_alias")
+                    .select("committed_generation")
+                    .where("id", "=", alias.id)
+                    .executeTakeFirst(),
+            ).toEqual({ committed_generation: "1" });
+        });
+    });
+
+    it("refuses mismatched authority, operation, generation, or target readback", async () => {
+        const { alias, ready } = await fixture();
+        const target = await ready();
+        await promote(alias.id, target, "0");
+        const job = await claim(alias.id);
+        await verifying(job);
+        const seen = observation(job);
+        const route = seen.route!;
+        const before = await operations(alias.id);
+        for (const mismatch of [
+            { ...seen, epoch: randomUUID() },
+            { ...seen, instanceId: randomUUID() },
+            { ...seen, route: null },
+            { ...seen, route: { ...route, aliasId: randomUUID() } },
+            { ...seen, route: { ...route, hostname: "wrong.sites.example.net" } },
+            { ...seen, route: { ...route, operationId: randomUUID() } },
+            { ...seen, route: { ...route, generation: "2" } },
+            { ...seen, route: { ...route, target: null } },
+            {
+                ...seen,
+                route: {
+                    ...route,
+                    target: { deploymentId: target, hostname: "wrong.sites.example.net" },
+                },
+            },
+        ]) {
+            expect(await finish(job, mismatch)).toBeNull();
+        }
+        expect(await operations(alias.id)).toEqual(before);
+        expect(await aliasRow(alias.id)).toMatchObject({
+            state: "binding",
+            committed_generation: "0",
+        });
+        expect(await finish(job)).not.toBeNull();
+    });
+
+    it("releases only the last pin and leaves a permanent withdrawal reservation", async () => {
+        const { alias, app, ready } = await fixture();
+        const other = await createAlias(
+            testDb.db,
+            people.dee!,
+            org,
+            app.id,
+            { slug: "stable" },
+            deps(),
+        );
+        const first = await ready();
+        const next = await ready();
+        for (const id of [alias.id, other.id]) {
+            await promote(id, first, "0");
+            const job = await claim(id);
+            await verifying(job);
+            expect(await finish(job)).not.toBeNull();
+        }
+        await promote(alias.id, next, "1");
+        const repoint = await claim(alias.id);
+        await verifying(repoint);
+        expect(await finish(repoint)).not.toBeNull();
+        expect(await unpinned(first)).toBeNull();
+        expect(await code(deleteDeployment(first))).toBe("conflict");
+
+        await withdraw(other.id, "1");
+        const withdrawal = await claim(other.id);
+        await verifying(withdrawal);
+        expect(await finish(withdrawal)).not.toBeNull();
+        expect(await unpinned(first)).toBeInstanceOf(Date);
+        expect(await unpinned(next)).toBeNull();
+        expect(await aliasRow(other.id)).toMatchObject({
+            state: "withdrawn",
+            target_deployment_id: null,
+            committed_generation: "2",
+        });
+        expect(
+            await testDb.db
+                .selectFrom("hostname_reservation")
+                .select(["hostname", "released_at"])
+                .where("owner_id", "=", other.id)
+                .executeTakeFirstOrThrow(),
+        ).toEqual({
+            hostname: other.hostname,
+            released_at: expect.any(Date),
+        });
+        expect(await code(deleteDeployment(first))).toBe("ok");
+    });
+
+    it("commits the readback snapshot even if the caller reuses the reply object", async () => {
+        const { alias, ready } = await fixture();
+        const target = await ready();
+        await promote(alias.id, target, "0");
+        const job = await claim(alias.id);
+        await verifying(job);
+        const seen = observation(job);
+        const hold = await holdAppLock(job.operation.app_id);
+        let released = false;
+        try {
+            const finalized = finalizePromotion(
+                testDb.db,
+                dataDir,
+                job.token,
+                authority,
+                async () => seen,
+            );
+            // Finalization has its snapshot and is still blocked before commit.
+            await waitForRowLockWait();
+            seen.epoch = randomUUID();
+            seen.route!.target!.hostname = "different.sites.example.net";
+            released = true;
+            await hold.release();
+            expect(await finalized).toEqual({ id: job.token.id });
+        } finally {
+            if (!released) await hold.release();
+        }
+        expect(await operations(alias.id)).toMatchObject([
+            { observed_epoch: authority.epoch, observed_target_deployment_id: target },
+        ]);
+    });
+
+    it("settles every ancestor only after the corrective tip is verified", async () => {
+        const { alias, ready } = await fixture();
+        const a = await ready();
+        const b = await ready();
+        await promote(alias.id, a, "0");
+        const bound = await claim(alias.id);
+        await verifying(bound);
+        expect(await finish(bound)).not.toBeNull();
+        await promote(alias.id, b, "1");
+        const uncertain = await claim(alias.id);
+        expect(await dispatch(uncertain.token)).not.toBeNull();
+        expect(await holdPromotion(testDb.db, dataDir, uncertain.token)).not.toBeNull();
+        const corrected = await supersedeOperation(testDb.db, dataDir, {
+            operationId: uncertain.token.id,
+            action: "bind",
+            targetDeploymentId: a,
+            attested: true,
+        });
+        const uncertainAgain = await claim(alias.id);
+        expect(uncertainAgain.token.id).toBe(corrected.operationId);
+        expect(await dispatch(uncertainAgain.token)).not.toBeNull();
+        expect(await holdPromotion(testDb.db, dataDir, uncertainAgain.token)).not.toBeNull();
+        await supersedeOperation(testDb.db, dataDir, {
+            operationId: uncertainAgain.token.id,
+            action: "bind",
+            targetDeploymentId: a,
+            attested: true,
+        });
+        const tip = await claim(alias.id);
+        await verifying(tip);
+        expect(await code(deleteDeployment(b))).toBe("conflict");
+        expect(await finish(tip)).not.toBeNull();
+        expect((await operations(alias.id)).filter((row) => row.status === "superseded")).toEqual(
+            expect.arrayContaining(
+                [uncertain, uncertainAgain].map(({ token }) =>
+                    expect.objectContaining({
+                        id: token.id,
+                        observed_operation_id: tip.token.id,
+                        observed_epoch: authority.epoch,
+                    }),
+                ),
+            ),
+        );
+        expect(await aliasRow(alias.id)).toMatchObject({
+            target_deployment_id: a,
+            committed_generation: "4",
+        });
+        expect(await unpinned(b)).toBeInstanceOf(Date);
+        expect(await unpinned(a)).toBeNull();
+        expect(await code(deleteDeployment(b))).toBe("ok");
+    });
 });
 
 describe("promotion intent", () => {
+    beforeAll(setupDatabase);
+    afterAll(teardownDatabase);
     it("queues a bind: reserves the next generation, pins the target and records the intent", async () => {
         const { alias, ready } = await fixture();
         const target = await ready();
@@ -503,6 +1044,8 @@ describe("promotion intent", () => {
 });
 
 describe("corrective operations", () => {
+    beforeAll(setupDatabase);
+    afterAll(teardownDatabase);
     // An alias bound to `previous`, with a repoint to `first` held for reconciliation.
     async function held() {
         const { alias, ready } = await fixture();

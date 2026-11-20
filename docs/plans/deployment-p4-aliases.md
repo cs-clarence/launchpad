@@ -1,8 +1,8 @@
 # P4: aliases, promotion, recovery counters and retention pins
 
-Status: **approved 2026-11-20 as written (automatic expiry stays out). P4a is merged;
-P4b is built on `feat/deployment-p4b-promotion`; later slices are not started. Nothing here is authorized to run
-against real infrastructure.** Parent: [deployment model plan](deployment-model.md), P4. Schema
+Status: **approved 2026-11-20 as written (automatic expiry stays out). P4a, P4b
+and the P4c private client are merged; P4c worker wiring is pending. Nothing here
+is authorized to run against real infrastructure.** Parent: [deployment model plan](deployment-model.md), P4. Schema
 contract: [replacement schema map](../design/deployment-cutover-schema.md). Behavior and the alias
 and operation state machines: [deployment design](../design/deployment-modes.md). Router:
 [alias router plan](production-alias-router.md) (R1 core and R2a host are built and unwired; R3
@@ -98,6 +98,23 @@ reservation races, alias recreation never reusing a hostname.
 First land the private client without a runtime caller. Add fenced database
 transitions, pin release and worker integration in follow-up changes. A
 request-level refusal does not settle an earlier ambiguous write.
+
+The database transition slice parks an expired claim with pending dispatch.
+It can reclaim a recorded dispatch for read-only verification, never for a
+second dispatch. Finalization compares the router readback with the expected
+instance, epoch and recorded route. The worker performs the fresh route readback
+and the served-identity probe inside the finalization callback, after the shared
+recovery lock is held (a bounded exception to the rule against network calls
+inside transactions). It settles the corrective chain and records the
+last pin release in the same transaction. Until worker wiring lands, no
+runtime caller claims or finalizes these operations.
+
+Review follow-up (approved): hold the shared recovery lock from fresh route
+readback and identity probe through SQL commit. Managed offline router rotation
+takes the exclusive lock on the same database. Repair a parked generation mismatch
+with `promotion-repair-generation`: verify the exact router alias, require a
+coherent held chain, audit the correction, and reserve above all persisted and
+observed generations. Only the verified correction releases chain pins.
 
 A private router control client (in `packages/alias-router`) with typed, bounded calls that classify
 every failure as definite or uncertain (a timeout is never proof of failure). A promotion runner in

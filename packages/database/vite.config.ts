@@ -10,6 +10,7 @@ export default createConfig({
             lib: {
                 entry: {
                     index: "src/index.ts",
+                    "deployment-lock": "src/deployment-lock.ts",
                 },
                 formats: ["es"],
                 fileName: (format, entryName) =>

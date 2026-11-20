@@ -3,7 +3,7 @@ import { parseArgs } from "node:util";
 import { initRouter, rotateRouter } from "./commands";
 import { checkHealth } from "./healthcheck";
 import { LockError } from "./lock";
-import { readSecretFile, readSecretStdin, SecretError } from "./secret";
+import { readOwnerFile, readSecretFile, readSecretStdin, SecretError } from "./secret";
 import { startRouter } from "./serve";
 
 const USAGE = `Usage: launchpad-router <command>
@@ -11,7 +11,9 @@ const USAGE = `Usage: launchpad-router <command>
 Commands:
   serve                                  Run the router (control and data listeners).
   init   (--token-file <path> | --token-stdin)   Create new routing state; prints the epoch.
-  rotate (--token-file <path> | --token-stdin)   Start a new epoch and token; prints the epoch.
+  rotate (--token-file <path> | --token-stdin) (--database-url-file <path> | --standalone)
+                                         Start a new epoch and token; prints the epoch.
+                                         Use --standalone only if the router has no model users.
   healthcheck                            Exit 0 when the control listener reports a healthy store.
 
 Settings come from LAUNCHPAD_ROUTER_* and LAUNCHPAD_APPS_* environment variables. The token is read
@@ -84,11 +86,21 @@ async function main(): Promise<void> {
         return;
     }
 
-    let values: { "token-file"?: string; "token-stdin"?: boolean };
+    let values: {
+        "token-file"?: string;
+        "token-stdin"?: boolean;
+        standalone?: boolean;
+        "database-url-file"?: string;
+    };
     try {
         ({ values } = parseArgs({
             args: rest,
-            options: { "token-file": { type: "string" }, "token-stdin": { type: "boolean" } },
+            options: {
+                "token-file": { type: "string" },
+                "token-stdin": { type: "boolean" },
+                standalone: { type: "boolean" },
+                "database-url-file": { type: "string" },
+            },
             strict: true,
         }));
     } catch {
@@ -97,12 +109,81 @@ async function main(): Promise<void> {
     if ((values["token-file"] === undefined) === (values["token-stdin"] !== true)) {
         return fail("expected exactly one of --token-file <path> or --token-stdin");
     }
+    const standalone = values.standalone === true;
+    const databaseFile = values["database-url-file"];
+    if (command === "init" && (standalone || databaseFile !== undefined)) {
+        return fail("database and standalone options are for rotate only");
+    }
+    if (command === "rotate" && standalone === (databaseFile !== undefined)) {
+        return fail("expected exactly one of --database-url-file <path> or --standalone");
+    }
     try {
         const token =
             values["token-file"] !== undefined
                 ? readSecretFile(values["token-file"])
                 : await readSecretStdin(process.stdin);
-        const epoch = command === "init" ? initRouter(config, token) : rotateRouter(config, token);
+        let epoch: string;
+        if (command === "init") epoch = initRouter(config, token);
+        else if (standalone) {
+            epoch = rotateRouter(config, token);
+        } else {
+            const url = readOwnerFile(databaseFile!, 4096)
+                .toString("utf8")
+                .replace(/\r?\n$/, "");
+            if (!/^postgres(?:ql)?:\/\/\S+$/.test(url))
+                return fail("The database URL file is invalid.");
+            const { createDatabase } = await import("@launchpad-kit/database");
+            const { isModelPrimary, withDeploymentRecoveryMaintenance } =
+                await import("@launchpad-kit/database/deployment-lock");
+            const db = createDatabase(url, { max: 1, connectionTimeout: 5 });
+            const budget = AbortSignal.timeout(30_000);
+            // The budget must also end a query PostgreSQL accepted but never answers.
+            const deadline = new Promise<never>((_, reject) =>
+                budget.addEventListener("abort", () => reject(budget.reason), { once: true }),
+            );
+            let committed: string | undefined;
+            const maintenance = withDeploymentRecoveryMaintenance(
+                db,
+                async (connection) => {
+                    if (!(await isModelPrimary(connection))) {
+                        throw new SecretError(
+                            "Managed rotation requires the primary deployment model database.",
+                        );
+                    }
+                    // Nothing awaits between this check and the synchronous rotation, so a
+                    // rotation can never commit after the command has reported a timeout.
+                    budget.throwIfAborted();
+                    committed = rotateRouter(config, token);
+                    return committed;
+                },
+                budget,
+            );
+            maintenance.catch(() => {});
+            try {
+                epoch = await Promise.race([maintenance, deadline]);
+            } catch (error) {
+                if (committed !== undefined) {
+                    // The router already changed epoch; only releasing the lock failed. Report
+                    // the epoch (not a secret) so the credentials can be updated, then exit.
+                    process.stderr.write(
+                        "warning: the epoch was rotated but releasing the maintenance lock failed; update the worker epoch and token before resuming.\n",
+                    );
+                    process.stdout.write(`${committed}\n`, () => process.exit(0));
+                    return;
+                }
+                if (error instanceof Error && error.name === "TimeoutError") {
+                    throw new SecretError(
+                        "Timed out waiting for exclusive router maintenance; pause model writers, check database connectivity, and retry.",
+                    );
+                }
+                throw error;
+            } finally {
+                await Promise.race([
+                    db.destroy().catch(() => {}),
+                    new Promise<void>((resolve) => setTimeout(resolve, 2000)),
+                ]);
+            }
+        }
         process.stdout.write(`${epoch}\n`);
     } catch (error) {
         fail(describe(error));

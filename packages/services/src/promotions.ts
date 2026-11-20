@@ -9,6 +9,7 @@ import { withModelMutation } from "./deployment-recovery";
 import { isUniqueViolation, ServiceError } from "./errors";
 import { isUuid } from "./ids";
 import { parseInput, recordAudit, requireMembership } from "./organizations";
+import { boundedPromotionEvidence, type PromotionReadback } from "./promotion-claims";
 
 type Db = Kysely<Database>;
 
@@ -330,6 +331,10 @@ export async function supersedeOperation(
         targetDeploymentId?: string;
         attested: boolean;
     },
+    repair?: {
+        authority: { instanceId: string; epoch: string };
+        readRoute: (hostname: string, signal: AbortSignal) => Promise<PromotionReadback>;
+    },
 ) {
     if (!input.attested) {
         throw new ServiceError(
@@ -351,10 +356,27 @@ export async function supersedeOperation(
     return withModelMutation(db, dataDir, async (trx) => {
         const found = await trx
             .selectFrom("promotion_operation")
-            .select(["id", "app_id", "alias_id", "organization_id"])
-            .where("id", "=", input.operationId)
+            .innerJoin("app_alias", "app_alias.id", "promotion_operation.alias_id")
+            .select([
+                "promotion_operation.id",
+                "promotion_operation.app_id",
+                "promotion_operation.alias_id",
+                "promotion_operation.organization_id",
+                "app_alias.hostname",
+            ])
+            .where("promotion_operation.id", "=", input.operationId)
             .executeTakeFirst();
         if (!found) throw new ServiceError("not-found", "Operation not found.");
+        // Read under the recovery barrier, before acquiring row locks. The worker
+        // cannot dispatch a new operation on this alias while the held tip exists.
+        const observed = repair
+            ? structuredClone(
+                  await boundedPromotionEvidence((signal) =>
+                      repair.readRoute(found.hostname, signal),
+                  ),
+              )
+            : undefined;
+        const routerTarget = observed?.route?.target;
         await trx
             .selectFrom("app")
             .select("id")
@@ -363,17 +385,25 @@ export async function supersedeOperation(
             .executeTakeFirstOrThrow();
         const alias = await trx
             .selectFrom("app_alias")
-            .select(["id", "state", "target_deployment_id", "reserved_generation"])
+            .select([
+                "id",
+                "state",
+                "target_deployment_id",
+                "reserved_generation",
+                "committed_generation",
+            ])
             .where("id", "=", found.alias_id)
             .forUpdate()
             .executeTakeFirstOrThrow();
-        const ids = [input.targetDeploymentId, alias.target_deployment_id].filter(
-            (id): id is string => !!id,
-        );
+        const ids = [
+            input.targetDeploymentId,
+            alias.target_deployment_id,
+            routerTarget?.deploymentId,
+        ].filter((id): id is string => !!id);
         const deployments = ids.length
             ? await trx
                   .selectFrom("deployment")
-                  .select(["id", "status", "desired_state", "app_id"])
+                  .select(["id", "hostname", "status", "desired_state", "app_id"])
                   .where("id", "in", ids)
                   .where("app_id", "=", found.app_id)
                   .orderBy("id")
@@ -389,6 +419,9 @@ export async function supersedeOperation(
                 "requested_by",
                 "previous_target_deployment_id",
                 "desired_target_deployment_id",
+                "failure_code",
+                "action",
+                "supersedes_operation_id",
             ])
             .where("id", "=", found.id)
             .forUpdate()
@@ -399,8 +432,33 @@ export async function supersedeOperation(
                 "Only an operation held for reconciliation can be corrected.",
             );
         }
-        if (alias.state !== "binding-uncertain" && alias.state !== "withdrawal-uncertain") {
+        const mismatch = held.failure_code === "alias-generation-mismatch";
+        if (mismatch !== Boolean(repair)) {
+            throw new ServiceError(
+                "conflict",
+                mismatch
+                    ? "A generation mismatch requires verified router repair."
+                    : "This operation is not held for a generation mismatch.",
+            );
+        }
+        const state =
+            mismatch && alias.state === "binding"
+                ? "binding-uncertain"
+                : mismatch && alias.state === "withdrawing"
+                  ? "withdrawal-uncertain"
+                  : alias.state;
+        if (state !== "binding-uncertain" && state !== "withdrawal-uncertain") {
             throw new ServiceError("conflict", "The alias is not waiting for reconciliation.");
+        }
+        if (mismatch && alias.target_deployment_id !== held.previous_target_deployment_id) {
+            throw new ServiceError("conflict", "The alias target disagrees with the held intent.");
+        }
+        if (
+            mismatch &&
+            !held.supersedes_operation_id &&
+            (held.action === "withdraw") !== (state === "withdrawal-uncertain")
+        ) {
+            throw new ServiceError("conflict", "The alias state disagrees with the held action.");
         }
         // A held bind may end at its target or at the prior stable target; a held withdrawal may
         // end withdrawn or back at the prior target. A corrective operation inherits the options of
@@ -423,7 +481,7 @@ export async function supersedeOperation(
         );
         const allowed =
             input.action === "withdraw"
-                ? alias.state === "withdrawal-uncertain"
+                ? state === "withdrawal-uncertain"
                 : input.targetDeploymentId !== undefined &&
                   chainTargets.has(input.targetDeploymentId);
         if (!allowed) {
@@ -445,7 +503,63 @@ export async function supersedeOperation(
                 );
             }
         }
-        const next = BigInt(alias.reserved_generation) + 1n;
+        let floor = BigInt(alias.reserved_generation);
+        if (repair && observed) {
+            const { route } = observed;
+            if (
+                observed.instanceId !== repair.authority.instanceId ||
+                observed.epoch !== repair.authority.epoch ||
+                (route === null && alias.committed_generation !== "0") ||
+                (route !== null &&
+                    (route.aliasId !== alias.id ||
+                        route.hostname !== found.hostname ||
+                        !/^[1-9][0-9]{0,18}$/.test(route.generation) ||
+                        BigInt(route.generation) < BigInt(alias.committed_generation) ||
+                        (routerTarget
+                            ? !chainTargets.has(routerTarget.deploymentId) ||
+                              !deployments.some(
+                                  (row) =>
+                                      row.id === routerTarget.deploymentId &&
+                                      row.hostname === routerTarget.hostname &&
+                                      row.status === "succeeded" &&
+                                      row.desired_state === "active",
+                              )
+                            : state !== "withdrawal-uncertain")))
+            ) {
+                throw new ServiceError(
+                    "conflict",
+                    "The router route cannot be verified against the held alias.",
+                );
+            }
+            if (route) {
+                const recorded = await trx
+                    .selectFrom("promotion_operation")
+                    .select(["alias_id", "generation", "desired_target_deployment_id"])
+                    .where("id", "=", route.operationId)
+                    .executeTakeFirst();
+                if (
+                    recorded &&
+                    (recorded.alias_id !== alias.id ||
+                        recorded.generation !== route.generation ||
+                        recorded.desired_target_deployment_id !==
+                            (routerTarget?.deploymentId ?? null))
+                ) {
+                    throw new ServiceError(
+                        "conflict",
+                        "The observed router operation disagrees with recorded intent.",
+                    );
+                }
+            }
+            const { latest } = await trx
+                .selectFrom("promotion_operation")
+                .select((eb) => eb.fn.max<string>("generation").as("latest"))
+                .where("alias_id", "=", alias.id)
+                .executeTakeFirstOrThrow();
+            for (const generation of [latest, route?.generation]) {
+                if (generation != null && BigInt(generation) > floor) floor = BigInt(generation);
+            }
+        }
+        const next = floor + 1n;
         if (next > MAX_GENERATION)
             throw new ServiceError("conflict", "This alias has no generations left.");
         const id = crypto.randomUUID();
@@ -476,7 +590,11 @@ export async function supersedeOperation(
             .execute();
         await trx
             .updateTable("app_alias")
-            .set({ reserved_generation: next.toString(), updated_at: sql<Date>`clock_timestamp()` })
+            .set({
+                state,
+                reserved_generation: next.toString(),
+                updated_at: sql<Date>`clock_timestamp()`,
+            })
             .where("id", "=", found.alias_id)
             .executeTakeFirstOrThrow();
         if (input.targetDeploymentId) {
@@ -503,7 +621,7 @@ export async function supersedeOperation(
                 target_type: "alias",
                 target_id: found.alias_id,
                 organization_id: found.organization_id,
-                detail: `attested=router-read;superseded=${held.id};new=${id};action=${input.action};generation=${next}${input.targetDeploymentId ? `;target=${input.targetDeploymentId}` : ""}`,
+                detail: `attested=router-read;superseded=${held.id};new=${id};action=${input.action};generation=${next}${input.targetDeploymentId ? `;target=${input.targetDeploymentId}` : ""}${observed ? `;repair=alias-generation-mismatch;observedEpoch=${observed.epoch};observedGeneration=${observed.route?.generation ?? "none"};observedOperation=${observed.route?.operationId ?? "none"};observedTarget=${routerTarget?.deploymentId ?? "none"}` : ""}`,
             })
             .execute();
         return { operationId: id, supersedes: held.id, generation: next.toString() };

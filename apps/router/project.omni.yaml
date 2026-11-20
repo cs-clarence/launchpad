@@ -10,6 +10,7 @@ dependencies:
     - "@launchpad-kit/vite-config"
     - "@launchpad-kit/vitest-config"
     - "@launchpad-kit/alias-router"
+    - "@launchpad-kit/database"
 
 tasks:
   test:unit:
