@@ -2,7 +2,9 @@
 
 The privileged half of deployments, currently **idle**. The preview deployment runtime (the polling
 loop, the lifecycle, expiry and deletion) was removed; the process only keeps a health marker and logs
-`legacy-runtime-removed`. It opens no database and needs no Dokku settings. The Docker and Dokku
+`legacy-runtime-removed`. It opens no database and needs no Dokku settings; at start it only refuses the removed
+preview settings (`LAUNCHPAD_PREVIEW_*`, `LAUNCHPAD_MAX_PREVIEWS`, `LAUNCHPAD_ALLOW_NO_EXPIRY`,
+`LAUNCHPAD_LIFECYCLE*`). The Docker and Dokku
 modules (`build.ts`, `ports.ts`, `verify.ts`, `lifecycle-ports.ts`, `template.ts`) are kept for the app
 worker that returns with the immutable model, and are covered by unit tests. Keep this page current
 when that changes.

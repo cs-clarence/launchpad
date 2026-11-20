@@ -27,7 +27,7 @@ import { compactId } from "../template";
 //   DOKKU_SSH_HOST / _PORT / _USER         the Dokku host
 //   DOKKU_SSH_KEY_PATH                     private key (mode 600)
 //   DOKKU_SSH_KNOWN_HOSTS_PATH             host key pinned out of band
-//   LAUNCHPAD_PREVIEW_PROXY_URL            where this machine reaches Dokku's proxy
+//   LAUNCHPAD_LIVE_PROXY_URL               where this machine reaches Dokku's proxy
 //   LAUNCHPAD_LIVE_DOMAIN                  a domain for the test hostnames (default
 //                                          live.example.com; no DNS is needed)
 //   DOCKER_HOST                            the Docker engine the worker builds with
@@ -38,7 +38,7 @@ const missing = [
     "DOKKU_SSH_HOST",
     "DOKKU_SSH_KEY_PATH",
     "DOKKU_SSH_KNOWN_HOSTS_PATH",
-    "LAUNCHPAD_PREVIEW_PROXY_URL",
+    "LAUNCHPAD_LIVE_PROXY_URL",
 ].filter((name) => !env[name]);
 if (missing.length > 0) {
     throw new Error(
@@ -53,7 +53,7 @@ if (env.LAUNCHPAD_LIVE_DOKKU !== "1") {
 const PREFIX = "lp-test-";
 const APP_PATTERN = /^lp-test-[a-z0-9]{6}$/;
 const domain = env.LAUNCHPAD_LIVE_DOMAIN || "live.example.com";
-const proxy = new URL(env.LAUNCHPAD_PREVIEW_PROXY_URL!);
+const proxy = new URL(env.LAUNCHPAD_LIVE_PROXY_URL!);
 
 const SITE_FILES: FixtureEntry[] = [
     { name: "index.html", content: "<!doctype html><title>live fixture</title><p>hello</p>" },

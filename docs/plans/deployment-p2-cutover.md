@@ -253,3 +253,19 @@ errors, validate record metadata, cancel archive copying, clarify conservative
 backend refusals and audit attestation semantics. Full local checks, tests,
 build/integration, image/package checks and the image upgrade drill pass;
 disposable PostgreSQL is torn down.
+
+## P2c as built
+
+Branch `feat/deployment-p2c-config`, based on the P2b merge `f07d3bc`.
+
+- `assertCurrentSettings` (`packages/services/src/app-routing-config.ts`) runs at controller
+  composition; the worker runs only `assertNoRemovedSettings`, imported from the dependency-free
+  sub-path `@launchpad-kit/services/removed-settings` so the idle bundle stays small (the whole
+  barrel grew it from about 1.5 KB to 475 KB). Together they refuse `LAUNCHPAD_PREVIEW_DOMAIN`, `LAUNCHPAD_PREVIEW_PROXY_URL`,
+  `LAUNCHPAD_MAX_PREVIEWS`, `LAUNCHPAD_ALLOW_NO_EXPIRY` and any non-empty `LAUNCHPAD_LIFECYCLE*` name,
+  and the controller, when `LAUNCHPAD_APPS_DOMAIN` is set, checks the domain pattern and its registrable-domain
+  separation from `LAUNCHPAD_BASE_URL`. An empty value counts as unset.
+- It does not call `parseAppRoutingConfig`, so no router, proxy or alias setting is required.
+  `LAUNCHPAD_DEPLOYMENTS` stays reserved and unread.
+- Undo is a revert. Breaking, for the release notes: a deployment that still sets a removed name
+  now fails at startup; remove the name.

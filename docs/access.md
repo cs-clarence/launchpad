@@ -6,12 +6,17 @@ Do not expose the controller directly to the public internet: the production
 ingress and threat review are [follow-up work](plans/production-compose-follow-up.md).
 
 1. Choose a private management origin, e.g.
-   `https://control.example.internal`, and a preview domain on a **different
-   registrable domain** from management,
-   e.g. `previews.example.net`. Set `LAUNCHPAD_BASE_URL` to the exact management
-   origin. (The preview domain setting was removed with the preview runtime; the app
-   domain, `LAUNCHPAD_APPS_DOMAIN`, arrives with the immutable model.) The controller
-   must not share a cookie origin with untrusted preview content.
+   `https://control.example.internal`, and an apps domain on a **different
+   registrable domain** from management, e.g. `sites.example.net`. Set
+   `LAUNCHPAD_BASE_URL` to the exact management origin. The controller and worker
+   refuse to start if the removed preview settings (`LAUNCHPAD_PREVIEW_DOMAIN`,
+   `LAUNCHPAD_PREVIEW_PROXY_URL`, `LAUNCHPAD_MAX_PREVIEWS`,
+   `LAUNCHPAD_ALLOW_NO_EXPIRY`, any `LAUNCHPAD_LIFECYCLE*`) are still set; remove them.
+   `LAUNCHPAD_APPS_DOMAIN` is optional for now, but when set it is checked at startup
+   (valid lowercase domain; `LAUNCHPAD_BASE_URL` must then be an `https` origin with no path
+   and on a different registrable domain).
+   Deployments themselves, and the proxy and router settings, arrive later. The
+   controller must not share a cookie origin with untrusted site content.
 2. Bind the controller on a private address. Terminate HTTPS at a trusted
    ingress and restrict access with a VPN or equivalent identity-aware gateway.
    If the proxy appends exactly one client IP to `X-Forwarded-For`, set
