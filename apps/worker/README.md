@@ -4,7 +4,9 @@ The worker stays idle and healthy with `LAUNCHPAD_DEPLOYMENTS=off` (the
 default). It does not connect to PostgreSQL, Docker or Dokku in that mode.
 With deployments enabled, it claims queued jobs, builds the fixed static-site
 image, and loads it into that deployment's own Dokku app. It does not roll
-back, delete apps, expire deployments or process aliases.
+back, expire deployments or process aliases. It also runs queued manual deletions: it
+destroys only the recorded app of the deployment (never a name that deployment did not create),
+confirms the app is gone, and removes that deployment's exact local image tag.
 
 See the [installation guide](../../docs/install.md) for enabled settings,
 shared storage and the stop grace period. The deployment's source image tag is

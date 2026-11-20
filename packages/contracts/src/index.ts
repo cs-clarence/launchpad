@@ -204,6 +204,12 @@ export const deploymentSchema = z.strictObject({
     failureMessage: z.string().nullable(),
 });
 
+export const deploymentDeletionSchema = z.strictObject({
+    operationId: z.uuid(),
+    deploymentId: z.uuid(),
+    status: z.literal("queued"),
+});
+
 export const deploymentEventSchema = z.strictObject({
     seq: z.string().regex(/^[1-9]\d*$/),
     phase: z.string(),

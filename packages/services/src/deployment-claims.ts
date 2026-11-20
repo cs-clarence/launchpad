@@ -77,7 +77,7 @@ export async function claimDeployment(db: Db, dataDir: string, owner: string) {
                 })
                 .where("id", "=", candidate.id)
                 .executeTakeFirstOrThrow();
-            await appendEvent(
+            await appendDeploymentEvent(
                 trx,
                 candidate,
                 "reconciliation-needed",
@@ -161,7 +161,7 @@ export function renewDeploymentClaim(db: Db, dataDir: string, token: DeploymentC
 
 // The deployment row is locked through the event insert, serializing sequence
 // allocation with both worker transitions and reconciliation on lease loss.
-async function appendEvent(
+export async function appendDeploymentEvent(
     trx: Db,
     deployment: { id: string; organization_id: string },
     phase: string,
@@ -193,7 +193,7 @@ export function beginDeploymentStep(
             .returningAll()
             .executeTakeFirst();
         if (!row) return null;
-        await appendEvent(trx, row, step, "info", "Deployment step started.");
+        await appendDeploymentEvent(trx, row, step, "info", "Deployment step started.");
         return row;
     });
 }
@@ -238,7 +238,7 @@ export function completeDeploymentStep(
             .returningAll()
             .executeTakeFirst();
         if (!row) return null;
-        await appendEvent(
+        await appendDeploymentEvent(
             trx,
             row,
             verified ? "succeeded" : step,
@@ -278,7 +278,7 @@ export function stopDeploymentStep(
             .returningAll()
             .executeTakeFirst();
         if (!row) return null;
-        await appendEvent(trx, row, outcome, failed ? "error" : "warn", message);
+        await appendDeploymentEvent(trx, row, outcome, failed ? "error" : "warn", message);
         return row;
     });
 }

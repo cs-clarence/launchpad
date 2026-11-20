@@ -26,6 +26,7 @@ export {
     artifactSchema,
     appSchema,
     deploymentSchema,
+    deploymentDeletionSchema,
     deploymentEventSchema,
     createAppSchema,
     createDeploymentSchema,

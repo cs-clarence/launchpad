@@ -1,21 +1,29 @@
 import { setTimeout as delay } from "node:timers/promises";
 import type { createDatabase } from "@launchpad-kit/database";
 import {
+    beginDeletionStep,
     beginDeploymentStep,
+    claimDeletion,
     claimDeployment,
+    completeDeletionStep,
     completeDeploymentStep,
     DeploymentRecoveryError,
+    renewDeletionClaim,
     renewDeploymentClaim,
+    stopDeletionStep,
     stopDeploymentStep,
 } from "@launchpad-kit/services";
 import { DeadlineExceeded, withinDeadline } from "./deadline";
+import { runDeletion, type DeletionRunnerPorts } from "./deletion-runner";
 import { runDeployment, type DeploymentRunnerPorts } from "./deployment-runner";
+import { imageTagFor } from "./template";
 
 export async function workDeployments({
     db,
     dataDir,
     owner,
     ports,
+    deletionPorts,
     shutdown,
     markHealthy,
     log,
@@ -27,6 +35,7 @@ export async function workDeployments({
     dataDir: string;
     owner: string;
     ports: DeploymentRunnerPorts;
+    deletionPorts: DeletionRunnerPorts;
     shutdown: AbortSignal;
     markHealthy: () => void;
     log: (line: Record<string, unknown>) => void;
@@ -48,9 +57,48 @@ export async function workDeployments({
         }
     }
 
+    // Returns whether a deletion was claimed, so the loop continues without sleeping.
+    async function deleteOne(): Promise<boolean> {
+        const claim = await database(() => claimDeletion(db, dataDir, owner));
+        markHealthy();
+        if (signal.aborted || claim.kind === "idle") return false;
+        if (claim.kind === "reconciliation-needed") {
+            log({ event: "deletion-reconciliation-needed", operationId: claim.id });
+            return true;
+        }
+        const { token, deletion } = claim;
+        const status = await runDeletion(
+            {
+                appName: deletion.appName,
+                imageTag: imageTagFor(deletion.deploymentId),
+                ownsRemoteApp: deletion.ownsRemoteApp,
+            },
+            { stepDone: deletion.stepDone },
+            {
+                begin: (step) => database(() => beginDeletionStep(db, dataDir, token, step)),
+                complete: (step) => database(() => completeDeletionStep(db, dataDir, token, step)),
+                stop: (step, outcome) =>
+                    database(() => stopDeletionStep(db, dataDir, token, step, outcome)),
+                renew: async () => {
+                    const lease = await database(() => renewDeletionClaim(db, dataDir, token));
+                    if (lease) markHealthy();
+                    return lease;
+                },
+            },
+            deletionPorts,
+            signal,
+        );
+        log({ event: "deletion-run-ended", operationId: token.id, status });
+        return status !== "authority-lost";
+    }
+
     let blocked = false;
+    let turn = 0;
     while (!signal.aborted) {
         try {
+            // Alternate so a steady stream of deployments cannot starve deletions.
+            if (turn++ % 2 === 1 && (await deleteOne())) continue;
+            if (signal.aborted) break;
             const claim = await database(() => claimDeployment(db, dataDir, owner));
             blocked = false;
             markHealthy();
@@ -94,6 +142,8 @@ export async function workDeployments({
                 if (status !== "authority-lost") continue;
             } else if (claim.kind === "reconciliation-needed") {
                 log({ event: "deployment-reconciliation-needed", deploymentId: claim.id });
+                continue;
+            } else if (await deleteOne()) {
                 continue;
             }
         } catch (error) {

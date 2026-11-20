@@ -10,7 +10,11 @@ import { createDatabase, migrateToLatest, migrationStatus } from "@launchpad-kit
 import { readFileSync, statSync } from "node:fs";
 import path from "node:path";
 import { createDokkuClient } from "@launchpad-kit/dokku";
-import { acknowledgeDeploymentImport, clearDeploymentRecovery } from "@launchpad-kit/services";
+import {
+    acknowledgeDeploymentImport,
+    clearDeploymentRecovery,
+    reconcileDeployment,
+} from "@launchpad-kit/services";
 import { createBackup, verifyBackup } from "./backup";
 import { checkRestore, restoreBackup, replaceTarget } from "./restore";
 
@@ -218,6 +222,49 @@ program
             ),
         );
         console.log("Deployment recovery cleared on the operator's attestation.");
+    });
+
+program
+    .command("deployment-reconcile")
+    .description(
+        "Record what you observed on Dokku for a deployment or deletion the worker held as reconciliation-needed. Never calls Dokku",
+    )
+    .requiredOption("--deployment <id>", "the deployment's ID")
+    .requiredOption(
+        "--outcome <outcome>",
+        "succeeded (deployment: it serves its recorded image; deletion: the app is gone), failed-clean (deployment: nothing of it exists; deletion: the app was not destroyed), failed-owned (deployment only: its app exists and deletion may destroy it), or abandon (deployment only; nothing unrecorded is ever destroyed)",
+    )
+    .option(
+        "--i-have-verified-dokku-by-exact-name",
+        "attest: you checked Dokku for this deployment's exact app name and image",
+    )
+    .action(async (options) => {
+        if (!["succeeded", "failed-clean", "failed-owned", "abandon"].includes(options.outcome)) {
+            throw new Error("--outcome must be succeeded, failed-clean, failed-owned or abandon.");
+        }
+        if (
+            !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
+                options.deployment,
+            )
+        ) {
+            throw new Error("--deployment must be a deployment ID (a UUID).");
+        }
+        const result = await withDatabase((db) =>
+            reconcileDeployment(
+                db,
+                path.resolve(process.env.LAUNCHPAD_DATA_DIR ?? ".data/controller"),
+                {
+                    deploymentId: options.deployment,
+                    outcome: options.outcome as
+                        | "succeeded"
+                        | "failed-clean"
+                        | "failed-owned"
+                        | "abandon",
+                    attested: options.iHaveVerifiedDokkuByExactName === true,
+                },
+            ),
+        );
+        console.log(`Recorded ${result.outcome} for 1 ${result.kind}.`);
     });
 
 program

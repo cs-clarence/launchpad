@@ -8,6 +8,7 @@ import {
     createDeployment,
     createOrganization,
     createProject,
+    requestDeploymentDeletion,
     lockDeploymentRecovery,
     markDeploymentRecoveryBlocked,
     parseDeploymentConfig,
@@ -15,6 +16,7 @@ import {
 } from "@launchpad-kit/services";
 import { SITE, tarGz } from "@launchpad-kit/services/testing";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import type { DeletionRunnerPorts } from "../deletion-runner";
 import type { DeploymentRunnerPorts } from "../deployment-runner";
 import { workDeployments } from "../deployment-worker";
 import { imageTagFor } from "../template";
@@ -79,7 +81,15 @@ async function enqueue() {
         { contentLength: bytes.length, projectId: project.id },
         { dataDir, limits: {} },
     );
-    return createDeployment(db, actor, org.id, app.id, { artifactId: artifact.id }, deps);
+    const deployment = await createDeployment(
+        db,
+        actor,
+        org.id,
+        app.id,
+        { artifactId: artifact.id },
+        deps,
+    );
+    return { ...deployment, actor, orgId: org.id, deps };
 }
 
 function fixture() {
@@ -96,13 +106,21 @@ function fixture() {
         load: vi.fn(async () => {}),
         verify: vi.fn(async () => {}),
     } satisfies DeploymentRunnerPorts;
+    let present = true;
+    const deletionPorts = {
+        exists: vi.fn<DeletionRunnerPorts["exists"]>(async () => present),
+        destroy: vi.fn<DeletionRunnerPorts["destroy"]>(async () => {
+            present = false;
+        }),
+        removeImage: vi.fn<DeletionRunnerPorts["removeImage"]>(async () => {}),
+    } satisfies DeletionRunnerPorts;
     const markHealthy = vi.fn();
-    return { shutdown, ports, markHealthy };
+    return { shutdown, ports, deletionPorts, markHealthy };
 }
 
 it("rejects a delayed result through the worker's real PostgreSQL store", async () => {
     const queued = await enqueue();
-    const { shutdown, ports, markHealthy } = fixture();
+    const { shutdown, ports, deletionPorts, markHealthy } = fixture();
     const release = Promise.withResolvers<void>();
     ports.verify.mockImplementationOnce(() => release.promise);
     const log = vi.fn((entry: Record<string, unknown>) => {
@@ -115,6 +133,7 @@ it("rejects a delayed result through the worker's real PostgreSQL store", async 
         dataDir: tmp.dir,
         owner: "old",
         ports,
+        deletionPorts,
         markHealthy,
         log,
         shutdown: shutdown.signal,
@@ -165,7 +184,7 @@ it("rejects a delayed result through the worker's real PostgreSQL store", async 
 
 it("does not dispatch or touch the health marker while recovery blocks the queue", async () => {
     const job = await enqueue();
-    const { shutdown, ports, markHealthy } = fixture();
+    const { shutdown, ports, deletionPorts, markHealthy } = fixture();
     await markDeploymentRecoveryBlocked(tmp.dir);
     const log = vi.fn(() => shutdown.abort());
     await workDeployments({
@@ -173,6 +192,7 @@ it("does not dispatch or touch the health marker while recovery blocks the queue
         dataDir: tmp.dir,
         owner: "blocked",
         ports,
+        deletionPorts,
         markHealthy,
         log,
         shutdown: shutdown.signal,
@@ -191,7 +211,7 @@ it("does not dispatch or touch the health marker while recovery blocks the queue
 
 it("fails the worker loop on a stalled claim and lets the caller close the pool", async () => {
     const job = await enqueue();
-    const { shutdown, ports, markHealthy } = fixture();
+    const { shutdown, ports, deletionPorts, markHealthy } = fixture();
     const db = createDatabase(source.url, { max: 2, closeTimeout: 0 });
     try {
         await source.db.transaction().execute(async (trx) => {
@@ -202,6 +222,7 @@ it("fails the worker loop on a stalled claim and lets the caller close the pool"
                     dataDir: tmp.dir,
                     owner: "stalled",
                     ports,
+                    deletionPorts,
                     markHealthy,
                     log: vi.fn(),
                     shutdown: shutdown.signal,
@@ -225,3 +246,64 @@ it("fails the worker loop on a stalled claim and lets the caller close the pool"
         await db.destroy();
     }
 }, 5000);
+
+it("deletes a finished deployment through the real store and keeps its names reserved", async () => {
+    const job = await enqueue();
+    const { db } = source;
+    await db
+        .updateTable("deployment")
+        .set({
+            status: "succeeded",
+            finished_at: new Date(),
+            step_done: "verify",
+            image_tag: imageTagFor(job.id),
+            image_id: `sha256:${"d".repeat(64)}`,
+        })
+        .where("id", "=", job.id)
+        .execute();
+    const { app_name: appName } = await db
+        .selectFrom("deployment")
+        .select("app_name")
+        .where("id", "=", job.id)
+        .executeTakeFirstOrThrow();
+    await requestDeploymentDeletion(db, job.actor, job.orgId, job.id, job.deps);
+    const { shutdown, ports, deletionPorts, markHealthy } = fixture();
+    const log = vi.fn((entry: Record<string, unknown>) => {
+        if (entry.event === "deletion-run-ended") shutdown.abort();
+    });
+    await workDeployments({
+        db,
+        dataDir: tmp.dir,
+        owner: "worker",
+        ports,
+        deletionPorts,
+        markHealthy,
+        log,
+        shutdown: shutdown.signal,
+    });
+    expect(log).toHaveBeenCalledWith({
+        event: "deletion-run-ended",
+        operationId: expect.any(String),
+        status: "succeeded",
+    });
+    expect(deletionPorts.destroy).toHaveBeenCalledExactlyOnceWith(appName, expect.any(AbortSignal));
+    expect(deletionPorts.removeImage).toHaveBeenCalledExactlyOnceWith(
+        imageTagFor(job.id),
+        expect.any(AbortSignal),
+    );
+    expect(ports.exists).not.toHaveBeenCalled();
+    expect(
+        await db
+            .selectFrom("deployment")
+            .select(["desired_state", "deleted_at"])
+            .where("id", "=", job.id)
+            .executeTakeFirstOrThrow(),
+    ).toMatchObject({ desired_state: "deleted", deleted_at: expect.any(Date) });
+    expect(
+        await db
+            .selectFrom("dokku_name_reservation")
+            .select("released_at")
+            .where("app_name", "=", appName)
+            .executeTakeFirstOrThrow(),
+    ).toEqual({ released_at: null });
+});

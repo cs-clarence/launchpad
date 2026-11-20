@@ -1060,6 +1060,7 @@ describe("OpenAPI reference", () => {
         "get /api/v1/organizations/{orgId}/apps/{appId}",
         "post /api/v1/organizations/{orgId}/apps/{appId}/deployments",
         "get /api/v1/organizations/{orgId}/apps/{appId}/deployments",
+        "delete /api/v1/organizations/{orgId}/deployments/{deploymentId}",
         "get /api/v1/organizations/{orgId}/deployments/{deploymentId}",
         "get /api/v1/organizations/{orgId}/deployments/{deploymentId}/events",
     ];

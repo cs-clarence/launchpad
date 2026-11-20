@@ -26,42 +26,29 @@ function fakes() {
 describe("the lifecycle ports", () => {
     it("offer exactly: does an app exist, destroy an app, remove an image by tag", () => {
         const { ports } = fakes();
-        expect(Object.keys(ports).sort()).toEqual(["dokku", "removeImages"]);
-        expect(Object.keys(ports.dokku)).toEqual(["apps"]);
-        expect(Object.keys(ports.dokku.apps).sort()).toEqual(["destroy", "exists"]);
+        expect(Object.keys(ports).sort()).toEqual(["destroy", "exists", "removeImage"]);
     });
 
     it("pass the app name and each image tag straight through, and nothing else", async () => {
         const { ports, calls } = fakes();
         const signal = new AbortController().signal;
-        await ports.dokku.apps.exists("lp-abcdefghij", signal);
-        await ports.dokku.apps.destroy("lp-abcdefghij", signal);
-        await ports.removeImages(
-            {
-                previewId: "p",
-                appName: "lp-abcdefghij",
-                imageTags: ["launchpad/site:a", "launchpad/site:b"],
-            },
-            signal,
-        );
+        await ports.exists("lp-abcdefghij", signal);
+        await ports.destroy("lp-abcdefghij", signal);
+        await ports.removeImage("launchpad/site:a", signal);
         expect(calls).toEqual([
             "exists:lp-abcdefghij",
             "destroy:lp-abcdefghij",
             "rmi:launchpad/site:a",
-            "rmi:launchpad/site:b",
         ]);
     });
+});
 
-    it("stop removing images when the deadline passes, and report a failed removal", async () => {
+describe("removing an image", () => {
+    it("stops before calling docker once aborted, and reports a failed removal", async () => {
         const aborted = new AbortController();
         aborted.abort();
         const { ports, calls } = fakes();
-        await expect(
-            ports.removeImages(
-                { previewId: "p", appName: "x", imageTags: ["launchpad/site:a"] },
-                aborted.signal,
-            ),
-        ).rejects.toBeDefined();
+        await expect(ports.removeImage("launchpad/site:a", aborted.signal)).rejects.toBeDefined();
         expect(calls).toEqual([]);
         const failing = createLifecyclePorts({
             dokku: {} as DokkuClient,
@@ -72,10 +59,7 @@ describe("the lifecycle ports", () => {
             } as unknown as Docker,
         });
         await expect(
-            failing.removeImages(
-                { previewId: "p", appName: "x", imageTags: ["launchpad/site:a"] },
-                new AbortController().signal,
-            ),
+            failing.removeImage("launchpad/site:a", new AbortController().signal),
         ).rejects.toThrow("busy");
     });
 });

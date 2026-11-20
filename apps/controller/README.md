@@ -296,9 +296,22 @@ defines their own status. There is no dashboard panel for it.
 With `LAUNCHPAD_DEPLOYMENTS=on`, under `/api/v1/organizations/{orgId}`: `POST /projects/{projectId}/artifacts` (the
 archive as `application/gzip` with a `Content-Length`), `POST /projects/{projectId}/apps`, `GET /apps`, `GET /apps/{appId}`,
 `POST /apps/{appId}/deployments` (202, queued), `GET /apps/{appId}/deployments`, `GET /deployments/{deploymentId}` and
-`/events`. Keys need `app:read` or `app:deploy`; a project-limited key reaches only its projects and may deploy only
-archives uploaded through the app's project. While off, writes answer 503 and reads still work. A queued
-deployment waits for an enabled worker; deletion, promotion and aliases come later. Each operation is in the OpenAPI document.
+`/events`, and `DELETE /deployments/{deploymentId}` (202). Keys need `app:read`, `app:deploy` or `app:delete`; a
+project-limited key reaches only its projects and may deploy only archives uploaded through the app's project.
+While off, writes answer 503 and reads still work. A queued deployment waits for an enabled worker. Only a finished
+deployment can be deleted: a worker destroys its own Dokku app and local image, and its hostname and name stay
+reserved permanently. Promotion and aliases come later. Each operation is in the OpenAPI document.
+
+A deployment the worker could not confirm is `reconciliation-needed` and blocks its app. After
+checking Dokku by exact name, record what you saw with
+`bun .output/admin.mjs deployment-reconcile --deployment <id> --outcome failed-clean --i-have-verified-dokku-by-exact-name`.
+The outcome is one of `succeeded`, `failed-clean`, `failed-owned` or `abandon`.
+It never calls Dokku and is audited; `succeeded` needs a recorded image. Use `failed-owned` when a held app
+creation actually left its app on Dokku, so a later deletion can destroy it; after `failed-clean` or `abandon`
+deletion never destroys a name that was not recorded as created. For a deletion, only `succeeded` (the app is
+gone) and `failed-clean` (it was not destroyed) are allowed. A held deletion does not block the app, but it keeps
+counting toward quota and shows only as `desiredState` `deleting`; look at the deployment's events for
+`deletion-reconciliation-needed`.
 
 ## Removed: preview deployment
 

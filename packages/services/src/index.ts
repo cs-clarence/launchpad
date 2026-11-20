@@ -19,6 +19,8 @@ export * from "./app-routing-config";
 export * from "./apps";
 export * from "./deployments";
 export * from "./deployment-claims";
+export * from "./deployment-deletion";
+export * from "./deployment-reconcile";
 export * from "./removed-settings";
 export * from "./drift";
 export * from "./deployment-recovery";
