@@ -17,7 +17,9 @@ import {
     listApps,
     listDeploymentEvents,
     listDeployments,
+    artifactStorageKey,
     markDeploymentRecoveryBlocked,
+    resolveArtifactPath,
     parseDeploymentConfig,
     ServiceError,
     uploadArtifact,
@@ -353,31 +355,93 @@ describe("creating a deployment", () => {
         expect(stored.preview_expires_at.getTime() - Date.now()).toBeLessThan(3_700_000);
     });
 
-    it("is never collected from under a deployment that references it", async () => {
-        const app = await newApp();
-        const artifact = await artifactFor(p1);
-        // Make the artifact eligible for collection, then race a deployment against collection.
-        await sql`update artifact set created_at = now() - interval '30 days' where id = ${artifact}`.execute(
-            testDb.db,
-        );
-        const [deployed, collected] = await Promise.allSettled([
-            createDeployment(testDb.db, people.dee!, org, app.id, { artifactId: artifact }, deps()),
-            collectArtifacts(testDb.db, { dataDir, retentionSeconds: 0 }),
-        ]);
-        const row = await testDb.db
-            .selectFrom("artifact")
-            .select("collected_at")
-            .where("id", "=", artifact)
-            .executeTakeFirstOrThrow();
-        if (deployed.status === "fulfilled") {
-            // The deployment won: the artifact is still stored and was not collected.
+    describe("against artifact collection", () => {
+        const stored = (artifact: string, digest: string) =>
+            fs.stat(resolveArtifactPath(dataDir, artifactStorageKey(org, digest))).then(
+                () => true,
+                () => false,
+            );
+        const age = (artifact: string) =>
+            sql`update artifact set created_at = now() - interval '30 days' where id = ${artifact}`.execute(
+                testDb.db,
+            );
+        const digestOf = async (artifact: string) =>
+            (
+                await testDb.db
+                    .selectFrom("artifact")
+                    .select("digest")
+                    .where("id", "=", artifact)
+                    .executeTakeFirstOrThrow()
+            ).digest;
+
+        it("keeps an artifact that a deployment already references", async () => {
+            const app = await newApp();
+            const artifact = await artifactFor(p1);
+            await age(artifact);
+            await createDeployment(
+                testDb.db,
+                people.dee!,
+                org,
+                app.id,
+                { artifactId: artifact },
+                deps(),
+            );
+            await collectArtifacts(testDb.db, { dataDir, retentionSeconds: 0 });
+            const row = await testDb.db
+                .selectFrom("artifact")
+                .select("collected_at")
+                .where("id", "=", artifact)
+                .executeTakeFirstOrThrow();
             expect(row.collected_at).toBeNull();
-        } else {
-            // Collection won: the deployment was refused, never accepted without its archive.
-            expect(deployed.reason).toBeInstanceOf(ServiceError);
-            expect(row.collected_at).not.toBeNull();
-        }
-        expect(collected.status).toBe("fulfilled");
+            expect(await stored(artifact, await digestOf(artifact))).toBe(true);
+        });
+
+        it("refuses an artifact that collection already took", async () => {
+            const app = await newApp();
+            const artifact = await artifactFor(p1);
+            const digest = await digestOf(artifact);
+            await age(artifact);
+            await collectArtifacts(testDb.db, { dataDir, retentionSeconds: 0 });
+            expect(await stored(artifact, digest)).toBe(false);
+            expect(
+                await code(
+                    createDeployment(
+                        testDb.db,
+                        people.dee!,
+                        org,
+                        app.id,
+                        { artifactId: artifact },
+                        deps(),
+                    ),
+                ),
+            ).toBe("not-found");
+        });
+
+        it("never ends with a deployment whose archive is gone, in either interleaving", async () => {
+            for (let i = 0; i < 5; i++) {
+                const app = await newApp();
+                const artifact = await artifactFor(p1);
+                const digest = await digestOf(artifact);
+                await age(artifact);
+                await Promise.allSettled([
+                    createDeployment(
+                        testDb.db,
+                        people.dee!,
+                        org,
+                        app.id,
+                        { artifactId: artifact },
+                        deps(),
+                    ),
+                    collectArtifacts(testDb.db, { dataDir, retentionSeconds: 0 }),
+                ]);
+                const deployments = await testDb.db
+                    .selectFrom("deployment")
+                    .select("id")
+                    .where("artifact_id", "=", artifact)
+                    .execute();
+                if (deployments.length > 0) expect(await stored(artifact, digest)).toBe(true);
+            }
+        });
     });
 
     it("refuses a second unfinished deployment and allows one after it finishes", async () => {

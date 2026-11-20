@@ -96,9 +96,9 @@ export async function createDeployment(
                 .where("id", "=", data.artifactId)
                 .where("organization_id", "=", organizationId)
                 .where("collected_at", "is", null)
-                // Held to commit: collection locks the row FOR UPDATE and re-judges it, so it either
-                // waits for this deployment and sees it, or has already collected the row, which
-                // this lookup then rejects.
+                // Held to commit: collection locks candidates FOR UPDATE SKIP LOCKED and re-judges
+                // them, so it skips an artifact this deployment holds (and so cannot collect it),
+                // or has already collected the row, which this lookup then rejects.
                 .forShare()
                 .executeTakeFirst();
             if (!artifact) throw new ServiceError("not-found", "Artifact not found.");
