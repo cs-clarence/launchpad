@@ -9,10 +9,11 @@ import { artifactStorageKey } from "@launchpad-kit/services";
 import { tarGz, type FixtureEntry } from "@launchpad-kit/services/testing";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createDocker } from "../docker";
+import type { DeploymentRunnerPorts } from "../deployment-runner";
 import { createLifecyclePorts } from "../lifecycle-ports";
 import { createDeployPorts } from "../ports";
-import type { DeployContext, DeployPorts } from "../types";
-import { compactId } from "../template";
+import type { DeployContext } from "../types";
+import { compactId, imageTagFor } from "../template";
 
 // LIVE TESTS. They talk to a real Dokku and a real Docker engine, so they are an
 // explicit opt-in: `omni -i run test:live -p @launchpad-kit/worker`, never part of `test`
@@ -64,8 +65,10 @@ const SITE_FILES: FixtureEntry[] = [
 
 let dataDir = "";
 let dokku: DokkuClient;
-let ports: DeployPorts;
+let ports: DeploymentRunnerPorts;
+const docker = createDocker({ binary: env.LAUNCHPAD_DOCKER_BIN || "docker" });
 const created = new Set<string>();
+const images = new Set<string>();
 
 function suffix(): string {
     return [...randomBytes(6)].map((b) => "abcdefghijklmnopqrstuvwxyz0123456789"[b % 36]).join("");
@@ -95,10 +98,11 @@ async function deploy(context: DeployContext) {
         created.add(context.appName);
         await dokku.apps.create(context.appName, signal);
     }
-    const { imageTag } = await ports.build(context, signal);
-    await dokku.domains.set(context.appName, context.hostname, signal);
-    await dokku.ports.set(context.appName, "http:80:80", signal);
-    await ports.loadImage(context, imageTag, signal);
+    images.add(imageTagFor(context.deploymentId));
+    const image = await ports.build(context, signal);
+    await ports.setDomain(context.appName, context.hostname, signal);
+    await ports.setPort(context.appName, signal);
+    await ports.load(context, image, signal);
     await ports.verify(context, signal);
 }
 
@@ -153,7 +157,7 @@ beforeAll(async () => {
     );
     ports = createDeployPorts({
         dokku,
-        docker: createDocker({ binary: env.LAUNCHPAD_DOCKER_BIN || "docker" }),
+        docker,
         dataDir,
         limits: { maxExpandedBytes: 10 * 1024 * 1024, maxEntries: 100, maxDepth: 8 },
         baseImage: env.LAUNCHPAD_BASE_IMAGE || "nginx:1.27-alpine",
@@ -166,6 +170,7 @@ afterAll(async () => {
     for (const app of created) {
         if (APP_PATTERN.test(app)) await dokku.apps.destroy(app).catch(() => undefined);
     }
+    for (const tag of images) await docker.removeImage(tag).catch(() => undefined);
     await fs.rm(dataDir, { recursive: true, force: true });
 });
 
@@ -191,17 +196,15 @@ describe("a static preview on a real Dokku", () => {
         expect(deep.body).toContain("live fixture");
     });
 
-    it("a second release replaces the first, and a rollback restores it", async () => {
-        const app = `${PREFIX}${suffix()}`;
-        const first = await newRelease(false, app);
+    it("keeps two deployments serving at independent hostnames", async () => {
+        const first = await newRelease(false, `${PREFIX}${suffix()}`);
         await deploy(first);
         expect((await get(first.hostname, "/")).id).toBe(compactId(first.deploymentId));
 
-        const second = await newRelease(false, app);
+        const second = await newRelease(false, `${PREFIX}${suffix()}`);
         await deploy(second);
         expect((await get(second.hostname, "/")).id).toBe(compactId(second.deploymentId));
 
-        await ports.rollback(second, first, new AbortController().signal);
         expect((await get(first.hostname, "/")).id).toBe(compactId(first.deploymentId));
     });
 });

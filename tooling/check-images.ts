@@ -364,7 +364,7 @@ async function main() {
         if (stopped !== "0") fail(`the controller exited ${stopped} on a stop, not 0`);
         await docker(["rm", "-fv", name]);
 
-        // The worker idles while the preview runtime is removed; it carries the tools it needs.
+        // With deployments off the worker stays healthy without connecting to Dokku or Docker.
         const workerName = `launchpad-image-check-${run}-worker`;
         containers.push(workerName);
         await docker([
@@ -379,7 +379,7 @@ async function main() {
         ]);
         let idle = false;
         for (let i = 0; i < 40 && !idle; i++) {
-            idle = (await logs(workerName)).includes('"event":"legacy-runtime-removed"');
+            idle = (await logs(workerName)).includes('"event":"deployment-worker-idle"');
             if (!idle) await Bun.sleep(500);
         }
         if (!idle) fail("the worker did not report that it is idle");

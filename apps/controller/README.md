@@ -298,7 +298,7 @@ archive as `application/gzip` with a `Content-Length`), `POST /projects/{project
 `POST /apps/{appId}/deployments` (202, queued), `GET /apps/{appId}/deployments`, `GET /deployments/{deploymentId}` and
 `/events`. Keys need `app:read` or `app:deploy`; a project-limited key reaches only its projects and may deploy only
 archives uploaded through the app's project. While off, writes answer 503 and reads still work. A queued
-deployment waits for the worker (not built yet); deletion, promotion and aliases come later. Each operation is in the OpenAPI document.
+deployment waits for an enabled worker; deletion, promotion and aliases come later. Each operation is in the OpenAPI document.
 
 ## Removed: preview deployment
 

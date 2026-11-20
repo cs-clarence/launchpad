@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 
-// The worker has no deploy loop while the previews are removed; it must stay running until it is told to stop. A process that
+// The worker has no deploy loop while deployments are off; it must stay running until it is told to stop. A process that
 // exits at once looks like a crash to a supervisor, which then restarts it in a loop.
 describe("the idle worker", () => {
     it("idles until it is stopped, then exits cleanly", { timeout: 30_000 }, async () => {
@@ -30,6 +30,28 @@ describe("the idle worker", () => {
 });
 
 describe("the idle worker's configuration check", () => {
+    it("requires connection settings only when enabled", { timeout: 30_000 }, () => {
+        const cwd = mkdtempSync(path.join(tmpdir(), "launchpad-enabled-config-"));
+        try {
+            const run = spawnSync("bun", [path.join(import.meta.dirname, "index.ts")], {
+                cwd,
+                env: {
+                    PATH: process.env.PATH,
+                    HOME: cwd,
+                    LAUNCHPAD_DEPLOYMENTS: "on",
+                    LAUNCHPAD_APPS_DOMAIN: "sites.example.net",
+                    LAUNCHPAD_BASE_URL: "https://manage.example.org",
+                },
+                encoding: "utf8",
+                timeout: 20_000,
+            });
+            expect(run.status).toBe(1);
+            expect(run.stderr).toContain("DATABASE_URL is required when deployments are on");
+        } finally {
+            rmSync(cwd, { recursive: true, force: true });
+        }
+    });
+
     it("exits with an actionable error on a removed preview setting", { timeout: 30_000 }, () => {
         const cwd = mkdtempSync(path.join(tmpdir(), "launchpad-idle-config-"));
         try {
@@ -52,10 +74,10 @@ async function check(child: ChildProcess, healthFile: string) {
     child.stdout?.on("data", (chunk) => (output += chunk));
     let exited: number | null | undefined;
     child.once("exit", (code) => (exited = code));
-    for (let i = 0; i < 50 && !output.includes('"event":"legacy-runtime-removed"'); i++) {
+    for (let i = 0; i < 50 && !output.includes('"event":"deployment-worker-idle"'); i++) {
         await new Promise((r) => setTimeout(r, 100));
     }
-    expect(output).toContain('"event":"legacy-runtime-removed"');
+    expect(output).toContain('"event":"deployment-worker-idle"');
     // Idle counts as healthy: the file the container healthcheck reads exists.
     expect(existsSync(healthFile)).toBe(true);
     await new Promise((r) => setTimeout(r, 1500));

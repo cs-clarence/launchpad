@@ -1,9 +1,9 @@
 import { closeSync, openSync, utimesSync } from "node:fs";
 
 // The worker has no HTTP surface, so its container healthcheck reads a file: it is touched each
-// time the worker's own heartbeat is recorded in the database, and by a timer while deployments
-// are off. A stale file therefore means the worker is stuck or cannot reach PostgreSQL. This is
-// liveness only: it does not say Dokku, Docker or a particular deployment is working.
+// time a queue check or lease renewal succeeds, and by a timer while deployments are off.
+// A stale file can also mean recovery is blocking writes; a fresh one does not prove Docker or
+// Dokku readiness.
 
 export const DEFAULT_HEALTH_TOUCH_MS = 10_000;
 

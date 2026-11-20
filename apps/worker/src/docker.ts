@@ -54,6 +54,7 @@ export function createDocker(options: { binary?: string; removeTimeoutMs?: numbe
     const removeTimeoutMs = options.removeTimeoutMs ?? 20_000;
 
     function start(args: string[], signal: AbortSignal | undefined) {
+        signal?.throwIfAborted();
         const child = spawn(binary, args, {
             stdio: ["ignore", "pipe", "pipe"],
             env: minimalEnv(),
@@ -84,6 +85,22 @@ export function createDocker(options: { binary?: string; removeTimeoutMs?: numbe
     }
 
     return {
+        async imageId(tag: string, signal?: AbortSignal): Promise<string> {
+            if (!TAG.test(tag)) throw new Error("Refused: not an image tag this worker makes.");
+            const { child, exited } = start(
+                ["image", "inspect", "--format", "{{.Id}}", tag],
+                signal,
+            );
+            const stdout = bounded(256);
+            child.stdout.on("data", (chunk: Buffer) => stdout.add(chunk));
+            const result = await exited;
+            const id = stdout.text.trim();
+            if (result.exitCode !== 0 || !/^sha256:[a-f0-9]{64}$/.test(id)) {
+                throw new DockerError("Could not confirm the built image identity.", result.stderr);
+            }
+            return id;
+        },
+
         // `docker build` of a directory that holds the fixed Dockerfile, `nginx.conf` and
         // `site/`. No network is offered to the build, which has no RUN steps anyway.
         async build(contextDir: string, tag: string, signal?: AbortSignal): Promise<void> {

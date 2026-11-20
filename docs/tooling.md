@@ -252,7 +252,7 @@ carry: mount one and set `LAUNCHPAD_PG_DUMP` / `LAUNCHPAD_PG_RESTORE`.
 `omni -i run test:images -p @launchpad-kit/tooling` builds both, checks them (non-root, no secret in a
 layer, no `.env`, `.git`, key or source file, the expected files present), runs `migrate` from the
 controller image against the disposable PostgreSQL, starts the controller and waits for `/api/health`
-and a healthy healthcheck, and starts the idle worker (it logs `legacy-runtime-removed`). It also builds the router image and
+and a healthy healthcheck, and starts the worker with deployments off (it logs `deployment-worker-idle`). It also builds the router image and
 checks it end to end: unprivileged, no secret, no published port, `init` from stdin (printing only the
 epoch and refusing to reinitialize), healthy, 401 on the control plane and a fixed 404 on the data plane,
 a second router refused by the lock, a graceful stop, and `rotate` after it. `init`, `rotate` and

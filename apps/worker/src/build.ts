@@ -1,6 +1,7 @@
 import { promises as fs } from "node:fs";
 import path from "node:path";
 import { resolveArtifactPath, type ArchiveLimits } from "@launchpad-kit/services";
+import { DeploymentEffectNotStarted } from "./deployment-errors";
 import type { Docker } from "./docker";
 import { extractSite } from "./extract";
 import { dockerfile, imageTagFor, nginxConf } from "./template";
@@ -14,29 +15,36 @@ export interface BuildDeps {
 }
 
 // Builds this deployment's image from its stored artifact and Launchpad's fixed
-// template. Idempotent: the tag is derived from the deployment, and a repeated build
-// replaces it. The scratch directory is removed whatever happens.
+// template. The tag belongs to this deployment; ambiguous builds are not retried.
 export async function buildImage(
     context: DeployContext,
     deps: BuildDeps,
     signal: AbortSignal,
 ): Promise<{ imageTag: string }> {
-    const tag = imageTagFor(context.deploymentId);
-    const archive = resolveArtifactPath(deps.dataDir, context.storageKey);
-    const root = path.join(path.resolve(deps.dataDir), "build");
-    await fs.mkdir(root, { recursive: true, mode: 0o700 });
-    const scratch = await fs.mkdtemp(path.join(root, "b-"));
+    let scratch: string | undefined;
     try {
-        await extractSite(archive, path.join(scratch, "site"), deps.limits);
-        await fs.writeFile(path.join(scratch, "Dockerfile"), dockerfile(deps.baseImage));
-        await fs.writeFile(
-            path.join(scratch, "nginx.conf"),
-            nginxConf({ spa: context.spa, deploymentId: context.deploymentId }),
-        );
+        const tag = imageTagFor(context.deploymentId);
+        try {
+            const archive = resolveArtifactPath(deps.dataDir, context.storageKey);
+            const root = path.join(path.resolve(deps.dataDir), "build");
+            await fs.mkdir(root, { mode: 0o700 }).catch((error: NodeJS.ErrnoException) => {
+                if (error.code !== "EEXIST") throw error;
+            });
+            scratch = await fs.mkdtemp(path.join(root, "b-"));
+            await extractSite(archive, path.join(scratch, "site"), deps.limits);
+            await fs.writeFile(path.join(scratch, "Dockerfile"), dockerfile(deps.baseImage));
+            await fs.writeFile(
+                path.join(scratch, "nginx.conf"),
+                nginxConf({ spa: context.spa, deploymentId: context.deploymentId }),
+            );
+            signal.throwIfAborted();
+        } catch (cause) {
+            throw new DeploymentEffectNotStarted("Could not prepare the build context.", { cause });
+        }
         await deps.docker.build(scratch, tag, signal);
         return { imageTag: tag };
     } finally {
-        await fs.rm(scratch, { recursive: true, force: true });
+        if (scratch) await fs.rm(scratch, { recursive: true, force: true }).catch(() => {});
     }
 }
 

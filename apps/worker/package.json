@@ -8,9 +8,11 @@
         "build": "bun build src/index.ts --target=bun --outdir=dist",
         "check:types": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.node.json",
         "test:unit": "bun --bun vitest run --config vitest.config.unit.ts",
+        "test:integration": "bun --bun vitest run --config vitest.config.integration.ts",
         "test:live": "bun --bun vitest run --config vitest.config.live.ts"
     },
     "dependencies": {
+        "@launchpad-kit/database": "workspace:^",
         "@launchpad-kit/dokku": "workspace:^",
         "@launchpad-kit/services": "workspace:^",
         "tar": "catalog:"

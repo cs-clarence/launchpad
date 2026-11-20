@@ -46,7 +46,7 @@ or prove. `restore` never contacts Dokku. Back up the target database first.
    before any exact-name cleanup; follow the [cutover runbook](deployment-cutover.md)
    while the old table identities still exist. Never defer this inventory until
    after migrating. Then migrate from the **intended** version and run `migrate --status` (`pending: 0`, exit
-   0). Run `bun .output/admin.mjs check-restore` with the `DOKKU_SSH_*` settings (the worker is idle and does not read them; these are only for this check). It records
+   0). Run `bun .output/admin.mjs check-restore` with the `DOKKU_SSH_*` settings while workers are stopped. It records
    its lists of **missing archives, missing
    immutable deployment apps and passed deployment preview deadlines**. Queued
    jobs have not touched Dokku and are not probed. `--no-dokku` is only a partial check.

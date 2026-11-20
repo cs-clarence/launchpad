@@ -9,6 +9,7 @@ dependencies:
     - "@launchpad-kit/tsconfig"
     - "@launchpad-kit/vite-config"
     - "@launchpad-kit/vitest-config"
+    - "@launchpad-kit/database"
     - "@launchpad-kit/dokku"
     - "@launchpad-kit/services"
 
@@ -17,7 +18,7 @@ tasks:
     enabled: true
 
   test:integration:
-    enabled: false
+    enabled: true
 
   # Opt-in, against a disposable Dokku and Docker you started; never part of `test`
   # or CI, and never cached. See src/__tests__/live.spec.ts for what it touches.

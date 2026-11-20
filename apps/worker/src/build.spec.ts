@@ -79,7 +79,9 @@ describe("building the image", () => {
             [...SITE, { name: "link", type: "symlink", link: "/etc/passwd" }],
             "exit 0",
         );
-        await expect(buildImage(context, deps, signal())).rejects.toThrow();
+        await expect(buildImage(context, deps, signal())).rejects.toThrow(
+            "Could not prepare the build context.",
+        );
         await expect(fs.stat(seen)).rejects.toThrow();
         expect(await fs.readdir(path.join(tmp.dir, "build"))).toEqual([]);
     });
@@ -88,7 +90,7 @@ describe("building the image", () => {
         const { context, deps } = await setup(SITE, "exit 0");
         await expect(
             buildImage({ ...context, storageKey: "../../etc/passwd" }, deps, signal()),
-        ).rejects.toThrow(/storage key/);
+        ).rejects.toThrow("Could not prepare the build context.");
     });
 });
 

@@ -83,6 +83,16 @@ describe("the docker vocabulary", () => {
         await expect(partial.done).rejects.toBeInstanceOf(DockerError);
     });
 
+    it("reads only a full image ID using the fixed inspection command", async () => {
+        const id = `sha256:${"a".repeat(64)}`;
+        const good = await recording(`echo '${id}'`);
+        await expect(good.docker.imageId(TAG)).resolves.toBe(id);
+        expect(await lines(good.argv)).toEqual(["image", "inspect", "--format", "{{.Id}}", TAG]);
+        const bad = await recording("echo sha256:1234");
+        await expect(bad.docker.imageId(TAG)).rejects.toBeInstanceOf(DockerError);
+        await expect(bad.docker.imageId("nginx:latest")).rejects.toThrow(/Refused/);
+    });
+
     it("keeps a bounded, whole-character diagnostic however the output is chunked", async () => {
         // 5000 two-byte characters on stderr: the limit is 4000 bytes, not characters.
         const { docker } = await recording(

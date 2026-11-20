@@ -58,16 +58,14 @@ for (const app of resources.apps as string[]) {
     await Bun.write("/data/created-apps.json.next", JSON.stringify(created, null, 2));
     await rename("/data/created-apps.json.next", "/data/created-apps.json");
     await dokku.apps.create(app, signal);
-    const { imageTag } = await ports.build(context, signal);
-    // Record the identity before loadImage removes the worker's temporary source tag.
-    const inspect = Bun.spawn(["docker", "image", "inspect", "--format", "{{.Id}}", imageTag]);
-    const imageId = (await new Response(inspect.stdout).text()).trim();
-    if ((await inspect.exited) !== 0) throw new Error("Cannot inspect built fixture.");
-    await dokku.domains.set(app, context.hostname, signal);
-    await dokku.ports.set(app, "http:80:80", signal);
-    await ports.loadImage(context, imageTag, signal);
+    const image = await ports.build(context, signal);
+    await ports.setDomain(app, context.hostname, signal);
+    await ports.setPort(app, signal);
+    await ports.load(context, image, signal);
     await ports.verify(context, signal);
-    fixtures.push({ ...context, imageId, imageTag });
+    fixtures.push({ ...context, ...image });
     await Bun.write("/data/fixtures.json", JSON.stringify(fixtures, null, 2));
-    console.log(JSON.stringify({ event: "fixture-verified", app, deploymentId, imageId }));
+    console.log(
+        JSON.stringify({ event: "fixture-verified", app, deploymentId, imageId: image.imageId }),
+    );
 }

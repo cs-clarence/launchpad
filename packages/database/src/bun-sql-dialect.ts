@@ -50,6 +50,8 @@ class BunSqlConnection implements DatabaseConnection {
 export interface BunSqlOptions {
     /** Largest number of connections the pool opens (Bun's default is 10). */
     max?: number;
+    connectionTimeout?: number;
+    connection?: Record<string, string | boolean | number>;
 }
 
 class BunSqlDriver implements Driver {
