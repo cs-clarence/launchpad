@@ -20,10 +20,22 @@ import {
     raiseAliasCounters,
     withdrawUnknownRoute,
     readRouterCredential,
+    readDriftDatabase,
     reconcileDeployment,
+    republishRecoveryAlias,
     supersedeOperation,
 } from "@launchpad-kit/services";
 import { createBackup, verifyBackup } from "./backup";
+import {
+    collectDrift,
+    driftCommandExitCode,
+    readDriftArchives,
+    readDriftDokku,
+    readDriftProbes,
+    readDriftRouter,
+    readRepublishProbe,
+    readUnservableProbe,
+} from "./drift";
 import { recoveryAnchorNotice, routerAnchorFromEnv, routerSessionFromEnv } from "./router-view";
 import { checkRestore, restoreBackup, replaceTarget } from "./restore";
 
@@ -50,6 +62,16 @@ function required(env: NodeJS.ProcessEnv, name: string): string {
     const value = env[name];
     if (!value) throw new Error(`${name} is required (or pass --no-dokku).`);
     return value;
+}
+
+function dokkuFromEnv(env: NodeJS.ProcessEnv) {
+    return createDokkuClient({
+        host: required(env, "DOKKU_SSH_HOST"),
+        port: sshPort(env.DOKKU_SSH_PORT),
+        username: env.DOKKU_SSH_USER || "dokku",
+        privateKeyPath: required(env, "DOKKU_SSH_KEY_PATH"),
+        knownHostsPath: required(env, "DOKKU_SSH_KNOWN_HOSTS_PATH"),
+    });
 }
 
 // Opens the database named by DATABASE_URL for one command and always closes it.
@@ -225,26 +247,91 @@ program
 
 program
     .command("recovery-clear")
-    .description("Reopen model mutations after a restore, once the operator has reconciled")
+    .description("Verify recovery evidence and reopen model mutations after a restore")
     .option(
-        "--i-have-reconciled-router-and-dokku",
-        "attest: ingress closed, dispatched Dokku work settled, router epoch and credentials rotated (if used), router and Dokku reconciled",
+        "--i-have-checked-the-dokku-host",
+        "confirm no Dokku work dispatched before the restore is still running",
     )
     .option(
         "--router-epoch-unrecorded",
         "confirm you rotated the router yourself: the restore recorded no router epoch to verify against",
     )
+    .option(
+        "--accept <code:id...>",
+        "accept exact current external findings; repeat the option as needed",
+    )
     .action(async (options) => {
-        await withDatabase((db) =>
+        const env = process.env;
+        const dataDir = path.resolve(env.LAUNCHPAD_DATA_DIR ?? ".data/controller");
+        const router = routerSessionFromEnv(env);
+        const report = await withDatabase((db) =>
             clearDeploymentRecovery(
                 db,
-                path.resolve(process.env.LAUNCHPAD_DATA_DIR ?? ".data/controller"),
-                options.iHaveReconciledRouterAndDokku === true,
-                routerSessionFromEnv(process.env)?.view,
-                { routerEpochUnrecorded: options.routerEpochUnrecorded === true },
+                dataDir,
+                options.iHaveCheckedTheDokkuHost === true,
+                router?.view,
+                {
+                    routerEpochUnrecorded: options.routerEpochUnrecorded === true,
+                    accept: options.accept,
+                    evidence: {
+                        dokku: () => readDriftDokku(dokkuFromEnv(env)),
+                        archives: (snapshot) => readDriftArchives(dataDir, snapshot),
+                        probe:
+                            env.LAUNCHPAD_APPS_PROXY_URL || router
+                                ? (snapshot) => readDriftProbes(env, snapshot, true)
+                                : undefined,
+                    },
+                },
             ),
         );
-        console.log("Deployment recovery cleared on the operator's attestation.");
+        console.log(JSON.stringify(report, null, 2));
+        console.log("Deployment recovery cleared after verification.");
+    });
+
+program
+    .command("recovery-republish-alias")
+    .description(
+        "While recovery is blocked, republish and verify the restored committed route for one alias",
+    )
+    .requiredOption("--alias <id>", "exact restored alias UUID")
+    .option(
+        "--router-epoch-unrecorded",
+        "confirm a rotation that the restore could not independently anchor",
+    )
+    .option(
+        "--withdraw-unservable-target",
+        "audited override: withdraw the alias only if its committed Dokku app is gone and the target is not served",
+    )
+    .action(async (options) => {
+        const env = process.env;
+        if (!/^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(options.alias))
+            throw new Error("--alias must be an alias UUID.");
+        const router = routerSessionFromEnv(env)?.republish;
+        if (!router) throw new Error("Router settings are required.");
+        const result = await withDatabase((db) =>
+            republishRecoveryAlias(
+                db,
+                path.resolve(env.LAUNCHPAD_DATA_DIR ?? ".data/controller"),
+                options.alias,
+                {
+                    ...router,
+                    serves: async (hostname, target) =>
+                        (await (
+                            options.withdrawUnservableTarget === true && target !== null
+                                ? readUnservableProbe
+                                : readRepublishProbe
+                        )(env.LAUNCHPAD_ALIAS_PROBE_URL, hostname)) ===
+                        (target?.deploymentId ?? null),
+                },
+                options.routerEpochUnrecorded === true,
+                options.withdrawUnservableTarget === true
+                    ? (appName) => dokkuFromEnv(env).apps.exists(appName)
+                    : undefined,
+            ),
+        );
+        console.log(
+            `Alias ${result.changed ? "republished" : "already verified"}; generation ${result.generation}; ${result.superseded} operation(s) superseded. Recovery remains blocked.`,
+        );
     });
 
 program
@@ -406,6 +493,79 @@ program
             ),
         );
         console.log(`Recorded ${result.outcome} for 1 ${result.kind}.`);
+    });
+
+program
+    .command("drift")
+    .description(
+        "Read-only: compare deployments, aliases, archives, Dokku and the router; never repair",
+    )
+    .option("--no-dokku", "skip Dokku (reported as skipped)")
+    .option("--no-router", "skip the router (reported as skipped)")
+    .option(
+        "--probe",
+        "also check served deployment identities through the configured proxy origins",
+    )
+    .action(async (options) => {
+        const env = process.env;
+        try {
+            const report = await withDatabase((db) =>
+                collectDrift({
+                    database: () => readDriftDatabase(db),
+                    dokku:
+                        options.dokku === false
+                            ? undefined
+                            : () =>
+                                  readDriftDokku(
+                                      createDokkuClient({
+                                          host: required(env, "DOKKU_SSH_HOST"),
+                                          port: sshPort(env.DOKKU_SSH_PORT),
+                                          username: env.DOKKU_SSH_USER || "dokku",
+                                          privateKeyPath: required(env, "DOKKU_SSH_KEY_PATH"),
+                                          knownHostsPath: required(
+                                              env,
+                                              "DOKKU_SSH_KNOWN_HOSTS_PATH",
+                                          ),
+                                      }),
+                                  ),
+                    router:
+                        options.router === false
+                            ? undefined
+                            : async () => {
+                                  const session = routerSessionFromEnv(env);
+                                  if (!session) throw new Error("Router settings are required.");
+                                  return readDriftRouter(session);
+                              },
+                    archives: (snapshot) =>
+                        readDriftArchives(
+                            path.resolve(env.LAUNCHPAD_DATA_DIR ?? ".data/controller"),
+                            snapshot,
+                        ),
+                    probe: options.probe ? (snapshot) => readDriftProbes(env, snapshot) : undefined,
+                    config: {
+                        // The control client independently checks the configured epoch on every
+                        // page. If it cannot be loaded, the requested router read is unavailable.
+                        expectedEpoch: (() => {
+                            try {
+                                return readRouterCredential(
+                                    env.LAUNCHPAD_ALIAS_ROUTER_EPOCH_FILE ?? "",
+                                    false,
+                                );
+                            } catch {
+                                return "";
+                            }
+                        })(),
+                        appNamePattern: /^lp-[a-z0-9]{10}$/,
+                        now: new Date(),
+                    },
+                }),
+            );
+            console.log(JSON.stringify(report, null, 2));
+            process.exitCode = driftCommandExitCode(report);
+        } catch {
+            console.error("Drift check failed; no complete report was produced.");
+            process.exitCode = 2;
+        }
     });
 
 program

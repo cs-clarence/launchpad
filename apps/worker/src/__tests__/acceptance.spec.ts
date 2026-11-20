@@ -7,7 +7,6 @@ import { createTestDatabase } from "@launchpad-kit/database/testing";
 import { DokkuError, type DokkuClient } from "@launchpad-kit/dokku";
 import {
     blockRestoredModel,
-    clearDeploymentRecovery,
     createApp,
     createDeployment,
     createOrganization,
@@ -23,6 +22,7 @@ import {
     type Principal,
 } from "@launchpad-kit/services";
 import { SITE, tarGz } from "@launchpad-kit/services/testing";
+import { clearWithSettledFixtures as clearDeploymentRecovery } from "@launchpad-kit/services/testing/recovery";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import type { Docker } from "../docker";
 import { createLifecyclePorts } from "../lifecycle-ports";
@@ -405,7 +405,7 @@ it("runs the worked acceptance example in order", { timeout: 120_000 }, async ()
             /recovery/i,
         );
         await expect(clearDeploymentRecovery(source.db, tmp.dir, false)).rejects.toThrow(
-            /i-have-reconciled-router-and-dokku/,
+            /i-have-checked-the-dokku-host/,
         );
         // Still refused: a failed attestation reopens nothing.
         await expect(

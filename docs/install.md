@@ -58,7 +58,9 @@ the controller publicly. Those are the [separate production follow-up](plans/pro
    static metadata, **not** database/Dokku readiness; use the signed-in
    operator-only `GET /api/v1/status` for runtime state.
 6. Leave `LAUNCHPAD_DEPLOYMENTS=off` (the default) until private [routing](access.md)
-   and a [backup/restore rehearsal](restore.md) have been checked. Off workers can
+   and a [backup/restore rehearsal](restore.md) have been checked. Keep the pinned
+   Dokku settings and any router/proxy credentials available to the admin host for
+   verified recovery. Off workers can
    stay stopped; they do not connect to PostgreSQL, Dokku or Docker. For an enabled
    worker set `LAUNCHPAD_DEPLOYMENTS=on`, the controller's `DATABASE_URL`,
    `LAUNCHPAD_DATA_DIR`, `LAUNCHPAD_BASE_URL`, `LAUNCHPAD_APPS_DOMAIN` and archive limits, and

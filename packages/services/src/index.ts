@@ -24,6 +24,7 @@ export * from "./promotion-claims";
 export * from "./router-credentials";
 export * from "./router-inventory";
 export * from "./recovery-counters";
+export * from "./recovery-republish";
 export * from "./deployments";
 export * from "./deployment-claims";
 export * from "./deployment-deletion";

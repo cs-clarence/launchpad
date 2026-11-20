@@ -106,8 +106,8 @@ tables/data and revocation of `preview:*` keys. Link the [pre-P2b cutover runboo
 backup, inventory and exact-name Dokku cleanup use the old binary before migrating.
 Also announce removal of `inventory-previews` and the changed `check-restore` report
 (immutable deployment IDs/deadlines, not preview IDs/slugs), the required data directory,
-and restore's durable model-recovery block, cleared only by `recovery-clear
---i-have-reconciled-router-and-dokku` (a mandatory operator attestation).
+and restore's durable model-recovery block. See the current
+[verified clear procedure](restore.md) for the required host check and evidence.
 
 A release is a person's decision. Work through this in order and stop at the first failure.
 

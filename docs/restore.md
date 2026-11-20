@@ -150,34 +150,61 @@ or prove. `restore` never contacts Dokku. Back up the target database first.
    `recovery-withdraw-unknown --hostname <h> --i-have-verified-the-router-by-exact-route`, which writes a
    withdrawal at the next generation and never touches a known alias, or restore its alias. A withdrawn
    hostname stays reserved on the router for the old alias, so do not create a new alias with the same
-   hostname. Then, as the controller's OS user, run
-   `bun .output/admin.mjs recovery-clear --i-have-reconciled-router-and-dokku`. The flag is
-   mandatory every time: the command never looks at the model tables or at
-   `maintenance/model-writer-seen`, because a restore can replace the volume or bring an empty
-   database that still has remote resources. By passing it you attest, in this order, that you
-   (1) closed ingress and stopped every pre-restore writer **and waited for every Dokku operation
-   they had dispatched to settle**, (2) stopped the router if used and
-   [rotated its epoch and control credentials in managed mode](../apps/router/README.md)
-   using `--database-url-file` (a 0600 file holding the target URL) after the restore command has exited, (3) reconciled
-   Dokku apps (and, from P4, aliases) against the restored
-   database, and (4) are clearing only now. The command now also compares the router: it refuses
-   while any alias counter is below the router's generation, while the router serves a route
-   Launchpad does not know (a route that serves nothing does not block), when the router cannot be
-   read (the message says why), and when the router's epoch has not changed since the restore began: `restore` records
-   the router's active epoch (not a secret) in the recovery marker before it changes anything (run it with the router
-   settings in its environment and the router running, as for `recovery-clear`; otherwise there is no anchor to record), and `recovery-clear`
-   requires the router to be on a different one, so an unrotated router cannot pass. If the router was unreachable or
-   unconfigured when the restore ran (the restore anchors on the configured epoch file if it can read it, which `recovery-clear` then accepts only with the same confirmation flag because the router may not have been on that epoch, and otherwise proceeds and says so), or the marker predates this check,
-   rotate the router yourself and pass `--router-epoch-unrecorded`; that is audited (a damaged marker is audited as such). A recorded anchor also means `recovery-clear` must be able to read the router, even if the restored database has no aliases. It also refuses when the
-   database holds aliases but no router is configured. If the
-   control URL is not set at all, no router is read: an installation that has ever used aliases must
-   keep the router settings on the host that runs `recovery-clear`. Targets and Dokku are
-   still your attestation; P5 replaces it with verified reconciliation ([recovery design](design/deployment-cutover-schema.md#restore-and-the-recovery-gate)).
-   The command audits only the attested fact, commits the ready gate, then removes
-   `maintenance/deployment-recovery-blocked` and fsyncs its directory. It still refuses while a
-   crashed import is pending. Do not delete the marker or writer record by hand.
-   Sign-in, organizations, members, projects and key administration remain available
-   while the model is blocked; the marker is not an access-control substitute.
+   hostname. If a known alias still disagrees with its restored committed route or is
+   missing its route or withdrawal tombstone, run
+   `bun .output/admin.mjs recovery-republish-alias --alias <restored-alias-uuid>`.
+   This publishes the database's committed target (or withdrawal) above both generation
+   fences and checks the exact route and served identity. It supersedes the affected
+   unfinished promotion chain only after verification, preserving its history. If
+   verification fails, keep recovery blocked and retry after investigating. Do not
+   republish a hostname recorded for a different alias ID.
+
+    If the restored committed target can no longer serve (for example its Dokku app
+    is gone and a replacement router has no route), republish cannot verify it and
+    recovery stays blocked. Once you have checked the Dokku host, run
+    `recovery-republish-alias --alias <uuid> --withdraw-unservable-target`. This
+    **overrides the restored database's committed target**: it refuses if the target
+    still serves or if its exact Dokku app still exists or cannot be checked.
+    A 404 or 502–504 without a deployment identity indicates the target is not
+    serving, but is not enough on its own to authorize withdrawal. The command uses
+    the pinned `DOKKU_SSH_*` settings to confirm the app is missing, writes a tombstone
+    above both generation fences, verifies the exact
+    tombstone and that nothing is served, then records a withdrawal, releases the
+    alias hostname reservation and unpins the target. It is audited with the
+    withdrawn target and the old deployment stays in history.
+
+    Keep ingress closed and workers stopped. After at least **25 minutes from the
+    recorded restore start**, check the Dokku host and confirm that no operation
+    dispatched before the restore is still running. As the controller's OS user, run
+    `bun .output/admin.mjs recovery-clear --i-have-checked-the-dokku-host`.
+    The command needs the pinned `DOKKU_SSH_*` settings, the data directory, the
+    configured proxy origins for identity checks, and the router settings if aliases
+    exist or a router was configured at restore time. It checks the restored database,
+    archived files, Dokku apps/domains, and the applicable router/identity sources
+    under the recovery lock. A required source that cannot be read blocks clearing.
+
+    The router must be on an epoch different from the one recorded before restore.
+    If there is no independently recorded epoch, or the anchor came from an epoch file
+    rather than the live router, rotate the router and pass `--router-epoch-unrecorded`
+    when you run the repair or clear. This does not override a matching epoch or an
+    unreadable router. A missing or damaged restore timestamp blocks clearing; repeat
+    the documented restore with all writers stopped to establish a valid start time.
+
+    Repair blocking findings and retry. For a remaining `deployment-app-missing`,
+    `deployment-domain-mismatch`, `archive-missing` or `probe-mismatch`, you may
+    repeat `--accept <code>:<deployment-uuid>` for each app, domain, or archive
+    finding you intend to resolve after reopening. For a probe finding, use
+    `--accept probe-mismatch:alias:<uuid>` or `--accept probe-mismatch:deployment:<uuid>`.
+    This is
+    audited; no flag can accept an identity/reservation alarm, router mismatch, or
+    unavailable source. Medium findings are reported without blocking, except an
+    ahead router generation, which must be reconciled.
+
+    The command audits the host check and per-finding acceptances, commits the ready gate, then removes
+    `maintenance/deployment-recovery-blocked` and fsyncs its directory. It still refuses while a
+    crashed import is pending. Do not delete the marker or writer record by hand.
+    Sign-in, organizations, members, projects and key administration remain available
+    while the model is blocked; the marker is not an access-control substitute.
 
 ## Recover a crashed importer before retrying
 

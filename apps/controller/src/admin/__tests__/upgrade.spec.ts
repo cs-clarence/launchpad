@@ -409,17 +409,18 @@ it(
                 "recovery-clear",
             );
             expect(refused.status).toBe(1);
-            expect(refused.stderr).toContain("--i-have-reconciled-router-and-dokku");
+            expect(refused.stderr).toContain("--i-have-checked-the-dokku-host");
             expect((await fs.stat(recoveryMarker)).isFile()).toBe(true);
-            const cleared = await admin(
+            const tooSoon = await admin(
                 target.url,
                 path.join(work, "restored-data"),
                 work,
                 "recovery-clear",
-                "--i-have-reconciled-router-and-dokku",
+                "--i-have-checked-the-dokku-host",
             );
-            expect(cleared.status, cleared.stderr).toBe(0);
-            await expect(fs.stat(recoveryMarker)).rejects.toMatchObject({ code: "ENOENT" });
+            expect(tooSoon.status, tooSoon.stderr).toBe(1);
+            expect(tooSoon.stderr).toContain("25 minutes");
+            expect((await fs.stat(recoveryMarker)).isFile()).toBe(true);
 
             // A backup made after 018 also restores blocked, even though it dumped ready.
             const modelBackup = path.join(work, "model-backup");

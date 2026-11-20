@@ -11,12 +11,12 @@ import {
     resolveArtifactPath,
     uploadArtifact,
     assertModelMutationsReady,
-    clearDeploymentRecovery,
     recordModelWriterSeen,
     acknowledgeDeploymentImport,
     type Principal,
 } from "@launchpad-kit/services";
 import { SITE, tarGz } from "@launchpad-kit/services/testing";
+import { clearWithSettledFixtures as clearDeploymentRecovery } from "@launchpad-kit/services/testing/recovery";
 import { sql } from "kysely";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createBackup, verifyBackup } from "../backup";
@@ -861,7 +861,7 @@ fi
         );
         // The writer-seen file no longer matters: the attestation is what clears, and it is required.
         await expect(clearDeploymentRecovery(target.db, options.dataDir, false)).rejects.toThrow(
-            /i-have-reconciled-router-and-dokku/,
+            /i-have-checked-the-dokku-host/,
         );
         await clearDeploymentRecovery(target.db, options.dataDir, true);
         await assertModelMutationsReady(target.db, options.dataDir);

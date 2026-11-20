@@ -5,7 +5,11 @@ import type { Database } from "@launchpad-kit/database";
 import { type Kysely, sql } from "kysely";
 import { ArchiveError, validateArchive } from "./archive";
 import type { Principal } from "./authorization";
-import { requireModelDataDirectory } from "./deployment-recovery";
+import {
+    assertModelMutationsReady,
+    requireModelDataDirectory,
+    withModelMutation,
+} from "./deployment-recovery";
 import { ServiceError } from "./errors";
 import { recordAudit, requireMembership } from "./organizations";
 
@@ -198,6 +202,7 @@ export async function uploadArtifact(
         throw new ServiceError("not-found", "Project not found.");
     }
     await requireProject(db, organizationId, meta.projectId);
+    await assertModelMutationsReady(db, deps.dataDir);
     const limits = resolveLimits(deps.limits);
     if (!body) throw new ServiceError("invalid", "The request has no body.");
     if (meta.contentLength !== null && meta.contentLength > limits.maxUploadBytes) {
@@ -445,7 +450,8 @@ async function finalize(
             throw error;
         }
     };
-    return db.transaction().execute(async (trx) => {
+    // Gate publication as well as admission: recovery may have started while streaming.
+    return withModelMutation(db, deps.dataDir, async (trx) => {
         const stored = await store(trx);
         // Every project an artifact was uploaded through, including a re-upload of known bytes:
         // a restricted key may deploy it only into one of them.

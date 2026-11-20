@@ -1,6 +1,6 @@
 # P5: verified restore reconciliation and drift
 
-Status: **approved 2026-11-20 as written (all five decisions). P5a is built; the rest is not.** Parent: [deployment model plan](deployment-model.md), P5.
+Status: **approved 2026-11-20 (all five decisions). P5a is merged; P5b–P5d are implemented and locally verified.** Parent: [deployment model plan](deployment-model.md), P5.
 Recovery design: [schema map](../design/deployment-cutover-schema.md#restore-and-the-recovery-gate). Drift design:
 [deployment design](../design/deployment-modes.md) ("Drift detection"; the pure comparer is `packages/services/src/drift`).
 P4 is merged: `recovery-clear` already compares the router's counters and unknown routes.
@@ -14,9 +14,10 @@ P4 is merged: `recovery-clear` already compares the router's counters and unknow
   still-running Dokku operation). Each gets a test against the real router on loopback and fake Dokku before the
   next slice builds on it.
 - **Undo:** keep ingress closed and the gate set; retry. Never lower a counter.
-- **Execution shape:** four PRs, solo build, independent Opus review before each push, CodeRabbit and CI before each
-  merge. No live Dokku, Docker, DNS or production resource: the Dokku side is a fake client until P7, which needs your
-  explicit authorization.
+- **Execution shape:** P5a already merged; P5b–P5d can land together, with separate
+  verification checkpoints, independent Opus review, and CodeRabbit and CI before
+  merge. No live Dokku, DNS or production resources: the Dokku side is a fake
+  client until P7, which needs explicit authorization.
 
 ## Scope
 
@@ -89,3 +90,65 @@ P4 is merged: `recovery-clear` already compares the router's counters and unknow
 
 Each slice: `omni -i run check test build test:integration` on disposable PostgreSQL (stopped afterwards), the real router
 on loopback and a fake Dokku, independent read-only review before each push, CodeRabbit and CI before merge.
+
+## P5b resume record
+
+- Implemented the read-only database snapshot, Dokku inventory/domain reads,
+  router inventory adapter, archive reader, optional identity probes and
+  `launchpad-admin drift`; operator usage is in [drift](../drift.md).
+- Added unit coverage for failed/skipped sources, two-snapshot filtering, archive
+  presence/link handling, Dokku argument/output validation and router mapping.
+  Added real-PostgreSQL snapshot mapping coverage in the services
+  promotion suite and real-router pagination/authority/probe loopback tests in
+  the controller integration suite.
+- The command implements the approved 0/1/2 contract, with explicit skips visible
+  in its JSON. The older pure `driftExitCode` helper retains its stricter exit 3
+  for skipped sources; the command translates that result to 0.
+- Verification: `omni -i run check test build` passed (98 tasks succeeded, one
+  disabled database unit-test task skipped). Independent read-only Opus 5.5 review
+  found no blocking/high-severity defects. Addressed its diagnostic wording and
+  documented aggregate read budgets, missing archive-directory semantics and
+  permanent (including released) reservation reads.
+- `omni -i run test:integration -p @launchpad-kit/controller -p @launchpad-kit/services`
+  passed against disposable PostgreSQL and the loopback router/probe fixtures.
+  The disposable PostgreSQL was stopped afterward; no live Dokku was contacted.
+- P5b is ready to build on without a separate merge. No commit, push, or PR has
+  been made for the combined change.
+
+## P5c decision: restored unfinished promotion chains
+
+The advisory comparer skips aliases with unfinished promotion operations. That
+is appropriate for `drift`, but does not verify the committed route during
+recovery: the restored intent may disagree with the rotated router, and the
+existing counter repair only raises the reserved generation. Republishing at a
+generation above both fences also makes the restored unfinished intent's
+generation unusable. Leaving that intent runnable is not a safe repair.
+
+Approved: compare the committed route even for in-flight aliases while the
+gate is closed. If it disagrees, refuse to clear. Only the explicit
+`recovery-republish-alias` command may settle the affected unfinished chain:
+preserve its immutable intent records, fence their generations, and audit their
+supersession after exact readback and probe of the restored committed target.
+Leave matching aliases' unfinished operations untouched. Refusing repairs of
+all in-flight aliases was rejected because it could require a different backup.
+
+## P5c–d resume record
+
+- The gate verifies the restored model and external evidence under the
+  maintenance lock. Its only manual host attestation covers old Dokku work;
+  the start time, minimum wait, router authority, and blocking drift are
+  checked separately. Exact accepted findings are written to audit with the clear.
+- The explicit republish verifies readback and served identity before settling
+  an affected chain. A lost reply or failed verification leaves the gate
+  closed and the operation history untouched. Retrying observes the current
+  generation and never lowers or reuses its fence.
+- Added blocked mutations coverage at service and HTTP boundaries, and
+  disposable real-router cases for rotation, unknown routes, an interrupted
+  republish, an offline-bootstrapped replacement router and its missing
+  tombstone, and opening a fresh connection while the gate is set.
+- Independent Opus review found two medium items: requiring a blocked
+  database gate before republish and clarifying untouched matching intents.
+  Added tests for both and rechecked router authority just before clear.
+- Final `omni -i run check test build test:integration` passed: 105 tasks
+  succeeded and 7 disabled tasks were skipped. The disposable PostgreSQL was
+  stopped afterward. Live Dokku and PR/CI checks were not run.

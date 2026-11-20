@@ -8,7 +8,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
     assertModelMutationsReady,
     blockRestoredModel,
-    clearDeploymentRecovery,
     markDeploymentRecoveryBlocked,
     recordModelWriterSeen,
     withModelMutation,
@@ -18,6 +17,11 @@ import {
     assertNoPendingDeploymentImport,
 } from "../deployment-recovery";
 import { getStatus } from "../status";
+import {
+    agreeingEvidence,
+    clearWithSettledFixtures as clearDeploymentRecovery,
+} from "../testing/recovery";
+import { clearDeploymentRecovery as verifiedClear } from "../deployment-recovery";
 
 let source: Awaited<ReturnType<typeof createTestDatabase>>;
 let dataDir: string;
@@ -245,18 +249,18 @@ describe("deployment model recovery gate", () => {
         await markDeploymentRecoveryBlocked(dataDir);
         await blockRestoredModel(source.db);
         await expect(clearDeploymentRecovery(source.db, dataDir, false)).rejects.toThrow(
-            /i-have-reconciled-router-and-dokku/,
+            /i-have-checked-the-dokku-host/,
         );
         expect((await fs.stat(marker())).isFile()).toBe(true);
         await expect(assertModelMutationsReady(source.db, dataDir)).rejects.toThrow(/blocked/);
         await recordModelWriterSeen(dataDir);
         await expect(clearDeploymentRecovery(source.db, dataDir, false)).rejects.toThrow(
-            /i-have-reconciled-router-and-dokku/,
+            /i-have-checked-the-dokku-host/,
         );
         expect((await fs.stat(marker())).isFile()).toBe(true);
     });
 
-    it("clears on the attestation alone and audits only the attested fact", async () => {
+    it("clears with verified evidence and audits the host check", async () => {
         await markDeploymentRecoveryBlocked(dataDir);
         await blockRestoredModel(source.db);
         await clearDeploymentRecovery(source.db, dataDir, true);
@@ -271,9 +275,30 @@ describe("deployment model recovery gate", () => {
             {
                 actor: "operator-cli",
                 action: "deployment.recovery-cleared",
-                detail: "attested=reconciled-router-and-dokku",
+                detail: "attested=checked-dokku-host",
             },
         ]);
+    });
+
+    it("refuses to skip the grace period or clear if required evidence is unavailable", async () => {
+        await markDeploymentRecoveryBlocked(dataDir);
+        await blockRestoredModel(source.db);
+        await expect(
+            verifiedClear(source.db, dataDir, true, undefined, {
+                evidence: agreeingEvidence,
+            }),
+        ).rejects.toThrow(/25 minutes/);
+        await expect(
+            clearDeploymentRecovery(source.db, dataDir, true, undefined, {
+                evidence: {
+                    ...agreeingEvidence,
+                    dokku: async () => {
+                        throw new Error("host unavailable");
+                    },
+                },
+            }),
+        ).rejects.toThrow(/cannot verify Dokku/);
+        await expect(assertModelMutationsReady(source.db, dataDir)).rejects.toThrow(/blocked/);
     });
 
     it("clears after a writer has run and with a populated model, once attested", async () => {
@@ -342,7 +367,7 @@ describe("deployment model recovery gate", () => {
         await markDeploymentRecoveryBlocked(dataDir);
         await blockRestoredModel(source.db);
         await expect(clearDeploymentRecovery(source.db, dataDir, false)).rejects.toThrow(
-            /i-have-reconciled-router-and-dokku/,
+            /i-have-checked-the-dokku-host/,
         );
         expect((await fs.stat(marker())).isFile()).toBe(true);
     });

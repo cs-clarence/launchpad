@@ -26,6 +26,7 @@ import {
     requestPromotion,
     requestWithdrawal,
     renewPromotionClaim,
+    readDriftDatabase,
     ServiceError,
     supersedeOperation,
     uploadArtifact,
@@ -35,6 +36,8 @@ import {
 } from "../index";
 import type { PromotionClaimToken, PromotionReadback } from "../promotion-claims";
 import { SITE, tarGz } from "../testing/tar-fixtures";
+import * as model from "../index";
+import { ageRecoveryMarker, agreeingEvidence } from "../testing/recovery";
 
 let testDb: Awaited<ReturnType<typeof createTestDatabase>>;
 let dataDir = "";
@@ -204,6 +207,253 @@ async function teardownDatabase() {
         if (dataDir) await fs.rm(dataDir, { recursive: true, force: true });
     }
 }
+
+describe("model service recovery coverage", () => {
+    beforeEach(setupDatabase);
+    afterEach(teardownDatabase);
+
+    it("refuses public model mutations and worker transitions after recovery starts", async () => {
+        const { app, alias, ready } = await fixture();
+        const target = await ready();
+        const artifactId = await artifact();
+        const intent = await promote(alias.id, target, "0");
+        const db = testDb.db;
+        const principal = people.dee!;
+        const token = { id: target, owner: "previous-worker", attempt: 1, fence: "1" };
+        const op = { ...token, id: intent.id };
+        const authority = { instanceId: randomUUID(), epoch: randomUUID() };
+        await model.markDeploymentRecoveryBlocked(dataDir);
+        const actions = {
+            uploadArtifact: () =>
+                model.uploadArtifact(
+                    db,
+                    principal,
+                    org,
+                    new ReadableStream(),
+                    {
+                        contentLength: null,
+                        projectId: p1,
+                    },
+                    { dataDir },
+                ),
+            createApp: () => model.createApp(db, principal, org, p1, { slug: "blocked" }, deps()),
+            createDeployment: () =>
+                model.createDeployment(db, principal, org, app.id, { artifactId }, deps()),
+            createAlias: () =>
+                model.createAlias(db, principal, org, app.id, { slug: "blocked" }, deps()),
+            requestPromotion: () => promote(alias.id, target, "1"),
+            requestWithdrawal: () => withdraw(alias.id, "1"),
+            requestAppShutdown: () =>
+                model.requestAppShutdown(db, people.ann!, org, app.id, deps()),
+            requestDeploymentDeletion: () =>
+                model.requestDeploymentDeletion(db, people.ann!, org, target, deps()),
+            reconcileDeployment: () =>
+                model.reconcileDeployment(db, dataDir, {
+                    deploymentId: target,
+                    outcome: "succeeded",
+                    attested: true,
+                }),
+            supersedeOperation: () =>
+                model.supersedeOperation(db, dataDir, {
+                    operationId: op.id,
+                    action: "withdraw",
+                    attested: true,
+                }),
+            collectArtifacts: () => model.collectArtifacts(db, { dataDir, retentionSeconds: 0 }),
+            sweepOrphanArtifactFiles: () =>
+                model.sweepOrphanArtifactFiles(db, { dataDir, retentionSeconds: 0 }),
+            recoverInterruptedCollections: () =>
+                model.recoverInterruptedCollections(db, { dataDir }),
+            claimDeployment: () => model.claimDeployment(db, dataDir, token.owner),
+            renewDeploymentClaim: () => model.renewDeploymentClaim(db, dataDir, token),
+            beginDeploymentStep: () => model.beginDeploymentStep(db, dataDir, token, "app"),
+            completeDeploymentStep: () =>
+                model.completeDeploymentStep(db, dataDir, token, { step: "app" }),
+            stopDeploymentStep: () => model.stopDeploymentStep(db, dataDir, token, "app", "failed"),
+            claimDeletion: () => model.claimDeletion(db, dataDir, token.owner),
+            renewDeletionClaim: () => model.renewDeletionClaim(db, dataDir, token),
+            beginDeletionStep: () => model.beginDeletionStep(db, dataDir, token, "destroy"),
+            completeDeletionStep: () => model.completeDeletionStep(db, dataDir, token, "destroy"),
+            stopDeletionStep: () => model.stopDeletionStep(db, dataDir, token, "destroy", "retry"),
+            claimPromotion: () => model.claimPromotion(db, dataDir, token.owner),
+            renewPromotionClaim: () => model.renewPromotionClaim(db, dataDir, op),
+            beginPromotionStep: () => model.beginPromotionStep(db, dataDir, op, "dispatch"),
+            acknowledgePromotionDispatch: () => model.acknowledgePromotionDispatch(db, dataDir, op),
+            holdPromotion: () => model.holdPromotion(db, dataDir, op),
+            failPromotion: () => model.failPromotion(db, dataDir, op, "refused", "Refused."),
+            finalizePromotion: () =>
+                model.finalizePromotion(db, dataDir, op, authority, async () => {
+                    throw new Error("Recovery must block before remote verification.");
+                }),
+        };
+        for (const [name, run] of Object.entries(actions)) {
+            await expect(run(), name).rejects.toBeInstanceOf(model.DeploymentRecoveryError);
+        }
+        expect(await operations(alias.id)).toMatchObject([{ id: intent.id, status: "queued" }]);
+    });
+
+    it("audits an exact external finding acceptance in the transaction that opens the gate", async () => {
+        const { ready } = await fixture();
+        const target = await ready();
+        const db = testDb.db;
+        const router = { instanceId: randomUUID(), epoch: randomUUID(), routes: [] };
+        await model.markDeploymentRecoveryBlocked(dataDir, {
+            routerEpoch: randomUUID(),
+            note: "recorded",
+        });
+        await model.blockRestoredModel(db);
+        await ageRecoveryMarker(dataDir);
+        const evidence = { ...agreeingEvidence, dokku: async () => ({ apps: [] }) };
+        const clear = (accept: string[] = []) =>
+            model.clearDeploymentRecovery(db, dataDir, true, async () => router, {
+                evidence,
+                accept,
+            });
+        await expect(clear()).rejects.toThrow(/deployment-app-missing/);
+        await expect(clear([`deployment-app-missing:${randomUUID()}`])).rejects.toThrow(/--accept/);
+        await expect(model.assertModelMutationsReady(db, dataDir)).rejects.toThrow(/blocked/);
+        const key = `deployment-app-missing:${target}`;
+        await clear([key]);
+        await model.assertModelMutationsReady(db, dataDir);
+        const audit = await db
+            .selectFrom("audit_event")
+            .select(["actor", "detail"])
+            .where("action", "=", "deployment.recovery-finding-accepted")
+            .executeTakeFirstOrThrow();
+        expect(audit.actor).toBe("operator-cli");
+        expect(JSON.parse(audit.detail!)).toMatchObject({
+            key,
+            finding: { code: "deployment-app-missing" },
+        });
+    });
+
+    it("leaves matching unfinished work intact and refuses to republish once the database is ready", async () => {
+        const { alias, ready } = await fixture();
+        const target = await ready();
+        const intent = await promote(alias.id, target, "0");
+        const db = testDb.db;
+        const authority = { instanceId: randomUUID(), epoch: randomUUID() };
+        await model.markDeploymentRecoveryBlocked(dataDir, {
+            routerEpoch: randomUUID(),
+            note: "recorded",
+        });
+        await model.blockRestoredModel(db);
+        await ageRecoveryMarker(dataDir);
+        const fail = async () => {
+            throw new Error("The matching alias must not be written.");
+        };
+        const router = {
+            observe: async () => ({ ...authority, route: null }),
+            register: fail,
+            replace: fail,
+            serves: async () => true,
+        };
+        expect(await model.republishRecoveryAlias(db, dataDir, alias.id, router)).toMatchObject({
+            changed: false,
+            superseded: 0,
+        });
+        expect(await operations(alias.id)).toMatchObject([{ id: intent.id, status: "queued" }]);
+        let reads = 0;
+        await expect(
+            model.clearDeploymentRecovery(
+                db,
+                dataDir,
+                true,
+                async () => ({
+                    ...authority,
+                    epoch: ++reads === 1 ? authority.epoch : randomUUID(),
+                    routes: [],
+                }),
+                { evidence: agreeingEvidence },
+            ),
+        ).rejects.toThrow(/authority changed/);
+        // Emulate death after committing ready but before removing the external marker.
+        await db
+            .updateTable("instance_state")
+            .set({ value: "ready" })
+            .where("key", "=", "deployment_recovery")
+            .execute();
+        await expect(model.republishRecoveryAlias(db, dataDir, alias.id, router)).rejects.toThrow(
+            /gate to be blocked/,
+        );
+        await expect(model.assertModelMutationsReady(db, dataDir)).rejects.toThrow(/blocked/);
+    });
+});
+
+describe("the read-only drift database snapshot", () => {
+    beforeEach(setupDatabase);
+    afterEach(teardownDatabase);
+
+    it("maps real model rows, pins, generations, archived identities and committed operations", async () => {
+        const { app, alias, ready } = await fixture();
+        const target = await ready();
+        const initial = await readDriftDatabase(testDb.db);
+        expect(initial.aliases.find((a) => a.id === alias.id)).toMatchObject({
+            state: "unbound",
+            committedGeneration: 0n,
+            reservedGeneration: 0n,
+            lastOperationId: null,
+        });
+        expect(initial.deployments.find((d) => d.id === target)).toMatchObject({
+            appId: app.id,
+            status: "succeeded",
+            everPinned: false,
+            inUncertainChain: false,
+            referencedByAliasIds: [],
+        });
+        expect(initial.reservations.some((r) => r.ownerId === target)).toBe(true);
+        expect(initial.knownAppNames).toContain(
+            initial.deployments.find((d) => d.id === target)!.dokkuAppName,
+        );
+        expect(initial.deployments.find((d) => d.id === target)!.artifactKey).toMatch(
+            /^artifacts\//,
+        );
+
+        const intent = await promote(alias.id, target, "0");
+        const queued = await readDriftDatabase(testDb.db);
+        expect(queued.deployments.find((d) => d.id === target)).toMatchObject({
+            everPinned: true,
+            inUncertainChain: true,
+        });
+        expect(queued.operations.find((o) => o.id === intent.id)).toMatchObject({
+            status: "queued",
+            dispatched: false,
+            leaseExpiresAt: null,
+        });
+        const claim = await claimPromotion(testDb.db, dataDir, "drift-test");
+        if (claim.kind !== "claimed") throw new Error("Expected a promotion claim.");
+        await beginPromotionStep(testDb.db, dataDir, claim.token, "dispatch");
+        const dispatched = await readDriftDatabase(testDb.db);
+        expect(dispatched.operations.find((o) => o.id === intent.id)?.dispatched).toBe(true);
+        await acknowledgePromotionDispatch(testDb.db, dataDir, claim.token);
+        await beginPromotionStep(testDb.db, dataDir, claim.token, "verify");
+        const authority = { instanceId: randomUUID(), epoch: randomUUID() };
+        await finalizePromotion(testDb.db, dataDir, claim.token, authority, async () => ({
+            ...authority,
+            route: {
+                aliasId: alias.id,
+                hostname: alias.hostname,
+                generation: intent.generation,
+                operationId: intent.id,
+                target: {
+                    deploymentId: target,
+                    hostname: initial.deployments.find((d) => d.id === target)!.hostname,
+                },
+            },
+        }));
+        const committed = await readDriftDatabase(testDb.db);
+        expect(committed.aliases.find((a) => a.id === alias.id)).toMatchObject({
+            state: "bound",
+            lastOperationId: intent.id,
+            committedGeneration: BigInt(intent.generation),
+        });
+        expect(committed.deployments.find((d) => d.id === target)).toMatchObject({
+            everPinned: true,
+            inUncertainChain: false,
+            referencedByAliasIds: [alias.id],
+        });
+    });
+});
 
 describe("promotion claims and finalization", () => {
     beforeEach(setupDatabase);

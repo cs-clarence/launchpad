@@ -84,6 +84,8 @@ describe("what the worker and the Dokku adapter can do", () => {
             "apps:create",
             "apps:destroy",
             "apps:exists",
+            "apps:list",
+            "domains:report",
             "domains:set",
             "git:load-image",
             "ports:set",

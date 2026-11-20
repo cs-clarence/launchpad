@@ -526,6 +526,30 @@ describe("stableDrift", () => {
         expect(compareDrift(input).findings.map((f) => f.code)).toEqual(["router-unknown-route"]);
         expect(stableDrift(input, after).findings).toEqual([]);
     });
+
+    it("drops a stuck-operation finding if its lease changed, even when both reads look expired", () => {
+        const input = withDb(agreeing(), {
+            operations: [
+                {
+                    id: "moving",
+                    aliasId: "prod",
+                    status: "applying",
+                    dispatched: true,
+                    leaseExpiresAt: PAST,
+                },
+            ],
+        });
+        expect(codes(input)).toContain("stuck-operation");
+        expect(
+            stableDrift(input, {
+                ...input.db,
+                operations: input.db.operations.map((o) => ({
+                    ...o,
+                    leaseExpiresAt: new Date(PAST.getTime() + 1000),
+                })),
+            }).findings.map((f) => f.code),
+        ).not.toContain("stuck-operation");
+    });
 });
 
 describe("source and edge handling", () => {
