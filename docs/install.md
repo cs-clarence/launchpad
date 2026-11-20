@@ -37,6 +37,10 @@ the controller publicly. Those are the [separate production follow-up](plans/pro
 3. Supply `DATABASE_URL`, `LAUNCHPAD_AUTH_SECRET` (at least 32 random characters),
    `LAUNCHPAD_BASE_URL` (the exact HTTPS origin used by browsers), and
    `LAUNCHPAD_DATA_DIR=/data` to the controller **at runtime**, never in an image.
+   The directory must already be mounted/available; startup refuses missing storage.
+   Readiness checks only that a plain directory exists, not that it is the intended
+   shared volume. The image's anonymous `/data` volume also passes that check:
+   verify the explicit mount and volume identity yourself.
    Keep the database and admin command private. Use
    [the controller settings reference](../apps/controller/README.md#configuration)
    for remaining values. The worker reads no settings while it is idle.

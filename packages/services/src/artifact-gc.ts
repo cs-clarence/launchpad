@@ -4,6 +4,7 @@ import path from "node:path";
 import type { ArtifactTable, Database } from "@launchpad-kit/database";
 import { type Kysely, type SelectQueryBuilder, sql } from "kysely";
 import { resolveArtifactPath } from "./artifacts";
+import { assertModelMutationsReady, withModelMutation } from "./deployment-recovery";
 
 type Db = Kysely<Database>;
 
@@ -37,20 +38,15 @@ function eligible<O>(
             not(
                 exists(
                     selectFrom("deployment as d")
-                        .innerJoin("preview as p", (join) =>
-                            join
-                                .onRef("p.id", "=", "d.preview_id")
-                                .onRef("p.organization_id", "=", "d.organization_id"),
-                        )
                         .select("d.id")
                         .whereRef("d.artifact_id", "=", "a.id")
                         .whereRef("d.organization_id", "=", "a.organization_id")
                         .where((eb) =>
                             eb.or([
-                                eb("p.desired_state", "<>", "deleted"),
+                                eb("d.desired_state", "<>", "deleted"),
                                 eb("d.status", "in", [...UNFINISHED]),
                                 eb(
-                                    "p.deleted_at",
+                                    "d.deleted_at",
                                     ">",
                                     sql<Date>`clock_timestamp() - ${retentionSeconds} * interval '1 second'`,
                                 ),
@@ -75,10 +71,8 @@ export interface CollectOptions {
 // Collects stored archives nothing can need any more, one artifact per transaction. An
 // artifact is eligible only when ALL of these hold:
 //   - it is older than the retention period;
-//   - no deployment of a preview that is not `deleted` points at it (so a live preview keeps
-//     the archive its rollback is rebuilt from), and none that is unfinished or held for
-//     reconciliation does;
-//   - no preview that used it was deleted within the retention period (so what was just
+//   - no non-deleted deployment or unfinished/held deployment points at it;
+//   - no deployment that used it was deleted within the retention period (so what was just
 //     deleted can still be recovered by hand during that time).
 // An upload nobody deployed is simply old enough. The row stays (marked collected) because
 // deployments and audit records still point at it.
@@ -88,6 +82,8 @@ export interface CollectOptions {
 // moved aside to a name only this collection knows, inside the transaction, and removed after
 // the commit: a re-upload that restores the archive in the meantime writes the real name and
 // is never touched, and a failed commit puts the file back.
+// P2b has no runtime caller. Even a no-op collection records model-writer-seen,
+// conservatively disabling the P2b-only empty-model recovery-clear rule.
 export async function collectArtifacts(
     db: Db,
     options: CollectOptions,
@@ -108,7 +104,7 @@ export async function collectArtifacts(
             | { kind: "skip"; id: string }
             | { kind: "collected"; id: string; to: string | null };
         try {
-            outcome = await db.transaction().execute(async (trx) => {
+            outcome = await withModelMutation(db, options.dataDir, async (trx) => {
                 const candidate = await (() => {
                     const q = eligible(
                         trx
@@ -234,6 +230,7 @@ export async function sweepOrphanArtifactFiles(
         beforeRemove?: (file: string) => Promise<void>;
     },
 ): Promise<{ removed: number; restored: number }> {
+    await assertModelMutationsReady(db, options.dataDir);
     const root = path.join(options.dataDir, "artifacts");
     const graceMs = options.graceMs ?? 60_000;
     const maxFiles = options.maxFiles ?? MAX_SWEPT_FILES;
@@ -254,7 +251,7 @@ export async function sweepOrphanArtifactFiles(
             const file = path.join(root, owner, name);
             const base = aside ? name.slice(0, name.indexOf(".tar.gz") + ".tar.gz".length) : name;
             const baseKey = `artifacts/${owner}/${base}`;
-            const outcome = await db.transaction().execute(async (trx) => {
+            const outcome = await withModelMutation(db, options.dataDir, async (trx) => {
                 await sql`select pg_advisory_xact_lock(hashtextextended(${`artifacts:${owner}`}, 0))`.execute(
                     trx,
                 );

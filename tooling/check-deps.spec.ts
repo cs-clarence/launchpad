@@ -54,6 +54,33 @@ function workspace(
 }
 
 describe("specifier parsing", () => {
+    it("does not mistake a hyphenated CLI command suffix for an import keyword", () => {
+        expect([
+            ...importedPackages(`
+            program.command("recovery-ack-import")
+                .description("Acknowledge a stopped importer");
+            import { value } from "real-package";
+        `),
+        ]).toEqual(["real-package"]);
+    });
+    it("keeps imports after a string ending in a keyword, an apostrophe or a minus", () => {
+        const found = importedPackages(
+            [
+                'program.command("recovery-ack-import");',
+                'import "after-command-package";',
+                "const note = `don't`;",
+                'import "after-apostrophe-package";',
+                'const offset=-require("unary-minus-package");',
+                'const spaced = value-require("binary-minus-package");',
+            ].join("\n"),
+        );
+        expect([...found].toSorted()).toEqual([
+            "after-apostrophe-package",
+            "after-command-package",
+            "binary-minus-package",
+            "unary-minus-package",
+        ]);
+    });
     it("maps specifiers to package names and ignores non-packages", () => {
         expect(packageOf("zod")).toBe("zod");
         expect(packageOf("@scope/pkg/sub/path")).toBe("@scope/pkg");

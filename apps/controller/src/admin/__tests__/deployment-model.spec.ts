@@ -1,16 +1,24 @@
 import { randomUUID } from "node:crypto";
-import { readFile } from "node:fs/promises";
+import { promises as fs } from "node:fs";
+import path from "node:path";
 import type { Database } from "@launchpad-kit/database";
 import { createTestDatabase } from "@launchpad-kit/database/testing";
 import { type Kysely, sql } from "kysely";
+import { FileMigrationProvider } from "kysely/migration";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-const retirement = await readFile(
-    new URL("./fixtures/immutable-retirement.sql", import.meta.url),
-    "utf8",
-);
-const model = await readFile(new URL("./fixtures/immutable-model.sql", import.meta.url), "utf8");
 type Db = Kysely<Database>;
+// Load the real discovered migration, without importing another package's source
+// into the controller's TypeScript root or keeping a second SQL fixture.
+const migrations = await new FileMigrationProvider({
+    fs,
+    path,
+    migrationFolder: path.resolve(
+        import.meta.dirname,
+        "../../../../../packages/database/src/migrations",
+    ),
+}).getMigrations();
+const cutover = migrations["20261119_018_deployment_model"]!.up;
 interface Tenant {
     org: string;
     project: string;
@@ -23,7 +31,6 @@ let source: Awaited<ReturnType<typeof createTestDatabase>> | undefined;
 let actor: string;
 let a: Tenant;
 let b: Tenant;
-let legacy: { id: string; hostname: string; app_name: string }[];
 const db = () => source!.db;
 const token = () => randomUUID().replaceAll("-", "").slice(0, 10);
 
@@ -64,15 +71,6 @@ async function tenant(slug: string): Promise<Tenant> {
     return { org, project: project.id, artifact: artifact.id };
 }
 
-async function install() {
-    await db()
-        .transaction()
-        .execute(async (trx) => {
-            await sql.raw(retirement).execute(trx);
-            await sql.raw(model).execute(trx);
-        });
-}
-
 beforeEach(async () => {
     source = await createTestDatabase();
     await source.migrate();
@@ -89,29 +87,6 @@ beforeEach(async () => {
         .execute();
     a = await tenant("org-a");
     b = await tenant("org-b");
-    legacy = [];
-    // Slug-reused historical owners: both identities must be seeded, not just
-    // the most recent row. These are synthetic, fully settled legacy records.
-    for (let i = 0; i < 2; i++) {
-        const appName = `lp-${token()}`;
-        legacy.push(
-            await db()
-                .insertInto("preview")
-                .values({
-                    organization_id: a.org,
-                    project_id: a.project,
-                    slug: "old-site",
-                    app_name: appName,
-                    hostname: `${appName}.old.example.net`,
-                    desired_state: "deleted",
-                    deleted_at: new Date("2026-01-02T00:00:00Z"),
-                    created_by: actor,
-                })
-                .returning(["id", "hostname", "app_name"])
-                .executeTakeFirstOrThrow(),
-        );
-    }
-    await install();
 });
 
 afterEach(async () => {
@@ -172,7 +147,7 @@ async function deployment(
             await nameReservation(connection, "deployment", id, parent.org, name);
     };
     if (options.reservationsFirst) await reserve();
-    await sql`insert into immutable_deployment
+    await sql`insert into deployment
         (id, organization_id, app_id, artifact_id, hostname, app_name, status,
          image_tag, image_id, finished_at, requested_by, preview_expires_at)
         values (${id}, ${parent.org}, ${parent.id}, ${options.artifact ?? parent.artifact},
@@ -233,61 +208,61 @@ async function promotion(
     await sql`insert into promotion_operation
         (id, organization_id, app_id, alias_id, action, previous_target_deployment_id,
          desired_target_deployment_id, expected_generation, generation, requested_by,
-         supersedes_operation_id, superseded_by_operation_id, status)
+         supersedes_operation_id, superseded_by_operation_id, status, idempotency_key)
         values (${id}, ${parent.org}, ${parent.id}, ${aliasId}, ${options.action ?? "bind"},
             ${options.previous ?? null}, ${target}, ${options.expected ?? "0"}, ${options.generation ?? "1"},
-            ${actor}, ${options.supersedes ?? null}, ${options.supersededBy ?? null}, ${options.status ?? "queued"})
+            ${actor}, ${options.supersedes ?? null}, ${options.supersededBy ?? null}, ${options.status ?? "queued"}, ${id})
     `.execute(connection);
     return id;
 }
 
-describe("immutable model/reservation SQL candidate (not migration 018)", () => {
-    it("refuses standalone invocation after the retirement transaction has ended", async () => {
-        await expect(
-            db()
-                .transaction()
-                .execute((trx) => sql.raw(model).execute(trx)),
-        ).rejects.toThrow(/requires retirement locks in the same transaction/);
+describe("migration 018 deployment model and reservations", () => {
+    it("keeps bigint generations as decimal strings without JavaScript precision loss", async () => {
+        const route = await allocateAlias(await app());
+        const before = await db()
+            .selectFrom("app_alias")
+            .select("reserved_generation")
+            .where("id", "=", route.id)
+            .executeTakeFirstOrThrow();
+        expect(before.reserved_generation).toBe("0");
+        await db()
+            .updateTable("app_alias")
+            .set({ reserved_generation: "9223372036854775807" })
+            .where("id", "=", route.id)
+            .execute();
+        const after = await db()
+            .selectFrom("app_alias")
+            .select("reserved_generation")
+            .where("id", "=", route.id)
+            .executeTakeFirstOrThrow();
+        expect(after.reserved_generation).toBe("9223372036854775807");
     });
-
-    it("seeds every legacy identity permanently without recording migration 018", async () => {
+    it("starts with empty permanent registries and a ready recovery gate", async () => {
         const hosts = await sql<{ hostname: string; owner_id: string; owner_kind: string }>`
             select hostname, owner_id, owner_kind from hostname_reservation order by hostname
         `.execute(db());
-        expect(hosts.rows).toEqual(
-            legacy
-                .map((row) => ({
-                    hostname: row.hostname,
-                    owner_id: row.id,
-                    owner_kind: "legacy_preview",
-                }))
-                .sort((x, y) => x.hostname.localeCompare(y.hostname)),
-        );
+        expect(hosts.rows).toEqual([]);
         const names = await sql<{ app_name: string; owner_id: string }>`
             select app_name, owner_id from dokku_name_reservation order by app_name
         `.execute(db());
-        expect(names.rows).toEqual(
-            legacy
-                .map((row) => ({
-                    app_name: row.app_name,
-                    owner_id: row.id,
-                }))
-                .sort((x, y) => x.app_name.localeCompare(y.app_name)),
-        );
+        expect(names.rows).toEqual([]);
         expect((await sql`select name from launchpad_migration`.execute(db())).rows).toHaveLength(
-            17,
+            18,
         );
         expect(
-            (await sql`select * from instance_state where key = 'immutable_recovery'`.execute(db()))
-                .rows,
-        ).toEqual([]);
+            (
+                await sql`select * from instance_state where key = 'deployment_recovery'`.execute(
+                    db(),
+                )
+            ).rows,
+        ).toMatchObject([{ value: "ready" }]);
     });
 
     it.each([true, false])("admits matching owners with reservationsFirst=%s", async (first) => {
         const parent = await app();
         await allocateDeployment(parent, { reservationsFirst: first });
         await allocateAlias(parent, { reservationsFirst: first });
-        expect((await sql`select * from immutable_deployment`.execute(db())).rows).toHaveLength(1);
+        expect((await sql`select * from deployment`.execute(db())).rows).toHaveLength(1);
         expect((await sql`select * from app_alias`.execute(db())).rows).toHaveLength(1);
     });
 
@@ -308,7 +283,7 @@ describe("immutable model/reservation SQL candidate (not migration 018)", () => 
                     }),
             ).rejects.toThrow(/owner and .* reservation must match/);
             expect(bodyCompleted).toBe(true);
-            expect((await sql`select * from immutable_deployment`.execute(db())).rows).toEqual([]);
+            expect((await sql`select * from deployment`.execute(db())).rows).toEqual([]);
             expect(
                 (
                     await sql`select * from hostname_reservation where owner_kind = 'deployment'`.execute(
@@ -333,7 +308,7 @@ describe("immutable model/reservation SQL candidate (not migration 018)", () => 
         expect(bodyCompleted).toBe(true);
     });
 
-    it.each(["alias", "deployment", "legacy_preview"])(
+    it.each(["alias", "deployment"])(
         "rejects a %s reservation without an owner at COMMIT",
         async (kind) => {
             let bodyCompleted = false;
@@ -399,19 +374,6 @@ describe("immutable model/reservation SQL candidate (not migration 018)", () => 
         },
     );
 
-    it.each(["hostname", "name"] as const)(
-        "refuses new ownership of a retired legacy %s",
-        async (identity) => {
-            const parent = await app();
-            await expect(
-                allocateDeployment(parent, {
-                    hostname: identity === "hostname" ? legacy[0]!.hostname : undefined,
-                    name: identity === "name" ? legacy[0]!.app_name : undefined,
-                }),
-            ).rejects.toThrow(/duplicate key/);
-        },
-    );
-
     it("shares one hostname namespace across deployments and aliases", async () => {
         const parent = await app();
         const deployed = await allocateDeployment(parent);
@@ -424,7 +386,7 @@ describe("immutable model/reservation SQL candidate (not migration 018)", () => 
         const parent = await app();
         const deployed = await allocateDeployment(parent);
         const route = await allocateAlias(parent, { slug: "production" });
-        await sql`update immutable_deployment set desired_state = 'deleted', deleted_at = now()
+        await sql`update deployment set desired_state = 'deleted', deleted_at = now()
             where id = ${deployed.id}`.execute(db());
         await sql`update app_alias set state = 'withdrawn', reserved_generation = 1, committed_generation = 1
             where id = ${route.id}`.execute(db());
@@ -467,27 +429,6 @@ describe("immutable model/reservation SQL candidate (not migration 018)", () => 
         ).rejects.toThrow(/release history/);
     });
 
-    it("freezes all retired tables without rewriting legacy rows", async () => {
-        await expect(
-            sql`update legacy_preview set slug = 'edited' where id = ${legacy[0]!.id}`.execute(
-                db(),
-            ),
-        ).rejects.toThrow(/history is read only/);
-        await expect(
-            sql`delete from legacy_preview where id = ${legacy[0]!.id}`.execute(db()),
-        ).rejects.toThrow(/history is read only/);
-        const triggers = await sql<{
-            table: string;
-        }>`select distinct tgrelid::regclass::text as "table"
-            from pg_trigger where tgname like 'legacy%read_only' order by "table"`.execute(db());
-        expect(triggers.rows).toEqual([
-            { table: "legacy_deletion_operation" },
-            { table: "legacy_deployment" },
-            { table: "legacy_deployment_event" },
-            { table: "legacy_preview" },
-        ]);
-    });
-
     it("refuses TRUNCATE of permanent hostname history", async () => {
         const before = (
             await sql`select * from hostname_reservation order by hostname`.execute(db())
@@ -498,16 +439,6 @@ describe("immutable model/reservation SQL candidate (not migration 018)", () => 
         expect(
             (await sql`select * from hostname_reservation order by hostname`.execute(db())).rows,
         ).toEqual(before);
-    });
-
-    it("refuses cascading TRUNCATE of legacy history", async () => {
-        const before = (await sql`select * from legacy_preview order by id`.execute(db())).rows;
-        await expect(
-            sql`truncate table public.legacy_preview cascade`.execute(db()),
-        ).rejects.toThrow(/history cannot be truncated/);
-        expect((await sql`select * from legacy_preview order by id`.execute(db())).rows).toEqual(
-            before,
-        );
     });
 
     it("rejects cross-organization project/artifact ownership", async () => {
@@ -629,19 +560,19 @@ describe("immutable model/reservation SQL candidate (not migration 018)", () => 
         const parent = await app();
         const deployed = await allocateDeployment(parent);
         await expect(
-            sql`update immutable_deployment set image_id = ${`sha256:${"b".repeat(64)}`}
+            sql`update deployment set image_id = ${`sha256:${"b".repeat(64)}`}
             where id = ${deployed.id}`.execute(db()),
         ).rejects.toThrow(/cannot be redeployed/);
         await expect(
-            sql`update immutable_deployment set status = 'queued'
+            sql`update deployment set status = 'queued'
             where id = ${deployed.id}`.execute(db()),
         ).rejects.toThrow(/cannot be redeployed/);
         await expect(
-            sql`update immutable_deployment set spa = true
+            sql`update deployment set spa = true
             where id = ${deployed.id}`.execute(db()),
         ).rejects.toThrow(/deployment identity/);
         await expect(
-            sql`update immutable_deployment set hostname = 'changed.apps.example.net'
+            sql`update deployment set hostname = 'changed.apps.example.net'
             where id = ${deployed.id}`.execute(db()),
         ).rejects.toThrow(/resource identity/);
     });
@@ -650,7 +581,7 @@ describe("immutable model/reservation SQL candidate (not migration 018)", () => 
         const first = await allocateDeployment(await app());
         const second = await allocateDeployment(await app(), { status: "queued" });
         await expect(
-            sql`update immutable_deployment set image_tag = ${`launchpad/site:${first.id}`}
+            sql`update deployment set image_tag = ${`launchpad/site:${first.id}`}
             where id = ${second.id}`.execute(db()),
         ).rejects.toThrow(/duplicate key/);
     });
@@ -660,9 +591,9 @@ describe("immutable model/reservation SQL candidate (not migration 018)", () => 
             select tgname as name, tgdeferrable and tginitdeferred as deferred
             from pg_trigger where tgname in (
                 'hostname_reservation_owner', 'dokku_name_reservation_owner',
-                'immutable_deployment_reservations', 'app_alias_reservations', 'legacy_preview_reservations'
+                'deployment_reservations', 'app_alias_reservations'
             )`.execute(db());
-        expect(triggers.rows).toHaveLength(5);
+        expect(triggers.rows).toHaveLength(4);
         expect(triggers.rows.every((row) => row.deferred)).toBe(true);
         const functions = await sql<{
             name: string;
@@ -674,16 +605,15 @@ describe("immutable model/reservation SQL candidate (not migration 018)", () => 
                 exists(select from aclexplode(coalesce(p.proacl, acldefault('f', p.proowner))) acl
                     where acl.grantee = 0 and acl.privilege_type = 'EXECUTE') as public_execute
             from pg_proc p where p.pronamespace = 'public'::regnamespace and p.proname in (
-                'immutable_check_reservations', 'immutable_validate_reservation', 'immutable_validate_owner'
+                'deployment_check_reservations', 'deployment_validate_reservation', 'deployment_validate_owner'
             )`.execute(db());
         expect(functions.rows).toHaveLength(3);
         for (const fn of functions.rows) {
-            expect(fn.definer).toBe(true);
+            expect(fn.definer).toBe(false);
             expect(fn.config).toContain("search_path=pg_catalog");
             expect(fn.public_execute).toBe(false);
         }
-        // This checks function metadata only. Restricted-role execution remains
-        // a separate P2 gate; the fixture migrator owns these functions for now.
+        // Invoker permissions and trigger enforcement are exercised below.
     });
 
     it.each([
@@ -743,7 +673,7 @@ describe("immutable model/reservation SQL candidate (not migration 018)", () => 
         expect(
             (await sql`select * from app_alias where hostname = ${hostname}`.execute(db())).rows,
         ).toHaveLength(1);
-        expect((await sql`select * from immutable_deployment`.execute(db())).rows).toEqual([]);
+        expect((await sql`select * from deployment`.execute(db())).rows).toEqual([]);
     });
 
     it("keeps app/project identity stable and allows only soft retirement", async () => {
@@ -775,6 +705,10 @@ describe("immutable model/reservation SQL candidate (not migration 018)", () => 
         ).rejects.toThrow(/promotion intent/);
         await expect(
             sql`update promotion_operation set generation = 2
+            where id = ${op}`.execute(db()),
+        ).rejects.toThrow(/promotion intent/);
+        await expect(
+            sql`update promotion_operation set idempotency_key = 'different-request'
             where id = ${op}`.execute(db()),
         ).rejects.toThrow(/promotion intent/);
         await sql`update promotion_operation set fence = 2, attempt = 2
@@ -813,14 +747,13 @@ describe("immutable model/reservation SQL candidate (not migration 018)", () => 
         ).rejects.toThrow(/operation identity and fence/);
     });
 
-    it("rolls back retirement and model creation together if a later stage refuses", async () => {
+    it("rolls back the destructive cutover if a later stage refuses", async () => {
         const fresh = await createTestDatabase();
         try {
-            await fresh.migrate();
+            await fresh.migrateTo("20261116_017_worker_heartbeat_lifecycle");
             await expect(
                 fresh.db.transaction().execute(async (trx) => {
-                    await sql.raw(retirement).execute(trx);
-                    await sql.raw(model).execute(trx);
+                    await cutover(trx);
                     throw new Error("recovery stage refused");
                 }),
             ).rejects.toThrow("recovery stage refused");
@@ -840,23 +773,19 @@ describe("immutable model/reservation SQL candidate (not migration 018)", () => 
         }
     });
 
-    it("installs BEFORE TRUNCATE statement guards on all twelve history/owner tables", async () => {
+    it("installs BEFORE TRUNCATE statement guards on all eight model tables", async () => {
         const guards = await sql<{ name: string }>`select tgrelid::regclass::text as name
-            from pg_trigger where tgfoid = 'public.immutable_protect_truncate()'::regprocedure
+            from pg_trigger where tgfoid = 'public.deployment_protect_truncate()'::regprocedure
                 and (tgtype & 32) = 32 and (tgtype & 2) = 2 and (tgtype & 1) = 0
             order by name`.execute(db());
         expect(guards.rows.map((row) => row.name)).toEqual([
             "app",
             "app_alias",
             "app_deployment_event",
+            "deployment",
             "deployment_deletion_operation",
             "dokku_name_reservation",
             "hostname_reservation",
-            "immutable_deployment",
-            "legacy_deletion_operation",
-            "legacy_deployment",
-            "legacy_deployment_event",
-            "legacy_preview",
             "promotion_operation",
         ]);
     });
@@ -894,10 +823,10 @@ describe("immutable model/reservation SQL candidate (not migration 018)", () => 
 
     it("does not cancel a deployment deletion once started", async () => {
         const deployed = await allocateDeployment(await app());
-        await sql`update immutable_deployment set desired_state = 'deleting'
+        await sql`update deployment set desired_state = 'deleting'
             where id = ${deployed.id}`.execute(db());
         await expect(
-            sql`update immutable_deployment set desired_state = 'active'
+            sql`update deployment set desired_state = 'active'
             where id = ${deployed.id}`.execute(db()),
         ).rejects.toThrow(/deletion cannot be cancelled/);
     });
@@ -998,36 +927,29 @@ describe("immutable model/reservation SQL candidate (not migration 018)", () => 
     );
 });
 
-// Test-only stand-in for the P2 role design: a NOLOGIN definer that owns the
-// SECURITY DEFINER functions, and an unprivileged application role that does
-// not own any table. P2 must still install the real roles and grants.
-describe("immutable model under restricted roles (test-only roles)", () => {
-    let definer = "";
+// A test-only non-owner application role. Validators are invokers, so it needs
+// read access and explicit function execution, but cannot disable owner guards.
+// Production role provisioning remains the Compose deployment gate.
+describe("deployment model under restricted roles (test-only roles)", () => {
     let application = "";
 
     beforeEach(async () => {
         const suffix = randomUUID().replaceAll("-", "").slice(0, 8);
-        definer = `lp_test_definer_${suffix}`;
         application = `lp_test_app_${suffix}`;
-        await sql.raw(`create role ${definer} nologin`).execute(db());
         await sql.raw(`create role ${application} nologin`).execute(db());
         const grant = (text: string) => sql.raw(text).execute(db());
-        await grant(`grant usage on schema public to ${definer}, ${application}`);
-        await grant(
-            `grant select on public.immutable_deployment, public.app_alias, public.legacy_preview,
-                public.hostname_reservation, public.dokku_name_reservation to ${definer}`,
-        );
+        await grant(`grant usage on schema public to ${application}`);
         for (const fn of [
-            "immutable_check_reservations(text, uuid)",
-            "immutable_validate_reservation()",
-            "immutable_validate_owner()",
+            "deployment_check_reservations(text, uuid)",
+            "deployment_validate_reservation()",
+            "deployment_validate_owner()",
         ]) {
-            await grant(`alter function public.${fn} owner to ${definer}`);
+            await grant(`grant execute on function public.${fn} to ${application}`);
         }
         // The application can read and write rows. It cannot delete, truncate,
-        // own tables, execute the validators, or read the frozen legacy tables.
+        // own tables or disable their guards.
         await grant(
-            `grant select, insert, update on public.app, public.immutable_deployment,
+            `grant select, insert, update on public.app, public.deployment,
                 public.app_deployment_event, public.app_alias, public.promotion_operation,
                 public.deployment_deletion_operation, public.hostname_reservation,
                 public.dokku_name_reservation to ${application}`,
@@ -1040,13 +962,8 @@ describe("immutable model under restricted roles (test-only roles)", () => {
 
     afterEach(async () => {
         if (!source) return;
-        // Hand the validators back first: dropping the definer's owned objects
-        // would try to drop functions that triggers still depend on.
-        await sql.raw(`reassign owned by ${definer} to current_user`).execute(db());
         await sql.raw(`drop owned by ${application}`).execute(db());
-        await sql.raw(`drop owned by ${definer}`).execute(db());
         await sql.raw(`drop role ${application}`).execute(db());
-        await sql.raw(`drop role ${definer}`).execute(db());
     });
 
     const asApplication = <T>(work: (trx: Db) => Promise<T>) =>
@@ -1057,19 +974,13 @@ describe("immutable model under restricted roles (test-only roles)", () => {
                 return work(trx);
             });
 
-    it("lets the unprivileged application allocate owners whose validators read tables it cannot", async () => {
-        // The role has no privilege on legacy_preview, yet the deferred owner
-        // trigger for a legacy owner must still run as the definer.
-        await expect(sql`select 1 from legacy_preview`.execute(db())).resolves.toBeDefined();
-        await expect(
-            asApplication((trx) => sql`select 1 from legacy_preview`.execute(trx)),
-        ).rejects.toThrow(/permission denied/);
+    it("lets the application allocate reciprocal owners with ordinary invoker validators", async () => {
         const parent = await asApplication((trx) => app(a, `site-${token()}`, trx));
         await asApplication(async (trx) => {
             await deployment(trx, parent);
             await alias(trx, parent);
         });
-        expect((await sql`select * from immutable_deployment`.execute(db())).rows).toHaveLength(1);
+        expect((await sql`select * from deployment`.execute(db())).rows).toHaveLength(1);
     });
 
     it("still fails a missing reservation at COMMIT under the restricted role", async () => {
@@ -1077,7 +988,7 @@ describe("immutable model under restricted roles (test-only roles)", () => {
         await expect(
             asApplication((trx) => deployment(trx, parent, { omitHost: true })),
         ).rejects.toThrow(/owner and hostname reservation must match/);
-        expect((await sql`select * from immutable_deployment`.execute(db())).rows).toEqual([]);
+        expect((await sql`select * from deployment`.execute(db())).rows).toEqual([]);
     });
 
     it.each([
@@ -1085,10 +996,10 @@ describe("immutable model under restricted roles (test-only roles)", () => {
         ["delete registry history", "delete from public.hostname_reservation"],
         ["disable a guard trigger", "alter table public.hostname_reservation disable trigger user"],
         ["bypass triggers", "set session_replication_role = replica"],
-        ["drop a guard function", "drop function public.immutable_protect_truncate() cascade"],
+        ["drop a guard function", "drop function public.deployment_protect_truncate() cascade"],
         [
             "replace a validator",
-            "alter function public.immutable_check_reservations(text, uuid) owner to current_user",
+            "alter function public.deployment_check_reservations(text, uuid) owner to current_user",
         ],
     ])("denies the application role the ability to %s", async (_name, statement) => {
         const before = (
@@ -1102,28 +1013,18 @@ describe("immutable model under restricted roles (test-only roles)", () => {
         ).toEqual(before);
     });
 
-    it("denies direct execution of every validator to the application role", async () => {
-        for (const call of [
-            "select public.immutable_check_reservations('alias', gen_random_uuid())",
-        ]) {
-            await expect(asApplication((trx) => sql.raw(call).execute(trx))).rejects.toThrow(
-                /permission denied for function/,
-            );
-        }
-    });
-
-    it("keeps definer-owned validators hardened: fixed search path, no PUBLIC execute", async () => {
+    it("keeps validators invoker-only: fixed search path, no PUBLIC execute", async () => {
         const rows = await sql<{ name: string; owner: string; definer: boolean; config: string[] }>`
             select p.proname as name, pg_get_userbyid(p.proowner) as owner,
                 p.prosecdef as definer, p.proconfig as config
             from pg_proc p where p.pronamespace = 'public'::regnamespace and p.proname in (
-                'immutable_check_reservations', 'immutable_validate_reservation',
-                'immutable_validate_owner')
+                'deployment_check_reservations', 'deployment_validate_reservation',
+                'deployment_validate_owner')
             order by p.proname`.execute(db());
         expect(rows.rows).toHaveLength(3);
         for (const fn of rows.rows) {
-            expect(fn.owner).toBe(definer);
-            expect(fn.definer).toBe(true);
+            expect(fn.owner).not.toBe(application);
+            expect(fn.definer).toBe(false);
             expect(fn.config).toContain("search_path=pg_catalog");
         }
     });

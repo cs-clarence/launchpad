@@ -24,6 +24,9 @@ down migration. Rehearse on disposable infrastructure first: the checked-in
 
     This flag belongs to the **old** backup command; P2a's backup command no
     longer accepts it. Do not proceed if `verify-backup` fails.
+    **After** verifying the backup and preserving Dokku state, an upgrade crossing
+    018 must complete the [pre-P2b inventory and exact-name app cleanup](deployment-cutover.md).
+    Finish this before step 4: the old identities are dropped unconditionally.
     With all legacy upload writers stopped, inspect the actual data directory's
     `tmp/` directory for regular files named `upload-<24 lowercase hex characters>.part`.
     Record and remove only those exact abandoned staging files, one at a time;
@@ -38,13 +41,16 @@ down migration. Rehearse on disposable infrastructure first: the checked-in
    `migrate --status` again and require `pending: 0`, no unknown migrations,
    and exit 0. Do not run migrations from source if the installed image carries
    a different set.
-5. Start the new controller, then the worker. Check the operator-only
+5. Verify the shared `LAUNCHPAD_DATA_DIR` directory is mounted and available
+   (missing storage is a startup error). Start the new controller, then the worker. Check the operator-only
    `GET /api/v1/status` for database readiness. `/api/health` alone does not check PostgreSQL.
 
 If the migration fails or the new version cannot run, **do not** start the old
 version against the migrated database. Stop processes
 and follow [restore](restore.md) using the pre-upgrade backup and the old
-version. Prefer restoring into a **fresh empty database**, verify the restored
+version. A restore performed by a binary that knows 018 also writes an external
+recovery marker, even for a pre-018 dump; follow its recovery-clear procedure
+before allowing model mutations. Prefer restoring into a **fresh empty database**, verify the restored
 state with the old admin build, then point the old controller and workers at
 that database. The old admin cannot back up a database containing migrations
 it does not know. If an in-place `--replace` is unavoidable, first back up

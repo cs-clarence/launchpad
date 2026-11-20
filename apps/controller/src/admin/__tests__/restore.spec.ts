@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
-import { promises as fs } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { mkdirSync, promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { migrateToLatest } from "@launchpad-kit/database";
@@ -9,6 +10,10 @@ import {
     createProject,
     resolveArtifactPath,
     uploadArtifact,
+    assertModelMutationsReady,
+    clearDeploymentRecovery,
+    recordModelWriterSeen,
+    acknowledgeDeploymentImport,
     type Principal,
 } from "@launchpad-kit/services";
 import { SITE, tarGz } from "@launchpad-kit/services/testing";
@@ -29,7 +34,7 @@ const usesFixture = (() => {
 })();
 const tool = (name: "pg_dump" | "pg_restore") =>
     usesFixture
-        ? `docker exec -i -e PGHOST=127.0.0.1 -e PGPORT=5432 -e PGUSER -e PGPASSWORD -e PGDATABASE ${CONTAINER} ${name} "$@"`
+        ? `docker exec -i -e PGHOST=127.0.0.1 -e PGPORT=5432 -e PGUSER -e PGPASSWORD -e PGDATABASE -e PGAPPNAME ${CONTAINER} ${name} "$@"`
         : `${process.env[name === "pg_dump" ? "TEST_PG_DUMP" : "TEST_PG_RESTORE"] ?? name} "$@"`;
 
 let source: Awaited<ReturnType<typeof createTestDatabase>>;
@@ -70,14 +75,18 @@ const dataDirectory = () => path.join(work, `data-${++counter}`);
 const restoreOptions = (
     target: { url: string },
     extra: Partial<Parameters<typeof restoreBackup>[0]> = {},
-) => ({
-    backupDir,
-    databaseUrl: target.url,
-    dataDir: dataDirectory(),
-    workersStopped: true,
-    pgRestore: restoreTool,
-    ...extra,
-});
+) => {
+    const options = {
+        backupDir,
+        databaseUrl: target.url,
+        dataDir: dataDirectory(),
+        workersStopped: true,
+        pgRestore: restoreTool,
+        ...extra,
+    };
+    mkdirSync(options.dataDir, { recursive: true, mode: 0o700 });
+    return options;
+};
 const tableCount = async (db: Awaited<ReturnType<typeof createTestDatabase>>["db"]) =>
     Number(
         (
@@ -168,6 +177,23 @@ describe("restoreBackup", () => {
         const result = await restoreBackup(options);
         expect(result.filesRestored).toBe(3);
         expect(result.pendingMigrations).toEqual([]);
+        expect(
+            (
+                await fs.stat(path.join(options.dataDir, "maintenance/deployment-recovery-blocked"))
+            ).isFile(),
+        ).toBe(true);
+        expect(
+            (
+                await target.db
+                    .selectFrom("instance_state")
+                    .select("value")
+                    .where("key", "=", "deployment_recovery")
+                    .executeTakeFirstOrThrow()
+            ).value,
+        ).toBe("blocked");
+        await expect(assertModelMutationsReady(target.db, options.dataDir)).rejects.toThrow(
+            /blocked/,
+        );
         const users = await target.db.selectFrom("user").select("email").orderBy("email").execute();
         expect(users.map((u) => u.email)).toEqual(["ann@example.com", "root@example.com"]);
         const report = await checkRestore({ db: target.db, dataDir: options.dataDir });
@@ -182,6 +208,8 @@ describe("restoreBackup", () => {
         }
         // Running it again against the now-populated database is refused, nothing replaced.
         await expect(restoreBackup({ ...options })).rejects.toThrow(/already has data/);
+        await clearDeploymentRecovery(target.db, options.dataDir);
+        await assertModelMutationsReady(target.db, options.dataDir);
     });
 
     it("needs the confirmation that the workers are stopped", async () => {
@@ -189,7 +217,7 @@ describe("restoreBackup", () => {
         const options = restoreOptions(target, { workersStopped: false });
         await expect(restoreBackup(options)).rejects.toThrow(/i-have-stopped-the-workers/);
         expect(await tableCount(target.db)).toBe(0);
-        await expect(fs.stat(options.dataDir)).rejects.toThrow();
+        await expect(fs.stat(path.join(options.dataDir, "maintenance"))).rejects.toThrow();
     });
 
     it("replaces a database only when it is named, and removes what the backup lacks", async () => {
@@ -210,20 +238,6 @@ describe("restoreBackup", () => {
         expect((await target.db.selectFrom("user").select("id").execute()).length).toBe(2);
     });
 
-    it("refuses while a worker has reported in the target database, even with the confirmation", async () => {
-        const target = await emptyTarget();
-        await target.migrate();
-        await target.db
-            .insertInto("worker_heartbeat")
-            .values({ worker_id: "w1", version: "t", lifecycle_enabled: false })
-            .execute();
-        const name = replaceTarget(target.url);
-        await expect(
-            restoreBackup(restoreOptions(target, { replaceDatabase: name })),
-        ).rejects.toThrow(/still running/);
-        expect(await tableCount(target.db)).toBeGreaterThan(1);
-    });
-
     it("puts the old data back when pg_restore fails after the swap", async () => {
         const target = await emptyTarget();
         await target.migrate();
@@ -235,14 +249,19 @@ describe("restoreBackup", () => {
             `#!/bin/sh\ncase "$*" in *--list*|*--schema-only*) exec ${restoreTool} "$@";; esac\ncat >/dev/null\necho 'boom' >&2\nexit 1\n`,
             { mode: 0o700 },
         );
-        await expect(
-            restoreBackup(
-                restoreOptions(target, {
-                    replaceDatabase: replaceTarget(target.url),
-                    pgRestore: failing,
-                }),
-            ),
-        ).rejects.toThrow(/boom/);
+        const options = restoreOptions(target, {
+            replaceDatabase: replaceTarget(target.url),
+            pgRestore: failing,
+        });
+        await expect(restoreBackup(options)).rejects.toThrow(/boom/);
+        expect(
+            (
+                await fs.stat(path.join(options.dataDir, "maintenance/deployment-recovery-blocked"))
+            ).isFile(),
+        ).toBe(true);
+        await expect(assertModelMutationsReady(target.db, options.dataDir)).rejects.toThrow(
+            /blocked/,
+        );
         const present = await sql<{ present: boolean }>`
             select to_regclass('public.leftover_from_before') is not null as present`.execute(
             target.db,
@@ -253,6 +272,221 @@ describe("restoreBackup", () => {
             target.db,
         );
         expect(Number(aside.rows[0]?.n)).toBe(0);
+    });
+
+    it("stays blocked after the admin dies between import and the database gate write", async () => {
+        const target = await emptyTarget();
+        await target.migrate();
+        const options = restoreOptions(target, { replaceDatabase: replaceTarget(target.url) });
+        const crash = path.join(work, "pg_restore_crash_after_import.sh");
+        // Only kills this test's spawned admin parent, after its pg_restore has
+        // completed. The test runner and PostgreSQL container are not signalled.
+        await fs.writeFile(
+            crash,
+            `#!/bin/sh
+case "$*" in *--list*|*--schema-only*) exec ${restoreTool} "$@";; esac
+${restoreTool} "$@"
+rc=$?
+[ "$rc" -eq 0 ] || exit "$rc"
+kill -KILL "$PPID"
+exit 0
+`,
+            { mode: 0o700 },
+        );
+        const result = spawnSync(
+            "bun",
+            [
+                path.resolve(import.meta.dirname, "../../../.output/admin.mjs"),
+                "restore",
+                backupDir,
+                "--i-have-stopped-the-workers",
+                "--replace",
+                replaceTarget(target.url),
+            ],
+            {
+                env: {
+                    PATH: process.env.PATH,
+                    HOME: process.env.HOME,
+                    DATABASE_URL: target.url,
+                    LAUNCHPAD_DATA_DIR: options.dataDir,
+                    LAUNCHPAD_PG_RESTORE: crash,
+                },
+                encoding: "utf8",
+                timeout: 60_000,
+            },
+        );
+        expect(result.error, result.stderr).toBeUndefined();
+        expect(result.signal, result.stderr).toBe("SIGKILL");
+        // No post-import gate update happened: the dump's ready row returned.
+        expect(
+            (
+                await target.db
+                    .selectFrom("instance_state")
+                    .select("value")
+                    .where("key", "=", "deployment_recovery")
+                    .executeTakeFirstOrThrow()
+            ).value,
+        ).toBe("ready");
+        expect(
+            (
+                await fs.stat(path.join(options.dataDir, "maintenance/deployment-recovery-blocked"))
+            ).isFile(),
+        ).toBe(true);
+        await expect(assertModelMutationsReady(target.db, options.dataDir)).rejects.toThrow(
+            /pg_restore/,
+        );
+        await expect(restoreBackup(options)).rejects.toThrow(/previous pg_restore/);
+        await expect(clearDeploymentRecovery(target.db, options.dataDir)).rejects.toThrow(
+            /pg_restore/,
+        );
+        const acknowledged = spawnSync(
+            "bun",
+            [
+                path.resolve(import.meta.dirname, "../../../.output/admin.mjs"),
+                "recovery-ack-import",
+                "--i-have-stopped-the-importer",
+            ],
+            {
+                env: {
+                    PATH: process.env.PATH,
+                    HOME: process.env.HOME,
+                    DATABASE_URL: target.url,
+                    LAUNCHPAD_DATA_DIR: options.dataDir,
+                },
+                encoding: "utf8",
+                timeout: 30_000,
+            },
+        );
+        expect(acknowledged.status, acknowledged.stderr).toBe(0);
+        await expect(assertModelMutationsReady(target.db, options.dataDir)).rejects.toThrow(
+            /blocked/,
+        );
+    });
+
+    it("keeps the import record and skips rollback when cancellation cannot prove importer exit", async () => {
+        const target = await emptyTarget();
+        await target.migrate();
+        const hang = path.join(work, "pg_restore_hang.sh");
+        const started = path.join(work, "hang-importer-started");
+        await fs.writeFile(
+            hang,
+            `#!/bin/sh\ncase "$*" in *--list*|*--schema-only*) exec ${restoreTool} "$@";; esac\n: > "${started}"\nexec sleep 30\n`,
+            { mode: 0o700 },
+        );
+        const options = restoreOptions(target, {
+            replaceDatabase: replaceTarget(target.url),
+            pgRestore: hang,
+        });
+        const deadline = new AbortController();
+        // Abort only once the importer is running; a separate watchdog bounds setup.
+        const watcher = (async () => {
+            const limit = Date.now() + 60_000;
+            while (!(await fs.stat(started).catch(() => null))) {
+                if (Date.now() > limit) {
+                    deadline.abort();
+                    throw new Error("importer never started");
+                }
+                await new Promise((resolve) => setTimeout(resolve, 20));
+            }
+            deadline.abort();
+        })();
+        const restoring = restoreBackup({ ...options, signal: deadline.signal });
+        // Settle both before reporting, so no restore or importer outlives a failing test.
+        const [watched, restored] = await Promise.allSettled([watcher, restoring]);
+        if (watched.status === "rejected") throw watched.reason;
+        expect(restored.status).toBe("rejected");
+        await expect(restoreBackup(options)).rejects.toThrow(/previous pg_restore/);
+        await expect(
+            fs.stat(path.join(options.dataDir, "maintenance/deployment-import-in-progress")),
+        ).resolves.toBeTruthy();
+        await acknowledgeDeploymentImport(
+            target.db,
+            options.dataDir,
+            replaceTarget(target.url),
+            true,
+        );
+    });
+
+    it("refuses a second restore while a crashed admin's importer wrapper can still connect", async () => {
+        const target = await emptyTarget();
+        await target.migrate();
+        const options = restoreOptions(target, { replaceDatabase: replaceTarget(target.url) });
+        const heldDump = path.join(work, "held-import.dump");
+        const release = path.join(work, "release-held-import");
+        const finished = path.join(work, "held-import-exited");
+        const crash = path.join(work, "pg_restore_surviving_wrapper.sh");
+        await fs.writeFile(
+            crash,
+            `#!/bin/sh
+case "$*" in *--list*|*--schema-only*) exec ${restoreTool} "$@";; esac
+cat > "${heldDump}"
+parent="$PPID"
+exec >/dev/null 2>&1
+kill -KILL "$parent"
+for i in $(seq 1 400); do
+    [ -e "${release}" ] && break
+    sleep 0.05
+done
+if [ -e "${release}" ]; then
+    ${restoreTool} "$@" < "${heldDump}"
+    echo "$?" > "${finished}.tmp" && mv "${finished}.tmp" "${finished}"
+else
+    echo "124" > "${finished}.tmp" && mv "${finished}.tmp" "${finished}"
+fi
+`,
+            { mode: 0o700 },
+        );
+        const result = spawnSync(
+            "bun",
+            [
+                path.resolve(import.meta.dirname, "../../../.output/admin.mjs"),
+                "restore",
+                backupDir,
+                "--i-have-stopped-the-workers",
+                "--replace",
+                replaceTarget(target.url),
+            ],
+            {
+                env: {
+                    PATH: process.env.PATH,
+                    HOME: process.env.HOME,
+                    DATABASE_URL: target.url,
+                    LAUNCHPAD_DATA_DIR: options.dataDir,
+                    LAUNCHPAD_PG_RESTORE: crash,
+                },
+                encoding: "utf8",
+                timeout: 60_000,
+            },
+        );
+        try {
+            expect(result.error, result.stderr).toBeUndefined();
+            expect(result.signal, result.stderr).toBe("SIGKILL");
+            await expect(fs.stat(finished)).rejects.toMatchObject({ code: "ENOENT" });
+            // There is not even a backend yet. The durable guard must refuse
+            // before a later import could commit into the second restore's schema.
+            await expect(restoreBackup(options)).rejects.toThrow(/previous pg_restore/);
+            await expect(clearDeploymentRecovery(target.db, options.dataDir)).rejects.toThrow(
+                /pg_restore/,
+            );
+        } finally {
+            await fs.writeFile(release, "");
+            const deadline = Date.now() + 30_000;
+            while (!(await fs.stat(finished).catch(() => null))) {
+                if (Date.now() > deadline)
+                    throw new Error("The test-owned importer wrapper did not exit.");
+                await new Promise((resolve) => setTimeout(resolve, 25));
+            }
+        }
+        expect((await fs.readFile(finished, "utf8")).trim()).toBe("0");
+        await acknowledgeDeploymentImport(
+            target.db,
+            options.dataDir,
+            replaceTarget(target.url),
+            true,
+        );
+        await expect(assertModelMutationsReady(target.db, options.dataDir)).rejects.toThrow(
+            /blocked/,
+        );
     });
 
     it("puts the old data back when the restore exits 0 but loaded nothing", async () => {
@@ -466,7 +700,7 @@ describe("restoreBackup", () => {
         const options = restoreOptions(target, { backupDir: broken });
         await expect(restoreBackup(options)).rejects.toThrow(/does not verify/);
         expect(await tableCount(target.db)).toBe(0);
-        await expect(fs.stat(options.dataDir)).rejects.toThrow();
+        await expect(fs.stat(path.join(options.dataDir, "maintenance"))).rejects.toThrow();
     });
 
     it("refuses a backup from a newer version", async () => {
@@ -516,8 +750,8 @@ describe("restoreBackup", () => {
         expect(await tableCount(target.db)).toBe(0);
     });
 
-    it("tells the operator which migrations the backup lacks when it is older than this build", async () => {
-        // A backup made at the first fourteen migrations, restored by a build that has seventeen.
+    it("marks recovery when an older dump erases existing model rows, regardless of its manifest", async () => {
+        // A backup at 014 can erase 018 resources without erasing their remote side effects.
         const sourceFolder = path.resolve(
             import.meta.dirname,
             "../../../../../packages/database/src",
@@ -546,8 +780,94 @@ describe("restoreBackup", () => {
             pgDump: dump,
         });
         const target = await emptyTarget();
-        const result = await restoreBackup(restoreOptions(target, { backupDir: dest }));
+        await target.migrate();
+        const actor = randomUUID();
+        const tenant = randomUUID();
+        await target.db
+            .insertInto("user")
+            .values({
+                id: actor,
+                name: "Model owner",
+                email: "model-owner@example.invalid",
+                emailVerified: false,
+                role: "user",
+            })
+            .execute();
+        await target.db
+            .insertInto("organization")
+            .values({
+                id: tenant,
+                name: "Model tenant",
+                slug: "model-tenant",
+                createdAt: new Date(),
+            })
+            .execute();
+        const project = await target.db
+            .insertInto("project")
+            .values({
+                organization_id: tenant,
+                name: "Site",
+                slug: "site",
+                created_by: actor,
+            })
+            .returning("id")
+            .executeTakeFirstOrThrow();
+        await target.db
+            .insertInto("app")
+            .values({
+                organization_id: tenant,
+                project_id: project.id,
+                slug: "site",
+                created_by: actor,
+            })
+            .execute();
+        const options = restoreOptions(target, {
+            backupDir: dest,
+            replaceDatabase: replaceTarget(target.url),
+        });
+        await recordModelWriterSeen(options.dataDir);
+        const result = await restoreBackup(options);
         expect(result.pendingMigrations).toHaveLength(files.length - 14);
+        expect(
+            (
+                await fs.stat(path.join(options.dataDir, "maintenance/deployment-recovery-blocked"))
+            ).isFile(),
+        ).toBe(true);
+        await target.migrate();
+        expect(await target.db.selectFrom("app").select("id").execute()).toEqual([]);
+        await expect(assertModelMutationsReady(target.db, options.dataDir)).rejects.toThrow(
+            /blocked/,
+        );
+        await expect(clearDeploymentRecovery(target.db, options.dataDir)).rejects.toThrow(/writer/);
+    });
+
+    it("migrates a restored 017 dump without overwriting its blocked gate", async () => {
+        const old = await emptyTarget();
+        await old.migrateTo("20261116_017_worker_heartbeat_lifecycle");
+        const dest = path.join(work, "schema-017-backup");
+        await createBackup({
+            db: old.db,
+            databaseUrl: old.url,
+            dataDir: sourceData,
+            dest,
+            version: "0.0.0-test",
+            pgDump: dump,
+        });
+        const target = await emptyTarget();
+        const options = restoreOptions(target, { backupDir: dest });
+        await restoreBackup(options);
+        await target.migrate();
+        expect(
+            (
+                await target.db
+                    .selectFrom("instance_state")
+                    .select("value")
+                    .where("key", "=", "deployment_recovery")
+                    .executeTakeFirstOrThrow()
+            ).value,
+        ).toBe("blocked");
+        await clearDeploymentRecovery(target.db, options.dataDir);
+        await assertModelMutationsReady(target.db, options.dataDir);
     });
 });
 
@@ -556,8 +876,18 @@ describe("checkRestore", () => {
         const target = await emptyTarget();
         const options = restoreOptions(target);
         await restoreBackup(options);
-        // A project, and two previews that were deployed: one app still exists, one is gone.
+        // Two immutable deployments reached Dokku; a queued one has not touched it.
         const project = await createProject(target.db, owner, org, { name: "Site", slug: "site" });
+        const parent = await target.db
+            .insertInto("app")
+            .values({
+                organization_id: org,
+                project_id: project.id,
+                slug: "site",
+                created_by: owner.userId,
+            })
+            .returning("id")
+            .executeTakeFirstOrThrow();
         const artifact = await target.db
             .selectFrom("artifact")
             .select("id")
@@ -567,47 +897,54 @@ describe("checkRestore", () => {
         for (const slug of ["kept", "lost", "never-deployed"]) {
             const id = randomUUID();
             const app = `lp-${randomUUID().replaceAll("-", "").slice(0, 10)}`;
-            await target.db
-                .insertInto("preview")
-                .values({
-                    id,
-                    organization_id: org,
-                    project_id: project.id,
-                    slug,
-                    app_name: app,
-                    hostname: `${slug}-${app}.previews.example.com`,
-                    created_by: owner.userId,
-                })
-                .execute();
-            if (slug !== "never-deployed") {
-                const deployment = await target.db
+            await target.db.transaction().execute(async (trx) => {
+                await trx
                     .insertInto("deployment")
                     .values({
+                        id,
                         organization_id: org,
-                        preview_id: id,
+                        app_id: parent.id,
                         artifact_id: artifact.id,
-                        status: "succeeded",
+                        app_name: app,
+                        hostname: `${slug}-${app}.previews.example.com`,
+                        status: slug === "never-deployed" ? "queued" : "succeeded",
+                        image_tag: `launchpad/site:${id}`,
+                        image_id: `sha256:${"a".repeat(64)}`,
+                        finished_at: slug === "never-deployed" ? null : new Date(),
                         requested_by: owner.userId,
+                        preview_expires_at: new Date(Date.now() + 86400000),
                     })
-                    .returning("id")
-                    .executeTakeFirstOrThrow();
-                await target.db
-                    .updateTable("preview")
-                    .set({ active_deployment_id: deployment.id })
-                    .where("id", "=", id)
                     .execute();
-            }
+                await trx
+                    .insertInto("hostname_reservation")
+                    .values({
+                        hostname: `${slug}-${app}.previews.example.com`,
+                        owner_kind: "deployment",
+                        owner_id: id,
+                        organization_id: org,
+                    })
+                    .execute();
+                await trx
+                    .insertInto("dokku_name_reservation")
+                    .values({
+                        app_name: app,
+                        owner_kind: "deployment",
+                        owner_id: id,
+                        organization_id: org,
+                    })
+                    .execute();
+            });
             previews.push({ id, app_name: app });
         }
         await target.db
-            .updateTable("preview")
-            .set({ expires_at: sql<Date>`now() - interval '1 day'` })
+            .updateTable("deployment")
+            .set({ preview_expires_at: sql<Date>`now() - interval '1 day'` })
             .where("id", "=", previews[0]!.id)
             .execute();
         const gone = (await target.db.selectFrom("artifact").select("storage_key").execute())[0]!;
         await fs.rm(resolveArtifactPath(options.dataDir, gone.storage_key));
         const asked: string[] = [];
-        const before = await target.db.selectFrom("preview").selectAll().orderBy("slug").execute();
+        const before = await target.db.selectFrom("deployment").selectAll().orderBy("id").execute();
         const report = await checkRestore({
             db: target.db,
             dataDir: options.dataDir,
@@ -617,14 +954,14 @@ describe("checkRestore", () => {
             },
         });
         expect(report.missingFiles).toEqual([gone.storage_key]);
-        expect(report.missingApps.map((a) => a.slug)).toEqual(["lost"]);
+        expect(report.missingApps.map((a) => a.deploymentId)).toEqual([previews[1]!.id]);
         expect(report.appsChecked).toBe(2);
-        expect(report.expired.map((p) => p.slug)).toEqual(["kept"]);
+        expect(report.expired.map((p) => p.deploymentId)).toEqual([previews[0]!.id]);
         expect(asked).not.toContain(previews[2]!.app_name);
         // Nothing was changed.
-        expect(await target.db.selectFrom("preview").selectAll().orderBy("slug").execute()).toEqual(
-            before,
-        );
+        expect(
+            await target.db.selectFrom("deployment").selectAll().orderBy("id").execute(),
+        ).toEqual(before);
         const skipped = await checkRestore({ db: target.db, dataDir: options.dataDir });
         expect(skipped.dokkuChecked).toBe(false);
         expect(skipped.missingApps).toEqual([]);

@@ -46,22 +46,13 @@ omni -i run test:integration      # auth/services/controller on PostgreSQL; SDK 
 omni -i run test:db:down
 ```
 
-For just the read-only preview retirement inventory regressions, run
-`omni -i run test:inventory -p @launchpad-kit/controller` between `test:db:up`
-and `test:db:down`. Each case creates/drops an isolated database; no controller
-server or Dokku is started.
-
-The P1 immutable-retirement SQL candidate has its own uncached test task:
-`omni -i run test:cutover:retirement -p @launchpad-kit/controller`, with the
-same disposable PostgreSQL prerequisite. It executes a test-only SQL fixture,
-not a discovered migration; it does not enable the immutable deployment model.
-The old-process compatibility drill is
-`omni -i run test:cutover:old-process -p @launchpad-kit/controller`: it runs the real
-`e03c542` worker and GC code (extracted from git) against the cut-over schema.
-The paired model/reservation candidate is
-`omni -i run test:cutover:model -p @launchpad-kit/controller`. It applies retirement
-and model SQL together inside each isolated test database. Neither candidate is
-installed by the production `migrate` command.
+For focused migration/model checks, run
+`omni -i run test:deployment-schema -p @launchpad-kit/controller` between `test:db:up`
+and `test:db:down`. These uncached tests cover populated 014/017 upgrades,
+rollback/refusal, permanent registries and immutable constraints using real migration
+018 in isolated databases. The old P1 SQL fixtures, inventory and old-process tasks
+are removed. Recovery-gate coverage lives in services integration tests and controller
+restore/upgrade tests. See [the cutover runbook](docs/deployment-cutover.md).
 
 To repeat the frozen previous-schema backup → migrate → restart → restore drill
 against disposable PostgreSQL, run `omni -i run test:upgrade -p @launchpad-kit/controller`

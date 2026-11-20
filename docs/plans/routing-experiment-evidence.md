@@ -7,7 +7,7 @@ The user explicitly authorized starting both disposable checks on 2026-11-19:
 DNS changes, or changes to the existing connectors.
 
 This executes the High-risk experiment already specified in
-`../decisions/immutable-deployment-alias-routing.md`. No application schema,
+`../decisions/deployment-alias-routing.md`. No application schema,
 public API, or production routing is changed.
 
 ## Resource contract (recorded before creation)

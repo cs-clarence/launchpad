@@ -26,20 +26,30 @@ or prove. `restore` never contacts Dokku. Back up the target database first.
 
     For a populated target, first back it up, then add
     `--replace <host:port/database>` with **exactly** the address printed by
-    the refusal. The flag confirms _all of step 1_. On a populated target,
-    restore also refuses a worker heartbeat within the last minute, even with
-    the flag; that check cannot prove that admin jobs or remote operations stopped. It checks
+    the refusal. The flag confirms _all of step 1_. There is no worker heartbeat
+    table or automatic proof that writers or remote operations stopped. Restore checks
     the manifest and dump before changing anything, restores archives first,
     then swaps the `public` schema. A failed restore rolls back a schema swap
     where possible; for an interrupted process, follow the recovery notes in
     [the controller reference](../apps/controller/README.md#restore) before
-    starting anything.
+    starting anything. Run restore and recovery-clear as the controller's **OS
+    user** (UID 10001 in the images), not root: owner-only maintenance files must
+    remain accessible to that same user. The existing, shared `LAUNCHPAD_DATA_DIR` mount must be
+    available: this binary writes an owner-only recovery marker after all refusals
+    and archive pre-checks, before copying any archive. A failed or killed restore
+    keeps that marker. A restored `ready` database row cannot bypass it.
 
-3. If `restore` reports pending migrations, run `bun .output/admin.mjs migrate`
-   from the **intended** version, then `migrate --status` (`pending: 0`, exit
+3. If `restore` reports pending migrations, check whether 018 is pending **before
+   running `migrate`**. If it is, keep ingress closed
+   and first use the **pre-P2b binary** against the restored database for
+   `inventory-previews --all`. Verify a matched backup and preserve Dokku state
+   before any exact-name cleanup; follow the [cutover runbook](deployment-cutover.md)
+   while the old table identities still exist. Never defer this inventory until
+   after migrating. Then migrate from the **intended** version and run `migrate --status` (`pending: 0`, exit
    0). Run `bun .output/admin.mjs check-restore` with the `DOKKU_SSH_*` settings (the worker is idle and does not read them; these are only for this check). It records
    its lists of **missing archives, missing
-   apps and expired previews**. `--no-dokku` is only a partial check.
+   immutable deployment apps and passed deployment preview deadlines**. Queued
+   jobs have not touched Dokku and are not probed. `--no-dokku` is only a partial check.
    Missing archives require repair before a deployment; an unreachable Dokku
    is an error, not a missing app. The check changes nothing.
 4. Start the restored controller with normal ingress still closed. Use temporary
@@ -115,12 +125,68 @@ or prove. `restore` never contacts Dokku. Back up the target database first.
    otherwise keep ingress closed. Do not assume that stopped workers prevent
    authenticated reads. Confirm revocations before reopening the private
    ingress. Then start the idle worker if needed.
-5. Restored preview data is inert: the preview runtime was removed, so nothing
-   redeploys, extends or deletes previews. Never manually delete a Dokku app
+5. Migration 018 unconditionally drops preview-era data, including from an old
+   restored backup; inventory/cleanup must use the pre-P2b binary first
+   ([cutover runbook](deployment-cutover.md)). Never manually delete a Dokku app
    just because it was absent in step 3. A restored database can also leave
    unreferenced apps; Launchpad deliberately leaves those alone. The
-   immutable-model migration will handle the old tables; see
-   [the cutover plan](plans/immutable-p2-cutover.md).
+   immutable model remains mutation-blocked until recovery is explicitly cleared.
+6. As the controller's OS user, for **P2b only**, `bun .output/admin.mjs recovery-clear` succeeds only when all
+   eight model tables are empty and no durable `maintenance/model-writer-seen`
+   file exists. It audits the operation, commits the ready gate, then removes
+   `maintenance/deployment-recovery-blocked` and fsyncs its directory. If a writer
+   has ever run, or any table has rows, it refuses: do not delete either file to
+   bypass it. Rolling back to P2b after P3 wrote model state is unsupported.
+   P3 replaces this limited rule with mandatory audited reconciliation attestation;
+   P5 supplies verification ([recovery design](design/deployment-cutover-schema.md#restore-and-the-recovery-gate)).
+   Sign-in, organizations, members, projects and key administration remain available
+   while the model is blocked; the marker is not an access-control substitute.
+
+## Recover a crashed importer before retrying
+
+Before spawning `pg_restore`, this binary fsyncs
+`maintenance/deployment-import-in-progress`, identifying the target database and
+the import's `PGAPPNAME`. A normal child exit is followed by a check that import
+backends have disconnected before the record is removed. If the admin dies,
+or backend exit cannot be established, the record remains. Another restore and
+`recovery-clear` then refuse, even if the restored model is empty. No schema undo
+is attempted while an importer might still commit.
+Custom `LAUNCHPAD_PG_RESTORE` programs are trusted synchronous replacements:
+they must `exec` the actual client or wait for it and all import workers, forward
+`PGAPPNAME`, and never background or queue an importer that outlives the wrapper.
+For remote/container wrappers this includes handling cancellation without leaving
+an untracked later-connecting worker. An absent backend cannot make a fire-and-forget
+wrapper safe; such wrappers are unsupported.
+
+1. Keep ingress closed and preserve the backup and any `launchpad_replaced_*`
+   schema. Inspect the owner-only import record, its database identity,
+   application name and timestamp. Identify and stop the **exact** old importer
+   and all wrappers; verify their OS processes have exited. A missing backend
+   alone is not proof: a surviving wrapper may connect later. Do not kill a
+   process solely from an old PID, which may have been reused.
+2. On the recorded database, inspect `pg_stat_activity` for that application's
+   backend and any other `pg_restore` or `launchpad-restore-*` importer. Confirm
+   no earlier import backend remains or could commit. If you cannot establish
+   both OS-process and database-backend exit, stop here.
+3. As the controller's OS user, with the **same data directory and target database**:
+
+    ```sh
+    bun .output/admin.mjs recovery-ack-import --i-have-stopped-the-importer
+    ```
+
+    The flag attests to step 1 and backend exit. The command additionally refuses
+    while an import backend is visible. It fsyncs a count-only acknowledgement in
+    `maintenance/deployment-import-ack-<operation-id>` **outside the database dump**,
+    then removes/fsyncs the pending record. The acknowledgement is durable even if
+    `public` is empty or replaced by the next restore. It does **not** clear the
+    model recovery marker.
+    The audit records the operator's attestation/request before removal, not a claim
+    that removal succeeded; if removal fails, the pending record continues to block.
+
+4. Follow the interrupted-schema recovery notes in the
+   [controller reference](../apps/controller/README.md#restore), then retry the
+   verified restore procedure. Never remove import/recovery records manually
+   or run `migrate` while an import could still be running.
 
 ## Repeat the disposable drill
 
@@ -131,7 +197,7 @@ Dokku: `omni -i run test:db:up`, then
 does not reach the test database on Docker Desktop). This builds a temporary controller image and runs
 the frozen previous-schema dump through backup, image migration, controller
 start/restart from that image, an authenticated operator status read, and
-restoration into another disposable database.
+restoration into another disposable database, plus a post-018 backup round trip.
 It creates only temporary test databases/directories and cleans them up.
 
 The opt-in remote rehearsal (`test:restore:live`) was removed with the preview runtime.

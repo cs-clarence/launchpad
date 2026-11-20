@@ -51,16 +51,19 @@ Copy `.env.local.example` to `.env.local` here and edit it; Omni loads it for `d
 back means stopping the controller and restoring the dump. Stopping management access
 never touches Dokku workloads.
 
-The worker checks the database schema when it starts and refuses to run against one it was
-not built for; the controller checks on its first request, and repeats a failed check every few
+The idle worker opens no database; the controller checks the schema on its first request, and repeats a failed check every few
 seconds, so it recovers by itself once the database is migrated (or reachable). A database that
-is **behind** (the API answers `503 schema-mismatch`; the worker exits) needs `migrate`, and one
+is **behind** (the API answers `503 schema-mismatch`) needs `migrate`, and one
 a **newer** version already migrated needs that version or a restored backup. `migrate --status`
 lists applied and pending migrations and changes nothing (exit code 1 if any are pending or
-unknown). Both built artifacts carry their migrations, bundled so they run without the repository:
+unknown). The controller carries its migrations, bundled so they run without the repository:
 `.output/migrations` for the controller (and the operator commands in `.output/admin.mjs`, so
-`bun .output/admin.mjs migrate` works in the image) and `dist/migrations` for the worker.
+`bun .output/admin.mjs migrate` works in the image). The idle worker has no migration bundle.
 `LAUNCHPAD_MIGRATIONS_DIR` names another folder.
+The existing `LAUNCHPAD_DATA_DIR` directory must be mounted/available before startup;
+the controller does not create a missing mount. See [migration 018's destructive cutover](../../docs/deployment-cutover.md).
+This is a directory check, not proof of volume identity: an unintended anonymous `/data`
+volume also passes. Verify that every writer/admin uses the intended shared storage.
 
 Operator commands run as an Omni task whose command and options are named arguments.
 Passwords come from a file only you can read (mode 600) or from piped stdin, never from
@@ -182,7 +185,11 @@ Restoring is a procedure, not one command. The current step-by-step
       database second.
     - Replacing moves the old `public` schema aside, restores into a new one, checks that the
       result holds exactly the migrations and live archives the backup records, and only then drops
-      the old schema. If the restore fails or does not check out, the old data is put back.
+      the old schema. If the restore fails or does not check out, the old data is put back, except
+      when the importer's exit cannot be verified (including after cancellation): then no rollback
+      is attempted and the import record stays. Keep ingress closed, preserve the saved
+      `launchpad_replaced_*` schema and follow the
+      [crashed-import recovery](../../docs/restore.md#recover-a-crashed-importer-before-retrying).
       Everything in the `public` schema is replaced; other schemas are not touched. A backup is
       taken of `public` only, and a dump that would create another schema or an extension is refused;
       so is a replace while views, foreign keys or column defaults in other schemas depend on
@@ -192,11 +199,20 @@ Restoring is a procedure, not one command. The current step-by-step
       database: `--no-owner` makes the restoring role the owner of everything it creates, and the new
       `public` schema has only the default grants.
     - A backup made by an older version restores fine: run `migrate` afterwards.
-3. `check-restore` (read-only): lists live archives whose file is missing, deployed previews whose
-   Dokku app is gone (it asks Dokku with `apps:exists` over the worker's `DOKKU_SSH_*` settings, or
-   pass `--no-dokku` to skip that; an unreachable Dokku is an error, not "missing"), and previews
-   whose expiry has already passed. It exits 1 if an archive or an app is missing.
-4. Start the workers and the controller. Restored preview data is inert until the schema cutover.
+3. `check-restore` (read-only): lists live archives whose file is missing and non-deleted immutable
+   deployments beyond queued whose Dokku app is gone (it asks Dokku with `apps:exists` over
+   `DOKKU_SSH_*` settings, or
+   pass `--no-dokku` to skip that; an unreachable Dokku is an error, not "missing"), and deployments
+   whose deployment preview deadline has passed. It exits 1 if an archive or an app is missing.
+4. Follow the [restore guide](../../docs/restore.md) for restricted maintenance startup,
+   credential reconciliation and `recovery-clear`. Model mutations remain blocked by an
+   fsynced external marker even if the restored dump said `ready`. In P2b, clear succeeds only
+   for an empty model with no durable writer-seen file. Never remove these files manually.
+   A crashed import also retains `deployment-import-in-progress`; another restore and clear
+   refuse until the exact importer/wrappers and database backend have exited and an explicit
+   `recovery-ack-import --i-have-stopped-the-importer` is durably audited. Custom PostgreSQL
+   wrappers must forward `PGAPPNAME` to the actual client. This acknowledgement does not clear
+   model recovery; see [crashed-import recovery](../../docs/restore.md#recover-a-crashed-importer-before-retrying).
 
 ```sh
 omni -i run admin -p @launchpad-kit/controller -a command=restore \
@@ -276,7 +292,7 @@ defines their own status. There is no dashboard panel for it.
 ## Removed: preview deployment
 
 The preview runtime (previews, deployments, deletion and expiry, the artifact upload endpoint, the
-dashboard preview pages and the `preview:*` key scopes) was removed. The database tables are untouched
-until the schema cutover migration. A stored key that still holds a `preview:*` scope is refused at
+dashboard preview pages and the `preview:*` key scopes) was removed. Migration 018 drops the old
+tables/data unconditionally and revokes their keys. A stored key that still holds a `preview:*` scope is refused at
 authentication. The upload endpoint returns with the app model under a new scope; see
-[the plan](../../docs/plans/immutable-p2-cutover.md).
+[the plan](../../docs/plans/deployment-p2-cutover.md).

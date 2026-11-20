@@ -29,33 +29,9 @@ tasks:
       append:
         - build
 
-  test:inventory:
-    description: Read-only preview retirement inventory regressions on disposable PostgreSQL
-    exec: sh -c 'export TEST_DATABASE_URL="${TEST_DATABASE_URL:-postgres://postgres:dev@127.0.0.1:55432/postgres}"; exec bun --bun vitest run --config vitest.config.integration.ts src/admin/__tests__/inventory.spec.ts'
-    dependencies:
-      - ^build
-    cache:
-      enabled: false
-
-  test:cutover:retirement:
-    description: Exercise the inert immutable-retirement SQL candidate on isolated PostgreSQL databases
-    exec: sh -c 'export TEST_DATABASE_URL="${TEST_DATABASE_URL:-postgres://postgres:dev@127.0.0.1:55432/postgres}"; exec bun --bun vitest run --config vitest.config.integration.ts src/admin/__tests__/immutable-retirement.spec.ts'
-    dependencies:
-      - ^build
-    cache:
-      enabled: false
-
-  test:cutover:old-process:
-    description: Run the real e03c542 worker/GC code (extracted from git) against the cut-over schema on isolated PostgreSQL
-    exec: sh -c 'export TEST_DATABASE_URL="${TEST_DATABASE_URL:-postgres://postgres:dev@127.0.0.1:55432/postgres}"; exec bun --bun vitest run --config vitest.config.integration.ts src/admin/__tests__/immutable-old-process.spec.ts'
-    dependencies:
-      - ^build
-    cache:
-      enabled: false
-
-  test:cutover:model:
-    description: Exercise inert immutable-model and reservation SQL on isolated PostgreSQL databases
-    exec: sh -c 'export TEST_DATABASE_URL="${TEST_DATABASE_URL:-postgres://postgres:dev@127.0.0.1:55432/postgres}"; exec bun --bun vitest run --config vitest.config.integration.ts src/admin/__tests__/immutable-model.spec.ts'
+  test:deployment-schema:
+    description: Exercise migration 018 and its immutable-model constraints on isolated PostgreSQL databases
+    exec: sh -c 'export TEST_DATABASE_URL="${TEST_DATABASE_URL:-postgres://postgres:dev@127.0.0.1:55432/postgres}"; exec bun --bun vitest run --config vitest.config.integration.ts src/admin/__tests__/deployment-model.spec.ts src/admin/__tests__/deployment-cutover.spec.ts'
     dependencies:
       - ^build
     cache:

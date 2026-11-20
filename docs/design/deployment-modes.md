@@ -21,7 +21,7 @@ not two build pipelines.
 - **Scope:** static sites only. No arbitrary Dockerfiles, dynamic runtimes,
   databases, autoscaling or multiple Docker engines per project.
 - **Routing choice:** a dedicated generation-checked alias router, specified in
-  `docs/decisions/immutable-deployment-alias-routing.md`. Runtime/implementation
+  `docs/decisions/deployment-alias-routing.md`. Runtime/implementation
   selection and feasibility are the experiment's output, not already verified.
 - **Execution:** settle contracts first; deliver bounded slices with independent
   review of promotion concurrency, remote outcomes and garbage collection.
@@ -62,21 +62,22 @@ modify resources outside it. Do not describe this as protection against that ope
 ## Database proposal
 
 Physical table names: the new deployment, event and deletion tables are
-`immutable_deployment`, `app_deployment_event` and `deployment_deletion_operation`.
+`deployment`, `app_deployment_event` and `deployment_deletion_operation`.
 The resource names `deployment`, `deployment_event` and `deletion_operation` below
-are logical shorthand. The old preview-era tables are dropped, but the new tables
-deliberately do not reuse their names, so a surviving old process fails with
-"relation does not exist" instead of operating on new rows. That does not stop a
-process already running or a remote operation it already dispatched: the operator
-stops every old process and lets in-flight remote work settle first. See the
-[implementation plan](../plans/immutable-deployment-model.md) for ordered gates.
+are logical shorthand. The old preview-era tables and rows are dropped before
+creating the replacement schema; the new `deployment` table reuses the name, not
+the old table or its data. Immutable behavior is enforced by constraints, not
+names. Startup schema checks refuse old binaries, but cannot fence a running old
+process or dispatched remote operation. The operator stops every old process
+and lets in-flight remote work settle first. See the
+[implementation plan](../plans/deployment-model.md) for ordered gates.
 
 Add new forward-only migrations; never rewrite frozen migrations.
 
 | Table                                                  | Responsibility                                                                                                                                                                |
 | ------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `app`                                                  | Organization/project, live-unique slug and timestamps. No preview/persistent mode or single production hostname.                                                              |
-| `deployment` (`immutable_deployment`)                  | App/artifact references, fixed settings, unique Dokku `app_name`, unique deployment hostname, job status, lease/fence, image identity, retention deadline and deletion state. |
+| `deployment`                                           | App/artifact references, fixed settings, unique Dokku `app_name`, unique deployment hostname, job status, lease/fence, image identity, retention deadline and deletion state. |
 | `deployment_event` (`app_deployment_event`)            | Ordered deployment progress/events, append-only.                                                                                                                              |
 | `app_alias`                                            | Stable alias ID, app ID, live-unique per-app slug, generated hostname, committed target deployment ID, routing generation and lifecycle state. Many aliases per app.          |
 | `promotion_operation`                                  | Alias ID, desired target, previous target, expected alias generation, status, lease/fence, actor, idempotency key and routing reconciliation details.                         |

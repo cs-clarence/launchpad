@@ -2,8 +2,8 @@
 
 Status: **revised 2026-11-19 after the user dropped the legacy runtime and after an
 independent review of that revision**. Parent plan:
-[immutable deployment model](immutable-deployment-model.md). Schema contract:
-[replacement schema map](../design/immutable-cutover-schema.md). Nothing here is
+[immutable deployment model](deployment-model.md). Schema contract:
+[replacement schema map](../design/deployment-cutover-schema.md). Nothing here is
 authorized to run against a real installation.
 
 ## Decisions (user, 2026-11-19)
@@ -115,7 +115,7 @@ and scope string across `apps`, `packages`, `tooling` and `docs`.
   `lifecycle.enabled_at` deleted, `preview:*` keys revoked with count-only audit, the model
   tables, registries and guards, and the gate initialized to `ready`.
 - **Types and readers.** Remove the dropped tables from `Database`, add the model tables;
-  `artifact-gc` pins by `immutable_deployment`; `check-restore` reads `immutable_deployment`;
+  `artifact-gc` pins by `deployment`; `check-restore` reads `deployment`;
   delete `inventory-previews`, its spec and docs.
 - **Recovery gate.** The marker (written after every refusal and the archive pre-check, before
   the first copy, and kept if a restore fails), the database gate, the fail-closed checks scoped
@@ -127,7 +127,7 @@ and scope string across `apps`, `packages`, `tooling` and `docs`.
   tasks `test:cutover:retirement`, `test:cutover:old-process`, `test:cutover:model` and
   `test:inventory`; the integration job's `fetch-depth: 0` (keep the commits job's); and the
   entries in `CONTRIBUTING.md`, `docs/tooling.md` and `docs/patterns/README.md`. Rewrite
-  `immutable-model.spec.ts` against the real migration. `packages/alias-router/src/schema.ts`
+  `deployment-model.spec.ts` against the real migration. `packages/alias-router/src/schema.ts`
   is a false positive: leave it.
 - **Drills.** The frozen schema-014 upgrade drill migrates to 018 and asserts the preview tables
   and `worker_heartbeat` are gone; a post-018 backup round trip; an older dump restored over a
@@ -148,18 +148,18 @@ Independent of the schema; it may land before P2b.
 
 ## Risks
 
-| Risk                                                    | Control                                                                                                                                                                                                                                                  |
-| ------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Data loss: previews are dropped                         | Decided and stated; backup and inventory with the pre-P2b binary first                                                                                                                                                                                   |
-| Dokku apps orphaned                                     | Nothing reports them until P5 wires drift, so the runbook is the control. Before P3 enables deploys, orphans must be removed **or** the P3 worker must treat any app that already exists at create time as a hard failure, never a resume                |
-| A removed symbol, route or scope is still referenced    | P2a removes readers first; grep gate; integration against the real migration                                                                                                                                                                             |
-| Stored `preview:*` keys between P2a and P2b             | Refused at authentication in P2a; revoked in 018                                                                                                                                                                                                         |
-| Interrupted collection before upgrade                   | Stop workers cleanly; `check-restore` reports missing files; P3 worker recovers at start                                                                                                                                                                 |
-| Old binary mixed with the new schema                    | Startup check refuses new starts once 018 is recorded; distinct names keep an old process off new rows. Neither stops a running process or an already-dispatched Dokku operation, so the runbook is to stop every old process and let remote work settle |
-| Restore leaves the model operable before reconciliation | Marker plus gate, both fail closed, keyed on the binary and not the manifest                                                                                                                                                                             |
-| Migration queues a lock behind readers                  | `lock_timeout` for 018 (015 to 017 are not covered when starting from 014)                                                                                                                                                                               |
-| Guards are not a privilege boundary                     | Stated in the schema map; the owner and application role split is a **gate** of the production Compose plan                                                                                                                                              |
-| `main` cannot deploy for a while                        | Accepted by the user; features are removed cleanly, not left half-working                                                                                                                                                                                |
+| Risk                                                    | Control                                                                                                                                                                                                                                   |
+| ------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Data loss: previews are dropped                         | Decided and stated; backup and inventory with the pre-P2b binary first                                                                                                                                                                    |
+| Dokku apps orphaned                                     | Nothing reports them until P5 wires drift, so the runbook is the control. Before P3 enables deploys, orphans must be removed **or** the P3 worker must treat any app that already exists at create time as a hard failure, never a resume |
+| A removed symbol, route or scope is still referenced    | P2a removes readers first; grep gate; integration against the real migration                                                                                                                                                              |
+| Stored `preview:*` keys between P2a and P2b             | Refused at authentication in P2a; revoked in 018                                                                                                                                                                                          |
+| Interrupted collection before upgrade                   | Stop workers cleanly; `check-restore` reports missing files; P3 worker recovers at start                                                                                                                                                  |
+| Old binary mixed with the new schema                    | Startup check refuses new starts once 018 is recorded. The replacement `deployment` table reuses the name, so names do not fence running old code. Stop every old process and let remote work settle before migration                     |
+| Restore leaves the model operable before reconciliation | Marker plus gate, both fail closed, keyed on the binary and not the manifest                                                                                                                                                              |
+| Migration queues a lock behind readers                  | `lock_timeout` for 018 (015 to 017 are not covered when starting from 014)                                                                                                                                                                |
+| Guards are not a privilege boundary                     | Stated in the schema map; the owner and application role split is a **gate** of the production Compose plan                                                                                                                               |
+| `main` cannot deploy for a while                        | Accepted by the user; features are removed cleanly, not left half-working                                                                                                                                                                 |
 
 ## Open questions
 
@@ -195,3 +195,61 @@ Breaking, for the release notes: the `preview:*` key scopes, the `/previews`, `/
 `deployments` clients and `uploadTimeoutMs`, the CLI `deploy`, `previews` and `deployments` commands,
 and the MCP `list_previews`, `get_preview`, `list_deployments`, `get_deployment`,
 `deployment_events`, `preview_deletion`, `deploy` and `delete_preview` tools and `--allow-*` options.
+
+## P2b progress
+
+Branch `feat/immutable-p2b-schema-recovery`, based on P2a merge `24c0324`.
+Implementation complete and independently reviewed locally; pending PR gates.
+Nothing here authorizes running the cutover against an installation.
+
+- Migration 018 now replaces the preview tables unconditionally, clears replay/lifecycle
+  state, revokes exact `preview:` prefixes with count-only audit, creates the eight guarded
+  model tables and initializes the ready gate. The P1 model SQL moved into the migration;
+  there is no second fixture copy.
+- The model tests use the real migration. Separate cutover tests cover populated 014/017
+  upgrades, session/artifact preservation, mixed/unknown/case-variant/already-revoked keys,
+  unexpected dependencies and lock-timeout rollback.
+- Initial read-only Opus review found no blockers/majors. Follow-up adds the missing immutable
+  promotion idempotency key, documents service-owned deletion progression, and shares the
+  migrator factory with test setup.
+- The [pre-cutover operator runbook](../deployment-cutover.md) records the pre-P2b inventory,
+  backup, exact-name app cleanup and remote-operation settling requirements.
+- `Database` now describes only the surviving/new tables. Artifact-GC pins immutable
+  deployments and gates collection/sweeps; `check-restore` reports deployment IDs/deadlines.
+- The fsynced external recovery marker is written before the first archive copy, based on
+  this binary's knowledge of 018 rather than the dump. Restore blocks/verifies the database
+  gate when its table exists; 018 preserves an older restore's blocked row. Model mutation
+  wrappers record/fsync writer-seen before callbacks and hold a shared recovery lock.
+  Restore/clear hold the exclusive lock through filesystem changes. Core administration
+  stays outside the model gate.
+- P2b `recovery-clear` checks every model table under locks and refuses writer-seen even
+  after an older dump erased model rows. P3 must replace that rule with the audited
+  attestation before adding a live writer; rollback from P3 to P2b remains unsupported.
+- P1 inventory, old-process/retirement tests, fixtures and tasks are removed. The dedicated
+  focused task is now `test:deployment-schema`; integration no longer requires full Git history.
+- Local checks, unit tests, build and all-project integration pass. Disposable image/package
+  checks and the image-based schema-014 upgrade/restore drill pass. Restore coverage includes
+  post-018 round trip, 014-over-model replacement, 017 blocked-row preservation and killing
+  the test's own admin process after import but before its gate write.
+
+Final read-only Opus review of the combined schema/recovery/readers diff found no blockers
+or majors. Minor follow-ups clarify OS-user ownership, conservative no-op GC writer records
+and missing-storage errors. The final full local gates, image/package checks and image upgrade
+drill pass after those follow-ups; disposable PostgreSQL is torn down.
+
+PR #58 is open; original head passed all eight checks. Review follow-ups below
+are pending refreshed PR gates.
+
+PR #58 review follow-up: the user chose a durable importer refusal guard rather
+than an importer-held process-lock redesign. A crashed/unproven `pg_restore` keeps
+its external in-progress record, blocking another restore and recovery-clear until
+an explicit, durably audited importer-exit acknowledgement. Parent-directory fsync
+is repeated after EEXIST, deadline-bearing recovery-lock waits are abortable, and
+runbook inventory/cleanup is ordered before 018 but after verified backup.
+Independent Opus review found no blockers; its wrapper-contract concern is
+addressed by requiring synchronous exec/wait and PGAPPNAME forwarding, with
+fire-and-forget wrappers unsupported. Minor follow-ups preserve both import/exit
+errors, validate record metadata, cancel archive copying, clarify conservative
+backend refusals and audit attestation semantics. Full local checks, tests,
+build/integration, image/package checks and the image upgrade drill pass;
+disposable PostgreSQL is torn down.
