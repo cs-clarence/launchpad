@@ -15,6 +15,7 @@ import {
     deploymentEventSchema,
     deploymentSchema,
     errorSchema,
+    markDeploymentRecoveryBlocked,
     parseDeploymentConfig,
     type Principal,
 } from "@launchpad-kit/services";
@@ -402,6 +403,33 @@ describe("apps and deployments over HTTP", () => {
         expect(has("/deployments/{deploymentId}", "get")).toBe(true);
         expect(has("/deployments/{deploymentId}/events", "get")).toBe(true);
         expect(has("/deployments/{deploymentId}", "delete")).toBe(true);
+    });
+
+    it("answers a malformed id with 404 and a blocked recovery gate with 503 on deletion", async () => {
+        expect(
+            (await call(api, "deleter", "DELETE", `${base()}/deployments/not-a-uuid`)).status,
+        ).toBe(404);
+        const app = (await newApp()).json.id;
+        const artifact = (await upload("full", p1)).json.id;
+        const queued = await call(api, "full", "POST", `${base()}/apps/${app}/deployments`, {
+            body: { artifactId: artifact },
+        });
+        const deployment = deploymentSchema.parse(await queued.json());
+        await sql`update deployment set status = 'failed', finished_at = now()
+            where id = ${deployment.id}`.execute(testDb.db);
+        await markDeploymentRecoveryBlocked(dataDir);
+        try {
+            const blocked = await call(
+                api,
+                "deleter",
+                "DELETE",
+                `${base()}/deployments/${deployment.id}`,
+            );
+            expect(blocked.status).toBe(503);
+            expect(errorSchema.parse(await blocked.json()).code).toBe("unavailable");
+        } finally {
+            await fs.rm(path.join(dataDir, "maintenance"), { recursive: true, force: true });
+        }
     });
 
     it("queues a deletion only for a finished deployment, within the key's scope and projects", async () => {

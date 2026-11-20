@@ -10,6 +10,7 @@ import { recordAudit, requireMembership } from "./organizations";
 type Db = Kysely<Database>;
 type DeletionStep = "destroy" | "images";
 
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const RETRY_DELAY_MS = 30_000;
 const databaseNow = sql<Date>`clock_timestamp()`;
 const leaseDeadline = sql<Date>`clock_timestamp() + (${DEPLOYMENT_LEASE_MS} * interval '1 millisecond')`;
@@ -48,6 +49,7 @@ export async function requestDeploymentDeletion(
 ) {
     await requireMembership(db, principal, organizationId, "app:delete");
     requireDeploymentsOn(deps.settings);
+    if (!UUID.test(deploymentId)) throw new ServiceError("not-found", "Deployment not found.");
     return withModelMutation(db, deps.dataDir, async (trx) => {
         await requireMembership(trx, principal, organizationId, "app:delete");
         const found = await trx
@@ -139,13 +141,24 @@ export async function claimDeletion(db: Db, dataDir: string, owner: string) {
             .limit(8)
             .execute();
         for (const listed of candidates) {
-            await lockApp(trx, listed.app_id);
+            // A busy app or deployment belongs to someone else right now; try the next candidate
+            // rather than waiting past the statement timeout.
+            const appRow = await trx
+                .selectFrom("app")
+                .select("id")
+                .where("id", "=", listed.app_id)
+                .forUpdate()
+                .skipLocked()
+                .executeTakeFirst();
+            if (!appRow) continue;
             const deployment = await trx
                 .selectFrom("deployment")
                 .select(["id", "organization_id", "app_name", "step_done"])
                 .where("id", "=", listed.deployment_id)
                 .forUpdate()
-                .executeTakeFirstOrThrow();
+                .skipLocked()
+                .executeTakeFirst();
+            if (!deployment) continue;
             const candidate = await trx
                 .selectFrom("deployment_deletion_operation")
                 .select(["id", "step_pending"])

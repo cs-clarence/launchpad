@@ -232,7 +232,7 @@ program
     .requiredOption("--deployment <id>", "the deployment's ID")
     .requiredOption(
         "--outcome <outcome>",
-        "succeeded (it serves its recorded image), failed-clean (nothing of it exists; for a deletion, the app was not destroyed), failed-owned (its app exists and deletion may destroy it; a deployment only), or abandon (a deployment only; nothing unrecorded is ever destroyed)",
+        "succeeded (deployment: it serves its recorded image; deletion: the app is gone), failed-clean (deployment: nothing of it exists; deletion: the app was not destroyed), failed-owned (deployment only: its app exists and deletion may destroy it), or abandon (deployment only; nothing unrecorded is ever destroyed)",
     )
     .option(
         "--i-have-verified-dokku-by-exact-name",

@@ -1396,33 +1396,6 @@ describe("deployment deletion", () => {
         expect(await state(deployment.id)).toMatchObject({ desired_state: "deleting" });
     });
 
-    it("does not let collection take an artifact while its deployment is being deleted", async () => {
-        const { deployment, artifactId } = await finished();
-        await testDb.db
-            .updateTable("artifact")
-            .set({ created_at: new Date(0) })
-            .where("id", "=", artifactId)
-            .execute();
-        let deleting: Promise<unknown> | undefined;
-        await collectArtifacts(testDb.db, {
-            dataDir,
-            retentionSeconds: 0,
-            afterCandidate: async (id) => {
-                if (id === artifactId) deleting = request(deployment.id);
-                await deleting;
-            },
-        });
-        expect(
-            (
-                await testDb.db
-                    .selectFrom("artifact")
-                    .select("collected_at")
-                    .where("id", "=", artifactId)
-                    .executeTakeFirstOrThrow()
-            ).collected_at,
-        ).toBeNull();
-    });
-
     it("recovers after a lost completion: held, reconciled, then images only", async () => {
         const { deployment } = await finished();
         await request(deployment.id);

@@ -304,7 +304,8 @@ reserved permanently. Promotion and aliases come later. Each operation is in the
 
 A deployment the worker could not confirm is `reconciliation-needed` and blocks its app. After
 checking Dokku by exact name, record what you saw with
-`bun .output/admin.mjs deployment-reconcile --deployment <id> --outcome succeeded|failed-clean|abandon --i-have-verified-dokku-by-exact-name`.
+`bun .output/admin.mjs deployment-reconcile --deployment <id> --outcome failed-clean --i-have-verified-dokku-by-exact-name`.
+The outcome is one of `succeeded`, `failed-clean`, `failed-owned` or `abandon`.
 It never calls Dokku and is audited; `succeeded` needs a recorded image. Use `failed-owned` when a held app
 creation actually left its app on Dokku, so a later deletion can destroy it; after `failed-clean` or `abandon`
 deletion never destroys a name that was not recorded as created. For a deletion, only `succeeded` (the app is

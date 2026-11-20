@@ -44,6 +44,7 @@ import {
     type Principal,
     removeMember,
     revokeInvitation,
+    DeploymentRecoveryError,
     ServiceError,
 } from "@launchpad-kit/services";
 import { Elysia } from "elysia";
@@ -211,6 +212,15 @@ export function createApi(deps: {
             if (error instanceof ServiceError) {
                 set.status = STATUS[error.code];
                 return { code: error.code, status: STATUS[error.code], title: error.message };
+            }
+            if (error instanceof DeploymentRecoveryError) {
+                // Writes are refused on purpose while a restore is being reconciled.
+                set.status = STATUS.unavailable;
+                return {
+                    code: "unavailable",
+                    status: STATUS.unavailable,
+                    title: "Deployments are unavailable while recovery is in progress.",
+                };
             }
             console.error("Unexpected API failure", error);
             set.status = 500;
