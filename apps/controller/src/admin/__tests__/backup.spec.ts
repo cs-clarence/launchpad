@@ -123,6 +123,8 @@ const fresh = () => path.join(work, `backup-${++counter}`);
 beforeAll(async () => {
     work = await fs.mkdtemp(path.join(os.tmpdir(), "launchpad-backup-"));
     dataDir = path.join(work, "data");
+    // The shared data directory is a mount: uploads never create it.
+    await fs.mkdir(dataDir, { recursive: true });
     marker = path.join(work, "dumped");
     release = path.join(work, "release");
     plainDump = path.join(work, "pg_dump_plain.sh");

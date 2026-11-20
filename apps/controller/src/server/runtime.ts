@@ -1,8 +1,14 @@
 import { createAuth, createMailer, loadAuthConfig } from "@launchpad-kit/auth";
 import { assertSchemaCurrent, createDatabase } from "@launchpad-kit/database";
-import { requireModelDataDirectory, type InvitationDeps } from "@launchpad-kit/services";
+import {
+    parseDeploymentConfig,
+    requireModelDataDirectory,
+    sweepStaleUploads,
+    type InvitationDeps,
+} from "@launchpad-kit/services";
 import path from "node:path";
 import { createApi } from "./api";
+import { artifactLimitsFromEnv } from "./artifact-config";
 
 function requireEnv(name: string): string {
     const value = process.env[name];
@@ -28,16 +34,29 @@ function compose() {
         publicSignup: config.publicSignup,
         hashPassword: async (password) => (await auth.$context).password.hash(password),
     };
+    // Uploaded archives live in the shared data directory, which must already exist: the
+    // controller never creates a missing mount (see requireModelDataDirectory).
+    const dataDir = path.resolve(process.env.LAUNCHPAD_DATA_DIR ?? ".data/controller");
+    const artifacts = { dataDir, limits: artifactLimitsFromEnv(process.env) };
+    // `LAUNCHPAD_DEPLOYMENTS` is off unless set; invalid settings stop the process at startup
+    // (see startup-settings.ts), so a parse failure here only repeats that for a bare import.
+    const deployments = { dataDir, settings: parseDeploymentConfig(process.env) };
+    // A crash mid-upload leaves a staged file behind; clear the old ones at startup.
+    void sweepStaleUploads(dataDir).catch((error) =>
+        console.error("Could not sweep stale uploads", error),
+    );
     const features = { emailRecovery: mailer !== null, invitations: invitations.enabled };
     const api = createApi({
         auth,
         db,
         origin: config.origin,
         invitations,
+        artifacts,
+        deployments,
         // Serves the OpenAPI document and Scalar reference; set to "false" to remove them.
         docs: process.env.LAUNCHPAD_API_DOCS !== "false",
     });
-    return { config, db, auth, api, invitations, features };
+    return { config, db, auth, api, invitations, features, artifacts, deployments };
 }
 
 let runtime: ReturnType<typeof compose> | undefined;

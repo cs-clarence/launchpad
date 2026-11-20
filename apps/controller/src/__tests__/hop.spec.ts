@@ -1054,6 +1054,14 @@ describe("OpenAPI reference", () => {
         "get /api/v1/organizations/{orgId}/api-keys",
         "post /api/v1/organizations/{orgId}/api-keys",
         "delete /api/v1/organizations/{orgId}/api-keys/{keyId}",
+        "post /api/v1/organizations/{orgId}/projects/{projectId}/artifacts",
+        "post /api/v1/organizations/{orgId}/projects/{projectId}/apps",
+        "get /api/v1/organizations/{orgId}/apps",
+        "get /api/v1/organizations/{orgId}/apps/{appId}",
+        "post /api/v1/organizations/{orgId}/apps/{appId}/deployments",
+        "get /api/v1/organizations/{orgId}/apps/{appId}/deployments",
+        "get /api/v1/organizations/{orgId}/deployments/{deploymentId}",
+        "get /api/v1/organizations/{orgId}/deployments/{deploymentId}/events",
     ];
 
     it("documents exactly the public v1 operations, without internals", async () => {

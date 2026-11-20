@@ -98,8 +98,9 @@ controller restore tests. Undo: revert; no schema change.
 ### P3b: apps and deployments through services and API (enqueue only)
 
 Split into two PRs. **P3b-i (services, built):** migration 019, scopes, `parseDeploymentConfig`,
-app and deployment services and their tests; nothing is routed yet. **P3b-ii (API):** the routes,
-upload endpoint and its body framing, response schemas, OpenAPI and the built-server tests.
+app and deployment services and their tests; nothing is routed yet. **P3b-ii (API, built):** the routes,
+upload endpoint and its body framing, response schemas, OpenAPI, runtime wiring and the
+built-server tests.
 The dashboard key form (`api-keys.tsx`) does not offer the new scopes until P6; keys carry them
 via the API. Provenance is a table, not a column: artifacts are deduplicated by digest, so one artifact can be
 uploaded through several projects, and `artifact_project(artifact_id, project_id)` records each.

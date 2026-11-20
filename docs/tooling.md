@@ -203,6 +203,10 @@ the controller also checks an optional `LAUNCHPAD_APPS_DOMAIN` against `LAUNCHPA
 (`assertCurrentSettings`, `packages/services/src/app-routing-config.ts`; the worker uses only
 `assertNoRemovedSettings` from the dependency-free `@launchpad-kit/services/removed-settings`).
 
+**Implemented (P3b):** `LAUNCHPAD_DEPLOYMENTS=on|off` (default off) and, when on, the apps domain,
+limits, TTLs and hostname template (`parseDeploymentConfig`) gate the app, upload and deployment
+routes; an invalid value stops the controller at startup. Nothing runs queued deployments yet.
+
 **Planned, not implemented:** the rest of the deployment design: the proxy
 (`LAUNCHPAD_APPS_PROXY_URL`) and private alias control/probe settings, parsed by
 `parseAppRoutingConfig`, which nothing calls until the deployment worker arrives, and

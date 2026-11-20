@@ -2,6 +2,12 @@ import { openapi } from "@elysia/openapi";
 import type { DocumentDecoration } from "elysia/types";
 import {
     acceptedInvitationSchema,
+    appSchema,
+    artifactSchema,
+    createAppSchema,
+    createDeploymentSchema,
+    deploymentEventSchema,
+    deploymentSchema,
     acceptInvitationSchema,
     addedMemberSchema,
     addMemberSchema,
@@ -45,6 +51,7 @@ const ERRORS = {
     409: "The change conflicts with existing data.",
     413: "The upload is larger than the allowed size.",
     422: "The request body is invalid.",
+    503: "Deployments are turned off, or not available on this instance.",
 } as const;
 
 interface Operation {
@@ -168,6 +175,12 @@ export function openApiPlugin(enabled: boolean) {
                 { name: "Session", description: "The signed-in user." },
                 { name: "Organizations", description: "Organizations and membership." },
                 { name: "Projects", description: "Organization-owned projects." },
+                { name: "Artifacts", description: "Uploaded static-site archives." },
+                { name: "Apps", description: "Stable app identities inside a project." },
+                {
+                    name: "Deployments",
+                    description: "Queued, immutable deployments of an uploaded archive.",
+                },
                 { name: "API keys", description: "Organization-owned automation keys." },
                 { name: "Operations", description: "Instance health, for the operator." },
                 {
@@ -367,5 +380,89 @@ export const docs = {
         body: acceptInvitationSchema,
         ok: { description: "Accepted.", schema: acceptedInvitationSchema },
         errors: [403, 404, 409, 422],
+    }),
+    uploadArtifact: operation({
+        keys: true,
+        tags: ["Artifacts"],
+        summary: "Upload a static-site archive for a project",
+        description:
+            "Deployers and above; a key needs `app:deploy` and, if project-limited, the project in its list. The body is the archive itself: `.tar.gz` of regular files and directories with `index.html` at its root, sent with a `Content-Length` and `Content-Type: application/gzip`. It is validated while streaming; links, devices, absolute or `..` paths, secrets (`.env*`, `.git`, private keys), duplicates and oversized archives are refused. An identical archive already stored for the organization is reused (`reused: true`). The upload records the project it came through: a project-limited key may deploy only archives uploaded through the app's own project. Needs deployments to be on.",
+        path: ["orgId", "projectId"],
+        rawBody: { contentType: "application/gzip", description: "A gzip-compressed tar archive." },
+        ok: { status: 201, description: "Stored (or reused).", schema: artifactSchema },
+        errors: [401, 403, 404, 408, 409, 413, 422, 503],
+    }),
+    createApp: operation({
+        keys: true,
+        tags: ["Apps"],
+        summary: "Create an app",
+        description:
+            "Deployers and above; a key needs `app:deploy` and, if project-limited, the project. An app is a stable identity inside a project; it has no deployment and no alias yet. Refused at the organization's app limit. Needs deployments to be on.",
+        path: ["orgId", "projectId"],
+        body: createAppSchema,
+        ok: { status: 201, description: "Created.", schema: appSchema },
+        errors: [401, 403, 404, 409, 422, 503],
+    }),
+    listApps: operation({
+        keys: true,
+        tags: ["Apps"],
+        summary: "List apps",
+        description:
+            "A key needs `app:read`; a project-limited key sees only its own projects' apps.",
+        path: ["orgId"],
+        ok: { description: "Apps, oldest first.", schema: z.array(appSchema) },
+        errors: [401, 403, 404],
+    }),
+    getApp: operation({
+        keys: true,
+        tags: ["Apps"],
+        summary: "Read an app",
+        description: "A key needs `app:read`.",
+        path: ["orgId", "appId"],
+        ok: { description: "The app.", schema: appSchema },
+        errors: [401, 403, 404],
+    }),
+    createDeployment: operation({
+        keys: true,
+        tags: ["Deployments"],
+        summary: "Queue a deployment",
+        description:
+            "Deployers and above; a key needs `app:deploy`. Queues one deployment of an uploaded archive and returns at once with status `queued`; a worker builds it later. It gets its own permanent hostname and remote name, and is never redeployed in place. An app has at most one unfinished deployment, and quotas apply per app and per organization. A project-limited key may use only an archive uploaded through the app's project. `ttl` (such as `7d`) sets the retention deadline, within the instance maximum. Needs deployments to be on.",
+        path: ["orgId", "appId"],
+        body: createDeploymentSchema,
+        ok: { status: 202, description: "Queued.", schema: deploymentSchema },
+        errors: [401, 403, 404, 409, 422, 503],
+    }),
+    listDeployments: operation({
+        keys: true,
+        tags: ["Deployments"],
+        summary: "List an app's deployments",
+        description: "A key needs `app:read`. Newest first.",
+        path: ["orgId", "appId"],
+        ok: { description: "Deployments.", schema: z.array(deploymentSchema) },
+        errors: [401, 403, 404],
+    }),
+    getDeployment: operation({
+        keys: true,
+        tags: ["Deployments"],
+        summary: "Read a deployment",
+        description: "A key needs `app:read`.",
+        path: ["orgId", "deploymentId"],
+        ok: { description: "The deployment.", schema: deploymentSchema },
+        errors: [401, 403, 404],
+    }),
+    listDeploymentEvents: operation({
+        keys: true,
+        tags: ["Deployments"],
+        summary: "List a deployment's events",
+        description:
+            "A key needs `app:read`. Progress in order. Page with `after` (the last `seq` you saw) and `limit` (1 to 500, default 100).",
+        path: ["orgId", "deploymentId"],
+        query: [
+            { name: "after", description: "Only events after this sequence number." },
+            { name: "limit", description: "At most this many events (1 to 500)." },
+        ],
+        ok: { description: "Events.", schema: z.array(deploymentEventSchema) },
+        errors: [401, 403, 404, 422],
     }),
 };

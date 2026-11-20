@@ -287,6 +287,25 @@ describe("who may upload", () => {
     });
 });
 
+describe("upload storage", () => {
+    it("never creates a missing data directory", async () => {
+        const missing = path.join(dataDir, "not-mounted");
+        const bytes = site([{ name: "missing.txt", content: "m" }]);
+        const outcome = await code(
+            uploadArtifact(
+                testDb.db,
+                people.dee!,
+                org,
+                stream(bytes),
+                { contentLength: bytes.length, projectId },
+                { dataDir: missing, limits: {} },
+            ),
+        );
+        expect(outcome).toBe("unavailable");
+        await expect(fs.stat(missing)).rejects.toMatchObject({ code: "ENOENT" });
+    });
+});
+
 describe("artifact project provenance", () => {
     const rows = (artifactId: string) =>
         testDb.db

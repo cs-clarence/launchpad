@@ -105,6 +105,7 @@ export const errorSchema = z.strictObject({
         "delivery-failed",
         "too-large",
         "timeout",
+        "unavailable",
         "internal",
     ]),
     status: z.number().int(),
@@ -165,6 +166,50 @@ export const artifactSchema = z.strictObject({
     reused: z
         .boolean()
         .meta({ description: "True when this organization already had the same archive." }),
+});
+
+export const appSchema = z.strictObject({
+    id: z.uuid(),
+    projectId: z.uuid(),
+    slug: z.string(),
+    state: z.enum(["active", "shutting-down", "deleted"]),
+    createdAt: timestamp,
+});
+
+export const deploymentStatusSchema = z.enum([
+    "queued",
+    "preparing",
+    "building",
+    "deploying",
+    "verifying",
+    "succeeded",
+    "failed",
+    "cancelled",
+    "reconciliation-needed",
+]);
+
+export const deploymentSchema = z.strictObject({
+    id: z.uuid(),
+    appId: z.uuid(),
+    status: deploymentStatusSchema,
+    desiredState: z.enum(["active", "deleting", "deleted"]),
+    hostname: z.string().meta({ description: "The deployment's own permanent hostname." }),
+    spa: z.boolean(),
+    createdAt: timestamp,
+    finishedAt: timestamp.nullable(),
+    expiresAt: timestamp.meta({
+        description: "Retention deadline for an unaliased deployment; no automatic deletion yet.",
+    }),
+    failureCode: z.string().nullable(),
+    failureMessage: z.string().nullable(),
+});
+
+export const deploymentEventSchema = z.strictObject({
+    seq: z.number().int().positive(),
+    phase: z.string(),
+    level: z.enum(["info", "warn", "error"]),
+    message: z.string(),
+    createdAt: timestamp,
 });
 
 export const invitationSchema = z.strictObject({

@@ -5,6 +5,7 @@ import type { Database } from "@launchpad-kit/database";
 import { type Kysely, sql } from "kysely";
 import { ArchiveError, validateArchive } from "./archive";
 import type { Principal } from "./authorization";
+import { requireModelDataDirectory } from "./deployment-recovery";
 import { ServiceError } from "./errors";
 import { recordAudit, requireMembership } from "./organizations";
 
@@ -166,6 +167,10 @@ export async function uploadArtifact(
     signal?: AbortSignal,
 ): Promise<UploadedArtifact> {
     await requireMembership(db, principal, organizationId, "app:deploy");
+    // The shared data directory must already be mounted: an upload never creates one.
+    await requireModelDataDirectory(deps.dataDir).catch(() => {
+        throw new ServiceError("unavailable", "The artifact storage directory is not available.");
+    });
     if (meta.restrictTo && !meta.restrictTo.includes(meta.projectId)) {
         throw new ServiceError("not-found", "Project not found.");
     }
