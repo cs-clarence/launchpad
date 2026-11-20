@@ -427,7 +427,7 @@ export const docs = {
         tags: ["Deployments"],
         summary: "Queue a deployment",
         description:
-            "Deployers and above; a key needs `app:deploy`. Queues one deployment of an uploaded archive and returns at once with status `queued`; a worker builds it later. It gets its own permanent hostname and remote name, and is never redeployed in place. An app has at most one unfinished deployment, and quotas apply per app and per organization. A project-limited key may use only an archive uploaded through the app's project. `ttl` (such as `7d`) sets the retention deadline, within the instance maximum. Needs deployments to be on.",
+            "Deployers and above; a key needs `app:deploy`. Queues one deployment of an uploaded archive and returns at once with status `queued`. This release has no deployment worker; deployments remain queued until a worker is available. Each deployment gets its own permanent hostname and remote name, and is never redeployed in place. An app has at most one unfinished deployment, and quotas apply per app and per organization. A project-limited key may use only an archive uploaded through the app's project. `ttl` (such as `7d`) sets the retention deadline, within the instance maximum. Needs deployments to be on.",
         path: ["orgId", "appId"],
         body: createDeploymentSchema,
         ok: { status: 202, description: "Queued.", schema: deploymentSchema },
@@ -456,7 +456,7 @@ export const docs = {
         tags: ["Deployments"],
         summary: "List a deployment's events",
         description:
-            "A key needs `app:read`. Progress in order. Page with `after` (the last `seq` you saw) and `limit` (1 to 500, default 100).",
+            "A key needs `app:read`. Progress in order. Sequence numbers are decimal strings. Page with `after` (the last `seq` you saw) and `limit` (1 to 500, default 100).",
         path: ["orgId", "deploymentId"],
         query: [
             { name: "after", description: "Only events after this sequence number." },

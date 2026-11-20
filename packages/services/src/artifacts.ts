@@ -67,6 +67,29 @@ export function resolveArtifactPath(dataDir: string, storageKey: string): string
     return path.join(dataDir, storageKey);
 }
 
+// Create one child at a time. Recursive mkdir could recreate a missing mount
+// if the data directory disappeared after the initial check.
+async function ensureStorageChild(directory: string) {
+    try {
+        await fs.mkdir(directory, { mode: 0o700 });
+    } catch (error) {
+        const code = (error as NodeJS.ErrnoException).code;
+        if (code === "EEXIST" && (await fs.lstat(directory)).isDirectory()) return;
+        if (code === "ENOENT") {
+            throw new ServiceError(
+                "unavailable",
+                "The artifact storage directory is not available.",
+            );
+        }
+        throw error;
+    }
+}
+
+async function ensureArtifactDirectory(dataDir: string, file: string) {
+    await ensureStorageChild(path.join(dataDir, "artifacts"));
+    await ensureStorageChild(path.dirname(file));
+}
+
 // FileHandle.write may write less than it was given. Writes the whole chunk, and
 // fails if the file system stops making progress rather than dropping the rest.
 export async function writeFully(
@@ -193,7 +216,7 @@ export async function uploadArtifact(
     }
     let temp = "";
     try {
-        await fs.mkdir(tmpDir(deps.dataDir), { recursive: true, mode: 0o700 });
+        await ensureStorageChild(tmpDir(deps.dataDir));
         temp = path.join(tmpDir(deps.dataDir), `upload-${randomBytes(12).toString("hex")}.part`);
         const { digest, bytes } = await receive(body, temp, limits, meta.contentLength, signal);
         let summary;
@@ -352,7 +375,7 @@ async function finalize(
                     .executeTakeFirstOrThrow();
                 return shape(touched, true);
             }
-            await fs.mkdir(path.dirname(final), { recursive: true, mode: 0o700 });
+            await ensureArtifactDirectory(deps.dataDir, final);
             await fs.rename(temp, final);
             // Stored again, so its retention starts again too.
             const restored = await trx
@@ -369,7 +392,7 @@ async function finalize(
         if (existing) {
             // Collected earlier: the row remains but the archive is gone. The same digest is
             // the same bytes, so storing it again makes the very same artifact usable.
-            await fs.mkdir(path.dirname(final), { recursive: true, mode: 0o700 });
+            await ensureArtifactDirectory(deps.dataDir, final);
             await fs.rename(temp, final);
             try {
                 const restored = await trx
@@ -390,7 +413,7 @@ async function finalize(
             () => true,
             () => false,
         );
-        await fs.mkdir(path.dirname(final), { recursive: true, mode: 0o700 });
+        await ensureArtifactDirectory(deps.dataDir, final);
         // Atomic on one file system: the file appears under its final name only when
         // complete. The same digest is the same bytes, so a leftover is harmless.
         await fs.rename(temp, final);

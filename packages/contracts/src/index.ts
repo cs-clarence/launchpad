@@ -205,7 +205,7 @@ export const deploymentSchema = z.strictObject({
 });
 
 export const deploymentEventSchema = z.strictObject({
-    seq: z.number().int().positive(),
+    seq: z.string().regex(/^[1-9]\d*$/),
     phase: z.string(),
     level: z.enum(["info", "warn", "error"]),
     message: z.string(),

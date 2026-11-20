@@ -302,7 +302,7 @@ describe("apps and deployments over HTTP", () => {
             `${base()}/deployments/${deployment.id}/events`,
         );
         expect(z.array(deploymentEventSchema).parse(await events.json())).toMatchObject([
-            { seq: 1, phase: "queued" },
+            { seq: "1", phase: "queued" },
         ]);
         const after = await call(
             api,
@@ -311,6 +311,14 @@ describe("apps and deployments over HTTP", () => {
             `${base()}/deployments/${deployment.id}/events?after=1&limit=10`,
         );
         expect(await after.json()).toEqual([]);
+        const maxCursor = await call(
+            api,
+            "reader",
+            "GET",
+            `${base()}/deployments/${deployment.id}/events?after=2147483647`,
+        );
+        expect(maxCursor.status).toBe(200);
+        expect(await maxCursor.json()).toEqual([]);
         for (const query of [
             "after=abc",
             "limit=-1",
@@ -318,6 +326,7 @@ describe("apps and deployments over HTTP", () => {
             "limit=501",
             "limit=1.5",
             "after=99999999999",
+            "after=2147483648",
         ]) {
             const bad = await call(
                 api,

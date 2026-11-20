@@ -722,13 +722,17 @@ export function createApi(deps: {
                         request,
                         set,
                         { organizationId: params.orgId, scope: "app:read" },
-                        (p, key) => {
+                        async (p, key) => {
                             const number = (value: unknown, name: string) => {
                                 if (value === undefined) return undefined;
-                                if (typeof value !== "string" || !/^\d{1,9}$/.test(value)) {
+                                if (
+                                    typeof value !== "string" ||
+                                    !/^\d{1,10}$/.test(value) ||
+                                    Number(value) > 2_147_483_647
+                                ) {
                                     throw new ServiceError(
                                         "invalid",
-                                        `${name} must be a non-negative integer.`,
+                                        `${name} must be an integer from 0 to 2147483647.`,
                                     );
                                 }
                                 return Number(value);
@@ -737,7 +741,7 @@ export function createApi(deps: {
                             if (limit !== undefined && (limit < 1 || limit > 500)) {
                                 throw new ServiceError("invalid", "limit must be 1 to 500.");
                             }
-                            return listDeploymentEvents(
+                            const events = await listDeploymentEvents(
                                 db,
                                 p,
                                 params.orgId,
@@ -748,6 +752,7 @@ export function createApi(deps: {
                                 },
                                 key?.projectIds,
                             );
+                            return events.map((event) => ({ ...event, seq: String(event.seq) }));
                         },
                     ),
             )
