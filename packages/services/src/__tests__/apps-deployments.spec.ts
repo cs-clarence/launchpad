@@ -385,6 +385,15 @@ describe("creating a deployment", () => {
                 .where("artifact_id", "=", artifact)
                 .execute();
 
+        // A step that must not wait on a held lock: it fails the test instead of hanging it.
+        const bounded = <T>(promise: Promise<T>, what: string, ms = 5000) =>
+            Promise.race([
+                promise,
+                new Promise<never>((_, reject) =>
+                    setTimeout(() => reject(new Error(`${what} did not finish in ${ms}ms`)), ms),
+                ),
+            ]);
+
         // A transaction held open by the test, so an interleaving is chosen, not hoped for.
         // `ready` rejects if the transaction fails before it is holding anything.
         function holder(work: (trx: Kysely<Database>) => Promise<void>) {
@@ -497,6 +506,8 @@ describe("creating a deployment", () => {
             } finally {
                 collector.release();
                 await collector.done.catch(() => {});
+                // Every started operation ends before the test does, even after a failure.
+                await deploying;
             }
             // The collector commits without collecting (the test only holds the lock); the
             // deployment is then accepted with the artifact intact.
@@ -515,6 +526,7 @@ describe("creating a deployment", () => {
                 await sql`lock table hostname_reservation in access exclusive mode`.execute(trx);
             });
             let deploying: Promise<string> | undefined;
+            let collection: Promise<{ collected: string[] }> | undefined;
             let collected: string[] = [];
             try {
                 const pid = await gate.ready;
@@ -530,11 +542,14 @@ describe("creating a deployment", () => {
                 );
                 await waitBlocked(pid, "hostname_reservation");
                 // It is past the artifact lookup now: collection must skip the artifact.
-                collected = (await collectArtifacts(testDb.db, { dataDir, retentionSeconds: 0 }))
-                    .collected;
+                collection = collectArtifacts(testDb.db, { dataDir, retentionSeconds: 0 });
+                collected = (await bounded(collection, "collection")).collected;
             } finally {
                 gate.release();
                 await gate.done.catch(() => {});
+                // Both operations end before the test does, even after a failure above.
+                await collection?.catch(() => {});
+                await deploying;
             }
             expect(await deploying).toBe("ok");
             expect(collected).not.toContain(artifact);
