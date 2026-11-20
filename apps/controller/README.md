@@ -62,6 +62,8 @@ unknown). The controller carries its migrations, bundled so they run without the
 `LAUNCHPAD_MIGRATIONS_DIR` names another folder.
 The existing `LAUNCHPAD_DATA_DIR` directory must be mounted/available before startup;
 the controller does not create a missing mount. See [migration 018's destructive cutover](../../docs/immutable-cutover.md).
+This is a directory check, not proof of volume identity: an unintended anonymous `/data`
+volume also passes. Verify that every writer/admin uses the intended shared storage.
 
 Operator commands run as an Omni task whose command and options are named arguments.
 Passwords come from a file only you can read (mode 600) or from piped stdin, never from
@@ -202,6 +204,11 @@ Restoring is a procedure, not one command. The current step-by-step
    credential reconciliation and `recovery-clear`. Model mutations remain blocked by an
    fsynced external marker even if the restored dump said `ready`. In P2b, clear succeeds only
    for an empty model with no durable writer-seen file. Never remove these files manually.
+   A crashed import also retains `immutable-import-in-progress`; another restore and clear
+   refuse until the exact importer/wrappers and database backend have exited and an explicit
+   `recovery-ack-import --i-have-stopped-the-importer` is durably audited. Custom PostgreSQL
+   wrappers must forward `PGAPPNAME` to the actual client. This acknowledgement does not clear
+   model recovery; see [crashed-import recovery](../../docs/restore.md#recover-a-crashed-importer-before-retrying).
 
 ```sh
 omni -i run admin -p @launchpad-kit/controller -a command=restore \

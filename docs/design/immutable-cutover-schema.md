@@ -137,6 +137,18 @@ back an empty registry and stale generations while the router and Dokku keep the
   018 initializes `ready` only when the key is absent; it preserves any pre-migration
   `blocked` row written while restoring an older dump. After import, restore sets and verifies `blocked`
   wherever `instance_state` exists; for dumps predating that table, the external marker blocks after migration.
+- **Importer crash guard (user decision, 2026-11-20).** The admin's session advisory lock
+  cannot survive its death while a separate `pg_restore` continues. Before spawning it,
+  persist/fsync `maintenance/immutable-import-in-progress` with an operation identity,
+  database identity and importer application name. Clear only after observing child exit
+  and import-backend disconnect. A crash or unproven exit keeps the record and refuses
+  new restores and recovery-clear, including on an empty database; no schema rollback
+  may race that importer. `recovery-ack-import --i-have-stopped-the-importer` requires
+  explicit operator confirmation that the exact importer/wrappers and database backend
+  have exited, adds a database-backend refusal check, durably audits outside the dump,
+  then removes/fsyncs the record. This acknowledgement never clears model recovery.
+  The runbook requires both host-process and backend checks; an absent backend alone
+  cannot prove a wrapper will not connect later.
 - **Scope.** The gate covers **model mutations only**: apps, deployments, aliases, promotions,
   deletions, artifact collection and the worker. Sign-in, sessions, organizations, projects,
   members and API-key administration stay available, or a restored controller could not be used.

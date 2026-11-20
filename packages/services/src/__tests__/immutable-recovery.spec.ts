@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { createTestDatabase } from "@launchpad-kit/database/testing";
 import { sql } from "kysely";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
     assertModelMutationsReady,
     blockRestoredModel,
@@ -13,6 +13,9 @@ import {
     recordModelWriterSeen,
     withModelMutation,
     withImmutableRecoveryMaintenance,
+    beginImmutableImport,
+    acknowledgeImmutableImport,
+    assertNoPendingImmutableImport,
 } from "../immutable-recovery";
 import { getStatus } from "../status";
 
@@ -26,11 +29,120 @@ beforeEach(async () => {
     dataDir = await fs.mkdtemp(path.join(os.tmpdir(), "lp-recovery-"));
 });
 afterEach(async () => {
+    vi.restoreAllMocks();
     await source?.destroy();
     if (dataDir) await fs.rm(dataDir, { recursive: true, force: true });
 });
 
 describe("immutable model recovery gate", () => {
+    it("refuses importer acknowledgement without attestation or while its backend is alive", async () => {
+        await markImmutableRecoveryBlocked(dataDir);
+        const record = await beginImmutableImport(dataDir, "localhost:5432/fixture");
+        let release!: () => void;
+        const held = new Promise<void>((resolve) => {
+            release = resolve;
+        });
+        let connected!: () => void;
+        const ready = new Promise<void>((resolve) => {
+            connected = resolve;
+        });
+        const importer = source.db.connection().execute(async (connection) => {
+            await sql`select set_config('application_name', ${record.applicationName}, false)`.execute(
+                connection,
+            );
+            connected();
+            try {
+                await held;
+            } finally {
+                await sql`reset application_name`.execute(connection);
+            }
+        });
+        try {
+            await ready;
+            await expect(
+                acknowledgeImmutableImport(source.db, dataDir, record.databaseIdentity, false),
+            ).rejects.toThrow(/Confirm/);
+            await expect(
+                acknowledgeImmutableImport(source.db, dataDir, record.databaseIdentity, true),
+            ).rejects.toThrow(/backend/);
+            await expect(clearImmutableRecovery(source.db, dataDir)).rejects.toThrow(/pg_restore/);
+        } finally {
+            release();
+            await importer;
+        }
+        await expect(
+            acknowledgeImmutableImport(source.db, dataDir, "wrong:5432/database", true),
+        ).rejects.toThrow(/different database/);
+        await expect(assertNoPendingImmutableImport(dataDir)).rejects.toThrow(
+            /previous pg_restore/,
+        );
+        await acknowledgeImmutableImport(source.db, dataDir, record.databaseIdentity, true);
+        await assertNoPendingImmutableImport(dataDir);
+        const audit = path.join(dataDir, `maintenance/immutable-import-ack-${record.id}`);
+        expect(JSON.parse(await fs.readFile(audit, "utf8"))).toMatchObject({
+            attestedStoppedImports: 1,
+            activeImportBackends: 0,
+            stoppedImporterAttested: true,
+        });
+        // Importer acknowledgement is not model reconciliation.
+        await expect(assertModelMutationsReady(source.db, dataDir)).rejects.toThrow(/blocked/);
+    });
+    it("resyncs the parent after a failed directory sync left maintenance present", async () => {
+        const open = fs.open.bind(fs);
+        let parentSyncs = 0;
+        vi.spyOn(fs, "open").mockImplementation(async (file, flags, mode) => {
+            const handle = await open(file, flags, mode);
+            if (file === dataDir) {
+                parentSyncs++;
+                if (parentSyncs === 1)
+                    vi.spyOn(handle, "sync").mockRejectedValueOnce(
+                        new Error("parent fsync failed"),
+                    );
+            }
+            return handle;
+        });
+        await expect(markImmutableRecoveryBlocked(dataDir)).rejects.toThrow("parent fsync failed");
+        expect((await fs.stat(path.join(dataDir, "maintenance"))).isDirectory()).toBe(true);
+        await markImmutableRecoveryBlocked(dataDir);
+        expect(parentSyncs).toBe(2);
+    });
+
+    it("aborts a queued maintenance lock before any callback or recovery marker write", async () => {
+        let release!: () => void;
+        const held = new Promise<void>((resolve) => {
+            release = resolve;
+        });
+        let entered!: () => void;
+        const ready = new Promise<void>((resolve) => {
+            entered = resolve;
+        });
+        const writer = withModelMutation(source.db, dataDir, async () => {
+            entered();
+            await held;
+        });
+        await ready;
+        // Keep the unfixed blocking implementation from hanging the whole suite.
+        const fallback = setTimeout(() => release(), 500);
+        let called = false;
+        try {
+            await expect(
+                withImmutableRecoveryMaintenance(
+                    source.db,
+                    async () => {
+                        called = true;
+                        await markImmutableRecoveryBlocked(dataDir);
+                    },
+                    AbortSignal.timeout(50),
+                ),
+            ).rejects.toThrow();
+            expect(called).toBe(false);
+            await expect(fs.stat(marker())).rejects.toMatchObject({ code: "ENOENT" });
+        } finally {
+            clearTimeout(fallback);
+            release();
+            await writer;
+        }
+    });
     it("allows a fresh 018 instance and refuses a missing or invalid gate row", async () => {
         await assertModelMutationsReady(source.db, dataDir);
         await source.db

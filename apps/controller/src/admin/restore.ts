@@ -7,10 +7,13 @@ import { pipeline } from "node:stream/promises";
 import { createDatabase, type Database, migrationStatus } from "@launchpad-kit/database";
 import {
     resolveArtifactPath,
-    IMMUTABLE_MIGRATION,
     markImmutableRecoveryBlocked,
     blockRestoredModel,
     withImmutableRecoveryMaintenance,
+    assertNoPendingImmutableImport,
+    assertNoActiveImmutableImportBackends,
+    beginImmutableImport,
+    finishImmutableImport,
 } from "@launchpad-kit/services";
 import { type Kysely, sql } from "kysely";
 import { type BackupManifest, columnExists, pgEnvironment, verifyBackup } from "./backup";
@@ -49,7 +52,9 @@ async function hashFile(file: string) {
     return hash.digest("hex");
 }
 
-async function runPgRestore(options: RestoreOptions, dump: string) {
+async function runPgRestore(options: RestoreOptions, dump: string, applicationName: string) {
+    // Replacements are trusted synchronous tools: wrappers must exec/wait for
+    // the real importer, forward PGAPPNAME, and never background/queue imports.
     const binary = options.pgRestore ?? "pg_restore";
     const child = spawn(
         binary,
@@ -62,7 +67,11 @@ async function runPgRestore(options: RestoreOptions, dump: string) {
             `--dbname=${pgEnvironment(options.databaseUrl).PGDATABASE ?? ""}`,
         ],
         {
-            env: { PATH: process.env.PATH, ...pgEnvironment(options.databaseUrl) },
+            env: {
+                PATH: process.env.PATH,
+                ...pgEnvironment(options.databaseUrl),
+                PGAPPNAME: applicationName,
+            },
             stdio: ["pipe", "pipe", "pipe"],
             signal: options.signal,
         },
@@ -252,146 +261,190 @@ export async function restoreBackup(options: RestoreOptions): Promise<RestoreRes
 
     const pool = createDatabase(options.databaseUrl, { max: 1 });
     try {
-        return await withImmutableRecoveryMaintenance(pool, async (db) => {
-            const populated = (await userTableCount(db)) > 0;
-            const target = replaceTarget(options.databaseUrl);
-            if (populated) {
-                const dependents = await outsideDependents(db);
-                if (dependents.length > 0) {
-                    throw new RestoreError(
-                        `${dependents.join(", ")} (outside the public schema) depend on tables that --replace would drop. ` +
-                            "Remove them, or restore into an empty database. Nothing was changed.",
-                    );
-                }
-                if (options.replaceDatabase === undefined) {
-                    throw new RestoreError(
-                        `${target} already has data. Restore into an empty database, or replace it by naming ` +
-                            `it with --replace ${target} (back it up first).`,
-                    );
-                }
-                if (options.replaceDatabase !== target) {
+        return await withImmutableRecoveryMaintenance(
+            pool,
+            async (db) => {
+                await assertNoPendingImmutableImport(options.dataDir);
+                await assertNoActiveImmutableImportBackends(db);
+                const populated = (await userTableCount(db)) > 0;
+                const target = replaceTarget(options.databaseUrl);
+                if (populated) {
+                    const dependents = await outsideDependents(db);
+                    if (dependents.length > 0) {
+                        throw new RestoreError(
+                            `${dependents.join(", ")} (outside the public schema) depend on tables that --replace would drop. ` +
+                                "Remove them, or restore into an empty database. Nothing was changed.",
+                        );
+                    }
+                    if (options.replaceDatabase === undefined) {
+                        throw new RestoreError(
+                            `${target} already has data. Restore into an empty database, or replace it by naming ` +
+                                `it with --replace ${target} (back it up first).`,
+                        );
+                    }
+                    if (options.replaceDatabase !== target) {
+                        throw new RestoreError(
+                            `--replace names ${options.replaceDatabase}, but the target is ${target}.`,
+                        );
+                    }
+                } else if (
+                    options.replaceDatabase !== undefined &&
+                    options.replaceDatabase !== target
+                ) {
                     throw new RestoreError(
                         `--replace names ${options.replaceDatabase}, but the target is ${target}.`,
                     );
                 }
-            } else if (
-                options.replaceDatabase !== undefined &&
-                options.replaceDatabase !== target
-            ) {
-                throw new RestoreError(
-                    `--replace names ${options.replaceDatabase}, but the target is ${target}.`,
-                );
-            }
 
-            // This build must know every migration the backup holds; one it does not know came from a
-            // newer version, and restoring it here would leave a schema no code here understands.
-            const status = await migrationStatus(db);
-            const known = new Set([...status.applied, ...status.pending]);
-            const unknown = manifest.migrations.filter((name) => !known.has(name));
-            if (unknown.length > 0) {
-                throw new RestoreError(
-                    `The backup holds migrations this version does not know (${unknown.join(", ")}): ` +
-                        "restore it with the version that made it, or a newer one.",
-                );
-            }
-
-            // Check every archive before anything is written: a file with the same name and other
-            // content is not ours to overwrite.
-            const toCopy: BackupManifest["artifacts"] = [];
-            let present = 0;
-            for (const artifact of manifest.artifacts) {
-                const target = resolveArtifactPath(options.dataDir, artifact.storageKey);
-                const existing = await fs.lstat(target).catch(() => null);
-                if (!existing) {
-                    toCopy.push(artifact);
-                } else if (existing.isFile() && (await hashFile(target)) === artifact.sha256) {
-                    present++;
-                } else {
+                // This build must know every migration the backup holds; one it does not know came from a
+                // newer version, and restoring it here would leave a schema no code here understands.
+                const status = await migrationStatus(db);
+                const known = new Set([...status.applied, ...status.pending]);
+                const unknown = manifest.migrations.filter((name) => !known.has(name));
+                if (unknown.length > 0) {
                     throw new RestoreError(
-                        `${target} exists with different content (or is not a plain file); nothing was restored.`,
+                        `The backup holds migrations this version does not know (${unknown.join(", ")}): ` +
+                            "restore it with the version that made it, or a newer one.",
                     );
                 }
-            }
-            // Keyed on this binary's migration set, never the dump's: even an old dump
-            // can erase model rows while leaving remote resources behind.
-            const modelAware = known.has(IMMUTABLE_MIGRATION);
-            if (modelAware) await markImmutableRecoveryBlocked(options.dataDir);
-            for (const artifact of toCopy) {
-                const target = resolveArtifactPath(options.dataDir, artifact.storageKey);
-                await fs.mkdir(path.dirname(target), { recursive: true, mode: 0o700 });
-                const temp = `${target}.restore-${randomBytes(6).toString("hex")}`;
-                try {
-                    // Hashed as it is copied: the file is checked against the manifest at the moment it is used.
-                    const hash = createHash("sha256");
-                    await pipeline(
-                        createReadStream(path.join(root, artifact.storageKey)),
-                        new Transform({
-                            transform(chunk, _encoding, done) {
-                                hash.update(chunk);
-                                done(null, chunk);
-                            },
-                        }),
-                        createWriteStream(temp, { mode: 0o600, flags: "wx" }),
-                    );
-                    if (hash.digest("hex") !== artifact.sha256) {
+
+                // Check every archive before anything is written: a file with the same name and other
+                // content is not ours to overwrite.
+                const toCopy: BackupManifest["artifacts"] = [];
+                let present = 0;
+                for (const artifact of manifest.artifacts) {
+                    const target = resolveArtifactPath(options.dataDir, artifact.storageKey);
+                    const existing = await fs.lstat(target).catch(() => null);
+                    if (!existing) {
+                        toCopy.push(artifact);
+                    } else if (existing.isFile() && (await hashFile(target)) === artifact.sha256) {
+                        present++;
+                    } else {
                         throw new RestoreError(
-                            `${artifact.storageKey} changed while it was being copied.`,
+                            `${target} exists with different content (or is not a plain file); nothing was restored.`,
                         );
                     }
-                    await fs.rename(temp, target);
+                }
+                // Keyed on this binary's migration set, never the dump's: even an old dump
+                // can erase model rows while leaving remote resources behind.
+                options.signal?.throwIfAborted();
+                // This binary knows 018 even when a migration-folder override or the
+                // backup contains only older migrations.
+                await markImmutableRecoveryBlocked(options.dataDir);
+                for (const artifact of toCopy) {
+                    options.signal?.throwIfAborted();
+                    const target = resolveArtifactPath(options.dataDir, artifact.storageKey);
+                    await fs.mkdir(path.dirname(target), { recursive: true, mode: 0o700 });
+                    const temp = `${target}.restore-${randomBytes(6).toString("hex")}`;
+                    try {
+                        // Hashed as it is copied: the file is checked against the manifest at the moment it is used.
+                        const hash = createHash("sha256");
+                        await pipeline(
+                            createReadStream(path.join(root, artifact.storageKey)),
+                            new Transform({
+                                transform(chunk, _encoding, done) {
+                                    hash.update(chunk);
+                                    done(null, chunk);
+                                },
+                            }),
+                            createWriteStream(temp, { mode: 0o600, flags: "wx" }),
+                            { signal: options.signal },
+                        );
+                        if (hash.digest("hex") !== artifact.sha256) {
+                            throw new RestoreError(
+                                `${artifact.storageKey} changed while it was being copied.`,
+                            );
+                        }
+                        await fs.rename(temp, target);
+                    } catch (error) {
+                        await fs.rm(temp, { force: true });
+                        throw error;
+                    }
+                }
+
+                // The old data is moved aside, not dropped: a restore that fails (or does not load what
+                // the backup holds) puts it back, and it is dropped only once the new data checks out.
+                const aside = `launchpad_replaced_${Date.now()}`;
+                options.signal?.throwIfAborted();
+                if (populated) {
+                    await db.transaction().execute(async (trx) => {
+                        // Do not wait behind a session that still holds the schema.
+                        await sql`set local lock_timeout = '10s'`.execute(trx);
+                        await sql.raw(`alter schema public rename to ${aside}`).execute(trx);
+                        if (!createsPublic) await sql`create schema public`.execute(trx);
+                    });
+                } else if (createsPublic) {
+                    // The empty database's own `public` makes way for the one the dump creates.
+                    await sql`drop schema if exists public`.execute(db);
+                } else {
+                    await sql`create schema if not exists public`.execute(db);
+                }
+                const putBack = async () => {
+                    await db.transaction().execute(async (trx) => {
+                        await sql`drop schema if exists public cascade`.execute(trx);
+                        if (populated)
+                            await sql.raw(`alter schema ${aside} rename to public`).execute(trx);
+                        else await sql`create schema public`.execute(trx);
+                    });
+                };
+                try {
+                    const importer = await beginImmutableImport(options.dataDir, target);
+                    let importFailure: unknown;
+                    try {
+                        await runPgRestore(
+                            options,
+                            path.join(root, manifest.database.file),
+                            importer.applicationName,
+                        );
+                    } catch (error) {
+                        importFailure = error;
+                        throw error;
+                    } finally {
+                        // runPgRestore observes the child's close event on success/error.
+                        // A dead admin cannot reach here, so its durable guard remains.
+                        try {
+                            await finishImmutableImport(db, options.dataDir, importer);
+                        } catch (exitError) {
+                            if (importFailure) {
+                                throw new RestoreError(
+                                    `Import failed (${String(importFailure)}); exit verification also failed (${String(exitError)}).`,
+                                );
+                            }
+                            throw exitError;
+                        }
+                    }
+                    await verifyRestored(db, manifest);
+                    await blockRestoredModel(db);
                 } catch (error) {
-                    await fs.rm(temp, { force: true });
+                    try {
+                        await assertNoPendingImmutableImport(options.dataDir);
+                    } catch {
+                        throw new RestoreError(
+                            "The importer's exit is unproven; no schema rollback was attempted. " +
+                                "Stop its OS process/wrappers and database backend, then use recovery-ack-import. " +
+                                `Preserve the backup and any ${aside} schema for recovery. Cause: ${String(error)}`,
+                        );
+                    }
+                    await putBack().catch((undo) => {
+                        throw new RestoreError(
+                            `The restore failed (${error instanceof Error ? error.message : String(error)}) and the old ` +
+                                `data could not be put back (${String(undo)}); it is in the schema ${aside}.`,
+                        );
+                    });
                     throw error;
                 }
-            }
+                if (populated) await sql.raw(`drop schema ${aside} cascade`).execute(db);
 
-            // The old data is moved aside, not dropped: a restore that fails (or does not load what
-            // the backup holds) puts it back, and it is dropped only once the new data checks out.
-            const aside = `launchpad_replaced_${Date.now()}`;
-            if (populated) {
-                await db.transaction().execute(async (trx) => {
-                    // Do not wait behind a session that still holds the schema.
-                    await sql`set local lock_timeout = '10s'`.execute(trx);
-                    await sql.raw(`alter schema public rename to ${aside}`).execute(trx);
-                    if (!createsPublic) await sql`create schema public`.execute(trx);
-                });
-            } else if (createsPublic) {
-                // The empty database's own `public` makes way for the one the dump creates.
-                await sql`drop schema if exists public`.execute(db);
-            } else {
-                await sql`create schema if not exists public`.execute(db);
-            }
-            const putBack = async () => {
-                await db.transaction().execute(async (trx) => {
-                    await sql`drop schema if exists public cascade`.execute(trx);
-                    if (populated)
-                        await sql.raw(`alter schema ${aside} rename to public`).execute(trx);
-                    else await sql`create schema public`.execute(trx);
-                });
-            };
-            try {
-                await runPgRestore(options, path.join(root, manifest.database.file));
-                await verifyRestored(db, manifest);
-                if (modelAware) await blockRestoredModel(db);
-            } catch (error) {
-                await putBack().catch((undo) => {
-                    throw new RestoreError(
-                        `The restore failed (${error instanceof Error ? error.message : String(error)}) and the old ` +
-                            `data could not be put back (${String(undo)}); it is in the schema ${aside}.`,
-                    );
-                });
-                throw error;
-            }
-            if (populated) await sql.raw(`drop schema ${aside} cascade`).execute(db);
-
-            const after = await migrationStatus(db);
-            return {
-                manifest,
-                pendingMigrations: after.pending,
-                filesRestored: toCopy.length,
-                filesAlreadyPresent: present,
-            };
-        });
+                const after = await migrationStatus(db);
+                return {
+                    manifest,
+                    pendingMigrations: after.pending,
+                    filesRestored: toCopy.length,
+                    filesAlreadyPresent: present,
+                };
+            },
+            options.signal,
+        );
     } finally {
         await pool.destroy();
     }

@@ -11,9 +11,6 @@ down migration. Rehearse on disposable infrastructure first: the checked-in
    grace-period and dispatched Dokku operation settlement checks in
    [restore, step 1](restore.md) **before taking the backup**. A worker exiting
    does not prove that its remote destroy finished.
-   An upgrade crossing 018 must complete the
-   [pre-P2b inventory and exact-name app cleanup](immutable-cutover.md) before migration:
-   the old database identities are dropped unconditionally.
 2. Take and verify a [pre-upgrade backup](backup.md) with the currently running
    version. Store the database dump and archives together, and keep the auth
    secret, environment settings, Dokku host state and preview datastores
@@ -27,6 +24,9 @@ down migration. Rehearse on disposable infrastructure first: the checked-in
 
     This flag belongs to the **old** backup command; P2a's backup command no
     longer accepts it. Do not proceed if `verify-backup` fails.
+    **After** verifying the backup and preserving Dokku state, an upgrade crossing
+    018 must complete the [pre-P2b inventory and exact-name app cleanup](immutable-cutover.md).
+    Finish this before step 4: the old identities are dropped unconditionally.
     With all legacy upload writers stopped, inspect the actual data directory's
     `tmp/` directory for regular files named `upload-<24 lowercase hex characters>.part`.
     Record and remove only those exact abandoned staging files, one at a time;

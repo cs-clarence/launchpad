@@ -54,6 +54,15 @@ function workspace(
 }
 
 describe("specifier parsing", () => {
+    it("does not mistake a hyphenated CLI command suffix for an import keyword", () => {
+        expect([
+            ...importedPackages(`
+            program.command("recovery-ack-import")
+                .description("Acknowledge a stopped importer");
+            import { value } from "real-package";
+        `),
+        ]).toEqual(["real-package"]);
+    });
     it("maps specifiers to package names and ignores non-packages", () => {
         expect(packageOf("zod")).toBe("zod");
         expect(packageOf("@scope/pkg/sub/path")).toBe("@scope/pkg");

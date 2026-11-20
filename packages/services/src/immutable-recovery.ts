@@ -1,6 +1,7 @@
-import { randomBytes } from "node:crypto";
+import { randomBytes, randomUUID } from "node:crypto";
 import { constants, promises as fs } from "node:fs";
 import path from "node:path";
+import { setTimeout as delay } from "node:timers/promises";
 import type { Database } from "@launchpad-kit/database";
 import { type Kysely, sql } from "kysely";
 
@@ -18,6 +19,7 @@ export const MODEL_TABLES = [
 const LOCK = "launchpad:immutable-recovery";
 const BLOCKED = "immutable-recovery-blocked";
 const SEEN = "model-writer-seen";
+const IMPORT = "immutable-import-in-progress";
 type Db = Kysely<Database>;
 
 export class ImmutableRecoveryError extends Error {
@@ -48,10 +50,12 @@ async function maintenance(dataDir: string, create = false) {
     if (create) {
         try {
             await fs.mkdir(dir, { mode: 0o700 });
-            await syncDirectory(root);
         } catch (error) {
             if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
         }
+        // A prior mkdir may have survived a failed parent fsync. EEXIST does
+        // not prove the directory entry is durable, so sync on retry too.
+        await syncDirectory(root);
     }
     try {
         const info = await fs.lstat(dir);
@@ -99,19 +103,24 @@ async function exists(dir: string | null, name: string) {
 
 // A restored ready row cannot clear this file: it lives outside the database dump.
 export async function markImmutableRecoveryBlocked(dataDir: string) {
+    await writeDurableRecord(dataDir, BLOCKED, {
+        version: 1,
+        restoreStartedAt: new Date().toISOString(),
+    });
+}
+
+async function writeDurableRecord(dataDir: string, name: string, record: unknown) {
     const dir = (await maintenance(dataDir, true))!;
     const temp = path.join(dir, `.recovery-${randomBytes(12).toString("hex")}`);
     try {
         const handle = await fs.open(temp, "wx", 0o600);
         try {
-            await handle.writeFile(
-                JSON.stringify({ version: 1, restoreStartedAt: new Date().toISOString() }) + "\n",
-            );
+            await handle.writeFile(JSON.stringify(record) + "\n");
             await handle.sync();
         } finally {
             await handle.close();
         }
-        await fs.rename(temp, path.join(dir, BLOCKED));
+        await fs.rename(temp, path.join(dir, name));
         await syncDirectory(dir);
     } finally {
         await fs.rm(temp, { force: true });
@@ -129,10 +138,25 @@ export async function lockImmutableRecovery(db: Db, exclusive: boolean) {
 export async function withImmutableRecoveryMaintenance<T>(
     db: Db,
     run: (connection: Db) => Promise<T>,
+    signal?: AbortSignal,
 ) {
     return db.connection().execute(async (connection) => {
-        await sql`select pg_advisory_lock(hashtextextended(${LOCK}, 0))`.execute(connection);
+        signal?.throwIfAborted();
+        if (!signal) {
+            await sql`select pg_advisory_lock(hashtextextended(${LOCK}, 0))`.execute(connection);
+        } else {
+            for (;;) {
+                signal.throwIfAborted();
+                const locked = await sql<{ acquired: boolean }>`
+                    select pg_try_advisory_lock(hashtextextended(${LOCK}, 0)) as acquired`.execute(
+                    connection,
+                );
+                if (locked.rows[0]!.acquired) break;
+                await delay(25, undefined, { signal });
+            }
+        }
         try {
+            signal?.throwIfAborted();
             return await run(connection);
         } finally {
             await sql`select pg_advisory_unlock(hashtextextended(${LOCK}, 0))`.execute(connection);
@@ -140,7 +164,155 @@ export async function withImmutableRecoveryMaintenance<T>(
     });
 }
 
+export interface ImmutableImportRecord {
+    version: 1;
+    id: string;
+    databaseIdentity: string;
+    applicationName: string;
+    startedAt: string;
+    adminPid: number;
+}
+
+export async function assertNoPendingImmutableImport(dataDir: string) {
+    if (await exists(await maintenance(dataDir), IMPORT)) {
+        throw new ImmutableRecoveryError(
+            "A previous pg_restore may still be running. Stop and verify its OS process and database backend, then run recovery-ack-import --i-have-stopped-the-importer before retrying.",
+        );
+    }
+}
+
+// Caller holds the exclusive maintenance lock. This file outlives the admin's
+// session lock if it dies; absence is restored only after observing child exit.
+export async function beginImmutableImport(
+    dataDir: string,
+    databaseIdentity: string,
+): Promise<ImmutableImportRecord> {
+    await assertNoPendingImmutableImport(dataDir);
+    const id = randomUUID();
+    const record: ImmutableImportRecord = {
+        version: 1,
+        id,
+        databaseIdentity,
+        applicationName: `launchpad-restore-${id}`,
+        startedAt: new Date().toISOString(),
+        adminPid: process.pid,
+    };
+    await writeDurableRecord(dataDir, IMPORT, record);
+    return record;
+}
+
+async function readImportRecord(dataDir: string): Promise<ImmutableImportRecord> {
+    const dir = await maintenance(dataDir);
+    if (!dir) throw new ImmutableRecoveryError("No pending import record exists.");
+    const handle = await fs.open(
+        path.join(dir, IMPORT),
+        constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK,
+    );
+    try {
+        const info = await handle.stat();
+        if (!info.isFile() || info.size > 4096)
+            throw new ImmutableRecoveryError(
+                "Invalid import record; keep recovery closed and investigate.",
+            );
+        const value = JSON.parse(await handle.readFile("utf8")) as ImmutableImportRecord;
+        if (
+            value.version !== 1 ||
+            typeof value.id !== "string" ||
+            !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(value.id) ||
+            value.applicationName !== `launchpad-restore-${value.id}` ||
+            typeof value.databaseIdentity !== "string" ||
+            !value.databaseIdentity.length ||
+            value.databaseIdentity.length > 1024 ||
+            typeof value.startedAt !== "string" ||
+            !Number.isFinite(Date.parse(value.startedAt)) ||
+            !Number.isSafeInteger(value.adminPid) ||
+            value.adminPid <= 0
+        ) {
+            throw new ImmutableRecoveryError(
+                "Invalid import record; keep recovery closed and investigate.",
+            );
+        }
+        return value;
+    } finally {
+        await handle.close();
+    }
+}
+
+async function activeImportBackends(db: Db) {
+    const active = await sql<{ n: number }>`
+        select count(*)::int as n from pg_stat_activity
+        where datname = current_database() and pid <> pg_backend_pid()
+          and (application_name = 'pg_restore' or application_name like 'launchpad-restore-%')
+    `.execute(db);
+    return active.rows[0]!.n;
+}
+
+export async function assertNoActiveImmutableImportBackends(db: Db) {
+    if (await activeImportBackends(db)) {
+        throw new ImmutableRecoveryError(
+            "An import backend is still connected (including any other pg_restore on this database); no restore/recovery changes are permitted.",
+        );
+    }
+}
+
+export async function finishImmutableImport(
+    db: Db,
+    dataDir: string,
+    record: ImmutableImportRecord,
+) {
+    // Client exit can precede backend cleanup, especially after disconnect/abort.
+    // Do not undo schemas or clear the guard while a backend could still commit.
+    const deadline = Date.now() + 2000;
+    while (await activeImportBackends(db)) {
+        if (Date.now() >= deadline)
+            throw new ImmutableRecoveryError(
+                "Importer backend exit is unproven; preserve the import record and stop recovery.",
+            );
+        await delay(25);
+    }
+    const current = await readImportRecord(dataDir);
+    if (current.id !== record.id)
+        throw new ImmutableRecoveryError("The pending import record changed unexpectedly.");
+    const dir = (await maintenance(dataDir))!;
+    await fs.unlink(path.join(dir, IMPORT));
+    await syncDirectory(dir);
+}
+
+// This cannot prove OS-process exit: the explicit confirmation covers that,
+// including wrappers that might connect later. The backend check is additional
+// refusal evidence, never a replacement for the attestation.
+export async function acknowledgeImmutableImport(
+    db: Db,
+    dataDir: string,
+    databaseIdentity: string,
+    importerStopped: boolean,
+) {
+    if (!importerStopped)
+        throw new ImmutableRecoveryError(
+            "Confirm the previous importer and its database backend have exited (--i-have-stopped-the-importer).",
+        );
+    await withImmutableRecoveryMaintenance(db, async (connection) => {
+        const record = await readImportRecord(dataDir);
+        if (record.databaseIdentity !== databaseIdentity)
+            throw new ImmutableRecoveryError(
+                "Import acknowledgement targets a different database.",
+            );
+        await assertNoActiveImmutableImportBackends(connection);
+        // The next restore replaces public, and it may currently be empty. Audit
+        // outside the dump so acknowledgement is durable in both cases.
+        await writeDurableRecord(dataDir, `immutable-import-ack-${record.id}`, {
+            version: 1,
+            acknowledgementRequestedAt: new Date().toISOString(),
+            attestedStoppedImports: 1,
+            activeImportBackends: 0,
+            stoppedImporterAttested: true,
+        });
+        await finishImmutableImport(connection, dataDir, record);
+    });
+}
+
 export async function assertModelMutationsReady(db: Db, dataDir: string) {
+    await assertNoPendingImmutableImport(dataDir);
     const dir = await maintenance(dataDir);
     if (await exists(dir, BLOCKED))
         throw new ImmutableRecoveryError(
@@ -228,6 +400,8 @@ export async function blockRestoredModel(db: Db) {
 // with the audited attestation regardless of empty tables or a replaced volume.
 export async function clearImmutableRecovery(db: Db, dataDir: string) {
     return withImmutableRecoveryMaintenance(db, async (connection) => {
+        await assertNoPendingImmutableImport(dataDir);
+        await assertNoActiveImmutableImportBackends(connection);
         const dir = await maintenance(dataDir);
         await connection.transaction().execute(async (trx) => {
             await lockImmutableRecovery(trx, true);

@@ -13,6 +13,7 @@ import {
     assertModelMutationsReady,
     clearImmutableRecovery,
     recordModelWriterSeen,
+    acknowledgeImmutableImport,
     type Principal,
 } from "@launchpad-kit/services";
 import { SITE, tarGz } from "@launchpad-kit/services/testing";
@@ -33,7 +34,7 @@ const usesFixture = (() => {
 })();
 const tool = (name: "pg_dump" | "pg_restore") =>
     usesFixture
-        ? `docker exec -i -e PGHOST=127.0.0.1 -e PGPORT=5432 -e PGUSER -e PGPASSWORD -e PGDATABASE ${CONTAINER} ${name} "$@"`
+        ? `docker exec -i -e PGHOST=127.0.0.1 -e PGPORT=5432 -e PGUSER -e PGPASSWORD -e PGDATABASE -e PGAPPNAME ${CONTAINER} ${name} "$@"`
         : `${process.env[name === "pg_dump" ? "TEST_PG_DUMP" : "TEST_PG_RESTORE"] ?? name} "$@"`;
 
 let source: Awaited<ReturnType<typeof createTestDatabase>>;
@@ -331,6 +332,114 @@ exit 0
                 await fs.stat(path.join(options.dataDir, "maintenance/immutable-recovery-blocked"))
             ).isFile(),
         ).toBe(true);
+        await expect(assertModelMutationsReady(target.db, options.dataDir)).rejects.toThrow(
+            /pg_restore/,
+        );
+        await expect(restoreBackup(options)).rejects.toThrow(/previous pg_restore/);
+        await expect(clearImmutableRecovery(target.db, options.dataDir)).rejects.toThrow(
+            /pg_restore/,
+        );
+        const acknowledged = spawnSync(
+            "bun",
+            [
+                path.resolve(import.meta.dirname, "../../../.output/admin.mjs"),
+                "recovery-ack-import",
+                "--i-have-stopped-the-importer",
+            ],
+            {
+                env: {
+                    PATH: process.env.PATH,
+                    HOME: process.env.HOME,
+                    DATABASE_URL: target.url,
+                    LAUNCHPAD_DATA_DIR: options.dataDir,
+                },
+                encoding: "utf8",
+                timeout: 30_000,
+            },
+        );
+        expect(acknowledged.status, acknowledged.stderr).toBe(0);
+        await expect(assertModelMutationsReady(target.db, options.dataDir)).rejects.toThrow(
+            /blocked/,
+        );
+    });
+
+    it("refuses a second restore while a crashed admin's importer wrapper can still connect", async () => {
+        const target = await emptyTarget();
+        await target.migrate();
+        const options = restoreOptions(target, { replaceDatabase: replaceTarget(target.url) });
+        const heldDump = path.join(work, "held-import.dump");
+        const release = path.join(work, "release-held-import");
+        const finished = path.join(work, "held-import-exited");
+        const crash = path.join(work, "pg_restore_surviving_wrapper.sh");
+        await fs.writeFile(
+            crash,
+            `#!/bin/sh
+case "$*" in *--list*|*--schema-only*) exec ${restoreTool} "$@";; esac
+cat > "${heldDump}"
+parent="$PPID"
+exec >/dev/null 2>&1
+kill -KILL "$parent"
+for i in $(seq 1 400); do
+    [ -e "${release}" ] && break
+    sleep 0.05
+done
+if [ -e "${release}" ]; then
+    ${restoreTool} "$@" < "${heldDump}"
+    echo "$?" > "${finished}"
+else
+    echo "124" > "${finished}"
+fi
+`,
+            { mode: 0o700 },
+        );
+        const result = spawnSync(
+            "bun",
+            [
+                path.resolve(import.meta.dirname, "../../../.output/admin.mjs"),
+                "restore",
+                backupDir,
+                "--i-have-stopped-the-workers",
+                "--replace",
+                replaceTarget(target.url),
+            ],
+            {
+                env: {
+                    PATH: process.env.PATH,
+                    HOME: process.env.HOME,
+                    DATABASE_URL: target.url,
+                    LAUNCHPAD_DATA_DIR: options.dataDir,
+                    LAUNCHPAD_PG_RESTORE: crash,
+                },
+                encoding: "utf8",
+                timeout: 60_000,
+            },
+        );
+        try {
+            expect(result.error, result.stderr).toBeUndefined();
+            expect(result.signal, result.stderr).toBe("SIGKILL");
+            await expect(fs.stat(finished)).rejects.toMatchObject({ code: "ENOENT" });
+            // There is not even a backend yet. The durable guard must refuse
+            // before a later import could commit into the second restore's schema.
+            await expect(restoreBackup(options)).rejects.toThrow(/previous pg_restore/);
+            await expect(clearImmutableRecovery(target.db, options.dataDir)).rejects.toThrow(
+                /pg_restore/,
+            );
+        } finally {
+            await fs.writeFile(release, "");
+            const deadline = Date.now() + 30_000;
+            while (!(await fs.stat(finished).catch(() => null))) {
+                if (Date.now() > deadline)
+                    throw new Error("The test-owned importer wrapper did not exit.");
+                await new Promise((resolve) => setTimeout(resolve, 25));
+            }
+        }
+        expect((await fs.readFile(finished, "utf8")).trim()).toBe("0");
+        await acknowledgeImmutableImport(
+            target.db,
+            options.dataDir,
+            replaceTarget(target.url),
+            true,
+        );
         await expect(assertModelMutationsReady(target.db, options.dataDir)).rejects.toThrow(
             /blocked/,
         );

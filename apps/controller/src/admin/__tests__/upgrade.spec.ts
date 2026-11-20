@@ -69,7 +69,7 @@ function pgClient(name: "pg_dump" | "pg_restore") {
         .filter(([key, value]) => key !== "PATH" && value)
         .map(([key, value]) => `export ${key}='${String(value).replaceAll("'", "'\\''")}'`)
         .join("\n");
-    return `${exports}\ndocker exec -i -e PGHOST=127.0.0.1 -e PGPORT=5432 -e PGUSER -e PGPASSWORD -e PGDATABASE launchpad-test-db ${name} "$@"`;
+    return `${exports}\ndocker exec -i -e PGHOST=127.0.0.1 -e PGPORT=5432 -e PGUSER -e PGPASSWORD -e PGDATABASE -e PGAPPNAME launchpad-test-db ${name} "$@"`;
 }
 
 async function admin(url: string, data: string, work: string, command: string, ...args: string[]) {

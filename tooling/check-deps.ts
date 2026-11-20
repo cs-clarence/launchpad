@@ -24,7 +24,7 @@ export interface Project {
 const SOURCE = /\.(ts|tsx|mts|cts|js|mjs|cjs)$/;
 const SKIP_DIRS = new Set(["node_modules", "dist", ".output", ".tanstack", "coverage", ".omni"]);
 const BUILTINS = new Set([...builtinModules, ...builtinModules.map((m) => `node:${m}`)]);
-const IMPORT = /(?:\bfrom\s*|\bimport\s*\(?\s*|\brequire\s*\(\s*)["']([^"']+)["']/g;
+const IMPORT = /(?<![\w$-])(?:from\s*|import\s*\(?\s*|require\s*\(\s*)["']([^"']+)["']/g;
 
 // The package name an import specifier points at, or null for specifiers that are
 // not packages (relative paths, built-ins, Bun and Vite virtual modules).

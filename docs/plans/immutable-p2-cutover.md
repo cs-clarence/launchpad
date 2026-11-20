@@ -237,4 +237,19 @@ or majors. Minor follow-ups clarify OS-user ownership, conservative no-op GC wri
 and missing-storage errors. The final full local gates, image/package checks and image upgrade
 drill pass after those follow-ups; disposable PostgreSQL is torn down.
 
-Remaining: commit/push, CI and CodeRabbit.
+PR #58 is open; original head passed all eight checks. Review follow-ups below
+are pending refreshed PR gates.
+
+PR #58 review follow-up: the user chose a durable importer refusal guard rather
+than an importer-held process-lock redesign. A crashed/unproven `pg_restore` keeps
+its external in-progress record, blocking another restore and recovery-clear until
+an explicit, durably audited importer-exit acknowledgement. Parent-directory fsync
+is repeated after EEXIST, deadline-bearing recovery-lock waits are abortable, and
+runbook inventory/cleanup is ordered before 018 but after verified backup.
+Independent Opus review found no blockers; its wrapper-contract concern is
+addressed by requiring synchronous exec/wait and PGAPPNAME forwarding, with
+fire-and-forget wrappers unsupported. Minor follow-ups preserve both import/exit
+errors, validate record metadata, cancel archive copying, clarify conservative
+backend refusals and audit attestation semantics. Full local checks, tests,
+build/integration, image/package checks and the image upgrade drill pass;
+disposable PostgreSQL is torn down.

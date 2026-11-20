@@ -39,8 +39,13 @@ or prove. `restore` never contacts Dokku. Back up the target database first.
     and archive pre-checks, before copying any archive. A failed or killed restore
     keeps that marker. A restored `ready` database row cannot bypass it.
 
-3. If `restore` reports pending migrations, run `bun .output/admin.mjs migrate`
-   from the **intended** version, then `migrate --status` (`pending: 0`, exit
+3. If `restore` reports pending migrations, check whether 018 is pending **before
+   running `migrate`**. If it is, keep ingress closed
+   and first use the **pre-P2b binary** against the restored database for
+   `inventory-previews --all`. Verify a matched backup and preserve Dokku state
+   before any exact-name cleanup; follow the [cutover runbook](immutable-cutover.md)
+   while the old table identities still exist. Never defer this inventory until
+   after migrating. Then migrate from the **intended** version and run `migrate --status` (`pending: 0`, exit
    0). Run `bun .output/admin.mjs check-restore` with the `DOKKU_SSH_*` settings (the worker is idle and does not read them; these are only for this check). It records
    its lists of **missing archives, missing
    immutable deployment apps and passed deployment preview deadlines**. Queued
@@ -136,6 +141,52 @@ or prove. `restore` never contacts Dokku. Back up the target database first.
    P5 supplies verification ([recovery design](design/immutable-cutover-schema.md#restore-and-the-recovery-gate)).
    Sign-in, organizations, members, projects and key administration remain available
    while the model is blocked; the marker is not an access-control substitute.
+
+## Recover a crashed importer before retrying
+
+Before spawning `pg_restore`, this binary fsyncs
+`maintenance/immutable-import-in-progress`, identifying the target database and
+the import's `PGAPPNAME`. A normal child exit is followed by a check that import
+backends have disconnected before the record is removed. If the admin dies,
+or backend exit cannot be established, the record remains. Another restore and
+`recovery-clear` then refuse, even if the restored model is empty. No schema undo
+is attempted while an importer might still commit.
+Custom `LAUNCHPAD_PG_RESTORE` programs are trusted synchronous replacements:
+they must `exec` the actual client or wait for it and all import workers, forward
+`PGAPPNAME`, and never background or queue an importer that outlives the wrapper.
+For remote/container wrappers this includes handling cancellation without leaving
+an untracked later-connecting worker. An absent backend cannot make a fire-and-forget
+wrapper safe; such wrappers are unsupported.
+
+1. Keep ingress closed and preserve the backup and any `launchpad_replaced_*`
+   schema. Inspect the owner-only import record, its database identity,
+   application name and timestamp. Identify and stop the **exact** old importer
+   and all wrappers; verify their OS processes have exited. A missing backend
+   alone is not proof: a surviving wrapper may connect later. Do not kill a
+   process solely from an old PID, which may have been reused.
+2. On the recorded database, inspect `pg_stat_activity` for that application's
+   backend and any other `pg_restore` or `launchpad-restore-*` importer. Confirm
+   no earlier import backend remains or could commit. If you cannot establish
+   both OS-process and database-backend exit, stop here.
+3. As the controller's OS user, with the **same data directory and target database**:
+
+    ```sh
+    bun .output/admin.mjs recovery-ack-import --i-have-stopped-the-importer
+    ```
+
+    The flag attests to step 1 and backend exit. The command additionally refuses
+    while an import backend is visible. It fsyncs a count-only acknowledgement in
+    `maintenance/immutable-import-ack-<operation-id>` **outside the database dump**,
+    then removes/fsyncs the pending record. The acknowledgement is durable even if
+    `public` is empty or replaced by the next restore. It does **not** clear the
+    model recovery marker.
+    The audit records the operator's attestation/request before removal, not a claim
+    that removal succeeded; if removal fails, the pending record continues to block.
+
+4. Follow the interrupted-schema recovery notes in the
+   [controller reference](../apps/controller/README.md#restore), then retry the
+   verified restore procedure. Never remove import/recovery records manually
+   or run `migrate` while an import could still be running.
 
 ## Repeat the disposable drill
 

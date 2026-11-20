@@ -10,9 +10,9 @@ import { createDatabase, migrateToLatest, migrationStatus } from "@launchpad-kit
 import { readFileSync, statSync } from "node:fs";
 import path from "node:path";
 import { createDokkuClient } from "@launchpad-kit/dokku";
-import { clearImmutableRecovery } from "@launchpad-kit/services";
+import { acknowledgeImmutableImport, clearImmutableRecovery } from "@launchpad-kit/services";
 import { createBackup, verifyBackup } from "./backup";
-import { checkRestore, restoreBackup } from "./restore";
+import { checkRestore, restoreBackup, replaceTarget } from "./restore";
 
 async function readStdin(): Promise<string> {
     const chunks: Buffer[] = [];
@@ -171,12 +171,34 @@ program
         );
         if (result.pendingMigrations.length > 0) {
             console.log(
-                `This version has ${result.pendingMigrations.length} migration(s) the backup lacks: run migrate.`,
+                `This version has ${result.pendingMigrations.length} migration(s) the backup lacks. Before migrate, follow docs/restore.md step 3: use the pre-P2b binary to inventory/clean up pre-018 data after a verified backup.`,
             );
         }
         console.log(
-            "Next: if migrations are pending run migrate, then run check-restore and follow docs/restore.md, " +
-                "then start the controller.",
+            "Next: follow docs/restore.md before migrating or starting the controller; keep ingress closed and preserve the recovery records.",
+        );
+    });
+
+program
+    .command("recovery-ack-import")
+    .description(
+        "Acknowledge a crashed restore importer only after its OS process and database backend have exited",
+    )
+    .requiredOption(
+        "--i-have-stopped-the-importer",
+        "confirm the old importer, wrappers and its database backend have exited",
+    )
+    .action(async (options) => {
+        await withDatabase((db) =>
+            acknowledgeImmutableImport(
+                db,
+                path.resolve(process.env.LAUNCHPAD_DATA_DIR ?? ".data/controller"),
+                replaceTarget(process.env.DATABASE_URL!),
+                options.iHaveStoppedTheImporter === true,
+            ),
+        );
+        console.log(
+            "Previous importer acknowledged in the durable maintenance audit. Model recovery remains blocked.",
         );
     });
 
