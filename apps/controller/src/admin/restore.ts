@@ -8,6 +8,7 @@ import { createDatabase, type Database, migrationStatus } from "@launchpad-kit/d
 import {
     resolveArtifactPath,
     markDeploymentRecoveryBlocked,
+    type RouterAnchor,
     blockRestoredModel,
     withDeploymentRecoveryMaintenance,
     assertNoPendingDeploymentImport,
@@ -39,7 +40,7 @@ export interface RestoreOptions {
     signal?: AbortSignal;
     // The router's active epoch read just before the restore (see routerAnchorFromEnv), recorded in
     // the recovery marker so recovery-clear can verify it changed. Omitted: not configured.
-    routerAnchor?: Parameters<typeof markDeploymentRecoveryBlocked>[1];
+    routerAnchor?: RouterAnchor;
 }
 
 export interface RestoreResult {

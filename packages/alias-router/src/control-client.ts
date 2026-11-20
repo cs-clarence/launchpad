@@ -223,7 +223,7 @@ export function createRouterControlClient(options: {
                 await call("v1/routes?limit=1", undefined, signal, MAX_LIST_REPLY_BYTES),
                 "uncertain",
             );
-            if (reply.instanceId !== authority.instanceId) {
+            if (reply.instanceId !== authority.instanceId || reply.epoch !== authority.epoch) {
                 throw new RouterControlError("uncertain");
             }
             return reply.epoch;

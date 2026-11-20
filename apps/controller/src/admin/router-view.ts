@@ -3,6 +3,7 @@ import {
     assertPrivateControlUrl,
     parseAppRoutingConfig,
     readRouterCredential,
+    type RouterAnchor,
     type RouterView,
 } from "@launchpad-kit/services";
 
@@ -61,11 +62,16 @@ export function routerSessionFromEnv(
 // or cannot be read must not stop an emergency restore. If it cannot be read, the anchor is the epoch
 // in the configured epoch file (the epoch the workers were using), so rotation can still be verified;
 // only with neither is there no anchor, and recovery-clear then needs --router-epoch-unrecorded.
-export async function routerAnchorFromEnv(env: Record<string, string | undefined>): Promise<{
-    routerEpoch: string | null;
-    note: "recorded" | "from-epoch-file" | "not-configured" | "unreachable";
-}> {
-    const session = routerSessionFromEnv(env);
+export async function routerAnchorFromEnv(
+    env: Record<string, string | undefined>,
+): Promise<RouterAnchor> {
+    let session: RouterSession | undefined;
+    try {
+        session = routerSessionFromEnv(env);
+    } catch {
+        // Incomplete or unsafe router settings must not stop an emergency restore either.
+        return { routerEpoch: null, note: "unreachable" };
+    }
     if (!session) return { routerEpoch: null, note: "not-configured" };
     try {
         return { routerEpoch: await session.epoch(), note: "recorded" };

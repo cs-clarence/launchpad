@@ -127,7 +127,7 @@ afterEach(async () => {
 describe("recovery counters", () => {
     it("refuses to clear while any alias exists without a router to compare", async () => {
         await aliasFixture();
-        await blocked();
+        await blocked(null);
         await expect(clearDeploymentRecovery(db.db, dataDir, true)).rejects.toThrow(
             /compare the router/,
         );
@@ -219,7 +219,7 @@ describe("recovery counters", () => {
     });
 
     it("clears an installation with no aliases without a router", async () => {
-        await blocked();
+        await blocked(null);
         await clearDeploymentRecovery(db.db, dataDir, true);
         await assertModelMutationsReady(db.db, dataDir);
     });
@@ -301,7 +301,11 @@ describe("recovery counters", () => {
                 .where("action", "=", "deployment.recovery-cleared")
                 .execute();
             expect(audit).toEqual([
-                { detail: "attested=reconciled-router-and-dokku;router-epoch=changed" },
+                {
+                    detail: expect.stringMatching(
+                        /^attested=reconciled-router-and-dokku;router-epoch=changed;anchor=[0-9a-f-]{36};current=[0-9a-f-]{36}$/,
+                    ),
+                },
             ]);
         });
 
@@ -353,7 +357,7 @@ describe("recovery counters", () => {
                 });
                 expect(await readRecoveryMarker(other)).toMatchObject({
                     routerEpoch: first,
-                    restoreStartedAt: bare!.restoreStartedAt,
+                    restoreStartedAt: (bare as { restoreStartedAt: string }).restoreStartedAt,
                 });
             } finally {
                 await fs.rm(other, { recursive: true, force: true });
@@ -376,8 +380,62 @@ describe("recovery counters", () => {
             );
         });
 
+        it("refuses to clear without a router when the restore anchored one, even with no aliases", async () => {
+            await blocked(randomUUID());
+            await expect(clearDeploymentRecovery(db.db, dataDir, true)).rejects.toThrow(
+                /router was configured when the restore began/,
+            );
+            await expect(assertModelMutationsReady(db.db, dataDir)).rejects.toThrow(/blocked/);
+            // A router that was unreachable (not unconfigured) at the time counts as configured.
+            await fs.rm(path.join(dataDir, "maintenance/deployment-recovery-blocked"));
+            await markDeploymentRecoveryBlocked(dataDir, {
+                routerEpoch: null,
+                note: "unreachable",
+            });
+            await expect(clearDeploymentRecovery(db.db, dataDir, true)).rejects.toThrow(
+                /router was configured/,
+            );
+        });
+
+        it("names a damaged marker, and audits the confirmation as such", async () => {
+            const alias = await aliasFixture();
+            await blockRestoredModel(db.db);
+            await fs.mkdir(path.join(dataDir, "maintenance"), { recursive: true, mode: 0o700 });
+            await fs.writeFile(
+                path.join(dataDir, "maintenance/deployment-recovery-blocked"),
+                "garbage",
+            );
+            await expect(clearDeploymentRecovery(db.db, dataDir, true, ok(alias))).rejects.toThrow(
+                /marker is damaged/,
+            );
+            await clearDeploymentRecovery(db.db, dataDir, true, ok(alias), {
+                routerEpochUnrecorded: true,
+            });
+            const audit = await db.db
+                .selectFrom("audit_event")
+                .select("detail")
+                .where("action", "=", "deployment.recovery-cleared")
+                .execute();
+            expect(audit).toEqual([
+                {
+                    detail: "attested=reconciled-router-and-dokku;router-epoch=marker-damaged-confirmed",
+                },
+            ]);
+        });
+
+        it("treats a symlink at the marker path as damaged, and refuses to record a malformed epoch", async () => {
+            await fs.mkdir(path.join(dataDir, "maintenance"), { recursive: true, mode: 0o700 });
+            const target = path.join(dataDir, "elsewhere");
+            await fs.writeFile(target, '{"version":1,"restoreStartedAt":"x"}');
+            await fs.symlink(target, path.join(dataDir, "maintenance/deployment-recovery-blocked"));
+            expect(await readRecoveryMarker(dataDir)).toBe("damaged");
+            await expect(
+                markDeploymentRecoveryBlocked(dataDir, { routerEpoch: "nope", note: "recorded" }),
+            ).rejects.toThrow(/not a valid epoch/);
+        });
+
         it("reads a version 1 or damaged marker as having no anchor", async () => {
-            await fs.mkdir(path.join(dataDir, "maintenance"), { mode: 0o700 });
+            await fs.mkdir(path.join(dataDir, "maintenance"), { recursive: true, mode: 0o700 });
             const file = path.join(dataDir, "maintenance/deployment-recovery-blocked");
             await fs.writeFile(
                 file,
@@ -391,7 +449,7 @@ describe("recovery counters", () => {
                 '{"version":2,"restoreStartedAt":"x","routerEpoch":"nope","routerEpochNote":"recorded"}',
             ]) {
                 await fs.writeFile(file, text);
-                expect(await readRecoveryMarker(dataDir)).toBeNull();
+                expect(await readRecoveryMarker(dataDir)).toBe("damaged");
             }
         });
     });

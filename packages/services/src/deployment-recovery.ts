@@ -105,79 +105,105 @@ async function exists(dir: string | null, name: string) {
     }
 }
 
-// What the recovery marker records. The router epoch is not a secret: it is the router's active
-// epoch at the moment the restore began, so recovery-clear can verify it has changed since.
-export interface RecoveryMarker {
-    version: 2;
-    restoreStartedAt: string;
-    routerEpoch: string | null;
-    // How the anchor was obtained ("recorded": read from the router; "from-epoch-file": the router
-    // could not be read, so the epoch the workers were configured with), or why there is none.
-    routerEpochNote: "recorded" | "from-epoch-file" | "not-configured" | "unreachable";
-}
+// How the restore anchored the router epoch: the epoch itself (not a secret) and where it came
+// from, or why there is none. The union keeps the two from disagreeing.
+export type RouterAnchor =
+    | { routerEpoch: string; note: "recorded" | "from-epoch-file" }
+    | { routerEpoch: null; note: "not-configured" | "unreachable" };
+
+export type RecoveryMarker = { version: 2; restoreStartedAt: string } & {
+    routerEpoch: RouterAnchor["routerEpoch"];
+    routerEpochNote: RouterAnchor["note"];
+};
 const EPOCH = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
-// Reads the marker if it is a well-formed version 1 or 2 record. Anything else (absent, corrupt,
-// unknown version) reads as no anchor: the file still blocks, and clear then needs the explicit flag.
-export async function readRecoveryMarker(dataDir: string): Promise<RecoveryMarker | null> {
+// Reads the marker: null when there is none, "damaged" when what is there is not a well-formed
+// version 1 or 2 record (the file still blocks; clear then treats it as having no anchor and says
+// so). Only absence is ENOENT; any other I/O failure is an error, never readiness.
+export async function readRecoveryMarker(
+    dataDir: string,
+): Promise<RecoveryMarker | "damaged" | null> {
     const dir = await maintenance(dataDir);
     if (!dir) return null;
+    let text: string;
     try {
-        const parsed = JSON.parse(await fs.readFile(path.join(dir, BLOCKED), "utf8")) as Record<
-            string,
-            unknown
-        >;
-        if (typeof parsed.restoreStartedAt !== "string") return null;
-        if (parsed.version === 1) {
-            return {
-                version: 2,
-                restoreStartedAt: parsed.restoreStartedAt,
-                routerEpoch: null,
-                routerEpochNote: "not-configured",
-            };
+        const handle = await fs.open(
+            path.join(dir, BLOCKED),
+            constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK,
+        );
+        try {
+            if (!(await handle.stat()).isFile()) return "damaged";
+            text = (await handle.readFile({ encoding: "utf8" })).slice(0, 4096);
+        } finally {
+            await handle.close();
         }
-        if (parsed.version !== 2) return null;
-        const epoch = parsed.routerEpoch;
-        if (epoch !== null && !(typeof epoch === "string" && EPOCH.test(epoch))) return null;
-        const note = parsed.routerEpochNote;
-        const anchored = note === "recorded" || note === "from-epoch-file";
-        if (!anchored && note !== "not-configured" && note !== "unreachable") return null;
-        if (anchored !== (epoch !== null)) return null;
+    } catch (error) {
+        const code = (error as NodeJS.ErrnoException).code;
+        if (code === "ENOENT") return null;
+        if (code === "ELOOP") return "damaged";
+        throw error;
+    }
+    let parsed: Record<string, unknown>;
+    try {
+        parsed = JSON.parse(text) as Record<string, unknown>;
+    } catch {
+        return "damaged";
+    }
+    if (typeof parsed.restoreStartedAt !== "string") return "damaged";
+    if (parsed.version === 1) {
+        return {
+            version: 2,
+            restoreStartedAt: parsed.restoreStartedAt,
+            routerEpoch: null,
+            routerEpochNote: "not-configured",
+        };
+    }
+    if (parsed.version !== 2) return "damaged";
+    const { routerEpoch: epoch, routerEpochNote: note } = parsed;
+    if (
+        typeof epoch === "string" &&
+        EPOCH.test(epoch) &&
+        (note === "recorded" || note === "from-epoch-file")
+    ) {
         return {
             version: 2,
             restoreStartedAt: parsed.restoreStartedAt,
             routerEpoch: epoch,
             routerEpochNote: note,
         };
-    } catch {
-        return null;
     }
+    if (epoch === null && (note === "not-configured" || note === "unreachable")) {
+        return {
+            version: 2,
+            restoreStartedAt: parsed.restoreStartedAt,
+            routerEpoch: null,
+            routerEpochNote: note,
+        };
+    }
+    return "damaged";
 }
 
 // A restored ready row cannot clear this file: it lives outside the database dump. A rerun after an
-// interrupted restore keeps the first anchor and start time: they mark when the writers stopped.
+// interrupted restore keeps the first anchor and start time (they mark when the writers stopped),
+// but still writes the record durably: the earlier directory sync may have failed.
 export async function markDeploymentRecoveryBlocked(
     dataDir: string,
-    anchor: { routerEpoch: string | null; note: RecoveryMarker["routerEpochNote"] } = {
-        routerEpoch: null,
-        note: "not-configured",
-    },
+    anchor: RouterAnchor = { routerEpoch: null, note: "not-configured" },
 ) {
-    const existing = await readRecoveryMarker(dataDir);
-    if (existing && existing.routerEpoch !== null) return;
-    const record: RecoveryMarker = {
-        version: 2,
-        restoreStartedAt: existing?.restoreStartedAt ?? new Date().toISOString(),
-        routerEpoch: anchor.routerEpoch,
-        routerEpochNote:
-            anchor.routerEpoch === null
-                ? anchor.note === "recorded" || anchor.note === "from-epoch-file"
-                    ? "unreachable"
-                    : anchor.note
-                : anchor.note === "from-epoch-file"
-                  ? "from-epoch-file"
-                  : "recorded",
-    };
+    if (anchor.routerEpoch !== null && !EPOCH.test(anchor.routerEpoch)) {
+        throw new DeploymentRecoveryError("The router epoch to record is not a valid epoch.");
+    }
+    const found = await readRecoveryMarker(dataDir);
+    const existing = found && found !== "damaged" ? found : null;
+    const record: RecoveryMarker =
+        existing && existing.routerEpoch !== null
+            ? existing
+            : ({
+                  version: 2,
+                  restoreStartedAt: existing?.restoreStartedAt ?? new Date().toISOString(),
+                  routerEpoch: anchor.routerEpoch,
+                  routerEpochNote: anchor.note,
+              } as RecoveryMarker);
     await writeDurableRecord(dataDir, BLOCKED, record);
 }
 
@@ -496,10 +522,12 @@ export async function clearDeploymentRecovery(
                 );
             }
             let epochAudit = "";
+            const marker = await readRecoveryMarker(dataDir);
+            const damaged = marker === "damaged";
+            const anchor = marker && marker !== "damaged" ? marker.routerEpoch : null;
             if (inventory) {
                 // The anchor is the router's epoch when the restore began. A router still on it was
                 // not rotated, so a delayed pre-restore write would still be accepted.
-                const anchor = (await readRecoveryMarker(dataDir))?.routerEpoch ?? null;
                 if (anchor !== null && inventory.epoch === anchor) {
                     throw new DeploymentRecoveryError(
                         "The router's epoch has not changed since the restore began, so a delayed pre-restore write could still land. Stop the router, rotate its epoch and credentials (docs/restore.md), update the epoch and token files, then retry.",
@@ -507,13 +535,15 @@ export async function clearDeploymentRecovery(
                 }
                 if (anchor === null && !options.routerEpochUnrecorded) {
                     throw new DeploymentRecoveryError(
-                        "The restore recorded no router epoch (the router was unreachable or unconfigured then, or the marker predates this check), so the rotation cannot be verified. After rotating the router, repeat with --router-epoch-unrecorded to confirm it yourself.",
+                        damaged
+                            ? "The recovery marker is damaged, so the router rotation cannot be verified. After rotating the router, repeat with --router-epoch-unrecorded to confirm it yourself."
+                            : "The restore recorded no router epoch (no router was configured or readable then, or the marker predates this check), so the rotation cannot be verified. After rotating the router, repeat with --router-epoch-unrecorded to confirm it yourself.",
                     );
                 }
                 epochAudit =
                     anchor === null
-                        ? ";router-epoch=unrecorded-confirmed"
-                        : ";router-epoch=changed";
+                        ? `;router-epoch=${damaged ? "marker-damaged-confirmed" : "unrecorded-confirmed"}`
+                        : `;router-epoch=changed;anchor=${anchor};current=${inventory.epoch}`;
                 const report = await compareRouterInventory(trx, inventory);
                 if (counterProblems(report)) {
                     const shown = report.unknownRoutes.slice(0, 5).join(", ");
@@ -523,6 +553,18 @@ export async function clearDeploymentRecovery(
                     );
                 }
             } else {
+                // A router was configured when the restore began (an epoch was anchored, or the
+                // router was unreachable then), so it must be read now: clearing without it would
+                // skip the rotation check even on a database with no aliases.
+                if (
+                    marker &&
+                    marker !== "damaged" &&
+                    (anchor !== null || marker.routerEpochNote === "unreachable")
+                ) {
+                    throw new DeploymentRecoveryError(
+                        "A router was configured when the restore began, so recovery-clear must read it to verify the rotation: configure the router settings (LAUNCHPAD_ALIAS_CONTROL_URL and the other LAUNCHPAD_ALIAS_* settings) and retry.",
+                    );
+                }
                 const anyAlias = await trx
                     .selectFrom("app_alias")
                     .select("id")

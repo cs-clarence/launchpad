@@ -68,6 +68,10 @@ describe("routerAnchorFromEnv", () => {
             routerEpoch: null,
             note: "not-configured",
         });
+        // Incomplete router settings must not stop an emergency restore either.
+        expect(
+            await routerAnchorFromEnv({ LAUNCHPAD_ALIAS_CONTROL_URL: "http://127.0.0.1:9001" }),
+        ).toEqual({ routerEpoch: null, note: "unreachable" });
         // Configured, but the credential files cannot be read: an emergency restore still proceeds.
         expect(await routerAnchorFromEnv(routerSettings)).toEqual({
             routerEpoch: null,

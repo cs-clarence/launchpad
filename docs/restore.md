@@ -164,10 +164,11 @@ or prove. `restore` never contacts Dokku. Back up the target database first.
    while any alias counter is below the router's generation, while the router serves a route
    Launchpad does not know (a route that serves nothing does not block), when the router cannot be
    read (the message says why), and when the router's epoch has not changed since the restore began: `restore` records
-   the router's active epoch (not a secret) in the recovery marker before it changes anything, and `recovery-clear`
+   the router's active epoch (not a secret) in the recovery marker before it changes anything (run it with the router
+   settings in its environment and the router running, as for `recovery-clear`; otherwise there is no anchor to record), and `recovery-clear`
    requires the router to be on a different one, so an unrotated router cannot pass. If the router was unreachable or
    unconfigured when the restore ran (the restore anchors on the configured epoch file if it can read it, and otherwise proceeds and says so), or the marker predates this check,
-   rotate the router yourself and pass `--router-epoch-unrecorded`; that is audited. It also refuses when the
+   rotate the router yourself and pass `--router-epoch-unrecorded`; that is audited (a damaged marker is audited as such). A recorded anchor also means `recovery-clear` must be able to read the router, even if the restored database has no aliases. It also refuses when the
    database holds aliases but no router is configured. If the
    control URL is not set at all, no router is read: an installation that has ever used aliases must
    keep the router settings on the host that runs `recovery-clear`. Targets and Dokku are
