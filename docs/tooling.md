@@ -196,14 +196,20 @@ rehearses a release into `.release-dry-run/` (also a manual, read-only GitHub wo
 
 ## Configuration and containers
 
-**Planned, not implemented:** the immutable-deployment design replaces the
-preview-specific domain/proxy settings with `LAUNCHPAD_APPS_DOMAIN` and
-`LAUNCHPAD_APPS_PROXY_URL`, plus private alias control/probe settings. It introduces
-a strict pre-model backup compatibility floor and new app/alias permissions.
-See [the design](design/deployment-modes.md) and
-[routing experiment](decisions/deployment-alias-routing.md).
-Do not configure these names against the current binary; implementation must
-update examples, tasks and this reference together after the experiment passes.
+**Implemented:** the controller and worker refuse to start while a removed preview
+setting is set (`LAUNCHPAD_PREVIEW_DOMAIN`, `LAUNCHPAD_PREVIEW_PROXY_URL`,
+`LAUNCHPAD_MAX_PREVIEWS`, `LAUNCHPAD_ALLOW_NO_EXPIRY`, `LAUNCHPAD_LIFECYCLE*`), and
+the controller also checks an optional `LAUNCHPAD_APPS_DOMAIN` against `LAUNCHPAD_BASE_URL`
+(`assertCurrentSettings`, `packages/services/src/app-routing-config.ts`; the worker uses only
+`assertNoRemovedSettings` from the dependency-free `@launchpad-kit/services/removed-settings`).
+
+**Planned, not implemented:** the rest of the deployment design: the proxy
+(`LAUNCHPAD_APPS_PROXY_URL`) and private alias control/probe settings, parsed by
+`parseAppRoutingConfig`, which nothing calls until the deployment worker arrives, and
+new app/alias permissions. See [the design](design/deployment-modes.md) and
+[routing experiment](decisions/deployment-alias-routing.md). Do not configure those
+names against the current binary; the deployment change updates examples, tasks and
+this reference together.
 
 Root `.env.local.example` configures the existing Dokku Compose setup. The
 controller's settings (PostgreSQL, authentication, email, API docs) are documented

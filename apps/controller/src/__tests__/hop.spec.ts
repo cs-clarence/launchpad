@@ -132,6 +132,32 @@ async function startOnce(
     );
 }
 
+describe("startup configuration", () => {
+    it("refuses a removed preview setting before listening", { timeout: 30_000 }, async () => {
+        const port = 40000 + Math.floor(Math.random() * 10000);
+        const result = spawnSync("bun", [".output/server/index.mjs"], {
+            env: {
+                PATH: process.env.PATH,
+                NODE_ENV: "production",
+                DATABASE_URL: testDb.url,
+                LAUNCHPAD_AUTH_SECRET: "integration-secret-".repeat(3),
+                LAUNCHPAD_BASE_URL: "http://127.0.0.1",
+                LAUNCHPAD_DATA_DIR: dataDir,
+                LAUNCHPAD_MAX_PREVIEWS: "5",
+                HOST: "127.0.0.1",
+                PORT: String(port),
+            },
+            encoding: "utf8",
+            timeout: 20_000,
+        });
+        expect(result.status).not.toBe(0);
+        expect(result.status).not.toBeNull();
+        expect(`${result.stdout}${result.stderr}`).toContain(
+            "LAUNCHPAD_MAX_PREVIEWS is no longer used",
+        );
+    });
+});
+
 const post = (
     instance: Instance,
     path: string,

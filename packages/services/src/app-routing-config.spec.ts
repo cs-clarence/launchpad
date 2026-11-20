@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { parseAppRoutingConfig } from "./app-routing-config";
+import { assertCurrentSettings, parseAppRoutingConfig } from "./app-routing-config";
+import { assertNoRemovedSettings } from "./removed-settings";
 
 const valid = {
     LAUNCHPAD_BASE_URL: "https://control.example.com",
@@ -19,7 +20,7 @@ describe("parseAppRoutingConfig", () => {
         // A preview-era name is the migration case: refused even before the new domain is set.
         expect(() =>
             parseAppRoutingConfig({ LAUNCHPAD_PREVIEW_DOMAIN: "previews.example.com" }),
-        ).toThrow("LAUNCHPAD_APPS_DOMAIN");
+        ).toThrow("LAUNCHPAD_PREVIEW_DOMAIN is no longer used");
     });
 
     it("applies the documented defaults", () => {
@@ -97,12 +98,12 @@ describe("parseAppRoutingConfig", () => {
     it("refuses the preview-era settings with a pointer to the new one", () => {
         expect(() =>
             parseAppRoutingConfig({ ...valid, LAUNCHPAD_PREVIEW_DOMAIN: "x.example.com" }),
-        ).toThrow("LAUNCHPAD_APPS_DOMAIN");
+        ).toThrow("LAUNCHPAD_PREVIEW_DOMAIN is no longer used");
         expect(() =>
             parseAppRoutingConfig({ ...valid, LAUNCHPAD_PREVIEW_PROXY_URL: "http://d" }),
-        ).toThrow("LAUNCHPAD_APPS_PROXY_URL");
+        ).toThrow("LAUNCHPAD_PREVIEW_PROXY_URL is no longer used");
         expect(() => parseAppRoutingConfig({ ...valid, LAUNCHPAD_MAX_PREVIEWS: "5" })).toThrow(
-            "LAUNCHPAD_MAX_APPS",
+            "LAUNCHPAD_MAX_PREVIEWS is no longer used",
         );
         expect(() => parseAppRoutingConfig({ ...valid, LAUNCHPAD_ALLOW_NO_EXPIRY: "on" })).toThrow(
             "no longer used",
@@ -193,5 +194,55 @@ describe("parseAppRoutingConfig", () => {
         expect(() =>
             parseAppRoutingConfig({ ...valid, LAUNCHPAD_APPS_DOMAIN: "Bad Domain" }),
         ).toThrow("LAUNCHPAD_APPS_DOMAIN");
+    });
+});
+
+describe("assertCurrentSettings", () => {
+    it("accepts an environment with no app settings and requires no router settings", () => {
+        expect(() => assertCurrentSettings({})).not.toThrow();
+        expect(() => assertCurrentSettings({ LAUNCHPAD_APPS_DOMAIN: "" })).not.toThrow();
+        // The apps domain alone is enough: nothing uses the router settings until P3.
+        expect(() =>
+            assertCurrentSettings({
+                LAUNCHPAD_BASE_URL: "https://control.example.com",
+                LAUNCHPAD_APPS_DOMAIN: "sites.example.net",
+            }),
+        ).not.toThrow();
+    });
+
+    it("refuses every removed name with an actionable message", () => {
+        for (const name of [
+            "LAUNCHPAD_PREVIEW_DOMAIN",
+            "LAUNCHPAD_PREVIEW_PROXY_URL",
+            "LAUNCHPAD_MAX_PREVIEWS",
+            "LAUNCHPAD_ALLOW_NO_EXPIRY",
+            "LAUNCHPAD_LIFECYCLE",
+            "LAUNCHPAD_LIFECYCLE_INTERVAL",
+        ]) {
+            expect(() => assertNoRemovedSettings({ [name]: "x" })).toThrow(name);
+            expect(() => assertCurrentSettings({ [name]: "x" })).toThrow(/no longer used/);
+            // An empty value is the same as unset, as elsewhere.
+            expect(() => assertCurrentSettings({ [name]: "" })).not.toThrow();
+        }
+    });
+
+    it("keeps the apps domain separate from the management origin", () => {
+        const env = (LAUNCHPAD_BASE_URL: string, LAUNCHPAD_APPS_DOMAIN: string) => ({
+            LAUNCHPAD_BASE_URL,
+            LAUNCHPAD_APPS_DOMAIN,
+        });
+        expect(() =>
+            assertCurrentSettings(env("https://control.example.com", "sites.example.com")),
+        ).toThrow("different registrable domain");
+        expect(() =>
+            assertCurrentSettings(env("https://control.example.com", "Not A Domain")),
+        ).toThrow("not a valid");
+        expect(() => assertCurrentSettings({ LAUNCHPAD_APPS_DOMAIN: "sites.example.net" })).toThrow(
+            "LAUNCHPAD_BASE_URL",
+        );
+        // The management origin must be https once the apps domain is set.
+        expect(() =>
+            assertCurrentSettings(env("http://localhost:3000", "sites.example.net")),
+        ).toThrow("https origin");
     });
 });

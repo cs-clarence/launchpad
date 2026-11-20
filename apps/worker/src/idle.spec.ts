@@ -1,4 +1,4 @@
-import { type ChildProcess, spawn } from "node:child_process";
+import { type ChildProcess, spawn, spawnSync } from "node:child_process";
 import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -24,6 +24,24 @@ describe("the idle worker", () => {
             await check(child, path.join(cwd, "healthy"));
         } finally {
             child.kill("SIGKILL");
+            rmSync(cwd, { recursive: true, force: true });
+        }
+    });
+});
+
+describe("the idle worker's configuration check", () => {
+    it("exits with an actionable error on a removed preview setting", { timeout: 30_000 }, () => {
+        const cwd = mkdtempSync(path.join(tmpdir(), "launchpad-idle-config-"));
+        try {
+            const run = spawnSync("bun", [path.join(import.meta.dirname, "index.ts")], {
+                cwd,
+                env: { PATH: process.env.PATH, HOME: cwd, LAUNCHPAD_MAX_PREVIEWS: "5" },
+                encoding: "utf8",
+                timeout: 20_000,
+            });
+            expect(run.status).toBe(1);
+            expect(run.stderr).toContain("LAUNCHPAD_MAX_PREVIEWS is no longer used");
+        } finally {
             rmSync(cwd, { recursive: true, force: true });
         }
     });

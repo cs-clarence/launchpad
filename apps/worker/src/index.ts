@@ -1,3 +1,4 @@
+import { assertNoRemovedSettings } from "@launchpad-kit/services/removed-settings";
 import { DEFAULT_HEALTH_TOUCH_MS, createHealthMarker, healthFileFromEnv } from "./health";
 
 const log = (line: Record<string, unknown>) => console.log(JSON.stringify(line));
@@ -6,6 +7,7 @@ const log = (line: Record<string, unknown>) => console.log(JSON.stringify(line))
 // whose worker arrives later. Until then this process does nothing but stay up and healthy, so a
 // supervisor does not restart it in a loop. It opens no database and needs no Dokku settings.
 async function main() {
+    assertNoRemovedSettings(process.env);
     const markHealthy = createHealthMarker(healthFileFromEnv(process.env));
     const shutdown = new AbortController();
     for (const name of ["SIGINT", "SIGTERM"] as const) {
