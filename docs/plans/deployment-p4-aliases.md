@@ -1,7 +1,7 @@
 # P4: aliases, promotion, recovery counters and retention pins
 
 Status: **approved 2026-11-20 as written (automatic expiry stays out). P4a, P4b
-and the P4c private client are merged; P4c worker wiring is pending. Nothing here
+and the P4c router client and fenced persistence are merged; the P4c worker runner is in review. Nothing here
 is authorized to run against real infrastructure.** Parent: [deployment model plan](deployment-model.md), P4. Schema
 contract: [replacement schema map](../design/deployment-cutover-schema.md). Behavior and the alias
 and operation state machines: [deployment design](../design/deployment-modes.md). Router:
@@ -112,7 +112,7 @@ runtime caller claims or finalizes these operations.
 Review follow-up (approved): hold the shared recovery lock from fresh route
 readback and identity probe through SQL commit. Managed offline router rotation
 takes the exclusive lock on the same database. Repair a parked generation mismatch
-with `promotion-repair-generation`: verify the exact router alias, require a
+with `promotion-reconcile` (alias `promotion-repair-generation`): verify the exact router alias, require a
 coherent held chain, audit the correction, and reserve above all persisted and
 observed generations. Only the verified correction releases chain pins.
 
@@ -123,7 +123,8 @@ authoritative readback checking operation ID, generation, target and epoch, then
 through the proxy; stale-generation rejection independent of leases. Every finalizing write carries
 the operation ID, attempt, fence and a live lease. Tests against the real router on loopback: lost
 reply, crash after dispatch, deadline, stale worker (a delayed write changes zero rows), repointing,
-withdrawal. Extend `deployment-reconcile` to operations (`superseded`, corrective).
+withdrawal. The operator reconciles a held operation with `promotion-reconcile`, which always
+reads the router first.
 
 ### P4d: API for operations, shutdown barrier
 

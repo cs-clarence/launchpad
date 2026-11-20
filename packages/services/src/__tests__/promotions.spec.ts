@@ -15,6 +15,7 @@ import {
     createDeployment,
     createOrganization,
     createProject,
+    failPromotion,
     finalizePromotion,
     holdPromotion,
     listAliasOperations,
@@ -518,6 +519,164 @@ describe("promotion claims and finalization", () => {
         expect(await code(deleteDeployment(target))).toBe("ok");
     });
 
+    describe("reconciling an ordinary hold with router evidence", () => {
+        const hostnameOf = async (id: string) =>
+            (
+                await testDb.db
+                    .selectFrom("deployment")
+                    .select("hostname")
+                    .where("id", "=", id)
+                    .executeTakeFirstOrThrow()
+            ).hostname;
+        async function held(alias: { id: string }, run: () => Promise<{ id: string }>) {
+            const operation = await run();
+            const job = await claim(alias.id);
+            expect(await dispatch(job.token)).not.toBeNull();
+            expect(await holdPromotion(testDb.db, dataDir, job.token)).not.toBeNull();
+            return operation;
+        }
+        const seen = async (
+            alias: { id: string; hostname: string },
+            route: { operationId: string; generation: string; target: string | null } | null,
+        ): Promise<PromotionReadback> => {
+            const target = route?.target
+                ? { deploymentId: route.target, hostname: await hostnameOf(route.target) }
+                : null;
+            return {
+                ...authority,
+                route: route && {
+                    aliasId: alias.id,
+                    hostname: alias.hostname,
+                    operationId: route.operationId,
+                    generation: route.generation,
+                    target,
+                },
+            };
+        };
+        const reconcile = async (
+            operationId: string,
+            input: { action: "bind" | "withdraw"; target?: string },
+            readback: PromotionReadback,
+        ) =>
+            supersedeOperation(
+                testDb.db,
+                dataDir,
+                {
+                    operationId,
+                    action: input.action,
+                    targetDeploymentId: input.target,
+                    attested: true,
+                },
+                { authority, readRoute: async () => readback },
+            );
+        const auditOf = async (aliasId: string) =>
+            (
+                await testDb.db
+                    .selectFrom("audit_event")
+                    .select("detail")
+                    .where("action", "=", "alias.operation-superseded")
+                    .where("target_id", "=", aliasId)
+                    .orderBy("id", "desc")
+                    .executeTakeFirstOrThrow()
+            ).detail;
+
+        // Hold everything before reconciling anything: a reconciled operation's correction is
+        // queued, and the next claim takes the oldest runnable one.
+        it("accepts a route the router committed, and one it never wrote", async () => {
+            const committed = await fixture();
+            const a = await committed.ready();
+            const absent = await fixture();
+            const b = await absent.ready();
+            const op = await held(committed.alias, () => promote(committed.alias.id, a, "0"));
+            const lost = await held(absent.alias, () => promote(absent.alias.id, b, "0"));
+
+            const result = await reconcile(
+                op.id,
+                { action: "bind", target: a },
+                await seen(committed.alias, { operationId: op.id, generation: "1", target: a }),
+            );
+            expect(result.generation).toBe("2");
+            expect(await auditOf(committed.alias.id)).toContain("repair=router-verified");
+            expect(await aliasRow(committed.alias.id)).toMatchObject({
+                state: "binding-uncertain",
+                reserved_generation: "2",
+            });
+            const next = await reconcile(
+                lost.id,
+                { action: "bind", target: b },
+                await seen(absent.alias, null),
+            );
+            expect(next.generation).toBe("2");
+        });
+
+        it("repoints and withdraws with the router still showing the previous target", async () => {
+            const { alias, ready } = await fixture();
+            const a = await ready();
+            const b = await ready();
+            const other = await fixture();
+            const c = await other.ready();
+            for (const [aliasId, target] of [
+                [alias.id, a],
+                [other.alias.id, c],
+            ] as const) {
+                await promote(aliasId, target, "0");
+                const bound = await claim(aliasId);
+                await verifying(bound);
+                expect(await finish(bound)).not.toBeNull();
+            }
+            const boundA = (await operations(alias.id))[0]!;
+            const boundC = (await operations(other.alias.id))[0]!;
+            const repoint = await held(alias, () => promote(alias.id, b, "1"));
+            const withdrawal = await held(other.alias, () => withdraw(other.alias.id, "1"));
+
+            const showsA = await seen(alias, {
+                operationId: boundA.id,
+                generation: "1",
+                target: a,
+            });
+            expect(
+                (await reconcile(repoint.id, { action: "bind", target: b }, showsA)).generation,
+            ).toBe("3");
+            const stillC = await seen(other.alias, {
+                operationId: boundC.id,
+                generation: "1",
+                target: c,
+            });
+            expect(
+                (await reconcile(withdrawal.id, { action: "withdraw" }, stillC)).generation,
+            ).toBe("3");
+            expect(await aliasRow(other.alias.id)).toMatchObject({ state: "withdrawal-uncertain" });
+        });
+
+        it("refuses evidence that disagrees with the held alias, changing nothing", async () => {
+            const { alias, ready } = await fixture();
+            const a = await ready();
+            const outside = await ready();
+            await promote(alias.id, a, "0");
+            const bound = await claim(alias.id);
+            await verifying(bound);
+            expect(await finish(bound)).not.toBeNull();
+            const b = await ready();
+            const op = await held(alias, () => promote(alias.id, b, "1"));
+            const before = {
+                alias: await aliasRow(alias.id),
+                operations: await operations(alias.id),
+            };
+            for (const readback of [
+                await seen(alias, null), // committed generation is 1, so an empty route is wrong
+                await seen(alias, { operationId: randomUUID(), generation: "1", target: outside }),
+                await seen(alias, { operationId: bound.token.id, generation: "7", target: a }),
+                await seen(alias, { operationId: op.id, generation: "9", target: b }),
+            ]) {
+                expect(await code(reconcile(op.id, { action: "bind", target: b }, readback))).toBe(
+                    "conflict",
+                );
+            }
+            expect(await aliasRow(alias.id)).toEqual(before.alias);
+            expect(await operations(alias.id)).toEqual(before.operations);
+        });
+    });
+
     it("excludes managed rotation from router verification through commit", async () => {
         const { alias, ready } = await fixture();
         await promote(alias.id, await ready(), "0");
@@ -698,6 +857,10 @@ describe("promotion claims and finalization", () => {
         });
         const uncertainAgain = await claim(alias.id);
         expect(uncertainAgain.token.id).toBe(corrected.operationId);
+        // A corrective operation is never failed outright: that would strand its held ancestors.
+        expect(
+            await failPromotion(testDb.db, dataDir, uncertainAgain.token, "router-refused", "x"),
+        ).toBeNull();
         expect(await dispatch(uncertainAgain.token)).not.toBeNull();
         expect(await holdPromotion(testDb.db, dataDir, uncertainAgain.token)).not.toBeNull();
         await supersedeOperation(testDb.db, dataDir, {

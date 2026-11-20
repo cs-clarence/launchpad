@@ -210,10 +210,16 @@ proxy origin (`LAUNCHPAD_APPS_PROXY_URL`); see [install](install.md#install-a-pr
 **Implemented (P4a):** `LAUNCHPAD_ALIASES=on|off` (default off; needs deployments on),
 `LAUNCHPAD_MAX_ALIASES_PER_APP` (5), `LAUNCHPAD_MAX_ALIASES` (50) and
 `LAUNCHPAD_ALIAS_HOSTNAME_TEMPLATE` (`parseAliasConfig`) gate creating aliases; reading them keeps working while the switch is off. The scopes
-`app:promote` and `app:alias:manage` exist; promotion is not built. When promotion lands (P4c),
-turning aliases on will also require the router settings.
+`app:promote` and `app:alias:manage` exist.
 
-**Planned, not implemented:** private alias control/probe settings and the router client.
+**Implemented (P4c):** with `LAUNCHPAD_ALIASES=on` the worker also requires the router settings
+(`parseAppRoutingConfig`: `LAUNCHPAD_ALIAS_INSTANCE_ID`, `LAUNCHPAD_ALIAS_CONTROL_URL`,
+`LAUNCHPAD_ALIAS_PROBE_URL`, `LAUNCHPAD_ALIAS_CONTROL_TOKEN_FILE`,
+`LAUNCHPAD_ALIAS_ROUTER_EPOCH_FILE`, `LAUNCHPAD_APPS_PROXY_URL`) and runs queued promotions
+through the private router client. The controller has no HTTP route for a promotion yet; P4d adds
+the API.
+
+**Planned, not implemented:** the promotion API and app shutdown (P4d).
 See [the design](design/deployment-modes.md) and
 [routing experiment](decisions/deployment-alias-routing.md). Do not configure those
 names against the current binary; the deployment change updates examples, tasks and

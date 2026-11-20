@@ -1,21 +1,29 @@
 import { setTimeout as delay } from "node:timers/promises";
 import type { createDatabase } from "@launchpad-kit/database";
 import {
+    acknowledgePromotionDispatch,
     beginDeletionStep,
+    beginPromotionStep,
     beginDeploymentStep,
     claimDeletion,
     claimDeployment,
+    claimPromotion,
     completeDeletionStep,
     completeDeploymentStep,
     DeploymentRecoveryError,
+    failPromotion,
+    finalizePromotion,
+    holdPromotion,
     renewDeletionClaim,
     renewDeploymentClaim,
+    renewPromotionClaim,
     stopDeletionStep,
     stopDeploymentStep,
 } from "@launchpad-kit/services";
 import { DeadlineExceeded, withinDeadline } from "./deadline";
 import { runDeletion, type DeletionRunnerPorts } from "./deletion-runner";
 import { runDeployment, type DeploymentRunnerPorts } from "./deployment-runner";
+import { runPromotion, type PromotionRunnerPorts } from "./promotion-runner";
 import { imageTagFor } from "./template";
 
 export async function workDeployments({
@@ -24,6 +32,7 @@ export async function workDeployments({
     owner,
     ports,
     deletionPorts,
+    promotionPorts,
     shutdown,
     markHealthy,
     log,
@@ -36,6 +45,8 @@ export async function workDeployments({
     owner: string;
     ports: DeploymentRunnerPorts;
     deletionPorts: DeletionRunnerPorts;
+    // Present only when aliases are on; with none the worker never contacts the router.
+    promotionPorts?: PromotionRunnerPorts;
     shutdown: AbortSignal;
     markHealthy: () => void;
     log: (line: Record<string, unknown>) => void;
@@ -44,10 +55,10 @@ export async function workDeployments({
     const fault = new AbortController();
     const signal = AbortSignal.any([shutdown, fault.signal]);
 
-    async function database<T>(run: () => Promise<T>): Promise<T> {
+    async function database<T>(run: () => Promise<T>, timeoutMs = databaseTimeoutMs): Promise<T> {
         fault.signal.throwIfAborted();
         try {
-            return await withinDeadline(run, databaseTimeoutMs, fault.signal);
+            return await withinDeadline(run, timeoutMs, fault.signal);
         } catch (error) {
             if (error instanceof DeadlineExceeded) {
                 fault.abort(new Error("Deployment worker database deadline exceeded."));
@@ -92,11 +103,76 @@ export async function workDeployments({
         return status !== "authority-lost";
     }
 
+    // Returns whether a promotion was claimed, so the loop continues without sleeping.
+    async function promoteOne(ports: PromotionRunnerPorts): Promise<boolean> {
+        const claim = await database(() => claimPromotion(db, dataDir, owner));
+        markHealthy();
+        if (signal.aborted || claim.kind === "idle") return false;
+        if (claim.kind === "reconciliation-needed") {
+            log({ event: "promotion-reconciliation-needed", operationId: claim.id });
+            return true;
+        }
+        const { token, alias, operation, target } = claim;
+        const status = await runPromotion(
+            {
+                aliasId: alias.id,
+                aliasHostname: alias.hostname,
+                operationId: operation.id,
+                generation: String(operation.generation),
+                corrective: operation.supersedes_operation_id !== null,
+                attempt: operation.attempt,
+                target: target ? { deploymentId: target.id, hostname: target.hostname } : null,
+            },
+            { stepDone: operation.step_done },
+            {
+                begin: (step) => database(() => beginPromotionStep(db, dataDir, token, step)),
+                acknowledge: () => database(() => acknowledgePromotionDispatch(db, dataDir, token)),
+                hold: () => database(() => holdPromotion(db, dataDir, token)),
+                fail: (code, message) =>
+                    database(() => failPromotion(db, dataDir, token, code, message)),
+                // The readback and identity probe run inside this transaction, bounded well below
+                // the session's idle-in-transaction limit.
+                finalize: (authority, verify) =>
+                    database(
+                        () => finalizePromotion(db, dataDir, token, authority, verify),
+                        databaseTimeoutMs + 8000,
+                    ),
+                renew: async () => {
+                    const lease = await database(() => renewPromotionClaim(db, dataDir, token));
+                    if (lease) markHealthy();
+                    return lease;
+                },
+            },
+            ports,
+            signal,
+            {
+                report: (reason) =>
+                    log({ event: "promotion-retry", operationId: token.id, reason }),
+            },
+        );
+        log({ event: "promotion-run-ended", operationId: token.id, status });
+        return status !== "authority-lost";
+    }
+
+    // Promotions go first, but never more than a few in a row, so a backlog (each can spend up to
+    // its verification budget) cannot starve deployments and deletions.
+    const MAX_PROMOTIONS_IN_ROW = 2;
+    let promotionsInRow = 0;
     let blocked = false;
     let turn = 0;
     while (!signal.aborted) {
         try {
             // Alternate so a steady stream of deployments cannot starve deletions.
+            if (
+                promotionPorts &&
+                promotionsInRow < MAX_PROMOTIONS_IN_ROW &&
+                (await promoteOne(promotionPorts))
+            ) {
+                promotionsInRow++;
+                continue;
+            }
+            promotionsInRow = 0;
+            if (signal.aborted) break;
             if (turn++ % 2 === 1 && (await deleteOne())) continue;
             if (signal.aborted) break;
             const claim = await database(() => claimDeployment(db, dataDir, owner));

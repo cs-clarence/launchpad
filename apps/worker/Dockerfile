@@ -5,7 +5,7 @@
 # Runs as uid 10001 (the controller's uid: both use one data directory). It needs, at run time
 # and not in the image: the data directory, SSH access to Dokku (a private key and a pinned
 # known_hosts file), and a Docker engine it can reach, whose socket it must be allowed to use
-# (give the container the socket's group). It holds no secret.
+# (give the container the socket's group). It holds no secret; an enabled alias worker reads a router token and epoch from mounted files.
 #
 # Two things to know when running it:
 # - Access to the Docker socket is root-equivalent on that host. Run the worker only where that

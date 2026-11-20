@@ -316,7 +316,7 @@ export function parseAppRoutingConfig(env: Env): AppRoutingSettings {
         ),
         aliasTemplate: template("LAUNCHPAD_ALIAS_HOSTNAME_TEMPLATE", DEFAULT_ALIAS_TEMPLATE),
         rollbackRetentionSeconds,
-        maxApps: integer(env, "LAUNCHPAD_MAX_APPS", 10, 10_000),
+        maxApps: integer(env, "LAUNCHPAD_MAX_APPS", 10, 100_000),
         maxDeploymentsPerApp,
         maxDeployments,
         maxAliasesPerApp,

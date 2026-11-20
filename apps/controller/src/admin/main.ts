@@ -8,21 +8,15 @@ import {
     setupFirstOperator,
 } from "@launchpad-kit/auth";
 import { createDatabase, migrateToLatest, migrationStatus } from "@launchpad-kit/database";
-import {
-    closeSync,
-    constants,
-    fstatSync,
-    openSync,
-    readFileSync,
-    readSync,
-    statSync,
-} from "node:fs";
+import { readFileSync, statSync } from "node:fs";
 import path from "node:path";
 import { createDokkuClient } from "@launchpad-kit/dokku";
 import {
     acknowledgeDeploymentImport,
+    assertPrivateControlUrl,
     clearDeploymentRecovery,
     parseAppRoutingConfig,
+    readRouterCredential,
     reconcileDeployment,
     supersedeOperation,
 } from "@launchpad-kit/services";
@@ -82,32 +76,6 @@ async function readPassword(passwordFile: string | undefined): Promise<string> {
         throw new Error("Give --password-file <path>, or pipe the password on stdin.");
     }
     return readStdin();
-}
-
-function readRouterCredential(file: string, secret: boolean): string {
-    try {
-        const fd = openSync(file, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
-        try {
-            const stat = fstatSync(fd);
-            const bytes = Buffer.alloc(257);
-            if (
-                !stat.isFile() ||
-                (secret && (stat.uid !== process.getuid?.() || stat.mode & 0o077)) ||
-                stat.size > 256
-            ) {
-                throw new Error();
-            }
-            const size = readSync(fd, bytes);
-            if (size === 257) throw new Error();
-            return new TextDecoder("utf-8", { fatal: true })
-                .decode(bytes.subarray(0, size))
-                .replace(/\r?\n$/, "");
-        } finally {
-            closeSync(fd);
-        }
-    } catch {
-        throw new Error("Could not read the configured router credential file.");
-    }
 }
 
 const program = new Command()
@@ -262,8 +230,11 @@ program
     });
 
 program
-    .command("promotion-repair-generation")
-    .description("Verify a held generation mismatch and queue a higher-generation correction")
+    .command("promotion-reconcile")
+    .alias("promotion-repair-generation")
+    .description(
+        "Verify the router's exact route for a held promotion operation (including a generation mismatch) and queue a higher-generation correction",
+    )
     .requiredOption("--operation <id>", "the held promotion operation")
     .option("--target <id>", "bind to an eligible target from the held chain")
     .option("--withdraw", "correct an uncertain withdrawal")
@@ -278,9 +249,7 @@ program
         const routing = parseAppRoutingConfig(process.env);
         if (!routing.enabled) throw new Error("Router settings are required.");
         const url = routing.aliasControlUrl;
-        if (url.protocol !== "https:" && !["127.0.0.1", "[::1]"].includes(url.hostname)) {
-            throw new Error("Router control requires HTTPS, or HTTP only on loopback.");
-        }
+        assertPrivateControlUrl(url, "LAUNCHPAD_ALIAS_CONTROL_URL");
         const authority = {
             instanceId: routing.aliasInstanceId,
             epoch: readRouterCredential(routing.aliasRouterEpochFile, false),

@@ -433,12 +433,10 @@ export async function supersedeOperation(
             );
         }
         const mismatch = held.failure_code === "alias-generation-mismatch";
-        if (mismatch !== Boolean(repair)) {
+        if (mismatch && !repair) {
             throw new ServiceError(
                 "conflict",
-                mismatch
-                    ? "A generation mismatch requires verified router repair."
-                    : "This operation is not held for a generation mismatch.",
+                "A generation mismatch requires verified router repair.",
             );
         }
         const state =
@@ -621,7 +619,7 @@ export async function supersedeOperation(
                 target_type: "alias",
                 target_id: found.alias_id,
                 organization_id: found.organization_id,
-                detail: `attested=router-read;superseded=${held.id};new=${id};action=${input.action};generation=${next}${input.targetDeploymentId ? `;target=${input.targetDeploymentId}` : ""}${observed ? `;repair=alias-generation-mismatch;observedEpoch=${observed.epoch};observedGeneration=${observed.route?.generation ?? "none"};observedOperation=${observed.route?.operationId ?? "none"};observedTarget=${routerTarget?.deploymentId ?? "none"}` : ""}`,
+                detail: `attested=router-read;superseded=${held.id};new=${id};action=${input.action};generation=${next}${input.targetDeploymentId ? `;target=${input.targetDeploymentId}` : ""}${observed ? `;repair=${mismatch ? "alias-generation-mismatch" : "router-verified"};observedEpoch=${observed.epoch};observedGeneration=${observed.route?.generation ?? "none"};observedOperation=${observed.route?.operationId ?? "none"};observedTarget=${routerTarget?.deploymentId ?? "none"}` : ""}`,
             })
             .execute();
         return { operationId: id, supersedes: held.id, generation: next.toString() };

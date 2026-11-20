@@ -12,6 +12,7 @@
         "test:live": "bun --bun vitest run --config vitest.config.live.ts"
     },
     "dependencies": {
+        "@launchpad-kit/alias-router": "workspace:^",
         "@launchpad-kit/database": "workspace:^",
         "@launchpad-kit/dokku": "workspace:^",
         "@launchpad-kit/services": "workspace:^",

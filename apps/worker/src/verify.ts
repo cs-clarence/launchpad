@@ -11,24 +11,30 @@ export interface ProbeConfig {
     intervalMs: number;
 }
 
-export function parseProxyUrl(value: string): URL {
+export function parseProxyUrl(value: string, name = "LAUNCHPAD_APPS_PROXY_URL"): URL {
     const url = new URL(value);
     if (url.protocol !== "http:" && url.protocol !== "https:") {
-        throw new Error("LAUNCHPAD_APPS_PROXY_URL must be http or https.");
+        throw new Error(`${name} must be http or https.`);
     }
     // Only scheme, host and port are used; anything else would be silently ignored.
     if (url.username || url.password || url.search || url.hash || url.pathname !== "/") {
-        throw new Error("LAUNCHPAD_APPS_PROXY_URL must be only a scheme, host and optional port.");
+        throw new Error(`${name} must be only a scheme, host and optional port.`);
     }
     return url;
 }
 
-function once(
+export interface ServedIdentity {
+    status: number;
+    // The compact deployment id the response was stamped with, if any.
+    deployment: string | null;
+}
+
+// One bounded GET of "/" with `hostname` as Host. Null means no HTTP answer at all.
+export function fetchIdentity(
     config: ProbeConfig,
     hostname: string,
-    deploymentId: string,
     signal: AbortSignal,
-): Promise<boolean> {
+): Promise<ServedIdentity | null> {
     return new Promise((resolve) => {
         const client = config.proxyUrl.protocol === "https:" ? https : http;
         const request = client.request(
@@ -47,13 +53,26 @@ function once(
                 // Only the status and the identity header matter; the body is dropped.
                 response.resume();
                 const header = response.headers["x-launchpad-deployment"];
-                resolve(response.statusCode === 200 && header === compactId(deploymentId));
+                resolve({
+                    status: response.statusCode ?? 0,
+                    deployment: typeof header === "string" ? header : null,
+                });
             },
         );
         request.on("timeout", () => request.destroy());
-        request.on("error", () => resolve(false));
+        request.on("error", () => resolve(null));
         request.end();
     });
+}
+
+async function once(
+    config: ProbeConfig,
+    hostname: string,
+    deploymentId: string,
+    signal: AbortSignal,
+): Promise<boolean> {
+    const served = await fetchIdentity(config, hostname, signal);
+    return served?.status === 200 && served.deployment === compactId(deploymentId);
 }
 
 // Succeeds only when the proxy answers 200 for the hostname from *this*

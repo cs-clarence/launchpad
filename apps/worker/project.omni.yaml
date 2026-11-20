@@ -12,6 +12,7 @@ dependencies:
     - "@launchpad-kit/database"
     - "@launchpad-kit/dokku"
     - "@launchpad-kit/services"
+    - "@launchpad-kit/alias-router"
 
 tasks:
   test:unit:
