@@ -74,8 +74,9 @@ A key needs `app:promote`; withdrawing needs `app:alias:manage`, and the two are
 The same `Idempotency-Key` with the same body returns the same operation; with a different body it is a 409.
 A stale `expectedGeneration` is a 409 as well: read the alias again. To roll back, promote an older
 deployment. The worker sends the route to the router, reads it back, probes the alias hostname for the
-deployment's identity, and only then commits; until then the old target keeps serving, and the previous
-target stays pinned and cannot be deleted. Withdraw an alias (its hostname then answers a fixed 404 and stays reserved):
+deployment's identity, and only then commits. Traffic can switch as soon as the route is sent, before the
+operation reaches `succeeded`; until it settles, both the previous and the new target stay pinned and cannot
+be deleted. Withdraw an alias (its hostname then answers a fixed 404 and stays reserved):
 
 ```sh
 curl -sS -X DELETE -H "$H" -H 'content-type: application/json' -H 'Idempotency-Key: retire-1' \
@@ -100,8 +101,9 @@ curl -sS -X DELETE -H "$H" "$API/apps/<app>"   # 202; repeat it to continue
 Admins and owners only; a key needs all of `app:delete`, `app:alias:manage` and `app:promote`. The app stops
 accepting deployments and promotions, every bound alias is withdrawn, and **only after the worker has
 verified every route is gone** is each deployment deleted. Nothing is destroyed while a route is live or
-uncertain. The response lists what was queued and what still blocks it (`blockedBy`); repeat the request until the app
-reads `deleted`. Its identity, hostnames and Dokku names stay reserved forever.
+uncertain. The response lists what was queued and what still blocks it (`blockedBy`); repeat the request until
+it answers 404, which for an app whose shutdown you started means it is finished (a deleted app is no longer
+readable). Its identity, hostnames and Dokku names stay reserved forever.
 
 ## Delete
 
