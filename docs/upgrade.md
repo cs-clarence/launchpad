@@ -17,9 +17,12 @@ down migration. Rehearse on disposable infrastructure first: the checked-in
    observation and never calls Dokku. One lookup is not enough: a worker claims the oldest
    runnable work first and finishes each deployment before the next, so interrupted work that is
    newer than queued work is claimed later. Repeat the lookup until no deployment remains
-   `queued`, `preparing`, `building`, `deploying` or `verifying`, then look once more after that
-   check reads zero (nothing runnable is left to move into a hold) and reconcile anything it
-   returns. Never retry by hand. For a pre-P2a worker, complete the legacy worker
+   `queued`, `preparing`, `building`, `deploying` or `verifying` **and** no queued or running
+   deletion remains (a deployment whose `desiredState` is still `deleting` without a
+   `deletion-reconciliation-needed` event), then look once more after both checks read zero
+   (nothing runnable is left to move into a hold) and reconcile anything it returns. Repeat
+   the whole check after reconciling, since reconciling a deletion lets the worker continue it.
+   Never retry by hand. For a pre-P2a worker, complete the legacy worker
    grace-period and dispatched Dokku operation settlement checks in
    [restore, step 1](restore.md) **before taking the backup**. A worker exiting
    does not prove that its remote destroy finished.
