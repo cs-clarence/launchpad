@@ -5,7 +5,8 @@ export type ServiceErrorCode =
     | "invalid"
     | "delivery-failed"
     | "too-large"
-    | "timeout";
+    | "timeout"
+    | "unavailable";
 
 // Expected, caller-visible failures. Adapters map the code to a transport status;
 // anything else is an unexpected failure and must not leak details.

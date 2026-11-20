@@ -97,6 +97,13 @@ controller restore tests. Undo: revert; no schema change.
 
 ### P3b: apps and deployments through services and API (enqueue only)
 
+Split into two PRs. **P3b-i (services, built):** migration 019, scopes, `parseDeploymentConfig`,
+app and deployment services and their tests; nothing is routed yet. **P3b-ii (API):** the routes,
+upload endpoint and its body framing, response schemas, OpenAPI and the built-server tests.
+The dashboard key form (`api-keys.tsx`) does not offer the new scopes until P6; keys carry them
+via the API. Provenance is a table, not a column: artifacts are deduplicated by digest, so one artifact can be
+uploaded through several projects, and `artifact_project(artifact_id, project_id)` records each.
+
 - Contracts and scopes: add `app:read`, `app:deploy`, `app:delete` to `API_KEY_SCOPES`; `app:promote`
   and `app:alias:manage` arrive with P4. Roles per the permission matrix (read: viewer; create app,
   deploy, extend: deployer; delete: deployer). Keys still need the creator's current role and
@@ -108,11 +115,11 @@ controller restore tests. Undo: revert; no schema change.
   the schema map's order (quota advisory lock, app row), checks the artifact belongs to the
   organization and is stored **and that the caller may use it**, in the same locked transaction as
   the other checks: the app's project must be one the key can access, and artifacts are
-  organization-owned and carry no project today, so P3b adds forward migration 019: a nullable
-  `artifact.upload_project_id` (qualified FK to `project`, set by the new upload route, null for
-  older rows). A key with a project restriction may deploy only an artifact whose
-  `upload_project_id` equals the app's project, **regardless of creator**; null provenance is
-  refused for such keys. Keys without a restriction and sessions need only the organization match
+  organization-owned and carry no project today, so P3b adds forward migration 019: the
+  `artifact_project` table (qualified FKs to `artifact` and `project`, one row per project an
+  artifact was uploaded through, written by the upload service). A key with a project restriction
+  may deploy only an artifact with a row for the app's project, **regardless of creator**; an
+  artifact with no rows (older ones) is refused for such keys. Keys without a restriction and sessions need only the organization match
   and the role. Tests: two keys with the same creator, one restricted to project A and one to B,
   against an artifact uploaded through B (the A key is refused, the B key succeeds, an
   unrestricted key succeeds), and a null-provenance artifact refused for a restricted key, enforces the per-app unfinished rule and both deployment quotas,

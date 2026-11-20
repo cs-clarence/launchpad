@@ -246,9 +246,14 @@ describe("migration 018 deployment model and reservations", () => {
             select app_name, owner_id from dokku_name_reservation order by app_name
         `.execute(db());
         expect(names.rows).toEqual([]);
-        expect((await sql`select name from launchpad_migration`.execute(db())).rows).toHaveLength(
-            18,
-        );
+        // 018 and everything before it ran; later migrations may follow.
+        expect(
+            (
+                await sql`select name from launchpad_migration where name <= '20261119_018_deployment_model'`.execute(
+                    db(),
+                )
+            ).rows,
+        ).toHaveLength(18);
         expect(
             (
                 await sql`select * from instance_state where key = 'deployment_recovery'`.execute(

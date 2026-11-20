@@ -16,6 +16,8 @@ export * from "./artifact-gc";
 export * from "./status";
 export * from "./hostname-template";
 export * from "./app-routing-config";
+export * from "./apps";
+export * from "./deployments";
 export * from "./removed-settings";
 export * from "./drift";
 export * from "./deployment-recovery";

@@ -6,6 +6,7 @@ import { migrateToLatest } from "@launchpad-kit/database";
 import { createTestDatabase } from "@launchpad-kit/database/testing";
 import {
     createOrganization,
+    createProject,
     resolveArtifactPath,
     uploadArtifact,
     type Principal,
@@ -46,6 +47,7 @@ let testDb: Awaited<ReturnType<typeof createTestDatabase>>;
 let work = "";
 let dataDir = "";
 let org = "";
+let projectId = "";
 let owner: Principal;
 let plainDump = "";
 let pausedDump = "";
@@ -85,7 +87,7 @@ async function upload(content: string) {
                 controller.close();
             },
         }),
-        { contentLength: bytes.length },
+        { contentLength: bytes.length, projectId },
         { dataDir, limits: {} },
     );
 }
@@ -170,6 +172,7 @@ beforeAll(async () => {
         )
     ).id;
     owner = { userId: annId, instanceRole: "user" };
+    projectId = (await createProject(testDb.db, owner, org, { name: "Seed", slug: "seed" })).id;
 });
 afterAll(async () => {
     await testDb?.destroy();
@@ -390,6 +393,10 @@ describe("createBackup", () => {
         expect(await outcome).toMatch(/missing/);
         await expect(fs.stat(dest)).rejects.toThrow();
         // Later tests share the database: the row without its file would fail them.
+        await testDb.db
+            .deleteFrom("artifact_project")
+            .where("artifact_id", "=", victim.id)
+            .execute();
         await testDb.db.deleteFrom("artifact").where("digest", "=", victim.digest).execute();
     });
 });

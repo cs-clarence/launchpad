@@ -8,6 +8,7 @@ import {
     addMember,
     artifactStorageKey,
     createOrganization,
+    createProject,
     removeMember,
     resolveArtifactPath,
     resolveLimits,
@@ -24,6 +25,9 @@ let testDb: Awaited<ReturnType<typeof createTestDatabase>>;
 const people: Record<string, Principal> = {};
 let org = "";
 let otherOrg = "";
+// One project per organization: every upload names the project it came through.
+const projects: Record<string, string> = {};
+let projectId = "";
 let dataDir = "";
 
 const code = (promise: Promise<unknown>) =>
@@ -99,7 +103,10 @@ const upload = (
         people[who]!,
         options.org ?? org,
         stream(bytes),
-        { contentLength: options.length === undefined ? bytes.length : options.length },
+        {
+            contentLength: options.length === undefined ? bytes.length : options.length,
+            projectId: projects[options.org ?? org]!,
+        },
         deps(options.limits),
     );
 
@@ -130,6 +137,11 @@ beforeAll(async () => {
             slug: "beta",
             ownerEmail: "zoe@example.com",
         })
+    ).id;
+    projects[org] = (await createProject(db, people.ann!, org, { name: "Site", slug: "site" })).id;
+    projectId = projects[org]!;
+    projects[otherOrg] = (
+        await createProject(db, people.zoe!, otherOrg, { name: "Site", slug: "site" })
     ).id;
     await addMember(db, people.ann!, org, { email: "dee@example.com", role: "deployer" });
     await addMember(db, people.ann!, org, { email: "vic@example.com", role: "viewer" });
@@ -211,7 +223,7 @@ describe("who may upload", () => {
                     people[who]!,
                     org,
                     body,
-                    { contentLength: bytes.length },
+                    { contentLength: bytes.length, projectId },
                     deps(),
                 ),
             );
@@ -226,7 +238,7 @@ describe("who may upload", () => {
                     people.zoe!,
                     org,
                     body,
-                    { contentLength: bytes.length },
+                    { contentLength: bytes.length, projectId },
                     deps(),
                 ),
             ),
@@ -258,7 +270,7 @@ describe("who may upload", () => {
                 people.gone!,
                 org,
                 body,
-                { contentLength: bytes.length },
+                { contentLength: bytes.length, projectId },
                 deps(),
             ),
         );
@@ -275,6 +287,72 @@ describe("who may upload", () => {
     });
 });
 
+describe("artifact project provenance", () => {
+    const rows = (artifactId: string) =>
+        testDb.db
+            .selectFrom("artifact_project")
+            .select("project_id")
+            .where("artifact_id", "=", artifactId)
+            .orderBy("project_id")
+            .execute();
+
+    it("records every project an artifact came through, including reuse and re-storing", async () => {
+        const second = (
+            await createProject(testDb.db, people.ann!, org, { name: "Prov", slug: "prov" })
+        ).id;
+        const bytes = site([{ name: "prov.txt", content: "prov" }]);
+        const through = (project: string) =>
+            uploadArtifact(
+                testDb.db,
+                people.dee!,
+                org,
+                stream(bytes),
+                { contentLength: bytes.length, projectId: project },
+                deps(),
+            );
+        const first = await through(projectId);
+        expect(await rows(first.id)).toEqual([{ project_id: projectId }]);
+        // The same bytes through another project: reused, and the new project is recorded.
+        const reused = await through(second);
+        expect(reused).toMatchObject({ id: first.id, reused: true });
+        expect((await rows(first.id)).map((r) => r.project_id).sort()).toEqual(
+            [projectId, second].sort(),
+        );
+        // Collected and stored again: still the same artifact, the history is kept.
+        await testDb.db
+            .updateTable("artifact")
+            .set({ collected_at: new Date() })
+            .where("id", "=", first.id)
+            .execute();
+        await fs.rm(resolveArtifactPath(dataDir, artifactStorageKey(org, first.digest)), {
+            force: true,
+        });
+        const again = await through(projectId);
+        expect(again.id).toBe(first.id);
+        expect(await rows(first.id)).toHaveLength(2);
+    });
+
+    it("refuses a project outside a key's restriction and an unknown project", async () => {
+        const bytes = site([{ name: "restricted.txt", content: "r" }]);
+        const attempt = (project: string, restrictTo?: string[] | null) =>
+            code(
+                uploadArtifact(
+                    testDb.db,
+                    people.dee!,
+                    org,
+                    stream(bytes),
+                    { contentLength: bytes.length, projectId: project, restrictTo },
+                    deps(),
+                ),
+            );
+        expect(await attempt(projectId, [randomUUID()])).toBe("not-found");
+        expect(await attempt(randomUUID())).toBe("not-found");
+        expect(await attempt(projects[otherOrg]!)).toBe("not-found");
+        expect(await attempt(projectId, [projectId])).toBe("ok");
+        expect(await attempt(projectId, null)).toBe("ok");
+    });
+});
+
 describe("limits and failures leave nothing behind", () => {
     it("rejects a declared size over the limit without reading the body", async () => {
         const { body, state } = spy(Buffer.alloc(100));
@@ -284,7 +362,7 @@ describe("limits and failures leave nothing behind", () => {
                 people.dee!,
                 org,
                 body,
-                { contentLength: 2000 },
+                { contentLength: 2000, projectId },
                 deps({ maxUploadBytes: 1000 }),
             ),
         );
@@ -302,7 +380,7 @@ describe("limits and failures leave nothing behind", () => {
                 people.dee!,
                 org,
                 body,
-                { contentLength: 10 },
+                { contentLength: 10, projectId },
                 deps({ maxUploadBytes: 64 }),
             ),
         );
@@ -314,7 +392,14 @@ describe("limits and failures leave nothing behind", () => {
     it("rejects a missing body, an empty body and a truncated one", async () => {
         expect(
             await code(
-                uploadArtifact(testDb.db, people.dee!, org, null, { contentLength: 0 }, deps()),
+                uploadArtifact(
+                    testDb.db,
+                    people.dee!,
+                    org,
+                    null,
+                    { contentLength: 0, projectId },
+                    deps(),
+                ),
             ),
         ).toBe("invalid");
         expect(await code(upload("dee", Buffer.alloc(0)))).toBe("invalid");
@@ -342,7 +427,7 @@ describe("limits and failures leave nothing behind", () => {
                 people.dee!,
                 org,
                 body,
-                { contentLength: bytes.length },
+                { contentLength: bytes.length, projectId },
                 deps(),
             ),
         );
@@ -364,7 +449,7 @@ describe("limits and failures leave nothing behind", () => {
                 people.dee!,
                 org,
                 body,
-                { contentLength: 100 },
+                { contentLength: 100, projectId },
                 deps({ uploadTimeoutMs: 300 }),
             ),
         );
@@ -397,7 +482,7 @@ describe("limits and failures leave nothing behind", () => {
                     people.dee!,
                     org,
                     body,
-                    { contentLength: null },
+                    { contentLength: null, projectId },
                     deps({ uploadTimeoutMs: 800, maxConcurrentUploads: 2 }),
                 ),
             );
@@ -416,7 +501,7 @@ describe("limits and failures leave nothing behind", () => {
                     people.zoe!,
                     otherOrg,
                     stream(site()),
-                    { contentLength: null },
+                    { contentLength: null, projectId: projects[otherOrg]! },
                     deps(),
                 ),
             ),
@@ -443,7 +528,7 @@ describe("limits and failures leave nothing behind", () => {
                 people.dee!,
                 org,
                 body,
-                { contentLength: 100 },
+                { contentLength: 100, projectId },
                 deps(),
                 controller.signal,
             ),
@@ -463,7 +548,7 @@ describe("limits and failures leave nothing behind", () => {
                 people.dee!,
                 org,
                 body,
-                { contentLength: 100 },
+                { contentLength: 100, projectId },
                 deps(),
                 controller.signal,
             ),
@@ -500,6 +585,9 @@ describe("the artifact quota", () => {
                 ownerEmail: "ann@example.com",
             })
         ).id;
+        projects[quotaOrg] = (
+            await createProject(testDb.db, people.ann!, quotaOrg, { name: "Q", slug: "q" })
+        ).id;
         const limits = { maxArtifacts: 3 };
         const results = await Promise.all(
             Array.from({ length: 7 }, (_, i) =>
@@ -522,7 +610,7 @@ describe("the artifact quota", () => {
                     people.ann!,
                     quotaOrg,
                     body,
-                    { contentLength: 100 },
+                    { contentLength: 100, projectId: projects[quotaOrg]! },
                     deps(limits),
                 ),
             ),
