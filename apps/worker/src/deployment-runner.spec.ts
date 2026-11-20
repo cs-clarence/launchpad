@@ -1,5 +1,6 @@
 import { DokkuError } from "@launchpad-kit/dokku";
 import { describe, expect, it, vi } from "vitest";
+import { withinDeadline } from "./deadline";
 import { DeploymentEffectNotStarted } from "./deployment-errors";
 import {
     runDeployment,
@@ -111,6 +112,100 @@ describe("deployment runner", () => {
         expect(store.stop).toHaveBeenCalledWith("app", "failed");
         expect(ports.create).not.toHaveBeenCalled();
         expect(ports.build).not.toHaveBeenCalled();
+    });
+
+    it("fails an uncertain existence read without treating it as a dispatched create", async () => {
+        const { store, ports, shutdown } = fixture();
+        ports.exists.mockRejectedValueOnce(
+            new DokkuError({
+                kind: "uncertain",
+                operation: "apps:exists",
+                message: "Lost read response",
+            }),
+        );
+        expect(
+            await runDeployment(
+                context,
+                { stepDone: null, image: null },
+                store,
+                ports,
+                shutdown.signal,
+            ),
+        ).toBe("failed");
+        expect(store.stop).toHaveBeenCalledWith("app", "failed");
+        expect(ports.create).not.toHaveBeenCalled();
+    });
+
+    it("holds an uncertain create for reconciliation", async () => {
+        const { store, ports, shutdown } = fixture();
+        ports.create.mockRejectedValueOnce(
+            new DokkuError({
+                kind: "uncertain",
+                operation: "apps:create",
+                mutating: true,
+                message: "Lost create response",
+            }),
+        );
+        expect(
+            await runDeployment(
+                context,
+                { stepDone: null, image: null },
+                store,
+                ports,
+                shutdown.signal,
+            ),
+        ).toBe("reconciliation-needed");
+        expect(store.stop).toHaveBeenCalledWith("app", "reconciliation-needed");
+    });
+
+    it("bounds a renewal that never settles before dispatch", async () => {
+        vi.useFakeTimers();
+        try {
+            const { store, ports, shutdown } = fixture();
+            store.renew.mockImplementation(() => new Promise(() => {}));
+            const run = runDeployment(
+                context,
+                { stepDone: "configure", image },
+                store,
+                ports,
+                shutdown.signal,
+            );
+            await vi.advanceTimersByTimeAsync(10_000);
+            expect(await run).toBe("authority-lost");
+            expect(ports.load).not.toHaveBeenCalled();
+            expect(store.complete).not.toHaveBeenCalled();
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
+    it("does not wait for a stuck heartbeat on shutdown", { timeout: 10_000 }, async () => {
+        const { store, ports, shutdown } = fixture();
+        const stuck = Promise.withResolvers<Date | null>();
+        store.renew.mockResolvedValueOnce(new Date()).mockReturnValue(stuck.promise);
+        const load = vi.fn<DeploymentRunnerPorts["load"]>(async (_context, _image, signal) => {
+            await new Promise<void>((resolve) =>
+                signal.addEventListener("abort", () => resolve(), { once: true }),
+            );
+            signal.throwIfAborted();
+        });
+        const run = runDeployment(
+            context,
+            { stepDone: "configure", image },
+            store,
+            { ...ports, load },
+            shutdown.signal,
+        );
+        try {
+            await vi.waitFor(() => expect(store.renew).toHaveBeenCalledTimes(2), 5000);
+            expect(load).toHaveBeenCalledOnce();
+            shutdown.abort();
+            await expect(withinDeadline(() => run, 1000)).resolves.toBe("authority-lost");
+        } finally {
+            shutdown.abort();
+            stuck.resolve(null);
+            await run;
+        }
     });
 
     it("resumes after a recorded step and retains an uncertain load for reconciliation", async () => {

@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { createDatabase } from "@launchpad-kit/database";
 import { createTestDatabase } from "@launchpad-kit/database/testing";
 import {
     beginDeploymentStep,
@@ -7,6 +8,7 @@ import {
     createDeployment,
     createOrganization,
     createProject,
+    lockDeploymentRecovery,
     markDeploymentRecoveryBlocked,
     parseDeploymentConfig,
     uploadArtifact,
@@ -186,3 +188,40 @@ it("does not dispatch or touch the health marker while recovery blocks the queue
             .executeTakeFirstOrThrow(),
     ).toEqual({ status: "queued" });
 });
+
+it("fails the worker loop on a stalled claim and lets the caller close the pool", async () => {
+    const job = await enqueue();
+    const { shutdown, ports, markHealthy } = fixture();
+    const db = createDatabase(source.url, { max: 2, closeTimeout: 0 });
+    try {
+        await source.db.transaction().execute(async (trx) => {
+            await lockDeploymentRecovery(trx, true);
+            await expect(
+                workDeployments({
+                    db,
+                    dataDir: tmp.dir,
+                    owner: "stalled",
+                    ports,
+                    markHealthy,
+                    log: vi.fn(),
+                    shutdown: shutdown.signal,
+                    databaseTimeoutMs: 100,
+                }),
+            ).rejects.toThrow("Deployment worker database deadline exceeded.");
+            // Close while the server still holds the lock; do not let the
+            // abandoned transaction claim after the timeout.
+            await db.destroy();
+        });
+        expect(ports.exists).not.toHaveBeenCalled();
+        expect(markHealthy).not.toHaveBeenCalled();
+        expect(
+            await source.db
+                .selectFrom("deployment")
+                .select("status")
+                .where("id", "=", job.id)
+                .executeTakeFirstOrThrow(),
+        ).toEqual({ status: "queued" });
+    } finally {
+        await db.destroy();
+    }
+}, 5000);

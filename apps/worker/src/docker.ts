@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { DeploymentEffectNotStarted } from "./deployment-errors";
 
 // The Docker engine is reached only through this fixed vocabulary: build the fixed
 // template, save that image, remove that image. Every argument is validated by the
@@ -105,7 +106,9 @@ export function createDocker(options: { binary?: string; removeTimeoutMs?: numbe
         // `site/`. No network is offered to the build, which has no RUN steps anyway.
         async build(contextDir: string, tag: string, signal?: AbortSignal): Promise<void> {
             if (!PLAIN_PATH.test(contextDir) || !TAG.test(tag)) {
-                throw new Error("Refused: not a build directory or image tag this worker makes.");
+                throw new DeploymentEffectNotStarted(
+                    "Refused: not a build directory or image tag this worker makes.",
+                );
             }
             const { child, exited } = start(
                 ["build", "--network", "none", "--quiet", "-t", tag, contextDir],

@@ -1,6 +1,7 @@
 import { setTimeout as delay } from "node:timers/promises";
 import { DokkuError } from "@launchpad-kit/dokku";
 import { DEPLOYMENT_LEASE_MS } from "@launchpad-kit/services";
+import { withinDeadline } from "./deadline";
 import { DeploymentEffectNotStarted } from "./deployment-errors";
 import type { DeployContext } from "./types";
 
@@ -59,14 +60,13 @@ export async function runDeployment(
     async function renew() {
         signal.throwIfAborted();
         const requestedAt = performance.now();
-        const watchdog = setTimeout(() => stop.abort(new AuthorityLost()), RENEW_TIMEOUT_MS);
         try {
-            if ((await store.renew()) === null) throw new AuthorityLost();
+            if ((await withinDeadline(() => store.renew(), RENEW_TIMEOUT_MS, signal)) === null) {
+                throw new AuthorityLost();
+            }
         } catch {
             stop.abort(new AuthorityLost());
             throw new AuthorityLost();
-        } finally {
-            clearTimeout(watchdog);
         }
         const until = requestedAt + DEPLOYMENT_LEASE_MS - LEASE_MARGIN_MS;
         if (performance.now() >= until) {
@@ -99,6 +99,17 @@ export async function runDeployment(
         return call(effect);
     }
 
+    async function appExists() {
+        return dispatch(async (effect) => {
+            try {
+                return await ports.exists(context.appName, effect);
+            } catch (cause) {
+                // A failed read cannot leave an ambiguous create behind.
+                throw new DeploymentEffectNotStarted("Could not check the app name.", { cause });
+            }
+        });
+    }
+
     try {
         let image = resume.image;
         const remaining = steps.slice(
@@ -111,7 +122,7 @@ export async function runDeployment(
             try {
                 switch (step) {
                     case "app":
-                        if (await dispatch((effect) => ports.exists(context.appName, effect))) {
+                        if (await appExists()) {
                             throw new DeploymentEffectNotStarted("The app name already exists.");
                         }
                         await dispatch((effect) => ports.create(context.appName, effect));

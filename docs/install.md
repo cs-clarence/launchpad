@@ -70,7 +70,8 @@ the controller publicly. Those are the [separate production follow-up](plans/pro
    same engine so a replacement can load the image recorded by its predecessor.
    `LAUNCHPAD_BASE_IMAGE` defaults to `nginx:1.27-alpine`; use a pinned digest for
    a release. Allow at least 30 seconds for shutdown so the worker can signal
-   and reap local subprocesses. Each dispatch has at most 290 seconds; work that
+   and reap local subprocesses. Configure a supervisor to restart the worker
+   if it exits after a stalled database operation. Each dispatch has at most 290 seconds; work that
    cannot be confirmed by then is held for reconciliation. Provision space for
    retained per-deployment images and scratch directories left after a forced stop;
    never prune an active worker's engine. An interrupted effect may still be running remotely;

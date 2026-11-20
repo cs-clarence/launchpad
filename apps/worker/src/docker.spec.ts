@@ -1,6 +1,7 @@
 import { promises as fs } from "node:fs";
 import path from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { DeploymentEffectNotStarted } from "./deployment-errors";
 import { createDocker, DockerError } from "./docker";
 import { fakeDocker, tempDir } from "./testing";
 
@@ -49,11 +50,13 @@ describe("the docker vocabulary", () => {
     it("refuses a tag or directory it would not make, before running anything", async () => {
         const { docker, argv } = await recording();
         for (const tag of ["", "nginx:latest", `${TAG};ls`, "launchpad/site:ABC", `${TAG}\n`]) {
-            await expect(docker.build("/tmp/d", tag)).rejects.toThrow(/Refused/);
+            await expect(docker.build("/tmp/d", tag)).rejects.toBeInstanceOf(
+                DeploymentEffectNotStarted,
+            );
             expect(() => docker.save(tag)).toThrow(/Refused/);
         }
         for (const dir of ["relative", "/tmp/a b", "/tmp/$(id)", "-f/x", "/tmp/a;b"]) {
-            await expect(docker.build(dir, TAG)).rejects.toThrow(/Refused/);
+            await expect(docker.build(dir, TAG)).rejects.toBeInstanceOf(DeploymentEffectNotStarted);
         }
         await expect(fs.stat(argv)).rejects.toThrow();
     });

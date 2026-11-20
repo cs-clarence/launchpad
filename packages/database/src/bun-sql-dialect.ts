@@ -52,6 +52,8 @@ export interface BunSqlOptions {
     max?: number;
     connectionTimeout?: number;
     connection?: Record<string, string | boolean | number>;
+    /** Seconds to wait for outstanding queries before closing their connections. */
+    closeTimeout?: number;
 }
 
 class BunSqlDriver implements Driver {
@@ -63,7 +65,8 @@ class BunSqlDriver implements Driver {
     ) {}
 
     async init(): Promise<void> {
-        this.client = new SQL({ url: this.connectionString, ...this.options });
+        const { max, connectionTimeout, connection } = this.options;
+        this.client = new SQL({ url: this.connectionString, max, connectionTimeout, connection });
     }
 
     async acquireConnection(): Promise<DatabaseConnection> {
@@ -106,7 +109,8 @@ class BunSqlDriver implements Driver {
     }
 
     async destroy(): Promise<void> {
-        await this.client?.close();
+        const timeout = this.options.closeTimeout;
+        await this.client?.close(timeout === undefined ? undefined : { timeout });
     }
 }
 

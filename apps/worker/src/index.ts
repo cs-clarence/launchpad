@@ -54,6 +54,7 @@ async function main() {
         const db = createDatabase(databaseUrl, {
             max: 2,
             connectionTimeout: 5,
+            closeTimeout: 0,
             connection: { statement_timeout: "5s", idle_in_transaction_session_timeout: "10s" },
         });
         try {

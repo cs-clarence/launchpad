@@ -8,6 +8,7 @@ import {
     renewDeploymentClaim,
     stopDeploymentStep,
 } from "@launchpad-kit/services";
+import { DeadlineExceeded, withinDeadline } from "./deadline";
 import { runDeployment, type DeploymentRunnerPorts } from "./deployment-runner";
 
 export async function workDeployments({
@@ -18,6 +19,9 @@ export async function workDeployments({
     shutdown,
     markHealthy,
     log,
+    // Wall-clock fail-stop budget for the entire operation, including the
+    // recovery check and fsync. It deliberately caps multiple SQL waits.
+    databaseTimeoutMs = 8000,
 }: {
     db: ReturnType<typeof createDatabase>;
     dataDir: string;
@@ -26,14 +30,31 @@ export async function workDeployments({
     shutdown: AbortSignal;
     markHealthy: () => void;
     log: (line: Record<string, unknown>) => void;
+    databaseTimeoutMs?: number;
 }) {
-    let blocked = false;
-    while (!shutdown.aborted) {
+    const fault = new AbortController();
+    const signal = AbortSignal.any([shutdown, fault.signal]);
+
+    async function database<T>(run: () => Promise<T>): Promise<T> {
+        fault.signal.throwIfAborted();
         try {
-            const claim = await claimDeployment(db, dataDir, owner);
+            return await withinDeadline(run, databaseTimeoutMs, fault.signal);
+        } catch (error) {
+            if (error instanceof DeadlineExceeded) {
+                fault.abort(new Error("Deployment worker database deadline exceeded."));
+            }
+            fault.signal.throwIfAborted();
+            throw error;
+        }
+    }
+
+    let blocked = false;
+    while (!signal.aborted) {
+        try {
+            const claim = await database(() => claimDeployment(db, dataDir, owner));
             blocked = false;
             markHealthy();
-            if (shutdown.aborted) return;
+            if (signal.aborted) break;
             if (claim.kind === "claimed") {
                 const { deployment: row, token, storageKey } = claim;
                 const status = await runDeployment(
@@ -52,19 +73,22 @@ export async function workDeployments({
                                 : null,
                     },
                     {
-                        begin: (step) => beginDeploymentStep(db, dataDir, token, step),
+                        begin: (step) =>
+                            database(() => beginDeploymentStep(db, dataDir, token, step)),
                         complete: (completion) =>
-                            completeDeploymentStep(db, dataDir, token, completion),
+                            database(() => completeDeploymentStep(db, dataDir, token, completion)),
                         stop: (step, outcome) =>
-                            stopDeploymentStep(db, dataDir, token, step, outcome),
+                            database(() => stopDeploymentStep(db, dataDir, token, step, outcome)),
                         renew: async () => {
-                            const lease = await renewDeploymentClaim(db, dataDir, token);
+                            const lease = await database(() =>
+                                renewDeploymentClaim(db, dataDir, token),
+                            );
                             if (lease) markHealthy();
                             return lease;
                         },
                     },
                     ports,
-                    shutdown,
+                    signal,
                 );
                 log({ event: "deployment-run-ended", deploymentId: row.id, status });
                 if (status !== "authority-lost") continue;
@@ -73,7 +97,7 @@ export async function workDeployments({
                 continue;
             }
         } catch (error) {
-            if (shutdown.aborted) return;
+            if (signal.aborted) break;
             if (error instanceof DeploymentRecoveryError) {
                 if (!blocked) log({ event: "deployment-recovery-blocked" });
                 blocked = true;
@@ -83,6 +107,9 @@ export async function workDeployments({
                 log({ event: "deployment-worker-error" });
             }
         }
-        await delay(2000, undefined, { signal: shutdown }).catch(() => undefined);
+        await delay(2000, undefined, { signal }).catch(() => undefined);
     }
+    // Do not start another claim with a pool that may still have a stuck query.
+    // The entrypoint closes the pool with a bounded disconnect and exits.
+    fault.signal.throwIfAborted();
 }
