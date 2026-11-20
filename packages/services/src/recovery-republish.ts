@@ -34,6 +34,10 @@ export function republishRecoveryAlias(
     aliasId: string,
     router: RecoveryRepublishRouter,
     routerEpochUnrecorded = false,
+    // The restored committed target cannot serve (for example its Dokku app is gone). Instead of
+    // republishing it, write a tombstone, verify nothing is served, and record a withdrawal. This
+    // overrides the restored database's committed target, so it is never the default.
+    withdrawUnservableTarget = false,
 ) {
     return withDeploymentRecoveryMaintenance(db, async (connection) => {
         await assertNoPendingDeploymentImport(dataDir);
@@ -88,8 +92,14 @@ export function republishRecoveryAlias(
 
         const committed = BigInt(alias.committed_generation);
         const reserved = BigInt(alias.reserved_generation);
+        if (withdrawUnservableTarget && (committed === 0n || alias.target_deployment_id === null)) {
+            throw new DeploymentRecoveryError(
+                "Only an alias with a committed target can have an unservable target withdrawn.",
+            );
+        }
+        const previousTarget = alias.target_deployment_id;
         const targetRow =
-            alias.target_deployment_id === null
+            alias.target_deployment_id === null || withdrawUnservableTarget
                 ? null
                 : await connection
                       .selectFrom("deployment")
@@ -119,8 +129,27 @@ export function republishRecoveryAlias(
             .orderBy("generation")
             .limit(1)
             .executeTakeFirst();
+        if (withdrawUnservableTarget) {
+            const committedTarget = await connection
+                .selectFrom("deployment")
+                .select(["id", "hostname"])
+                .where("id", "=", previousTarget!)
+                .executeTakeFirstOrThrow();
+            // A target that still serves must be republished, never withdrawn.
+            if (
+                await router.serves(alias.hostname, {
+                    deploymentId: committedTarget.id,
+                    hostname: committedTarget.hostname,
+                })
+            ) {
+                throw new DeploymentRecoveryError(
+                    "The committed target still serves; republish it without --withdraw-unservable-target.",
+                );
+            }
+        }
         const matches =
-            committed === 0n
+            !withdrawUnservableTarget &&
+            (committed === 0n
                 ? !route ||
                   (route.target === null &&
                       BigInt(route.generation) <= reserved &&
@@ -128,7 +157,7 @@ export function republishRecoveryAlias(
                 : route?.generation === alias.committed_generation &&
                   (!last || route.operationId === last.id) &&
                   (route.target?.deploymentId ?? null) === (target?.deploymentId ?? null) &&
-                  (route.target?.hostname ?? null) === (target?.hostname ?? null);
+                  (route.target?.hostname ?? null) === (target?.hostname ?? null));
         if (matches) {
             if (!(await router.serves(alias.hostname, target)))
                 throw new DeploymentRecoveryError(
@@ -203,7 +232,9 @@ export function republishRecoveryAlias(
                     alias_id: aliasId,
                     action: target ? "bind" : "withdraw",
                     idempotency_key: `recovery-${operationId}`,
-                    previous_target_deployment_id: target?.deploymentId ?? null,
+                    previous_target_deployment_id: withdrawUnservableTarget
+                        ? previousTarget
+                        : (target?.deploymentId ?? null),
                     desired_target_deployment_id: target?.deploymentId ?? null,
                     expected_generation: alias.committed_generation,
                     generation,
@@ -234,17 +265,30 @@ export function republishRecoveryAlias(
                 .set({
                     reserved_generation: generation,
                     committed_generation: committed === 0n ? "0" : generation,
+                    target_deployment_id: target?.deploymentId ?? null,
                     state: target ? "bound" : committed === 0n ? "unbound" : "withdrawn",
                     updated_at: now,
                 })
                 .where("id", "=", aliasId)
                 .execute();
-            const released = new Set(
-                operations.flatMap((op) => [
+            if (withdrawUnservableTarget) {
+                // As a verified withdrawal does: the hostname stays fenced on the router and is
+                // no longer held for the alias.
+                await trx
+                    .updateTable("hostname_reservation")
+                    .set({ released_at: now })
+                    .where("owner_kind", "=", "alias")
+                    .where("owner_id", "=", aliasId)
+                    .where("released_at", "is", null)
+                    .execute();
+            }
+            const released = new Set([
+                ...(withdrawUnservableTarget ? [previousTarget] : []),
+                ...operations.flatMap((op) => [
                     op.previous_target_deployment_id,
                     op.desired_target_deployment_id,
                 ]),
-            );
+            ]);
             for (const id of released) {
                 if (id && !(await isDeploymentPinned(trx, id))) {
                     await trx
@@ -267,6 +311,7 @@ export function republishRecoveryAlias(
                         operationId,
                         attributedUserId: alias.created_by,
                         target: target?.deploymentId ?? null,
+                        withdrawnUnservableTarget: withdrawUnservableTarget ? previousTarget : null,
                         superseded: operations.map((op) => op.id),
                         routerEpochUnrecorded,
                     }),

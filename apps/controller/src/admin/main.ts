@@ -297,6 +297,10 @@ program
         "--router-epoch-unrecorded",
         "confirm a rotation that the restore could not independently anchor",
     )
+    .option(
+        "--withdraw-unservable-target",
+        "audited override: the committed target cannot serve (for example its Dokku app is gone), so withdraw the alias instead; refused if it still serves",
+    )
     .action(async (options) => {
         const env = process.env;
         if (!/^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(options.alias))
@@ -315,6 +319,7 @@ program
                         (target?.deploymentId ?? null),
                 },
                 options.routerEpochUnrecorded === true,
+                options.withdrawUnservableTarget === true,
             ),
         );
         console.log(

@@ -909,4 +909,127 @@ describe("P4 worked example and restore, against the real router", () => {
                 .execute();
         }
     });
+
+    it("withdraws an alias whose committed target cannot serve on a replacement router", async () => {
+        const { alias, ready } = await fixture();
+        const target = await ready();
+        await promote(alias.id, target, "0");
+        expect(ended(await work())).toBe("succeeded");
+        expect(await aliasRow(alias.id)).toMatchObject({
+            state: "bound",
+            target_deployment_id: target,
+        });
+
+        await markDeploymentRecoveryBlocked(tmp.dir, { routerEpoch: epoch, note: "recorded" });
+        await blockRestoredModel(db.db);
+        await ageRecoveryMarker(tmp.dir);
+        const replacementAuthority = {
+            epoch: randomUUID(),
+            token: randomBytes(32).toString("hex"),
+        };
+        const settings = { instanceId, appsDomain: "sites.example.net" };
+        const stateFile = path.join(routerDir, `replacement-${randomUUID()}.sqlite`);
+        initializeRouterState(stateFile, settings, replacementAuthority);
+        let replacement: RouterStore | undefined;
+        let server: ReturnType<typeof Bun.serve> | undefined;
+        let replacementData: ReturnType<typeof Bun.serve> | undefined;
+        try {
+            replacement = openRouterState(stateFile, settings);
+            server = Bun.serve({
+                hostname: "127.0.0.1",
+                port: 0,
+                fetch: createControlHandler(replacement),
+            });
+            replacementData = Bun.serve({
+                hostname: "127.0.0.1",
+                port: 0,
+                fetch: createDataHandler(replacement, {
+                    upstream: async () => new Response("unexpected target", { status: 500 }),
+                }),
+            });
+            const dataPort = replacementData.port;
+            const control = createRouterControlClient({
+                baseUrl: new URL(`http://127.0.0.1:${server.port}`),
+                credentials: { instanceId, ...replacementAuthority },
+            });
+            const view = () => control.listRoutes();
+            const nothingServed = async (hostname: string) => {
+                const response = await fetch(`http://127.0.0.1:${dataPort}`, {
+                    headers: { Host: hostname },
+                    signal: AbortSignal.timeout(5000),
+                });
+                await response.body?.cancel();
+                return response.status === 404 && !response.headers.has("x-launchpad-deployment");
+            };
+            const router = (served: boolean) => ({
+                observe: control.readRoute,
+                register: control.registerDeployment,
+                replace: control.replaceRoute,
+                // The tombstone check is the 404; a deployment is "served" only when asked to be.
+                serves: async (hostname: string, t: unknown) =>
+                    t === null ? nothingServed(hostname) : served,
+            });
+            await expect(clearDeploymentRecovery(db.db, tmp.dir, true, view)).rejects.toThrow(
+                /alias-route-missing/,
+            );
+            // Only an unservable target may be withdrawn; a serving one must be republished.
+            await expect(
+                republishRecoveryAlias(db.db, tmp.dir, alias.id, router(true), false, true),
+            ).rejects.toThrow(/still serves/);
+            expect((await control.readRoute(alias.hostname)).route).toBeNull();
+            expect(await aliasRow(alias.id)).toMatchObject({ state: "bound" });
+
+            const repaired = await republishRecoveryAlias(
+                db.db,
+                tmp.dir,
+                alias.id,
+                router(false),
+                false,
+                true,
+            );
+            expect(repaired).toMatchObject({ generation: "2", changed: true });
+            expect((await control.readRoute(alias.hostname)).route).toMatchObject({
+                generation: "2",
+                target: null,
+            });
+            expect(await aliasRow(alias.id)).toMatchObject({
+                state: "withdrawn",
+                target_deployment_id: null,
+                committed_generation: "2",
+                reserved_generation: "2",
+            });
+            expect(
+                await db.db
+                    .selectFrom("hostname_reservation")
+                    .select("released_at")
+                    .where("owner_id", "=", alias.id)
+                    .executeTakeFirstOrThrow(),
+            ).toMatchObject({ released_at: expect.any(Date) });
+            const audit = await db.db
+                .selectFrom("audit_event")
+                .select("detail")
+                .where("action", "=", "deployment.recovery-alias-republished")
+                .executeTakeFirstOrThrow();
+            expect(JSON.parse(audit.detail!)).toMatchObject({ withdrawnUnservableTarget: target });
+            // Nothing is left to withdraw, and the repair itself never opened the gate.
+            await expect(
+                republishRecoveryAlias(db.db, tmp.dir, alias.id, router(false), false, true),
+            ).rejects.toThrow(/committed target/);
+            await expect(assertModelMutationsReady(db.db, tmp.dir)).rejects.toThrow(/blocked/);
+            await clearDeploymentRecovery(db.db, tmp.dir, true, view);
+            await assertModelMutationsReady(db.db, tmp.dir);
+        } finally {
+            await replacementData?.stop(true);
+            await server?.stop(true);
+            replacement?.close();
+            await fs.rm(path.join(tmp.dir, "maintenance/deployment-recovery-blocked"), {
+                force: true,
+            });
+            await db.db
+                .updateTable("instance_state")
+                .set({ value: "ready" })
+                .where("key", "=", "deployment_recovery")
+                .execute();
+        }
+    });
 });

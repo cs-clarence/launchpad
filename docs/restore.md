@@ -159,6 +159,16 @@ or prove. `restore` never contacts Dokku. Back up the target database first.
    verification fails, keep recovery blocked and retry after investigating. Do not
    republish a hostname recorded for a different alias ID.
 
+    If the restored committed target can no longer serve (for example its Dokku app
+    is gone and a replacement router has no route), republish cannot verify it and
+    recovery stays blocked. Once you have checked the Dokku host, run
+    `recovery-republish-alias --alias <uuid> --withdraw-unservable-target`. This
+    **overrides the restored database's committed target**: it refuses if the target
+    still serves, writes a tombstone above both generation fences, verifies the exact
+    tombstone and that nothing is served, then records a withdrawal, releases the
+    alias hostname reservation and unpins the target. It is audited with the
+    withdrawn target and the old deployment stays in history.
+
     Keep ingress closed and workers stopped. After at least **25 minutes from the
     recorded restore start**, check the Dokku host and confirm that no operation
     dispatched before the restore is still running. As the controller's OS user, run
