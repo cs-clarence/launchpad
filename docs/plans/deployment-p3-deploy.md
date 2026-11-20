@@ -108,9 +108,14 @@ controller restore tests. Undo: revert; no schema change.
   the schema map's order (quota advisory lock, app row), checks the artifact belongs to the
   organization and is stored **and that the caller may use it**, in the same locked transaction as
   the other checks: the app's project must be one the key can access, and artifacts are
-  organization-owned (they carry no project), so a key with a project restriction may deploy only
-  an artifact its own creator uploaded (`created_by`); a test uses a key restricted to project A
-  against an artifact uploaded for project B, enforces the per-app unfinished rule and both deployment quotas,
+  organization-owned and carry no project today, so P3b adds forward migration 019: a nullable
+  `artifact.upload_project_id` (qualified FK to `project`, set by the new upload route, null for
+  older rows). A key with a project restriction may deploy only an artifact whose
+  `upload_project_id` equals the app's project, **regardless of creator**; null provenance is
+  refused for such keys. Keys without a restriction and sessions need only the organization match
+  and the role. Tests: two keys with the same creator, one restricted to project A and one to B,
+  against an artifact uploaded through B (the A key is refused, the B key succeeds, an
+  unrestricted key succeeds), and a null-provenance artifact refused for a restricted key, enforces the per-app unfinished rule and both deployment quotas,
   generates the Dokku name and hostname (`hostname-template.ts`), sets `preview_expires_at` per
   decision 4, inserts the deployment and its two reservation rows in one transaction, and records
   the first `app_deployment_event` (`queued`) in the same transaction. No network I/O inside a
