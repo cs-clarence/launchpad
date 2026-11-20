@@ -175,6 +175,23 @@ describe("restoreBackup", () => {
         ).toMatchObject({ rows: [{ present: false }] });
     });
 
+    it("records the router anchor it was given in the recovery marker", async () => {
+        const target = await emptyTarget();
+        const epoch = "22222222-2222-4222-8222-222222222222";
+        const options = restoreOptions(target, {
+            routerAnchor: { routerEpoch: epoch, note: "recorded" },
+        });
+        await restoreBackup(options);
+        expect(
+            JSON.parse(
+                await fs.readFile(
+                    path.join(options.dataDir, "maintenance/deployment-recovery-blocked"),
+                    "utf8",
+                ),
+            ),
+        ).toMatchObject({ version: 2, routerEpoch: epoch, routerEpochNote: "recorded" });
+    });
+
     it("restores into an empty database with its archives, and the result checks clean", async () => {
         const target = await emptyTarget();
         const options = restoreOptions(target);

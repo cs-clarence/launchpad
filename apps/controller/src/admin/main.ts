@@ -16,6 +16,7 @@ import {
     assertPrivateControlUrl,
     clearDeploymentRecovery,
     parseAppRoutingConfig,
+    readRecoveryMarker,
     raiseAliasCounters,
     withdrawUnknownRoute,
     readRouterCredential,
@@ -23,7 +24,7 @@ import {
     supersedeOperation,
 } from "@launchpad-kit/services";
 import { createBackup, verifyBackup } from "./backup";
-import { routerSessionFromEnv } from "./router-view";
+import { recoveryAnchorNotice, routerAnchorFromEnv, routerSessionFromEnv } from "./router-view";
 import { checkRestore, restoreBackup, replaceTarget } from "./restore";
 
 async function readStdin(): Promise<string> {
@@ -169,14 +170,22 @@ program
     .action(async (dir, options) => {
         const url = process.env.DATABASE_URL;
         if (!url) throw new Error("DATABASE_URL is required.");
+        // Read the router's epoch before anything changes, while the pre-restore credentials still
+        // match: recovery-clear later verifies that it has been rotated since.
+        const routerAnchor = await routerAnchorFromEnv(process.env);
+        const dataDir = path.resolve(process.env.LAUNCHPAD_DATA_DIR ?? ".data/controller");
         const result = await restoreBackup({
             backupDir: dir,
             databaseUrl: url,
-            dataDir: path.resolve(process.env.LAUNCHPAD_DATA_DIR ?? ".data/controller"),
+            dataDir,
             workersStopped: options.iHaveStoppedTheWorkers === true,
             replaceDatabase: options.replace,
             pgRestore: process.env.LAUNCHPAD_PG_RESTORE,
+            routerAnchor,
         });
+        // Judge by the marker on disk: a retry keeps the first anchor, whatever this run read.
+        const notice = recoveryAnchorNotice(await readRecoveryMarker(dataDir));
+        if (notice) console.log(notice);
         console.log(
             `Restored the database (${result.manifest.migrations.length} migrations applied) and ` +
                 `${result.filesRestored} archive(s) copied (${result.filesAlreadyPresent} already there).`,
@@ -221,6 +230,10 @@ program
         "--i-have-reconciled-router-and-dokku",
         "attest: ingress closed, dispatched Dokku work settled, router epoch and credentials rotated (if used), router and Dokku reconciled",
     )
+    .option(
+        "--router-epoch-unrecorded",
+        "confirm you rotated the router yourself: the restore recorded no router epoch to verify against",
+    )
     .action(async (options) => {
         await withDatabase((db) =>
             clearDeploymentRecovery(
@@ -228,6 +241,7 @@ program
                 path.resolve(process.env.LAUNCHPAD_DATA_DIR ?? ".data/controller"),
                 options.iHaveReconciledRouterAndDokku === true,
                 routerSessionFromEnv(process.env)?.view,
+                { routerEpochUnrecorded: options.routerEpochUnrecorded === true },
             ),
         );
         console.log("Deployment recovery cleared on the operator's attestation.");

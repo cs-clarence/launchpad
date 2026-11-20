@@ -72,8 +72,8 @@ let project = "";
 let counter = 0;
 
 const instanceId = randomUUID();
-const epoch = randomUUID();
-const token = randomBytes(32).toString("hex");
+let epoch = randomUUID();
+let token = randomBytes(32).toString("hex");
 const faults = { dropRouteReply: false, delayRouteReplyMs: 0, rejectRouteWrite: false };
 const routeWrites: string[] = [];
 
@@ -715,10 +715,19 @@ describe("P4 worked example and restore, against the real router", () => {
             generation: "4",
             targetDeploymentId: stranger.deploymentId,
         });
-        await markDeploymentRecoveryBlocked(tmp.dir);
+        // The restore began while the router was on the current epoch.
+        await markDeploymentRecoveryBlocked(tmp.dir, { routerEpoch: epoch, note: "recorded" });
         await blockRestoredModel(db.db);
         try {
             const view = () => client().listRoutes();
+            // First: the router has not been rotated since the restore began.
+            await expect(clearDeploymentRecovery(db.db, tmp.dir, true, view)).rejects.toThrow(
+                /epoch has not changed/,
+            );
+            // Offline rotation, as the router's operator command does it.
+            const rotated = { epoch: randomUUID(), token: randomBytes(32).toString("hex") };
+            store.rotateAuthority(rotated);
+            ({ epoch, token } = rotated);
             await expect(clearDeploymentRecovery(db.db, tmp.dir, true, view)).rejects.toThrow(
                 /ahead/,
             );

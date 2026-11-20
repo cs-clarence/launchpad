@@ -58,6 +58,35 @@ describe("private router control client", () => {
         expect(await client.readRoute(write.hostname)).toEqual(withdrawn);
     });
 
+    it("reads the router's epoch, and refuses a reply from another router", async () => {
+        const { send, options } = setup();
+        const client = createRouterControlClient({ ...options, fetch: send });
+        expect(await client.readEpoch()).toBe(options.credentials.epoch);
+        const other = createRouterControlClient({
+            ...options,
+            fetch: async () =>
+                Response.json({
+                    instanceId: randomUUID(),
+                    epoch: randomUUID(),
+                    routes: [],
+                    nextCursor: null,
+                }),
+        });
+        await expect(other.readEpoch()).rejects.toMatchObject({ kind: "uncertain" });
+        // The right router answering with an epoch that is not the one it authenticated: refused.
+        const drifted = createRouterControlClient({
+            ...options,
+            fetch: async () =>
+                Response.json({
+                    instanceId: options.credentials.instanceId,
+                    epoch: randomUUID(),
+                    routes: [],
+                    nextCursor: null,
+                }),
+        });
+        await expect(drifted.readEpoch()).rejects.toMatchObject({ kind: "uncertain" });
+    });
+
     it("lists every route, following pages and refusing a reply from another authority or a stuck cursor", async () => {
         const { send, options, target, write } = setup();
         const client = createRouterControlClient({ ...options, fetch: send });

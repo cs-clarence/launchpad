@@ -13,6 +13,7 @@ import {
     createOrganization,
     createProject,
     markDeploymentRecoveryBlocked,
+    readRecoveryMarker,
     parseAliasConfig,
     parseDeploymentConfig,
     raiseAliasCounters,
@@ -103,8 +104,13 @@ const route = (
 });
 const aliasRow = (id: string) =>
     db.db.selectFrom("app_alias").selectAll().where("id", "=", id).executeTakeFirstOrThrow();
-const blocked = async () => {
-    await markDeploymentRecoveryBlocked(dataDir);
+// The restore recorded an epoch the router has since moved off (authority.epoch differs), as it
+// would after a rotation.
+const blocked = async (anchor: string | null = randomUUID()) => {
+    await markDeploymentRecoveryBlocked(
+        dataDir,
+        anchor ? { routerEpoch: anchor, note: "recorded" } : undefined,
+    );
     await blockRestoredModel(db.db);
 };
 
@@ -121,7 +127,7 @@ afterEach(async () => {
 describe("recovery counters", () => {
     it("refuses to clear while any alias exists without a router to compare", async () => {
         await aliasFixture();
-        await blocked();
+        await blocked(null);
         await expect(clearDeploymentRecovery(db.db, dataDir, true)).rejects.toThrow(
             /compare the router/,
         );
@@ -213,7 +219,7 @@ describe("recovery counters", () => {
     });
 
     it("clears an installation with no aliases without a router", async () => {
-        await blocked();
+        await blocked(null);
         await clearDeploymentRecovery(db.db, dataDir, true);
         await assertModelMutationsReady(db.db, dataDir);
     });
@@ -264,5 +270,297 @@ describe("recovery counters", () => {
             .where("action", "=", "deployment.unknown-route-withdrawn")
             .execute();
         expect(audit).toEqual([{ detail: "hostname=stranger.sites.example.net;generation=7" }]);
+    });
+
+    describe("the router epoch anchor", () => {
+        const ok = (alias: { id: string; hostname: string }) => async () =>
+            inventory([route(alias, "0")]);
+
+        it("refuses while the router is still on the epoch recorded when the restore began", async () => {
+            const alias = await aliasFixture();
+            await blocked(authority.epoch);
+            await expect(clearDeploymentRecovery(db.db, dataDir, true, ok(alias))).rejects.toThrow(
+                /epoch has not changed since the restore began/,
+            );
+            await expect(assertModelMutationsReady(db.db, dataDir)).rejects.toThrow(/blocked/);
+            // The unrecorded flag does not override a recorded anchor.
+            await expect(
+                clearDeploymentRecovery(db.db, dataDir, true, ok(alias), {
+                    routerEpochUnrecorded: true,
+                }),
+            ).rejects.toThrow(/epoch has not changed/);
+        });
+
+        it("clears once it has been rotated, and audits that the epoch changed", async () => {
+            const alias = await aliasFixture();
+            await blocked(randomUUID());
+            await clearDeploymentRecovery(db.db, dataDir, true, ok(alias));
+            const audit = await db.db
+                .selectFrom("audit_event")
+                .select("detail")
+                .where("action", "=", "deployment.recovery-cleared")
+                .execute();
+            expect(audit).toEqual([
+                {
+                    detail: expect.stringMatching(
+                        /^attested=reconciled-router-and-dokku;router-epoch=changed;anchor=[0-9a-f-]{36};current=[0-9a-f-]{36}$/,
+                    ),
+                },
+            ]);
+        });
+
+        it("needs the explicit flag when the restore recorded no epoch, and audits it", async () => {
+            const alias = await aliasFixture();
+            await blocked(null);
+            expect(await readRecoveryMarker(dataDir)).toMatchObject({
+                routerEpoch: null,
+                routerEpochNote: "not-configured",
+            });
+            await expect(clearDeploymentRecovery(db.db, dataDir, true, ok(alias))).rejects.toThrow(
+                /recorded no router epoch/,
+            );
+            await clearDeploymentRecovery(db.db, dataDir, true, ok(alias), {
+                routerEpochUnrecorded: true,
+            });
+            const audit = await db.db
+                .selectFrom("audit_event")
+                .select("detail")
+                .where("action", "=", "deployment.recovery-cleared")
+                .execute();
+            expect(audit).toEqual([
+                {
+                    detail: "attested=reconciled-router-and-dokku;router-epoch=unrecorded-confirmed",
+                },
+            ]);
+        });
+
+        it("keeps the first anchor and start time when an interrupted restore runs again", async () => {
+            const first = randomUUID();
+            await markDeploymentRecoveryBlocked(dataDir, { routerEpoch: first, note: "recorded" });
+            const before = await readRecoveryMarker(dataDir);
+            await markDeploymentRecoveryBlocked(dataDir, {
+                routerEpoch: randomUUID(),
+                note: "recorded",
+            });
+            expect(await readRecoveryMarker(dataDir)).toEqual(before);
+            // A marker with no anchor yet is replaced by one that has it, keeping the start time.
+            const other = await fs.mkdtemp(path.join(os.tmpdir(), "lp-anchor-"));
+            try {
+                await markDeploymentRecoveryBlocked(other, {
+                    routerEpoch: null,
+                    note: "unreachable",
+                });
+                const bare = await readRecoveryMarker(other);
+                await markDeploymentRecoveryBlocked(other, {
+                    routerEpoch: first,
+                    note: "recorded",
+                });
+                expect(await readRecoveryMarker(other)).toMatchObject({
+                    routerEpoch: first,
+                    restoreStartedAt: (bare as { restoreStartedAt: string }).restoreStartedAt,
+                });
+            } finally {
+                await fs.rm(other, { recursive: true, force: true });
+            }
+        });
+
+        it("treats an anchor taken from the epoch file like a recorded one", async () => {
+            const alias = await aliasFixture();
+            await markDeploymentRecoveryBlocked(dataDir, {
+                routerEpoch: authority.epoch,
+                note: "from-epoch-file",
+            });
+            await blockRestoredModel(db.db);
+            expect(await readRecoveryMarker(dataDir)).toMatchObject({
+                routerEpoch: authority.epoch,
+                routerEpochNote: "from-epoch-file",
+            });
+            await expect(clearDeploymentRecovery(db.db, dataDir, true, ok(alias))).rejects.toThrow(
+                /epoch has not changed/,
+            );
+        });
+
+        it("refuses to clear without a router when the restore anchored one, even with no aliases", async () => {
+            await blocked(randomUUID());
+            await expect(clearDeploymentRecovery(db.db, dataDir, true)).rejects.toThrow(
+                /router was configured when the restore began/,
+            );
+            await expect(assertModelMutationsReady(db.db, dataDir)).rejects.toThrow(/blocked/);
+            // A router that was unreachable (not unconfigured) at the time counts as configured.
+            await fs.rm(path.join(dataDir, "maintenance/deployment-recovery-blocked"));
+            await markDeploymentRecoveryBlocked(dataDir, {
+                routerEpoch: null,
+                note: "unreachable",
+            });
+            await expect(clearDeploymentRecovery(db.db, dataDir, true)).rejects.toThrow(
+                /router was configured/,
+            );
+        });
+
+        it("names a damaged marker, and audits the confirmation as such", async () => {
+            const alias = await aliasFixture();
+            await blockRestoredModel(db.db);
+            await fs.mkdir(path.join(dataDir, "maintenance"), { recursive: true, mode: 0o700 });
+            await fs.writeFile(
+                path.join(dataDir, "maintenance/deployment-recovery-blocked"),
+                "garbage",
+            );
+            await expect(clearDeploymentRecovery(db.db, dataDir, true, ok(alias))).rejects.toThrow(
+                /marker is damaged/,
+            );
+            await clearDeploymentRecovery(db.db, dataDir, true, ok(alias), {
+                routerEpochUnrecorded: true,
+            });
+            const audit = await db.db
+                .selectFrom("audit_event")
+                .select("detail")
+                .where("action", "=", "deployment.recovery-cleared")
+                .execute();
+            expect(audit).toEqual([
+                {
+                    detail: "attested=reconciled-router-and-dokku;router-epoch=marker-damaged-confirmed",
+                },
+            ]);
+        });
+
+        it("treats a symlink at the marker path as damaged, and refuses to record a malformed epoch", async () => {
+            await fs.mkdir(path.join(dataDir, "maintenance"), { recursive: true, mode: 0o700 });
+            const target = path.join(dataDir, "elsewhere");
+            await fs.writeFile(target, '{"version":1,"restoreStartedAt":"x"}');
+            await fs.symlink(target, path.join(dataDir, "maintenance/deployment-recovery-blocked"));
+            expect(await readRecoveryMarker(dataDir)).toBe("damaged");
+            await expect(
+                markDeploymentRecoveryBlocked(dataDir, { routerEpoch: "nope", note: "recorded" }),
+            ).rejects.toThrow(/not a valid epoch/);
+        });
+
+        it("accepts a rotation proven only against a file-derived anchor once the operator confirms it", async () => {
+            const alias = await aliasFixture();
+            await markDeploymentRecoveryBlocked(dataDir, {
+                routerEpoch: randomUUID(),
+                note: "from-epoch-file",
+            });
+            await blockRestoredModel(db.db);
+            await expect(clearDeploymentRecovery(db.db, dataDir, true, ok(alias))).rejects.toThrow(
+                /not proof of a rotation/,
+            );
+            await clearDeploymentRecovery(db.db, dataDir, true, ok(alias), {
+                routerEpochUnrecorded: true,
+            });
+            const audit = await db.db
+                .selectFrom("audit_event")
+                .select("detail")
+                .where("action", "=", "deployment.recovery-cleared")
+                .execute();
+            expect(audit[0]!.detail).toMatch(/router-epoch=changed-file-anchor-confirmed;anchor=/);
+        });
+
+        it("keeps 'unreachable' across a restore retry that finds no router, and lets an epoch strengthen it", async () => {
+            await markDeploymentRecoveryBlocked(dataDir, {
+                routerEpoch: null,
+                note: "unreachable",
+            });
+            await markDeploymentRecoveryBlocked(dataDir, {
+                routerEpoch: null,
+                note: "not-configured",
+            });
+            expect(await readRecoveryMarker(dataDir)).toMatchObject({
+                routerEpoch: null,
+                routerEpochNote: "unreachable",
+            });
+            const epoch = randomUUID();
+            await markDeploymentRecoveryBlocked(dataDir, { routerEpoch: epoch, note: "recorded" });
+            expect(await readRecoveryMarker(dataDir)).toMatchObject({
+                routerEpoch: epoch,
+                routerEpochNote: "recorded",
+            });
+        });
+
+        it("keeps unknown history across a retry that finds no router, and lets an epoch strengthen it", async () => {
+            await fs.mkdir(path.join(dataDir, "maintenance"), { recursive: true, mode: 0o700 });
+            const file = path.join(dataDir, "maintenance/deployment-recovery-blocked");
+            for (const text of [
+                '{"version":1,"restoreStartedAt":"2026-01-01T00:00:00.000Z"}\n',
+                "garbage",
+            ]) {
+                await fs.writeFile(file, text);
+                await markDeploymentRecoveryBlocked(dataDir, {
+                    routerEpoch: null,
+                    note: "not-configured",
+                });
+                expect(await readRecoveryMarker(dataDir)).toMatchObject({
+                    routerEpoch: null,
+                    routerEpochNote: "history-unknown",
+                });
+                // And again: still unknown, not weakened to "not configured".
+                await markDeploymentRecoveryBlocked(dataDir, {
+                    routerEpoch: null,
+                    note: "not-configured",
+                });
+                expect(await readRecoveryMarker(dataDir)).toMatchObject({
+                    routerEpochNote: "history-unknown",
+                });
+            }
+            await blockRestoredModel(db.db);
+            await expect(clearDeploymentRecovery(db.db, dataDir, true)).rejects.toThrow(
+                /not known whether a router was in use/,
+            );
+            const epoch = randomUUID();
+            await markDeploymentRecoveryBlocked(dataDir, { routerEpoch: epoch, note: "recorded" });
+            expect(await readRecoveryMarker(dataDir)).toMatchObject({ routerEpoch: epoch });
+        });
+
+        it("needs the flag on the no-router path for a version 1 or damaged marker", async () => {
+            await blockRestoredModel(db.db);
+            await fs.mkdir(path.join(dataDir, "maintenance"), { recursive: true, mode: 0o700 });
+            const file = path.join(dataDir, "maintenance/deployment-recovery-blocked");
+            await fs.writeFile(
+                file,
+                '{"version":1,"restoreStartedAt":"2026-01-01T00:00:00.000Z"}\n',
+            );
+            expect(await readRecoveryMarker(dataDir)).toMatchObject({
+                routerEpochNote: "predates-anchor",
+            });
+            await expect(clearDeploymentRecovery(db.db, dataDir, true)).rejects.toThrow(
+                /not known whether a router was in use/,
+            );
+            await fs.writeFile(file, "null");
+            expect(await readRecoveryMarker(dataDir)).toBe("damaged");
+            await expect(clearDeploymentRecovery(db.db, dataDir, true)).rejects.toThrow(
+                /marker is damaged/,
+            );
+            await clearDeploymentRecovery(db.db, dataDir, true, undefined, {
+                routerEpochUnrecorded: true,
+            });
+            const audit = await db.db
+                .selectFrom("audit_event")
+                .select("detail")
+                .where("action", "=", "deployment.recovery-cleared")
+                .execute();
+            expect(audit).toEqual([
+                {
+                    detail: "attested=reconciled-router-and-dokku;router-epoch=marker-damaged-confirmed",
+                },
+            ]);
+        });
+
+        it("reads a version 1 or damaged marker as having no anchor", async () => {
+            await fs.mkdir(path.join(dataDir, "maintenance"), { recursive: true, mode: 0o700 });
+            const file = path.join(dataDir, "maintenance/deployment-recovery-blocked");
+            await fs.writeFile(
+                file,
+                '{"version":1,"restoreStartedAt":"2026-01-01T00:00:00.000Z"}\n',
+            );
+            expect(await readRecoveryMarker(dataDir)).toMatchObject({ routerEpoch: null });
+            for (const text of [
+                '{"version":2,"restoreStartedAt":"x","routerEpoch":null,"routerEpochNote":"recorded"}',
+                "not json",
+                '{"version":3}',
+                '{"version":2,"restoreStartedAt":"x","routerEpoch":"nope","routerEpochNote":"recorded"}',
+            ]) {
+                await fs.writeFile(file, text);
+                expect(await readRecoveryMarker(dataDir)).toBe("damaged");
+            }
+        });
     });
 });

@@ -112,6 +112,33 @@ describe("deployment model recovery gate", () => {
         expect(parentSyncs).toBe(2);
     });
 
+    it("still syncs the directories when a rerun keeps an anchored marker", async () => {
+        const anchor = {
+            routerEpoch: "11111111-1111-4111-8111-111111111111",
+            note: "recorded",
+        } as const;
+        const open = fs.open.bind(fs);
+        let parentSyncs = 0;
+        vi.spyOn(fs, "open").mockImplementation(async (file, flags, mode) => {
+            const handle = await open(file, flags, mode);
+            if (file === dataDir) {
+                parentSyncs++;
+                if (parentSyncs === 1) {
+                    vi.spyOn(handle, "sync").mockRejectedValueOnce(
+                        new Error("parent fsync failed"),
+                    );
+                }
+            }
+            return handle;
+        });
+        await expect(markDeploymentRecoveryBlocked(dataDir, anchor)).rejects.toThrow(
+            "parent fsync failed",
+        );
+        // The record is on disk and anchored, yet the rerun must still write and sync it again.
+        await markDeploymentRecoveryBlocked(dataDir, anchor);
+        expect(parentSyncs).toBe(2);
+    });
+
     it("aborts a queued maintenance lock before any callback or recovery marker write", async () => {
         let release!: () => void;
         const held = new Promise<void>((resolve) => {
@@ -186,7 +213,11 @@ describe("deployment model recovery gate", () => {
     it("keeps an external marker authoritative over a restored ready row", async () => {
         await markDeploymentRecoveryBlocked(dataDir);
         expect((await fs.stat(marker())).mode & 0o777).toBe(0o600);
-        expect(JSON.parse(await fs.readFile(marker(), "utf8"))).toMatchObject({ version: 1 });
+        expect(JSON.parse(await fs.readFile(marker(), "utf8"))).toMatchObject({
+            version: 2,
+            routerEpoch: null,
+            routerEpochNote: "not-configured",
+        });
         await expect(assertModelMutationsReady(source.db, dataDir)).rejects.toThrow(/blocked/);
         // Read-only operator administration remains usable during recovery.
         expect(
