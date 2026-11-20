@@ -491,6 +491,51 @@ describe("app shutdown", () => {
         expect(new Set(keys).size).toBe(2);
     });
 
+    it("still replays a recorded request while shutting down, but refuses anything new", async () => {
+        const { app, alias, deployment } = await fixture();
+        const target = await deployment();
+        const body = { targetDeploymentId: target, expectedGeneration: "0" };
+        const recorded = await requestPromotion(
+            db.db,
+            people.ann!,
+            org,
+            alias.id,
+            body,
+            "replay",
+            deps(),
+        );
+        await shutdown(app.id);
+        const replay = await requestPromotion(
+            db.db,
+            people.ann!,
+            org,
+            alias.id,
+            body,
+            "replay",
+            deps(),
+        );
+        expect(replay.id).toBe(recorded.id);
+        expect(
+            await code(
+                requestPromotion(db.db, people.ann!, org, alias.id, body, "another", deps()),
+            ),
+        ).toBe("not-found");
+        // A changed request under the recorded key is still a conflict, not a new operation.
+        expect(
+            await code(
+                requestPromotion(
+                    db.db,
+                    people.ann!,
+                    org,
+                    alias.id,
+                    { ...body, expectedGeneration: "4" },
+                    "replay",
+                    deps(),
+                ),
+            ),
+        ).toBe("conflict");
+    });
+
     it("settles an app with nothing to remove at once, and keeps a withdrawn alias's hostname", async () => {
         const empty = await fixture();
         expect(await shutdown(empty.app.id)).toMatchObject({ state: "deleted", blockedBy: [] });

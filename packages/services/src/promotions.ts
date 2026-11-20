@@ -76,16 +76,18 @@ async function request(
             .select(["app_alias.app_id as appId", "app.project_id as projectId"])
             .where("app_alias.id", "=", aliasId)
             .where("app_alias.organization_id", "=", organizationId)
-            .where("app.state", "=", "active")
+            .where("app.state", "<>", "deleted")
             .executeTakeFirst();
         if (!found || (restrictTo && !restrictTo.includes(found.projectId))) {
             throw new ServiceError("not-found", "Alias not found.");
         }
+        // A shutting-down app still replays what it already recorded; it refuses anything new
+        // (checked after the replay lookup below).
         const lockedApp = await trx
             .selectFrom("app")
-            .select("id")
+            .select(["id", "state"])
             .where("id", "=", found.appId)
-            .where("state", "=", "active")
+            .where("state", "<>", "deleted")
             .forUpdate()
             .executeTakeFirst();
         if (!lockedApp) throw new ServiceError("not-found", "Alias not found.");
@@ -133,6 +135,7 @@ async function request(
             }
             return shape(existing);
         }
+        if (lockedApp.state !== "active") throw new ServiceError("not-found", "Alias not found.");
 
         if (!STABLE.includes(alias.state as (typeof STABLE)[number])) {
             throw new ServiceError(
