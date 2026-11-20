@@ -1,7 +1,7 @@
 # P3: deploy and delete one deployment end to end
 
-Status: **approved 2026-11-20 with the numbered decisions below. P3a through P3c are merged;
-P3d is under review. Nothing here is authorized to run against real infrastructure.**
+Status: **approved 2026-11-20 with the numbered decisions below. P3a through P3d are merged;
+P3e is under review. Nothing here is authorized to run against real infrastructure.**
 Parent: [deployment model plan](deployment-model.md), P3. Schema contract:
 [replacement schema map](../design/deployment-cutover-schema.md). Behavior:
 [deployment design](../design/deployment-modes.md). Slices P4 (aliases, promotion, retention
@@ -227,8 +227,9 @@ command outcomes, the blocked-app case unblocked by `deployment-reconcile`. Undo
 
 ### P3e: end-to-end acceptance and documentation
 
-Built controller and worker against disposable PostgreSQL with a fake Dokku and Docker adapter (no
-real Dokku, no service start beyond the test containers). Update install, upgrade, restore,
+The real services, worker loop, runner, build and readiness probe against disposable PostgreSQL with
+a stateful fake Dokku and Docker adapter; the HTTP layer is covered by the controller's adapter and
+built-server suites (no real Dokku, no service start beyond the test containers). Update install, upgrade, restore,
 tooling, patterns, the controller and worker READMEs, the example environment and examples with
 real commands, including `LAUNCHPAD_DEPLOYMENTS`. The disposable-Dokku rehearsal remains the
 parent plan's P7 and needs its own authorization.

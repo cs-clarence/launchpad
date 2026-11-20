@@ -5,7 +5,10 @@ import integrationTestConfig from "@launchpad-kit/vitest-config/integration";
 export default mergeConfig(mergeConfig(baseConfig, integrationTestConfig), {
     test: {
         testTimeout: 30_000,
-        include: ["./src/__tests__/deployment-worker.spec.ts"],
+        include: [
+            "./src/__tests__/deployment-worker.spec.ts",
+            "./src/__tests__/acceptance.spec.ts",
+        ],
         exclude: ["./src/__tests__/live.spec.ts"],
     },
 } satisfies UserWorkspaceConfig);

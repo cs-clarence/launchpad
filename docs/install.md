@@ -75,7 +75,7 @@ the controller publicly. Those are the [separate production follow-up](plans/pro
    cannot be confirmed by then is held for reconciliation. Provision space for
    retained per-deployment images and scratch directories left after a forced stop;
    never prune an active worker's engine. An interrupted effect may still be running remotely;
-   do not retry it by hand or assume stopping the worker stopped Dokku.
+   do not retry it by hand or assume stopping the worker stopped Dokku. See [deployments](deployments.md) for the API and reconcile commands.
 
 If the status shows a schema mismatch, stop the processes, take a backup and
 follow [upgrade](upgrade.md). Do not point a second installation at the same

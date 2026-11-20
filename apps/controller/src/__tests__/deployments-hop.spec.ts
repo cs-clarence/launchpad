@@ -117,7 +117,7 @@ beforeAll(async () => {
             testDb.db,
             owner,
             org,
-            { name: "ci", scopes: ["app:read", "app:deploy"], expiresInDays: 1 },
+            { name: "ci", scopes: ["app:read", "app:deploy", "app:delete"], expiresInDays: 1 },
             sessionId,
         )
     ).secret;
@@ -182,6 +182,14 @@ describe("deployments through the built server", () => {
                 artifactId: artifact.id,
             });
             expect(second.status).toBe(409);
+            // Finish it by hand (no worker runs here), then delete it and read its events.
+            await sql`update deployment set status = 'failed', finished_at = now()
+                where id = ${deployment.id}`.execute(testDb.db);
+            const deletion = await call(base, "DELETE", `/deployments/${deployment.id}`);
+            expect(deletion.status).toBe(202);
+            const events = await call(base, "GET", `/deployments/${deployment.id}/events`);
+            const phases = ((await events.json()) as { phase: string }[]).map((e) => e.phase);
+            expect(phases).toEqual(["queued", "deleting"]);
             // An unauthenticated call is refused before anything is read.
             const anonymous = await fetch(`${base}/api/v1/organizations/${org}/apps`);
             expect(anonymous.status).toBe(401);

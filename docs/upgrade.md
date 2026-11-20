@@ -6,8 +6,10 @@ down migration. Rehearse on disposable infrastructure first: the checked-in
 14-migration fixture is exercised by `omni -i run test:upgrade -p @launchpad-kit/controller`.
 
 1. Record the current image versions and runtime settings, and arrange an
-   outage. Stop all workers and the controller and wait for them to exit. The idle
-   worker stops at once. For a pre-P2a worker, complete the legacy worker
+   outage. Stop all workers and the controller and wait for them to exit. A worker with
+   deployments off stops at once; an enabled worker needs its stop grace period, and an
+   interrupted effect may be unconfirmed: after the upgrade, look for
+   `reconciliation-needed` deployments and use `deployment-reconcile`; never retry by hand. For a pre-P2a worker, complete the legacy worker
    grace-period and dispatched Dokku operation settlement checks in
    [restore, step 1](restore.md) **before taking the backup**. A worker exiting
    does not prove that its remote destroy finished.
