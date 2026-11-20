@@ -90,6 +90,30 @@ export async function requestDeploymentDeletion(
                     : "This deployment has not finished.",
             );
         }
+        // Pins: an alias that points at it, or any operation that could still route to it. Promotion
+        // holds the same app lock, so this cannot race a new reservation.
+        const pinnedByAlias = await trx
+            .selectFrom("app_alias")
+            .select("id")
+            .where("target_deployment_id", "=", deploymentId)
+            .executeTakeFirst();
+        const pinnedByOperation = await trx
+            .selectFrom("promotion_operation")
+            .select("id")
+            .where((eb) =>
+                eb.or([
+                    eb("previous_target_deployment_id", "=", deploymentId),
+                    eb("desired_target_deployment_id", "=", deploymentId),
+                ]),
+            )
+            .where("status", "in", ["queued", "applying", "verifying", "reconciliation-needed"])
+            .executeTakeFirst();
+        if (pinnedByAlias || pinnedByOperation) {
+            throw new ServiceError(
+                "conflict",
+                "An alias or a pending promotion still uses this deployment.",
+            );
+        }
         const operation = await trx
             .insertInto("deployment_deletion_operation")
             .values({

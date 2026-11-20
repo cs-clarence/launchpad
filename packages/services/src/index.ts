@@ -18,6 +18,7 @@ export * from "./hostname-template";
 export * from "./app-routing-config";
 export * from "./apps";
 export * from "./aliases";
+export * from "./promotions";
 export * from "./deployments";
 export * from "./deployment-claims";
 export * from "./deployment-deletion";

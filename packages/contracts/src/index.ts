@@ -180,6 +180,42 @@ export const appSchema = z.strictObject({
     createdAt: timestamp,
 });
 
+const MAX_GENERATION = 9223372036854775807n;
+// A generation is a bigint: it crosses every boundary as a decimal string, never a number.
+export const generationSchema = z
+    .string()
+    .regex(/^(0|[1-9]\d{0,18})$/)
+    .refine((value) => /^(0|[1-9]\d{0,18})$/.test(value) && BigInt(value) <= MAX_GENERATION);
+
+export const promoteAliasSchema = z.strictObject({
+    targetDeploymentId: z.uuid(),
+    expectedGeneration: generationSchema.meta({
+        description: "The alias's reserved generation you saw; the request fails if it moved.",
+    }),
+});
+
+export const withdrawAliasSchema = z.strictObject({ expectedGeneration: generationSchema });
+
+export const promotionOperationSchema = z.strictObject({
+    id: z.uuid(),
+    aliasId: z.uuid(),
+    action: z.enum(["bind", "withdraw"]),
+    status: z.enum([
+        "queued",
+        "applying",
+        "verifying",
+        "succeeded",
+        "failed",
+        "reconciliation-needed",
+        "superseded",
+    ]),
+    generation: generationSchema,
+    expectedGeneration: generationSchema,
+    previousTargetDeploymentId: z.uuid().nullable(),
+    desiredTargetDeploymentId: z.uuid().nullable(),
+    createdAt: timestamp,
+});
+
 export const aliasSchema = z.strictObject({
     id: z.uuid(),
     appId: z.uuid(),
