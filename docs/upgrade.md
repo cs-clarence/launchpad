@@ -12,17 +12,16 @@ down migration. Rehearse on disposable infrastructure first: the checked-in
    290-second dispatch and the five-minute lease, and no worker-started Docker or
    Dokku process left on the Dokku host. An interrupted effect may be unconfirmed, but its
    status changes only when a worker next claims it after its lease lapses. After the
-   upgraded worker has restarted, look for `reconciliation-needed` deployments (and
-   `deletion-reconciliation-needed` events) and use `deployment-reconcile`; it records an
-   observation and never calls Dokku. One lookup is not enough: a worker claims the oldest
-   runnable work first and finishes each deployment before the next, so interrupted work that is
-   newer than queued work is claimed later. Repeat the lookup until no deployment remains
-   `queued`, `preparing`, `building`, `deploying` or `verifying` **and** no queued or running
-   deletion remains (a deployment whose `desiredState` is still `deleting` without a
-   `deletion-reconciliation-needed` event), then look once more after both checks read zero
-   (nothing runnable is left to move into a hold) and reconcile anything it returns. Repeat
-   the whole check after reconciling, since reconciling a deletion lets the worker continue it.
-   Never retry by hand. For a pre-P2a worker, complete the legacy worker
+   upgraded worker has restarted, look for `reconciliation-needed` deployments, and for held deletions
+   (`deployment_deletion_operation.status = 'reconciliation-needed'`; an event is history, so do not
+   rely on it), and use `deployment-reconcile`; it records an observation and never calls Dokku.
+   One lookup is not enough: a worker claims the oldest runnable work first and finishes each
+   deployment before the next, so interrupted work that is newer than queued work is claimed
+   later. Repeat the lookup until no deployment is `queued`, `preparing`, `building`, `deploying`
+   or `verifying` **and** no deletion operation is `queued` or `running`, then look once more
+   after both checks read zero (nothing runnable is left to move into a hold) and reconcile
+   anything it returns. Repeat the whole check after reconciling, since reconciling a deletion
+   lets the worker continue it. Never retry by hand. For a pre-P2a worker, complete the legacy worker
    grace-period and dispatched Dokku operation settlement checks in
    [restore, step 1](restore.md) **before taking the backup**. A worker exiting
    does not prove that its remote destroy finished.
