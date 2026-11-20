@@ -154,14 +154,24 @@ export async function workDeployments({
         return status !== "authority-lost";
     }
 
+    // Promotions go first, but never more than a few in a row, so a backlog (each can spend up to
+    // its verification budget) cannot starve deployments and deletions.
+    const MAX_PROMOTIONS_IN_ROW = 2;
+    let promotionsInRow = 0;
     let blocked = false;
     let turn = 0;
     while (!signal.aborted) {
         try {
             // Alternate so a steady stream of deployments cannot starve deletions.
-            // Promotions are rare and cheap, so they go first on every pass; deployments and
-            // deletions alternate below.
-            if (promotionPorts && (await promoteOne(promotionPorts))) continue;
+            if (
+                promotionPorts &&
+                promotionsInRow < MAX_PROMOTIONS_IN_ROW &&
+                (await promoteOne(promotionPorts))
+            ) {
+                promotionsInRow++;
+                continue;
+            }
+            promotionsInRow = 0;
             if (signal.aborted) break;
             if (turn++ % 2 === 1 && (await deleteOne())) continue;
             if (signal.aborted) break;

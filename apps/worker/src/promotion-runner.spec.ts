@@ -211,18 +211,36 @@ describe("promotion runner", () => {
     });
 
     it("holds when the alias never serves the target within the budget", async () => {
+        // A deterministic clock: every reading advances it, so the attempts do not depend on how
+        // long the test process happens to pause.
+        let now = 0;
+        const clock = vi.spyOn(performance, "now").mockImplementation(() => (now += 15));
+        try {
+            const f = fixture();
+            f.ports.serves.mockResolvedValue(false);
+            const outcome = await runPromotion(
+                context,
+                { stepDone: "dispatch" },
+                f.store,
+                f.ports,
+                f.shutdown.signal,
+                { budgetMs: 200, pauseMs: 1 },
+            );
+            expect(outcome).toBe("reconciliation-needed");
+            expect(f.store.hold).toHaveBeenCalled();
+            expect(f.store.finalize.mock.calls.length).toBeGreaterThan(1);
+        } finally {
+            clock.mockRestore();
+        }
+    });
+
+    it("holds an acknowledged dispatch when credentials stay unreadable, never failing it", async () => {
         const f = fixture();
-        f.ports.serves.mockResolvedValue(false);
-        const outcome = await runPromotion(
-            context,
-            { stepDone: "dispatch" },
-            f.store,
-            f.ports,
-            f.shutdown.signal,
-            { budgetMs: 60, pauseMs: 10 },
-        );
-        expect(outcome).toBe("reconciliation-needed");
+        f.ports.open.mockImplementationOnce(() => {
+            throw new Error("Could not read the configured router credential file.");
+        });
+        expect(await run(f, { attempt: 3 }, "dispatch")).toBe("reconciliation-needed");
+        expect(f.store.fail).not.toHaveBeenCalled();
         expect(f.store.hold).toHaveBeenCalled();
-        expect(f.store.finalize.mock.calls.length).toBeGreaterThan(1);
     });
 });

@@ -106,7 +106,9 @@ export async function runPromotion(
     const beforeDispatch = async (reason: PromotionRetryReason): Promise<PromotionOutcome> => {
         options.report?.(reason);
         if (context.attempt < MAX_PREDISPATCH_ATTEMPTS) return "retry";
-        if (context.corrective) return hold();
+        // A route write already acknowledged cannot be failed, and a chain's tip must stay: both
+        // are held so the operator can reconcile them.
+        if (context.corrective || resume.stepDone === "dispatch") return hold();
         return (await store.fail(
             "router-unavailable",
             "The router could not be reached to register the deployment.",
