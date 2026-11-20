@@ -395,7 +395,16 @@ export async function clearDeploymentRecovery(
         await assertNoActiveDeploymentImportBackends(connection);
         const dir = await maintenance(dataDir);
         // Read the router while the maintenance lock excludes every model writer.
-        const inventory = router ? await router().catch(() => null) : undefined;
+        let unreadable = "";
+        const inventory = router
+            ? await Promise.resolve()
+                  .then(router)
+                  .catch((error: unknown) => {
+                      // Client and credential errors are fixed text: safe to show the operator.
+                      unreadable = error instanceof Error ? error.message : "unknown error";
+                      return null;
+                  })
+            : undefined;
         await connection.transaction().execute(async (trx) => {
             await lockDeploymentRecovery(trx, true);
             const table = await sql<{
@@ -412,7 +421,7 @@ export async function clearDeploymentRecovery(
                 throw new DeploymentRecoveryError("Run migration 018 before recovery-clear.");
             if (inventory === null) {
                 throw new DeploymentRecoveryError(
-                    "The router could not be read, so its counters cannot be compared. Check the router settings, epoch and credentials, then retry.",
+                    `The router could not be read (${unreadable}), so its counters cannot be compared. Check that the router is running, and the router settings, epoch and token files, then retry.`,
                 );
             }
             if (inventory) {

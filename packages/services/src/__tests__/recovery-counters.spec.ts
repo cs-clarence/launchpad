@@ -16,6 +16,7 @@ import {
     parseAliasConfig,
     parseDeploymentConfig,
     raiseAliasCounters,
+    withdrawUnknownRoute,
     type AliasDeps,
     type RouterInventory,
 } from "../index";
@@ -214,5 +215,47 @@ describe("recovery counters", () => {
         await blocked();
         await clearDeploymentRecovery(db.db, dataDir, true);
         await assertModelMutationsReady(db.db, dataDir);
+    });
+
+    it("names why the router could not be read", async () => {
+        await aliasFixture();
+        await blocked();
+        await expect(
+            clearDeploymentRecovery(db.db, dataDir, true, async () => {
+                throw new Error("Could not read the configured router credential file.");
+            }),
+        ).rejects.toThrow(
+            /could not be read \(Could not read the configured router credential file\./,
+        );
+    });
+
+    it("withdraws only a live route for an alias Launchpad does not know, at the next generation", async () => {
+        const alias = await aliasFixture();
+        const stranger = route({ id: randomUUID(), hostname: "stranger.sites.example.net" }, "6");
+        const idle = route({ id: randomUUID(), hostname: "idle.sites.example.net" }, "2", null);
+        const withdrawn: unknown[] = [];
+        const router = {
+            view: async () => inventory([route(alias, "1"), stranger, idle]),
+            withdraw: async (written: unknown) => void withdrawn.push(written),
+        };
+        for (const hostname of [alias.hostname, idle.hostname, "missing.sites.example.net"]) {
+            await expect(withdrawUnknownRoute(db.db, hostname, router)).rejects.toThrow(
+                /not a live route/,
+            );
+        }
+        expect(withdrawn).toEqual([]);
+        expect(await withdrawUnknownRoute(db.db, stranger.hostname, router)).toEqual({
+            hostname: stranger.hostname,
+            generation: "7",
+        });
+        expect(withdrawn).toEqual([
+            { aliasId: stranger.aliasId, hostname: stranger.hostname, generation: "7" },
+        ]);
+        const audit = await db.db
+            .selectFrom("audit_event")
+            .select("detail")
+            .where("action", "=", "deployment.unknown-route-withdrawn")
+            .execute();
+        expect(audit).toEqual([{ detail: "hostname=stranger.sites.example.net;generation=7" }]);
     });
 });

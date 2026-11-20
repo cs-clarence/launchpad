@@ -136,13 +136,21 @@ or prove. `restore` never contacts Dokku. Back up the target database first.
    just because it was absent in step 3. A restored database can also leave
    unreferenced apps; Launchpad deliberately leaves those alone. The
    immutable model remains mutation-blocked until recovery is explicitly cleared.
-6. Reconcile **before** clearing. With aliases in use, first run
-   `bun .output/admin.mjs recovery-raise-counters` (it needs the router settings and reads the router
-   through its control endpoint with the **new** epoch and token files). It raises each alias's reserved
+6. Reconcile **before** clearing. With aliases in use, start the router again (rotation needs it
+   stopped), keep every worker stopped, and run
+   `bun .output/admin.mjs recovery-raise-counters`. It needs the router settings
+   (`LAUNCHPAD_ALIAS_CONTROL_URL`, `LAUNCHPAD_ALIAS_INSTANCE_ID`, `LAUNCHPAD_APPS_DOMAIN`, the token and
+   epoch files) in **the controller user's** environment, including its own copy of the token file
+   (mode 0600, owned by that user), and reads the router through its control endpoint with the **new**
+   epoch and token. It raises each alias's reserved
    generation to the router's generation for its hostname, never lowers one, and leaves the committed
    generation alone, so a restored database cannot hand out a generation the router has already
-   seen. It lists any route the router serves for a hostname Launchpad has no alias for: withdraw each
-   on the router, or restore its alias. Then, as the controller's OS user, run
+   seen. It lists any route the router serves for a hostname Launchpad has no alias for (for example an alias
+   created and promoted after the backup): withdraw each with
+   `recovery-withdraw-unknown --hostname <h> --i-have-verified-the-router-by-exact-route`, which writes a
+   withdrawal at the next generation and never touches a known alias, or restore its alias. A withdrawn
+   hostname stays reserved on the router for the old alias, so do not create a new alias with the same
+   hostname. Then, as the controller's OS user, run
    `bun .output/admin.mjs recovery-clear --i-have-reconciled-router-and-dokku`. The flag is
    mandatory every time: the command never looks at the model tables or at
    `maintenance/model-writer-seen`, because a restore can replace the volume or bring an empty
@@ -155,7 +163,9 @@ or prove. `restore` never contacts Dokku. Back up the target database first.
    database, and (4) are clearing only now. The command now also compares the router: it refuses
    while any alias counter is below the router's generation, while the router serves a route
    Launchpad does not know (a route that serves nothing does not block), when the router cannot be
-   read, and when the database holds aliases but no router is configured. Targets and Dokku are
+   read (the message says why), and when the database holds aliases but no router is configured. If the
+   control URL is not set at all, no router is read: an installation that has ever used aliases must
+   keep the router settings on the host that runs `recovery-clear`. Targets and Dokku are
    still your attestation; P5 replaces it with verified reconciliation ([recovery design](design/deployment-cutover-schema.md#restore-and-the-recovery-gate)).
    The command audits only the attested fact, commits the ready gate, then removes
    `maintenance/deployment-recovery-blocked` and fsyncs its directory. It still refuses while a

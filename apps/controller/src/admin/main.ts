@@ -17,12 +17,13 @@ import {
     clearDeploymentRecovery,
     parseAppRoutingConfig,
     raiseAliasCounters,
-    type RouterView,
+    withdrawUnknownRoute,
     readRouterCredential,
     reconcileDeployment,
     supersedeOperation,
 } from "@launchpad-kit/services";
 import { createBackup, verifyBackup } from "./backup";
+import { routerSessionFromEnv } from "./router-view";
 import { checkRestore, restoreBackup, replaceTarget } from "./restore";
 
 async function readStdin(): Promise<string> {
@@ -78,25 +79,6 @@ async function readPassword(passwordFile: string | undefined): Promise<string> {
         throw new Error("Give --password-file <path>, or pipe the password on stdin.");
     }
     return readStdin();
-}
-
-// The router, read through its authenticated control endpoint, when router settings are configured.
-// Epoch and token are read from their files at the moment of use, so a rotation is picked up.
-function routerViewFromEnv(): RouterView | undefined {
-    const routing = parseAppRoutingConfig(process.env);
-    if (!routing.enabled) return undefined;
-    assertPrivateControlUrl(routing.aliasControlUrl, "LAUNCHPAD_ALIAS_CONTROL_URL");
-    return async () => {
-        const client = createRouterControlClient({
-            baseUrl: routing.aliasControlUrl,
-            credentials: {
-                instanceId: routing.aliasInstanceId,
-                epoch: readRouterCredential(routing.aliasRouterEpochFile, false),
-                token: readRouterCredential(routing.aliasControlTokenFile, true),
-            },
-        });
-        return client.listRoutes(AbortSignal.timeout(120_000));
-    };
 }
 
 const program = new Command()
@@ -245,7 +227,7 @@ program
                 db,
                 path.resolve(process.env.LAUNCHPAD_DATA_DIR ?? ".data/controller"),
                 options.iHaveReconciledRouterAndDokku === true,
-                routerViewFromEnv(),
+                routerSessionFromEnv(process.env)?.view,
             ),
         );
         console.log("Deployment recovery cleared on the operator's attestation.");
@@ -257,29 +239,56 @@ program
         "After a restore, raise each alias counter to the router's generation for its hostname (never lower). Does not reopen the model",
     )
     .action(async () => {
-        const view = routerViewFromEnv();
-        if (!view)
+        const router = routerSessionFromEnv(process.env);
+        if (!router) {
             throw new Error(
-                "Router settings are required (LAUNCHPAD_APPS_DOMAIN and the LAUNCHPAD_ALIAS_* settings).",
+                "Router settings are required (LAUNCHPAD_ALIAS_CONTROL_URL, LAUNCHPAD_APPS_DOMAIN and the other LAUNCHPAD_ALIAS_* settings).",
             );
+        }
         const result = await withDatabase((db) =>
             raiseAliasCounters(
                 db,
                 path.resolve(process.env.LAUNCHPAD_DATA_DIR ?? ".data/controller"),
-                view,
+                router.view,
             ),
         );
         console.log(`Raised ${result.raised} alias counter(s).`);
         if (result.unknownRoutes.length) {
             console.log(
-                `The router serves ${result.unknownRoutes.length} route(s) Launchpad has no alias for: ${result.unknownRoutes.slice(0, 20).join(", ")}. recovery-clear refuses until each is withdrawn on the router or its alias is restored.`,
+                `The router serves ${result.unknownRoutes.length} route(s) Launchpad has no alias for: ${result.unknownRoutes.slice(0, 20).join(", ")}. recovery-clear refuses until each is withdrawn (recovery-withdraw-unknown) or its alias is restored.`,
             );
         }
         if (result.unknownWithdrawn.length) {
             console.log(
-                `The router also holds ${result.unknownWithdrawn.length} withdrawn route(s) Launchpad does not know; they serve nothing and do not block recovery-clear.`,
+                `The router also holds ${result.unknownWithdrawn.length} withdrawn route(s) Launchpad does not know; they serve nothing and do not block recovery-clear. Their hostnames stay reserved on the router for the old alias, so do not create an alias with the same hostname.`,
             );
         }
+    });
+
+program
+    .command("recovery-withdraw-unknown")
+    .description(
+        "Withdraw one live route the router serves for a hostname Launchpad has no alias for (written at the next generation). Never touches a known alias",
+    )
+    .requiredOption("--hostname <hostname>", "the exact hostname the router serves")
+    .option(
+        "--i-have-verified-the-router-by-exact-route",
+        "attest: you checked that this route is not one you want to keep",
+    )
+    .action(async (options) => {
+        if (options.iHaveVerifiedTheRouterByExactRoute !== true) {
+            throw new Error(
+                "Withdrawing a route needs --i-have-verified-the-router-by-exact-route: read the route first.",
+            );
+        }
+        const router = routerSessionFromEnv(process.env);
+        if (!router) throw new Error("Router settings are required.");
+        const result = await withDatabase((db) =>
+            withdrawUnknownRoute(db, options.hostname, router),
+        );
+        console.log(
+            `Withdrew ${result.hostname} at generation ${result.generation}. Its hostname stays reserved on the router for the old alias.`,
+        );
     });
 
 program

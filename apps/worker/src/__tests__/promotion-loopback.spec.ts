@@ -1,5 +1,12 @@
 import { randomBytes, randomUUID } from "node:crypto";
-import { chmodSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import {
+    promises as fs,
+    chmodSync,
+    mkdtempSync,
+    realpathSync,
+    rmSync,
+    writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import {
@@ -19,6 +26,7 @@ import {
     clearDeploymentRecovery,
     markDeploymentRecoveryBlocked,
     raiseAliasCounters,
+    withdrawUnknownRoute,
     beginPromotionStep,
     claimPromotion,
     createAlias,
@@ -721,20 +729,30 @@ describe("P4 worked example and restore, against the real router", () => {
                 reserved_generation: "3",
                 committed_generation: "0",
             });
-            // Still refused: a live route Launchpad does not know. Withdraw it on the router.
+            // Still refused: a live route Launchpad does not know. Withdraw it with the operator command.
             await expect(clearDeploymentRecovery(db.db, tmp.dir, true, view)).rejects.toThrow(
                 /unknown routes/,
             );
-            await client().replaceRoute({
-                hostname: strangerHost,
-                aliasId: strangerAlias,
-                operationId: randomUUID(),
-                generation: "5",
-                targetDeploymentId: null,
-            });
+            expect(
+                await withdrawUnknownRoute(db.db, strangerHost, {
+                    view,
+                    withdraw: async (route) => {
+                        await client().replaceRoute({
+                            hostname: route.hostname,
+                            aliasId: route.aliasId,
+                            operationId: randomUUID(),
+                            generation: route.generation,
+                            targetDeploymentId: null,
+                        });
+                    },
+                }),
+            ).toEqual({ hostname: strangerHost, generation: "5" });
             await clearDeploymentRecovery(db.db, tmp.dir, true, view);
             await assertModelMutationsReady(db.db, tmp.dir);
         } finally {
+            await fs.rm(path.join(tmp.dir, "maintenance/deployment-recovery-blocked"), {
+                force: true,
+            });
             await db.db
                 .updateTable("instance_state")
                 .set({ value: "ready" })

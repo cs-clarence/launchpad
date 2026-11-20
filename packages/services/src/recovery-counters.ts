@@ -7,6 +7,7 @@ import {
     lockDeploymentRecovery,
     withDeploymentRecoveryMaintenance,
 } from "./deployment-recovery";
+import { MAX_GENERATION } from "./promotion-reserve";
 import { compareRouterInventory, type RouterView } from "./router-inventory";
 
 type Db = Kysely<Database>;
@@ -38,16 +39,15 @@ export async function raiseAliasCounters(db: Db, dataDir: string, view: RouterVi
                     .where("id", "=", row.aliasId)
                     .forUpdate()
                     .executeTakeFirstOrThrow();
-                const updated = await trx
+                await trx
                     .updateTable("app_alias")
                     .set({
                         reserved_generation: sql<string>`greatest(reserved_generation, ${row.router}::bigint)`,
                         updated_at: sql<Date>`clock_timestamp()`,
                     })
                     .where("id", "=", row.aliasId)
-                    .returning("id")
-                    .executeTakeFirstOrThrow();
-                if (updated) raised++;
+                    .execute();
+                raised++;
             }
             if (raised > 0) {
                 await trx
@@ -68,5 +68,45 @@ export async function raiseAliasCounters(db: Db, dataDir: string, view: RouterVi
                 unknownWithdrawn: report.unknownWithdrawn,
             };
         });
+    });
+}
+
+// Withdraws one live route the router serves for a hostname Launchpad has no alias for, at the
+// next generation. Refuses anything Launchpad knows, and anything that already serves nothing.
+// Held under the recovery maintenance lock so no alias can be created for the hostname while it is
+// judged unknown. The hostname stays reserved on the router for the old alias id.
+export async function withdrawUnknownRoute(
+    db: Db,
+    hostname: string,
+    router: {
+        view: RouterView;
+        withdraw(route: { aliasId: string; hostname: string; generation: string }): Promise<void>;
+    },
+) {
+    return withDeploymentRecoveryMaintenance(db, async (connection) => {
+        const inventory = await router.view();
+        const report = await compareRouterInventory(connection, inventory);
+        const route = inventory.routes.find((row) => row.hostname === hostname);
+        if (!route || !report.unknownRoutes.includes(hostname)) {
+            throw new DeploymentRecoveryError(
+                "That hostname is not a live route the router serves for an alias Launchpad does not know.",
+            );
+        }
+        const next = BigInt(route.generation) + 1n;
+        if (next > MAX_GENERATION)
+            throw new DeploymentRecoveryError("That route has no generations left.");
+        await router.withdraw({ aliasId: route.aliasId, hostname, generation: next.toString() });
+        await connection
+            .insertInto("audit_event")
+            .values({
+                actor: "operator-cli",
+                action: "deployment.unknown-route-withdrawn",
+                target_type: "instance",
+                target_id: "self",
+                organization_id: null,
+                detail: `hostname=${hostname};generation=${next}`,
+            })
+            .execute();
+        return { hostname, generation: next.toString() };
     });
 }

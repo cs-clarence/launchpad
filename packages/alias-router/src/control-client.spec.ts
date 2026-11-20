@@ -108,6 +108,30 @@ describe("private router control client", () => {
         ).rejects.toMatchObject({ kind: "uncertain" });
     });
 
+    it("lists more routes than one page holds, in order and without loss", async () => {
+        const { send, options } = setup();
+        const client = createRouterControlClient({ ...options, fetch: send });
+        const hostnames: string[] = [];
+        for (let index = 0; index < 501; index++) {
+            const deployment = {
+                deploymentId: randomUUID(),
+                hostname: `d${String(index).padStart(4, "0")}.sites.example.net`,
+            };
+            const hostname = `a${String(index).padStart(4, "0")}.sites.example.net`;
+            await client.registerDeployment(deployment);
+            await client.replaceRoute({
+                hostname,
+                aliasId: randomUUID(),
+                operationId: randomUUID(),
+                generation: "1",
+                targetDeploymentId: deployment.deploymentId,
+            });
+            hostnames.push(hostname);
+        }
+        const listed = await client.listRoutes();
+        expect(listed.routes.map((row) => row.hostname)).toEqual(hostnames.toSorted());
+    }, 60_000);
+
     it("does not turn a dropped reply after commit into a refusal", async () => {
         const { options, send, target, write } = setup();
         const healthy = createRouterControlClient({ ...options, fetch: send });
