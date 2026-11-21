@@ -8,6 +8,7 @@ docs
 **/.output
 **/.tanstack
 **/.env*
+docker-compose.env
 **/*.pem
 **/*.key
 **/id_*

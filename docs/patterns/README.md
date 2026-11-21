@@ -53,6 +53,19 @@ findings. `deployment-recovery.ts` instead verifies under the exclusive maintena
 lock, with acceptance policy in `recovery-evidence.ts`; `recovery-republish.ts`
 repairs a single exact route and records its verified operation. See [operator usage](../drift.md).
 
+Production Compose configuration: `docker-compose.yaml` (project `launchpad-production`;
+one allowlisted `environment` per service, YAML anchors for the settings the controller and worker
+must share, secrets as `${VAR:?}`, admin in a profile) with `docker-compose.env.example`;
+its shape is asserted by `tooling/compose-production.ts` (`check:compose`, and a unit
+spec in `test`). Run once on disposable infrastructure, never as production; see [production Compose](../production-compose.md).
+
+Opt-in disposable rehearsals live under `tooling/experiments/`: `routing/` (the router
+experiment and its production-router rehearsal) and `acceptance/` (the full-stack P7 rehearsal:
+`run.ts` creates and cleans up resources, `world.ts` is the HTTP/SQL/docker access layer,
+`scenarios.ts` is the worked example, `proxy.ts` and `rules.ts` the control-plane fault proxy).
+They are never imported by packages or apps, never in CI, and record every resource before
+creating it.
+
 The health endpoint reports static metadata, not PostgreSQL/Dokku readiness.
 Key administration is a dedicated organization-page component in
 `apps/controller/src/components/api-keys.tsx`. It imports only browser-safe

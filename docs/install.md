@@ -1,8 +1,9 @@
 # Install a private Launchpad instance from built artifacts
 
 For an instance operator preparing a **private** Linux/amd64 installation. This
-guide wires the artifacts and explains the checks; it does not supply a production
-Compose stack, TLS ingress, host ports, a Dokku backup, or permission to expose
+guide wires the artifacts and explains the checks. A Compose
+definition, run once on disposable infrastructure and **never as production**, of the whole stack is described in [production Compose](production-compose.md);
+neither it nor this guide supplies TLS ingress, a Dokku backup, or permission to expose
 the controller publicly. Those are the [separate production follow-up](plans/production-compose-follow-up.md).
 
 After enabling deployment and (optionally) alias routing, use the

@@ -1,0 +1,80 @@
+{
+    "dir": "/tmp/opencode/lp-accept-TqIC2s",
+    "network": "lp-accept-tqic2s-net",
+    "containers": {
+        "dokku": "lp-accept-tqic2s-dokku",
+        "postgres": "lp-accept-tqic2s-postgres",
+        "router": "lp-accept-tqic2s-router",
+        "proxy": "lp-accept-tqic2s-proxy",
+        "controller": "lp-accept-tqic2s-controller",
+        "worker1": "lp-accept-tqic2s-worker1",
+        "worker2": "lp-accept-tqic2s-worker2"
+    },
+    "images": {
+        "controller": "lp-accept-tqic2s/controller:test",
+        "worker": "lp-accept-tqic2s/worker:test",
+        "router": "lp-accept-tqic2s/router:test"
+    },
+    "volumes": ["lp-accept-tqic2s-router-state"],
+    "helpers": [
+        "lp-accept-tqic2s-helper-1",
+        "lp-accept-tqic2s-helper-2",
+        "lp-accept-tqic2s-helper-3",
+        "lp-accept-tqic2s-helper-4",
+        "lp-accept-tqic2s-helper-5",
+        "lp-accept-tqic2s-helper-6",
+        "lp-accept-tqic2s-helper-7"
+    ],
+    "discovered": [
+        {
+            "deploymentId": "d248d83a-a690-4ca2-afd4-ba763ed3d1f3",
+            "app": "lp-g6ih0du6zl",
+            "imageTag": "launchpad/site:d248d83aa6904ca2afd4ba763ed3d1f3"
+        },
+        {
+            "deploymentId": "67e191ec-1db7-4c48-9f8b-a53cdf8e7597",
+            "app": "lp-q0yuzco8w1",
+            "imageTag": "launchpad/site:67e191ec1db74c489f8ba53cdf8e7597"
+        },
+        {
+            "deploymentId": "cc03a1f7-626f-43a4-85c0-16a4083183ac",
+            "app": "lp-gae9lbc2yv",
+            "imageTag": "launchpad/site:cc03a1f7626f43a485c016a4083183ac"
+        },
+        {
+            "deploymentId": "c906624e-c8c6-4966-8cda-9ee06d067901",
+            "app": "lp-juxe8gbxxg",
+            "imageTag": "launchpad/site:c906624ec8c649668cda9ee06d067901"
+        },
+        {
+            "deploymentId": "37715b61-6191-45e3-85bc-7abea82bc52b",
+            "app": "lp-uzexnm4ugh",
+            "imageTag": "launchpad/site:37715b61619145e385bc7abea82bc52b"
+        },
+        {
+            "deploymentId": "065f7852-0bbd-4fca-96db-9469810d1b4c",
+            "app": "lp-jwm13vb1x8",
+            "imageTag": "launchpad/site:065f78520bbd4fca96db9469810d1b4c"
+        },
+        {
+            "deploymentId": "8ecb67b0-a486-4b84-978b-19e996be5b60",
+            "app": "lp-2fdsggve6r",
+            "imageTag": "launchpad/site:8ecb67b0a4864b84978b19e996be5b60"
+        },
+        {
+            "deploymentId": "1c8c2496-3ec6-4df7-b4a4-c14f982673cf",
+            "app": "lp-yl44hgs0zd",
+            "imageTag": "launchpad/site:1c8c24963ec64df7b4a4c14f982673cf"
+        },
+        {
+            "deploymentId": "2d59e604-d33a-47ab-83c2-a5f87a955952",
+            "app": "lp-j9glawka9v",
+            "imageTag": "launchpad/site:2d59e604d33a47ab83c2a5f87a955952"
+        },
+        {
+            "deploymentId": "b2b53e88-597f-4b5b-b8f7-3732c686ff9c",
+            "app": "lp-lc6tdtgy8v",
+            "imageTag": "launchpad/site:b2b53e88597f4b5bb8f73732c686ff9c"
+        }
+    ]
+}

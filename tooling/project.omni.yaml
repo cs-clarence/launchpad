@@ -12,6 +12,10 @@ tasks:
     description: Opt-in disposable Dokku topology and alias-router experiment (Docker, no production settings)
     exec: sh -c 'cd "$(git rev-parse --show-toplevel)" && bun tooling/experiments/routing/run.ts'
 
+  test:acceptance:rehearsal:
+    description: Opt-in full-stack P7 rehearsal on disposable PostgreSQL and Dokku (Docker; needs LAUNCHPAD_ACCEPTANCE_REHEARSAL=1)
+    exec: sh -c 'cd "$(git rev-parse --show-toplevel)" && bun tooling/experiments/acceptance/run.ts'
+
   check:format:
     description: Format check of the whole repository, including docs and root files
     exec: sh -c 'cd "$(git rev-parse --show-toplevel)" && bun x oxfmt --check'
@@ -33,10 +37,9 @@ tasks:
     exec: sh -c 'cd "$(git rev-parse --show-toplevel)" && bun tooling/check-deps.ts'
 
   check:compose:
-    description: Validate the Dokku Compose file (needs the Docker CLI)
-    # Omni loads .env.local into task environments (unexpanded), which would override
-    # the example file; unset exactly the variables the example defines.
-    exec: sh -c 'cd "$(git rev-parse --show-toplevel)" && export PWD && unset $(sed -n "s/^\([A-Z_]*\)=.*/\1/p" .env.local.example) && docker compose --env-file .env.local.example config --quiet'
+    description: Render docker-compose.yaml with placeholder settings and assert its shape (needs the Docker CLI; starts nothing)
+    # The renderer gets a minimal environment, so .env.local never leaks into it.
+    exec: sh -c 'cd "$(git rev-parse --show-toplevel)" && bun tooling/compose-production.ts'
 
   check:versions:
     description: Every shipped package has the same version and is watched by cog.toml

@@ -1,0 +1,44 @@
+app lp-g6ih0du6zl: not destroyed (already absent or unreachable)
+app lp-q0yuzco8w1: not destroyed (already absent or unreachable)
+app lp-gae9lbc2yv: destroyed
+app lp-juxe8gbxxg: not destroyed (already absent or unreachable)
+app lp-uzexnm4ugh: destroyed
+app lp-jwm13vb1x8: destroyed
+app lp-2fdsggve6r: destroyed
+app lp-yl44hgs0zd: destroyed
+app lp-j9glawka9v: destroyed
+app lp-lc6tdtgy8v: destroyed
+fixture lp-g6ih0du6zl: containers and image tags absent
+fixture lp-q0yuzco8w1: containers and image tags absent
+fixture lp-gae9lbc2yv: containers and image tags absent
+fixture lp-juxe8gbxxg: containers and image tags absent
+fixture lp-uzexnm4ugh: containers and image tags absent
+fixture lp-jwm13vb1x8: containers and image tags absent
+fixture lp-2fdsggve6r: containers and image tags absent
+fixture lp-yl44hgs0zd: containers and image tags absent
+fixture lp-j9glawka9v: containers and image tags absent
+fixture lp-lc6tdtgy8v: containers and image tags absent
+container lp-accept-tqic2s-worker1: absent
+container lp-accept-tqic2s-worker2: absent
+container lp-accept-tqic2s-controller: absent
+container lp-accept-tqic2s-proxy: absent
+container lp-accept-tqic2s-router: absent
+container lp-accept-tqic2s-postgres: absent
+container lp-accept-tqic2s-dokku: absent
+helper lp-accept-tqic2s-helper-1: absent
+helper lp-accept-tqic2s-helper-2: absent
+helper lp-accept-tqic2s-helper-3: absent
+helper lp-accept-tqic2s-helper-4: absent
+helper lp-accept-tqic2s-helper-5: absent
+helper lp-accept-tqic2s-helper-6: absent
+volume lp-accept-tqic2s-router-state: absent
+secret/state path credentials: absent
+secret/state path dokku: absent
+secret/state path data: absent
+secret/state path controller.env: absent
+secret/state path worker.env: absent
+secret/state path site: absent
+network lp-accept-tqic2s-net: absent
+image lp-accept-tqic2s/controller:test: absent
+image lp-accept-tqic2s/worker:test: absent
+image lp-accept-tqic2s/router:test: absent

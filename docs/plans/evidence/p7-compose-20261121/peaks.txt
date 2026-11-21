@@ -1,0 +1,21 @@
+idle-stats.jsonl
+  lpc-54e9c3-controller-1: peak cpu 6.1% peak mem 49.5MiB median mem 49.1MiB samples 6
+  lpc-54e9c3-dokku-1: peak cpu 9.1% peak mem 23.8MiB median mem 22.4MiB samples 6
+  lpc-54e9c3-postgres-1: peak cpu 5.6% peak mem 53.5MiB median mem 53.2MiB samples 6
+  lpc-54e9c3-router-1: peak cpu 10.5% peak mem 11.3MiB median mem 10.7MiB samples 6
+  lpc-54e9c3-worker-1: peak cpu 9.3% peak mem 23.8MiB median mem 22.8MiB samples 6
+deploy-stats.jsonl
+  app(lp-): peak cpu 0.0% peak mem 6.1MiB median mem 5.8MiB samples 131
+  lpc-54e9c3-admin-run-8: peak cpu 0.0% peak mem 0.0MiB median mem 0.0MiB samples 1
+  lpc-54e9c3-controller-1: peak cpu 11.9% peak mem 56.2MiB median mem 47.5MiB samples 179
+  lpc-54e9c3-dokku-1: peak cpu 168.7% peak mem 92.9MiB median mem 25.2MiB samples 197
+  lpc-54e9c3-postgres-1: peak cpu 21.8% peak mem 62.2MiB median mem 51.2MiB samples 193
+  lpc-54e9c3-router-1: peak cpu 12.2% peak mem 15.7MiB median mem 10.8MiB samples 193
+  lpc-54e9c3-worker-1: peak cpu 11.5% peak mem 32.3MiB median mem 25.7MiB samples 178
+limits-stats.jsonl
+  app(lp-): peak cpu 0.0% peak mem 6.1MiB median mem 5.8MiB samples 17
+  lpc-54e9c3-controller-1: peak cpu 44.8% peak mem 61.8MiB median mem 43.4MiB samples 72
+  lpc-54e9c3-dokku-1: peak cpu 170.7% peak mem 70.6MiB median mem 23.0MiB samples 72
+  lpc-54e9c3-postgres-1: peak cpu 6.7% peak mem 55.2MiB median mem 52.3MiB samples 72
+  lpc-54e9c3-router-1: peak cpu 13.3% peak mem 11.5MiB median mem 10.3MiB samples 72
+  lpc-54e9c3-worker-1: peak cpu 26.4% peak mem 39.1MiB median mem 28.9MiB samples 72

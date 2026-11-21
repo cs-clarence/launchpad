@@ -84,6 +84,18 @@ Rules that keep the graph correct:
   inventory and old-process tasks are removed. Services integration covers the
   recovery gate; controller integration covers marker persistence, older-dump
   restore over model rows and post-018 round trips. See [restore](restore.md).
+- **Production Compose configuration.** `docker-compose.yaml` and its placeholder-only
+  `docker-compose.env.example` are checked by `tooling/compose-production.ts`:
+  `omni -i run check:compose` renders the file with
+  `docker compose config` in a minimal environment (it starts nothing; the Docker CLI is
+  needed) and asserts it fails without required settings; `tooling/compose-production.spec.ts`
+  (in `test`, no Docker) runs the same assertions on the raw YAML after interpolating the
+  example settings. Both are uncached like every `tooling` task, so the cache-key rules are
+  unaffected. The same task asserts that every external base image in the application and Dokku
+  Dockerfiles is pinned by digest and the Dokku plugin by commit, and that every service has
+  memory, CPU and process limits. They prove the configuration's shape, not that the stack runs
+  (a one-time disposable run is recorded in `docs/plans/evidence/p7-compose-20261121/`). See
+  [production Compose](production-compose.md).
 - **Disposable routing experiment.** The opt-in `test:routing:experiment` tooling task
   builds a worker image, deploys two fixtures through pinned SSH to its own Dokku,
   and exercises the experimental generation-checked Bun/SQLite router. It has no
@@ -92,6 +104,17 @@ Rules that keep the graph correct:
   environments rather than production `.env.local` settings. Resource inventory,
   cleanup scope, evidence and limitations are in
   [the experiment record](plans/routing-experiment-evidence.md).
+- **Full-stack acceptance rehearsal.** The opt-in `test:acceptance:rehearsal` tooling task
+  (`tooling/experiments/acceptance/`, `LAUNCHPAD_ACCEPTANCE_REHEARSAL=1`) runs the built
+  controller, worker and production router images against a disposable PostgreSQL and a
+  disposable Dokku, and drives the worked acceptance example over the real HTTP API. Where a
+  scenario cannot be driven black-box it uses a named mechanism (a SQL read, `docker pause`, a
+  fault proxy in front of the router's control plane) and records it in the evidence. Like the
+  routing experiment it records its resources before creating them, passes no repository
+  environment to child commands, publishes no host ports, removes only exact recorded names and
+  verifies their absence. Never in CI or a default task. The `rules.ts` fault matching has a unit
+  test that runs with `test:unit`. Evidence and results:
+  [P7 acceptance](plans/deployment-p7-acceptance.md).
 - **Omni loads `.env.local`** from the repository root and the project into task
   environments without expanding variables, and task `env.vars` override the shell. For
   a default that the shell may override, apply it in the command
@@ -244,7 +267,7 @@ See [the design](design/deployment-modes.md) and
 names against the current binary; the deployment change updates examples, tasks and
 this reference together.
 
-Root `.env.local.example` configures the existing Dokku Compose setup. The
+The root `docker-compose.env.example` configures the Compose stack. The
 controller's settings (PostgreSQL, authentication, email, API docs) are documented
 in `apps/controller/README.md` and `apps/controller/.env.local.example`; the worker's settings (database, Dokku SSH, proxy) are in `docs/install.md` step 6 and `apps/worker/.env.local.example`. Do not bake
 credentials into an image.
@@ -291,6 +314,6 @@ a second router refused by the lock, a graceful stop, and `rotate --standalone` 
 `TEST_DATABASE_URL` (defaults to the disposable fixture), removes its named containers, volumes,
 images and database, never pushes, and never touches
 Dokku. CI runs it in the integration job. Its containers, anonymous volumes, images and database are
-removed by exact name (also on an interrupt); Docker's build cache is not. `docker-compose.yml` still manages Dokku only;
-controller/PostgreSQL orchestration and secure controller-to-Dokku networking remain future work
-(`docs/plans/production-compose-follow-up.md`).
+removed by exact name (also on an interrupt); Docker's build cache is not. `docker-compose.yaml` defines the full stack (including Dokku). It was started once on disposable infrastructure by hand (no reusable
+task exists; alias routing could not be enabled) and has **never been started as production**
+([production Compose](production-compose.md); `docs/plans/production-compose-follow-up.md`).

@@ -1,0 +1,356 @@
+# Production-shaped Launchpad stack: PostgreSQL, controller, worker, Dokku, the alias router and an
+# opt-in admin service. Exercised once on a disposable host with deployments on and aliases off
+# (docs/plans/evidence/p7-compose-20261121/); see docs/production-compose.md, "What is not
+# production-ready", for what remains unproven.
+#
+#   docker compose --env-file docker-compose.env -f docker-compose.yaml config --quiet
+#
+# Rules this file keeps (asserted by tooling/compose-production.ts):
+# - no `env_file`: every service gets an allowlisted `environment`, secrets are `${VAR:?}`;
+# - the database sits on an internal network and nothing but the controller, Dokku SSH, Dokku HTTP(S)
+#   and the router's data plane is published, all on loopback by default;
+# - the worker and Dokku hold the host Docker socket, which is root-equivalent on that host;
+# - the admin service is in a profile, has no restart policy and is never started by `up`.
+
+name: launchpad-production
+
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "5"
+
+# One definition for what the controller and the worker must agree on: deployments and lifecycle
+# switches, archive limits (the worker validates uploads with the controller's limits) and quotas.
+x-shared-settings: &shared-settings
+  LAUNCHPAD_DATA_DIR: /data
+  LAUNCHPAD_BASE_URL: ${LAUNCHPAD_BASE_URL:?set the exact https management origin}
+  LAUNCHPAD_APPS_DOMAIN: ${LAUNCHPAD_APPS_DOMAIN:?set the apps domain (a different registrable domain)}
+  LAUNCHPAD_DEPLOYMENTS: ${LAUNCHPAD_DEPLOYMENTS:-off}
+  LAUNCHPAD_ALIASES: ${LAUNCHPAD_ALIASES:-off}
+  LAUNCHPAD_MAX_UPLOAD_BYTES: ${LAUNCHPAD_MAX_UPLOAD_BYTES:-}
+  LAUNCHPAD_MAX_EXPANDED_BYTES: ${LAUNCHPAD_MAX_EXPANDED_BYTES:-}
+  LAUNCHPAD_MAX_ARCHIVE_ENTRIES: ${LAUNCHPAD_MAX_ARCHIVE_ENTRIES:-}
+  LAUNCHPAD_MAX_ARCHIVE_DEPTH: ${LAUNCHPAD_MAX_ARCHIVE_DEPTH:-}
+  LAUNCHPAD_UPLOAD_TIMEOUT_SECONDS: ${LAUNCHPAD_UPLOAD_TIMEOUT_SECONDS:-}
+  LAUNCHPAD_MAX_ARTIFACTS: ${LAUNCHPAD_MAX_ARTIFACTS:-}
+  LAUNCHPAD_MAX_CONCURRENT_UPLOADS: ${LAUNCHPAD_MAX_CONCURRENT_UPLOADS:-}
+  LAUNCHPAD_MAX_APPS: ${LAUNCHPAD_MAX_APPS:-}
+  LAUNCHPAD_MAX_DEPLOYMENTS_PER_APP: ${LAUNCHPAD_MAX_DEPLOYMENTS_PER_APP:-}
+  LAUNCHPAD_MAX_DEPLOYMENTS: ${LAUNCHPAD_MAX_DEPLOYMENTS:-}
+  LAUNCHPAD_DEFAULT_TTL: ${LAUNCHPAD_DEFAULT_TTL:-}
+  LAUNCHPAD_MAX_TTL: ${LAUNCHPAD_MAX_TTL:-}
+  LAUNCHPAD_DEPLOYMENT_HOSTNAME_TEMPLATE: ${LAUNCHPAD_DEPLOYMENT_HOSTNAME_TEMPLATE:-}
+  LAUNCHPAD_MAX_ALIASES_PER_APP: ${LAUNCHPAD_MAX_ALIASES_PER_APP:-}
+  LAUNCHPAD_MAX_ALIASES: ${LAUNCHPAD_MAX_ALIASES:-}
+  LAUNCHPAD_ALIAS_HOSTNAME_TEMPLATE: ${LAUNCHPAD_ALIAS_HOSTNAME_TEMPLATE:-}
+  LAUNCHPAD_ROLLBACK_RETENTION: ${LAUNCHPAD_ROLLBACK_RETENTION:-}
+
+x-database-url: &database-url postgresql://launchpad:${POSTGRES_PASSWORD:?set a URL-safe database password}@postgres:5432/launchpad
+
+# What the worker and the admin both need to reach Dokku and the router (paths are inside the
+# container; the files are mounted read-only below).
+x-remote-settings: &remote-settings
+  DOKKU_SSH_HOST: dokku
+  DOKKU_SSH_PORT: "22"
+  DOKKU_SSH_USER: dokku
+  DOKKU_SSH_KEY_PATH: /credentials/dokku/id_ed25519
+  DOKKU_SSH_KNOWN_HOSTS_PATH: /credentials/dokku/known_hosts
+  LAUNCHPAD_APPS_PROXY_URL: http://dokku:80
+  LAUNCHPAD_ALIAS_INSTANCE_ID: ${LAUNCHPAD_ALIAS_INSTANCE_ID:?set the router instance UUID}
+  LAUNCHPAD_ALIAS_CONTROL_URL: http://router:3081
+  LAUNCHPAD_ALIAS_PROBE_URL: http://router:3080
+  LAUNCHPAD_ALIAS_CONTROL_TOKEN_FILE: /credentials/router/control-token
+  LAUNCHPAD_ALIAS_ROUTER_EPOCH_FILE: /credentials/router/epoch
+
+x-hardening: &hardening
+  cap_drop: [ALL]
+  security_opt: ["no-new-privileges:true"]
+
+x-dokku-key: &dokku-key
+  type: bind
+  source: ${LAUNCHPAD_DOKKU_SSH_KEY_FILE:?set the host path of the worker's Dokku SSH private key}
+  target: /credentials/dokku/id_ed25519
+  read_only: true
+  bind:
+    create_host_path: false
+
+x-dokku-known-hosts: &dokku-known-hosts
+  type: bind
+  source: ${LAUNCHPAD_DOKKU_KNOWN_HOSTS_FILE:?set the host path of the pinned Dokku known_hosts}
+  target: /credentials/dokku/known_hosts
+  read_only: true
+  bind:
+    create_host_path: false
+
+x-router-token: &router-token
+  type: bind
+  source: ${LAUNCHPAD_ROUTER_TOKEN_FILE:?set the host path of the router control token file}
+  target: /credentials/router/control-token
+  read_only: true
+  bind:
+    create_host_path: false
+
+x-router-epoch: &router-epoch
+  type: bind
+  source: ${LAUNCHPAD_ROUTER_EPOCH_FILE:?set the host path of the router epoch file}
+  target: /credentials/router/epoch
+  read_only: true
+  bind:
+    create_host_path: false
+
+services:
+  postgres:
+    image: ${POSTGRES_IMAGE:-postgres:17-alpine@sha256:526f86d93c6ea08fd3f1fe5605650cacc781b2c6013169a0ad8f42c7d3d84f32}
+    restart: unless-stopped
+    mem_limit: 512m
+    cpus: 1.0
+    pids_limit: 256
+    environment:
+      POSTGRES_USER: launchpad
+      POSTGRES_DB: launchpad
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set a URL-safe database password}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    networks: [database]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U launchpad -d launchpad"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 30s
+    logging: *logging
+
+  controller:
+    build:
+      context: .
+      dockerfile: apps/controller/Dockerfile
+      args:
+        LAUNCHPAD_VERSION: ${LAUNCHPAD_VERSION:-unknown}
+    image: launchpad/controller:${LAUNCHPAD_IMAGE_TAG:-local}
+    restart: unless-stopped
+    mem_limit: 512m
+    cpus: 1.0
+    pids_limit: 256
+    <<: *hardening
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      <<: *shared-settings
+      DATABASE_URL: *database-url
+      LAUNCHPAD_AUTH_SECRET: ${LAUNCHPAD_AUTH_SECRET:?set a random secret of at least 32 characters}
+      LAUNCHPAD_ENROLLMENT: operator
+      LAUNCHPAD_PUBLIC_SIGNUP: "false"
+      LAUNCHPAD_TRUSTED_PROXY: ${LAUNCHPAD_TRUSTED_PROXY:-false}
+      LAUNCHPAD_API_DOCS: ${LAUNCHPAD_API_DOCS:-false}
+    ports:
+      - "${CONTROLLER_BIND_IP:-127.0.0.1}:${CONTROLLER_HOST_PORT:-32180}:3000"
+    volumes:
+      - launchpad-data:/data
+    networks: [database, backend]
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "bun",
+          "-e",
+          "fetch('http://127.0.0.1:3000/api/health').then(r=>process.exit(r.ok?0:1),()=>process.exit(1))",
+        ]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    logging: *logging
+
+  worker:
+    build:
+      context: .
+      dockerfile: apps/worker/Dockerfile
+      args:
+        LAUNCHPAD_VERSION: ${LAUNCHPAD_VERSION:-unknown}
+    image: launchpad/worker:${LAUNCHPAD_IMAGE_TAG:-local}
+    # No setting names the worker: its owner id is a fresh UUID per process. The stable service
+    # name and hostname identify it in logs.
+    hostname: launchpad-worker
+    restart: unless-stopped
+    mem_limit: 512m
+    cpus: 1.0
+    pids_limit: 256
+    <<: *hardening
+    # Bounds the wait before Docker forces a stop; does not drain in-flight deployments.
+    stop_grace_period: 25m
+    # Give the unprivileged user the Docker socket's group (root-equivalent access).
+    group_add:
+      - "${DOCKER_SOCKET_GID:?set the numeric group id of the Docker socket}"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      dokku:
+        condition: service_healthy
+      router:
+        condition: service_healthy
+    environment:
+      <<: [*shared-settings, *remote-settings]
+      DATABASE_URL: *database-url
+      LAUNCHPAD_BASE_IMAGE: ${LAUNCHPAD_BASE_IMAGE:-nginx:1.27-alpine}
+      LAUNCHPAD_WORKER_HEALTH_FILE: /tmp/launchpad-worker-health
+    volumes:
+      - launchpad-data:/data
+      - type: bind
+        source: ${DOCKER_SOCKET_PATH:-/var/run/docker.sock}
+        target: /var/run/docker.sock
+        bind:
+          create_host_path: false
+      - *dokku-key
+      - *dokku-known-hosts
+      - *router-token
+      - *router-epoch
+    networks: [database, backend]
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - test -n "$$(find $$LAUNCHPAD_WORKER_HEALTH_FILE -mmin -1 2>/dev/null)"
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    logging: *logging
+
+  dokku:
+    build:
+      context: ./containers/dokku
+      dockerfile: Dockerfile
+      args:
+        DOKKU_VERSION: ${DOKKU_VERSION:-0.38.34}
+    image: launchpad/dokku:${DOKKU_VERSION:-0.38.34}
+    restart: unless-stopped
+    mem_limit: 1g
+    cpus: 2.0
+    pids_limit: 1024
+    environment:
+      DOKKU_HOSTNAME: ${LAUNCHPAD_APPS_DOMAIN:?set the apps domain (a different registrable domain)}
+      # Host-visible paths of the bind below, so the host engine mounts the right sources.
+      DOKKU_HOST_ROOT: ${DOKKU_DATA_DIR:?set the absolute host directory for Dokku state}/home/dokku
+      DOKKU_LIB_HOST_ROOT: ${DOKKU_DATA_DIR}/var/lib/dokku
+    ports:
+      - "${DOKKU_SSH_BIND_IP:-127.0.0.1}:${DOKKU_SSH_HOST_PORT:-32222}:22"
+      - "${PREVIEW_BIND_IP:-127.0.0.1}:${PREVIEW_HTTP_HOST_PORT:-32181}:80"
+      - "${PREVIEW_BIND_IP:-127.0.0.1}:${PREVIEW_HTTPS_HOST_PORT:-32443}:443"
+    volumes:
+      - type: bind
+        source: ${DOKKU_DATA_DIR}
+        target: /mnt/dokku
+        bind:
+          create_host_path: false
+      # Grants Dokku host-level Docker control; trusted deployments only.
+      - type: bind
+        source: ${DOCKER_SOCKET_PATH:-/var/run/docker.sock}
+        target: /var/run/docker.sock
+        bind:
+          create_host_path: false
+    # `backend` gives the worker and router the stable name `dokku`. `apps` is where Dokku puts
+    # the app containers it creates (`network:set --global initial-network`, a first-start step),
+    # so its nginx can reach them. Compose cannot attach a service to the engine's default
+    # bridge: it sends network-scoped aliases, which the engine rejects for that network.
+    networks: [backend, apps]
+    healthcheck:
+      # The host key survives in the state bind, so it alone does not prove the container has
+      # finished booting: also require nginx (the HTTP proxy) to listen.
+      test:
+        - CMD-SHELL
+        - test -s /etc/ssh/ssh_host_ed25519_key.pub && dokku version && ss -ltn | grep -q ':80 '
+      interval: 15s
+      timeout: 10s
+      retries: 6
+      # A container start installs packages and takes about a minute; the first start (an empty
+      # state directory) took about 4.5 minutes in the rehearsal.
+      start_period: 6m
+    logging: *logging
+
+  router:
+    build:
+      context: .
+      dockerfile: apps/router/Dockerfile
+      args:
+        LAUNCHPAD_VERSION: ${LAUNCHPAD_VERSION:-unknown}
+    image: launchpad/router:${LAUNCHPAD_IMAGE_TAG:-local}
+    restart: unless-stopped
+    mem_limit: 128m
+    cpus: 0.5
+    pids_limit: 128
+    <<: *hardening
+    environment:
+      LAUNCHPAD_ROUTER_STATE_FILE: /state/routes.sqlite
+      LAUNCHPAD_ROUTER_INSTANCE_ID: ${LAUNCHPAD_ALIAS_INSTANCE_ID:?set the router instance UUID}
+      LAUNCHPAD_APPS_DOMAIN: ${LAUNCHPAD_APPS_DOMAIN:?set the apps domain (a different registrable domain)}
+      LAUNCHPAD_APPS_PROXY_URL: http://dokku:80
+      LAUNCHPAD_ROUTER_CONTROL_LISTEN: 0.0.0.0:3081
+      LAUNCHPAD_ROUTER_CONTROL_PRIVATE_NETWORK: "1"
+      LAUNCHPAD_ROUTER_DATA_LISTEN: 0.0.0.0:3080
+    # Only the data plane is published. The control plane (3081) never is.
+    ports:
+      - "${PREVIEW_BIND_IP:-127.0.0.1}:${ROUTER_DATA_HOST_PORT:-32182}:3080"
+    volumes:
+      - router-state:/state
+    networks: [backend]
+    healthcheck:
+      test: ["CMD", "bun", "dist/index.js", "healthcheck"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    logging: *logging
+
+  # One-off operator commands (migrate, setup, backup, restore, check-restore, ...), never a
+  # service: it needs `--profile admin` or an explicit `docker compose run`, has no restart
+  # policy and is not started by `up`.
+  admin:
+    profiles: [admin]
+    build:
+      context: .
+      dockerfile: apps/controller/Dockerfile
+      target: admin
+      args:
+        LAUNCHPAD_VERSION: ${LAUNCHPAD_VERSION:-unknown}
+    image: launchpad/admin:${LAUNCHPAD_IMAGE_TAG:-local}
+    mem_limit: 512m
+    cpus: 1.0
+    pids_limit: 256
+    <<: *hardening
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      <<: [*shared-settings, *remote-settings]
+      DATABASE_URL: *database-url
+      LAUNCHPAD_AUTH_SECRET: ${LAUNCHPAD_AUTH_SECRET:?set a random secret of at least 32 characters}
+    volumes:
+      - launchpad-data:/data
+      - type: bind
+        source: ${LAUNCHPAD_BACKUP_DIR:?set the absolute host directory for backups (owned by 10001:10001)}
+        target: /backups
+        bind:
+          create_host_path: false
+      - *dokku-key
+      - *dokku-known-hosts
+      - *router-token
+      - *router-epoch
+    networks: [database, backend]
+    logging: *logging
+
+volumes:
+  postgres-data:
+  launchpad-data:
+  router-state:
+
+networks:
+  # Private: no route out of the host and no published ports. Only the services that use the
+  # database are attached.
+  database:
+    internal: true
+  backend:
+  # Holds only Dokku and the app containers it creates. The fixed name is what Dokku's
+  # `initial-network` setting refers to, so it is not prefixed with the project name.
+  apps:
+    name: ${LAUNCHPAD_APPS_NETWORK:-launchpad-apps}

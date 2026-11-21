@@ -138,7 +138,10 @@ A release is a person's decision. Work through this in order and stop at the fir
    manifests carry `license` and `repository`; **registry ownership of the name is verified
    with an authenticated account**. (The source scope is selected; ownership,
    licence and final product naming are not yet settled.)
-5. Base images in `apps/{controller,worker,router}/Dockerfile` are pinned by digest, not tag.
+5. Base images in `apps/{controller,worker,router}/Dockerfile` and `containers/dokku/Dockerfile`, and
+   `postgres` in `docker-compose.yaml`, are pinned by tag **and** digest (asserted by
+   `check:compose`; digests are verified with `docker buildx imagetools inspect`, see
+   [production Compose](production-compose.md#images-and-pins)). Refresh them deliberately.
 6. Run the [dry run](#rehearse-a-release); inspect the tarball listings, `SHA256SUMS` and the
    image notes. No `.env`, key, source map or workspace specifier in any tarball.
 7. `cog bump` on a clean checkout, then review the bump commit, changelog and tag locally.
