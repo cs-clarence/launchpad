@@ -16,13 +16,41 @@ deployment; quotas limit apps and retained deployments (`LAUNCHPAD_MAX_APPS`,
 and then pointed at any succeeded deployment of the same app (see [Promote](#promote-an-alias)).
 Automatic expiry is not built: nothing deletes a deployment unless you ask.
 
-Keys need `app:read`, `app:deploy`, `app:delete`, `app:promote` or `app:alias:manage`. The dashboard key form does not offer these scopes yet:
-an owner or admin signed in fresh issues the key through `POST /api/v1/organizations/{orgId}/api-keys` (see
+Keys need `app:read`, `app:deploy`, `app:delete`, `app:promote` or `app:alias:manage`. An owner or
+admin who signed in within the last 15 minutes can issue the key in the organization dashboard or through
+`POST /api/v1/organizations/{orgId}/api-keys` (see
 [the controller README](../apps/controller/README.md)). A key never exceeds its creator's role (viewer reads;
 deployer creates apps, deploys and deletes). A project-limited key reaches only its projects and may deploy
 only archives uploaded through the app's project.
 
-## Example
+## Deploy from the dashboard or CLI
+
+In the organization dashboard's **Apps and deployments** section, create or choose an app.
+Upload a `.tar.gz` containing `index.html` at its root, then choose **Deploy to a new preview URL**.
+Refresh to watch it progress. Open the preview after it succeeds. To move traffic, create or select
+a stable alias, choose the target deployment, and confirm **Promote**. Choose an older retained
+deployment in the same form to roll back. The alias and operation history show pending and
+uncertain states independently of deployment status.
+
+From the CLI (substitute IDs from the command output):
+
+```sh
+launchpad artifact upload "$PROJECT" ./dist --directory  # record the artifact ID
+launchpad app create "$PROJECT" web                     # record the app ID
+launchpad app deploy "$APP" --artifact "$ARTIFACT" --ttl 7d
+launchpad deployment get "$DEPLOYMENT"
+launchpad alias create "$APP" prod
+launchpad alias list "$APP"                             # read reservedGeneration and alias ID
+launchpad alias promote "$ALIAS" "$DEPLOYMENT" --expected-generation 0 \
+  --idempotency-key release-42 --confirm
+launchpad alias operations "$ALIAS"
+```
+
+Use `--allow-deploy` for an MCP client to deploy an already uploaded artifact and `--allow-promote`
+independently for promotion. Both need an explicit project allowlist, exact IDs, and
+`confirm: true`; see [MCP startup and tools](../apps/mcp/README.md#tools).
+
+## HTTP example
 
 ```sh
 API=https://controller.example/api/v1/organizations/$ORG
@@ -120,8 +148,15 @@ reserved forever.
 
 If a Dokku or Docker step ends uncertain (a lost reply, a worker killed mid-step), the deployment becomes
 `reconciliation-needed` and blocks its app; a held deletion keeps `desiredState` `deleting` and a
-`deletion-reconciliation-needed` event. Nothing retries these automatically. Check Dokku **by exact
-name**, then record what you saw:
+`deletion-reconciliation-needed` event. Nothing retries these automatically. An org admin or owner
+who signed in within the last 15 minutes can select **Request operator review** on the held
+deployment or routing operation. The request records who asked and for which resource, but does
+not provide evidence, queue a correction or release pins. API keys cannot request it.
+
+The instance operator can read the latest 100 requests with
+`bun .output/admin.mjs reconciliation-requests`. This is audit history, not a live work queue:
+recheck whether the work is still held. For a routing operation, use `promotion-reconcile` above.
+For deployment or deletion, check Dokku **by exact name**, then record what you saw:
 
 ```sh
 bun .output/admin.mjs deployment-reconcile --deployment <id> \

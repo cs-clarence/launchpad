@@ -67,6 +67,10 @@ inspect and exercise local artifacts, never publish them. The operator
 The alias router's integration suite likewise opens loopback listeners (and needs `openssl`) but no
 database: `omni -i run test:integration -p @launchpad-kit/alias-router`.
 
+The controller's built-server integration also drives `launchpad artifact upload`,
+`launchpad app deploy` and a separately confirmed MCP promotion through the real
+HTTP API with a disposable database. No Dokku or alias router is needed for that test.
+
 The SDK's transport suite uses ephemeral loopback HTTP fixtures instead of the
 database: `omni -i run test:integration -p @launchpad-kit/sdk` runs it alone. Fixtures
 close after each test; default `test` remains unit-only and opens no listeners.

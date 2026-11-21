@@ -184,10 +184,13 @@ Undo: keep ingress closed and gate set; retry reconciliation, never lower counte
 
 ### P6 — coordinated client and documentation cutover
 
+See the [P6 implementation plan](deployment-p6-clients.md) for the approved
+split between session requests and instance-operator verification.
+
 Finish API/OpenAPI, app/alias dashboard, SDK, CLI and MCP together against the
 settled contracts. Finish the app/alias UX over the removed `/previews` contract (P2a removes it) with explicit breaking
 release notes. Deploy never promotes implicitly. Require independent key scopes,
-project checks, session-only recent-auth reconciliation and explicit MCP promotion/
+project checks, session-only recent-auth reconciliation requests and explicit MCP promotion/
 alias-management startup opt-ins and confirmation. Update examples and install,
 upgrade, backup/restore, tooling and package-pattern docs with actual commands.
 

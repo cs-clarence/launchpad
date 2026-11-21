@@ -85,6 +85,83 @@ async function cli(args: string[], options: Parameters<typeof fakeIo>[0] = {}) {
 const loggedIn = () =>
     cli(["login", "--controller", CONTROLLER, "--key-stdin"], { stdin: `${KEY}\n` });
 
+it("rejects destructive app and routing commands without explicit confirmation", async () => {
+    for (const args of [
+        ["app", "shutdown", "app-id"],
+        ["deployment", "delete", "deployment-id"],
+        [
+            "alias",
+            "promote",
+            "alias-id",
+            "deployment-id",
+            "--expected-generation",
+            "0",
+            "--idempotency-key",
+            "r1",
+        ],
+        ["alias", "withdraw", "alias-id", "--expected-generation", "0", "--idempotency-key", "r2"],
+    ]) {
+        // This happens before credential resolution, let alone a network request.
+        const result = await cli(args);
+        expect(result.code).toBe(EXIT.usage);
+        expect(result.err).toContain("Confirm");
+    }
+});
+
+it.skipIf(process.platform === "win32")(
+    "protects the credential directory when an output path has a symlinked parent",
+    async () => {
+        const absolute = path.join(dir, "site", "out");
+        const store = path.join(absolute, "state");
+        const linkedParent = path.join(dir, "site-link");
+        await fs.mkdir(store, { recursive: true });
+        await fs.writeFile(path.join(absolute, "index.html"), "<p>Fixture site</p>");
+        await fs.writeFile(path.join(store, "credentials.json"), "{}");
+        await fs.symlink(path.join(dir, "site"), linkedParent, "dir");
+        const fake = fakeIo();
+        let uploads = 0;
+        fake.io.workingDir = dir;
+        fake.io.context = createContext(
+            {
+                LAUNCHPAD_CONFIG_DIR: store,
+                LAUNCHPAD_CONTROLLER: CONTROLLER,
+                LAUNCHPAD_API_KEY: KEY,
+                LAUNCHPAD_ORG: ORG,
+            },
+            {
+                fetch: (async (_url: string, init: RequestInit) => {
+                    uploads++;
+                    expect(init.body).toBeInstanceOf(Blob);
+                    return json(
+                        {
+                            id: crypto.randomUUID(),
+                            digest: "a".repeat(64),
+                            sizeBytes: 10,
+                            expandedBytes: 20,
+                            entryCount: 1,
+                            createdAt: "2026-11-21T00:00:00Z",
+                            reused: false,
+                        },
+                        201,
+                    );
+                }) as typeof fetch,
+            },
+        );
+        const upload = (source: string) =>
+            run(["artifact", "upload", "project", source, "--directory"], fake.io);
+        expect(await upload("site-link/out")).toBe(EXIT.usage);
+        expect(fake.err.join("\n")).toContain("credential store");
+        expect(uploads).toBe(0);
+
+        await fs.unlink(path.join(store, "credentials.json"));
+        await fs.symlink(absolute, path.join(dir, "out-link"), "dir");
+        expect(await upload("out-link")).toBe(EXIT.usage);
+        expect(uploads).toBe(0);
+        expect(await upload("site-link/out")).toBe(EXIT.ok);
+        expect(uploads).toBe(1);
+    },
+);
+
 beforeEach(async () => {
     controllerDown = false;
     dir = await fs.mkdtemp(path.join(os.tmpdir(), "launchpad-cli-"));

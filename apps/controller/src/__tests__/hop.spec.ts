@@ -1070,6 +1070,8 @@ describe("OpenAPI reference", () => {
         "delete /api/v1/organizations/{orgId}/apps/{appId}",
         "get /api/v1/organizations/{orgId}/deployments/{deploymentId}",
         "get /api/v1/organizations/{orgId}/deployments/{deploymentId}/events",
+        "post /api/v1/organizations/{orgId}/deployments/{deploymentId}/reconciliation-requests",
+        "post /api/v1/organizations/{orgId}/promotion-operations/{operationId}/reconciliation-requests",
     ];
 
     it("documents exactly the public v1 operations, without internals", async () => {
@@ -1101,6 +1103,14 @@ describe("OpenAPI reference", () => {
         expect(Object.keys(spec.paths["/api/v1/organizations"]!.post!.responses)).toEqual(
             expect.arrayContaining(["201", "401", "403", "409", "422"]),
         );
+        for (const path of [
+            "/api/v1/organizations/{orgId}/deployments/{deploymentId}/reconciliation-requests",
+            "/api/v1/organizations/{orgId}/promotion-operations/{operationId}/reconciliation-requests",
+        ]) {
+            const operation = spec.paths[path]!.post!;
+            expect(operation.security).toEqual([{ sessionCookie: [] }]);
+            expect(operation.responses).toHaveProperty("202");
+        }
     });
 
     it("serves the Scalar reference from this origin only", async () => {

@@ -59,6 +59,11 @@ down migration. Rehearse on disposable infrastructure first: the checked-in
    (missing storage is a startup error). Start the new controller, then the worker. Check the operator-only
    `GET /api/v1/status` for database readiness. `/api/health` alone does not check PostgreSQL.
 
+For the immutable-model client cutover, replace old preview scripts, MCP configurations and keys
+using the [breaking change notes](releasing.md#immutable-deployment-client-cutover).
+Redeploy from a known archive, then explicitly promote a succeeded deployment; deploy does
+not move existing stable aliases. Once already on 018, the P6 client cutover adds no migration.
+
 If the migration fails or the new version cannot run, **do not** start the old
 version against the migrated database. Stop processes
 and follow [restore](restore.md) using the pre-upgrade backup and the old

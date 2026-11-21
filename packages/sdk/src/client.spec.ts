@@ -67,6 +67,64 @@ describe("configuration", () => {
 });
 
 describe("requests", () => {
+    it("sends artifacts as binary and deploys without any alias mutation", async () => {
+        const id = crypto.randomUUID();
+        const createdAt = new Date().toISOString();
+        const { calls, client } = recording((url) =>
+            url.endsWith("/artifacts")
+                ? json({
+                      id,
+                      digest: "a".repeat(64),
+                      sizeBytes: 3,
+                      expandedBytes: 5,
+                      entryCount: 1,
+                      createdAt,
+                      reused: false,
+                  })
+                : json({
+                      id,
+                      appId: id,
+                      status: "queued",
+                      desiredState: "active",
+                      hostname: "preview.example.net",
+                      spa: false,
+                      createdAt,
+                      finishedAt: null,
+                      expiresAt: createdAt,
+                      failureCode: null,
+                      failureMessage: null,
+                  }),
+        );
+        const archive = new Blob([new Uint8Array([31, 139, 8])]);
+        const uploaded = await client.artifacts.upload(ORG, id, archive);
+        await client.deployments.create(ORG, id, { artifactId: uploaded.id });
+        expect(calls.map(({ url }) => new URL(url).pathname)).toEqual([
+            `/api/v1/organizations/${ORG}/projects/${id}/artifacts`,
+            `/api/v1/organizations/${ORG}/apps/${id}/deployments`,
+        ]);
+        expect(calls[0]!.init.body).toBe(archive);
+        expect(new Headers(calls[0]!.init.headers).get("content-type")).toBe("application/gzip");
+        expect(JSON.parse(calls[1]!.init.body as string)).toEqual({ artifactId: id });
+    });
+
+    it("preserves an alias generation outside the safe integer range and sends its retry key", async () => {
+        const id = crypto.randomUUID();
+        const expectedGeneration = "9007199254740993";
+        const { client, calls } = recording(() =>
+            json({ code: "conflict", status: 409, title: "Stale generation" }, { status: 409 }),
+        );
+        await expect(
+            client.aliases.withdraw(
+                ORG,
+                id,
+                { expectedGeneration },
+                { idempotencyKey: "withdraw-1" },
+            ),
+        ).rejects.toMatchObject({ status: 409 });
+        expect(calls[0]!.init.method).toBe("DELETE");
+        expect(new Headers(calls[0]!.init.headers).get("idempotency-key")).toBe("withdraw-1");
+        expect(calls[0]!.init.body).toBe(JSON.stringify({ expectedGeneration }));
+    });
     it("sends the key as a bearer token, never cookies, and refuses redirects", async () => {
         const { calls, client } = recording(() =>
             json({

@@ -2,15 +2,14 @@
 
 For an instance operator preserving the controller database and stored site
 archives. Backups do **not** contain environment files, the authentication secret,
-Dokku state or any preview datastore; back those up separately.
+Dokku state, the alias router database or any site datastore; back those up separately.
 
 1. Supply `DATABASE_URL` and the controller's actual `LAUNCHPAD_DATA_DIR`
    to the admin command, and a `pg_dump` at least as new as the PostgreSQL
    server (`LAUNCHPAD_PG_DUMP` can name the tool). Choose a **new** destination.
-   Nothing collects archives while the preview runtime is removed, so there is
-   no worker check and no stop-confirmation flag. Older-version collectors can
-   still move files against the unchanged schema: stop them and wait for them
-   to exit before backing up. A worker with deployments off need not be stopped; stop an enabled worker first: a
+   Close deployment writes before taking a matched snapshot. There is no stop-confirmation
+   flag in the current command. If upgrading from a legacy binary, stop its collectors and
+   wait for them to exit. A worker with deployments off need not be stopped; stop an enabled worker first: a
    snapshot taken mid-step restores as `reconciliation-needed` work.
 
     ```sh

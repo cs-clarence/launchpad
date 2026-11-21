@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { createAuth, loadAuthConfig } from "@launchpad-kit/auth";
+import { createAuth, loadAuthConfig, provisionUser } from "@launchpad-kit/auth";
 import { createDatabase } from "@launchpad-kit/database";
 import { createTestDatabase } from "@launchpad-kit/database/testing";
 import {
@@ -21,6 +21,7 @@ import {
     parseAliasConfig,
     parseDeploymentConfig,
     promotionOperationSchema,
+    RECONCILIATION_REQUESTED,
     type Principal,
 } from "@launchpad-kit/services";
 import { SITE, tarGz } from "@launchpad-kit/services/testing";
@@ -39,6 +40,7 @@ let p2 = "";
 let owner: Principal;
 let api: ReturnType<typeof createApi>;
 let offApi: ReturnType<typeof createApi>;
+let auth: ReturnType<typeof createAuth>;
 const keys: Record<string, string> = {};
 const BASE = "http://localhost:3000";
 
@@ -164,7 +166,7 @@ beforeAll(async () => {
         LAUNCHPAD_BASE_URL: "http://localhost:3000",
     });
     const db = createDatabase(testDb.url);
-    const auth = createAuth({ db, config });
+    auth = createAuth({ db, config });
     const invitations = {
         enabled: false,
         mailer: null,
@@ -432,6 +434,99 @@ describe("apps and deployments over HTTP", () => {
         expect(has("/aliases/{aliasId}", "delete")).toBe(true);
         expect(has("/aliases/{aliasId}/operations", "get")).toBe(true);
         expect(has("/apps/{appId}", "delete")).toBe(true);
+        expect(has("/promotion-operations/{operationId}/reconciliation-requests", "post")).toBe(
+            true,
+        );
+        expect(has("/deployments/{deploymentId}/reconciliation-requests", "post")).toBe(true);
+    });
+
+    it("records reconciliation requests only from recent admin sessions and never settles the resource", async () => {
+        const app = (await newApp()).json.id;
+        const artifact = (await upload("full", p1)).json.id;
+        const reply = await call(api, "full", "POST", `${base()}/apps/${app}/deployments`, {
+            body: { artifactId: artifact },
+        });
+        const deployment = deploymentSchema.parse(await reply.json());
+        const route = `${base()}/deployments/${deployment.id}/reconciliation-requests`;
+        const password = "fixture-account-password";
+        const email = "requester@example.com";
+        const { id: user } = await provisionUser(
+            { db: testDb.db, auth },
+            { email, name: "Requester", password, actor: "operator-cli" },
+        );
+        await testDb.db
+            .insertInto("member")
+            .values({
+                id: randomUUID(),
+                userId: user,
+                organizationId: org,
+                role: "deployer",
+                createdAt: new Date(),
+            })
+            .execute();
+        const login = await auth.api.signInEmail({ body: { email, password }, asResponse: true });
+        expect(login.status).toBe(200);
+        const cookie = login.headers
+            .getSetCookie()
+            .map((part) => part.split(";")[0])
+            .join("; ");
+        const request = (key: string | null = null, url = route, origin = BASE) =>
+            call(api, key, "POST", url, { headers: { cookie, origin } });
+        expect((await call(api, null, "POST", route)).status).toBe(401);
+        expect((await request()).status).toBe(403);
+        await testDb.db
+            .updateTable("member")
+            .set({ role: "admin" })
+            .where("userId", "=", user)
+            .execute();
+        expect((await request("shutdowner")).status).toBe(403);
+        expect((await request(null, route, "https://other.example.net")).status).toBe(403);
+        expect((await request(null, route.replace(org, randomUUID()))).status).toBe(404);
+        expect((await request()).status).toBe(409);
+        await testDb.db
+            .updateTable("deployment")
+            .set({ status: "reconciliation-needed" })
+            .where("id", "=", deployment.id)
+            .execute();
+        expect(
+            (
+                await call(api, null, "POST", route, {
+                    headers: { cookie, origin: BASE },
+                    body: { outcome: "succeeded", attested: true },
+                })
+            ).status,
+        ).toBe(422);
+        await markDeploymentRecoveryBlocked(dataDir);
+        try {
+            expect((await request()).status).toBe(202);
+            expect(
+                (
+                    await call(api, "full", "POST", `${base()}/projects/${p1}/apps`, {
+                        body: { slug: "still-blocked" },
+                    })
+                ).status,
+            ).toBe(503);
+        } finally {
+            await fs.unlink(path.join(dataDir, "maintenance", "deployment-recovery-blocked"));
+        }
+        await sql`update "session" set "createdAt" = now() - interval '16 minutes' where "userId" = ${user}`.execute(
+            testDb.db,
+        );
+        expect((await request()).status).toBe(403);
+        expect(
+            await testDb.db
+                .selectFrom("audit_event")
+                .select(["actor", "target_id"])
+                .where("action", "=", RECONCILIATION_REQUESTED)
+                .where("target_id", "=", deployment.id)
+                .execute(),
+        ).toEqual([{ actor: `user:${user}`, target_id: deployment.id }]);
+        const stored = await testDb.db
+            .selectFrom("deployment")
+            .select(["status", "desired_state"])
+            .where("id", "=", deployment.id)
+            .executeTakeFirstOrThrow();
+        expect(stored).toEqual({ status: "reconciliation-needed", desired_state: "active" });
     });
 
     it("creates, lists and reads aliases within the key's scope and projects", async () => {

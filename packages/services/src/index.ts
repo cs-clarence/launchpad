@@ -29,6 +29,7 @@ export * from "./deployments";
 export * from "./deployment-claims";
 export * from "./deployment-deletion";
 export * from "./deployment-reconcile";
+export * from "./reconciliation-requests";
 export * from "./removed-settings";
 export * from "./drift";
 export * from "./deployment-recovery";

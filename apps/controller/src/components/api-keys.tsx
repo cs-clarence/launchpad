@@ -21,6 +21,11 @@ const SCOPES = [
     ["project:read", "List projects"],
     ["project:create", "Create projects (unrestricted keys only)"],
     ["member:read", "Read all organization members, including their email addresses"],
+    ["app:read", "Read apps, deployments, aliases and operation history"],
+    ["app:deploy", "Create apps, upload archives and deploy without promoting"],
+    ["app:promote", "Point aliases at deployments, including rollbacks"],
+    ["app:alias:manage", "Create and permanently withdraw alias hostnames"],
+    ["app:delete", "Delete unpinned deployments"],
 ] as const;
 const DEFAULT_SCOPES = ["organization:read", "project:read"];
 

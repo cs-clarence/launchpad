@@ -30,9 +30,17 @@ The local stdio MCP adapter lives in `apps/mcp/src/server.ts`. It uses only
 client-core and the SDK, never controller services or the CLI executable. Per-call
 `working_dir` and `launchpad.json` context resolution lives in
 `packages/client-core/src/workspace.ts`; it never changes cwd or saved selections.
-File selection (operator
-include/exclude globs, exclude wins) lives in `packages/client-core/src/pack.ts`, kept for the app deploy command. MCP output is bounded and uses
+The CLI's app/alias commands live in `apps/cli/src/app-commands.ts`. The CLI can
+pack an explicitly selected static output directory with `packages/client-core/src/pack.ts`;
+MCP deploys by artifact ID and never packs local files. Both use
+`packages/client-core/src/app-client.ts` to resolve the SDK and organization. MCP checks
+the app's actual project against the startup allowlist before a mutation. MCP output is bounded and uses
 the same `safeOutput` redaction/control stripping as the CLI (client-core).
+
+The dashboard app panel (`apps/controller/src/components/deployment-apps.tsx`) uses
+same-origin HTTP. `packages/services/src/reconciliation-requests.ts` records audit-only
+handoffs from recent admin/owner sessions, separate from the operator commands that
+verify external evidence and settle held operations.
 
 Operator status is `getStatus` in `packages/services/src/status.ts` behind session-only
 `GET /api/v1/status` (database readiness and stored artifacts only).

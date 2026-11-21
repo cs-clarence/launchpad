@@ -1,6 +1,19 @@
 import {
     type createApiKeySchema,
     type createProjectSchema,
+    type createAppSchema,
+    type createAliasSchema,
+    type createDeploymentSchema,
+    type promoteAliasSchema,
+    type withdrawAliasSchema,
+    aliasSchema,
+    appSchema,
+    appShutdownSchema,
+    artifactSchema,
+    deploymentDeletionSchema,
+    deploymentEventSchema,
+    deploymentSchema,
+    promotionOperationSchema,
     createdProjectSchema,
     keyInfoSchema,
     memberSchema,
@@ -17,6 +30,10 @@ export type Project = z.infer<typeof projectSchema>;
 export type CreatedProject = z.infer<typeof createdProjectSchema>;
 export type CreateProjectInput = z.input<typeof createProjectSchema>;
 export type CreateApiKeyInput = z.input<typeof createApiKeySchema>;
+export type App = z.infer<typeof appSchema>;
+export type Alias = z.infer<typeof aliasSchema>;
+export type Deployment = z.infer<typeof deploymentSchema>;
+export type PromotionOperation = z.infer<typeof promotionOperationSchema>;
 export interface RequestOptions {
     // Repeating a request with the same key does not apply the mutation again.
     // The returned resource may reflect its current state, not the original response.
@@ -104,7 +121,7 @@ export function createClient(options: ClientOptions) {
     }
     const doFetch = options.fetch ?? globalThis.fetch.bind(globalThis);
     const timeoutMs = options.timeoutMs ?? 30_000;
-    const IDEMPOTENCY_KEY = /^[A-Za-z0-9._:-]{1,128}$/;
+    const IDEMPOTENCY_KEY = /^[\x21-\x7e]{1,128}$/;
 
     async function request<T>(
         method: string,
@@ -114,11 +131,12 @@ export function createClient(options: ClientOptions) {
         extra: {
             idempotencyKey?: string;
             signal?: AbortSignal;
+            archive?: Blob;
         } = {},
     ): Promise<T> {
         if (extra.idempotencyKey !== undefined && !IDEMPOTENCY_KEY.test(extra.idempotencyKey)) {
             throw new LaunchpadConfigError(
-                "An idempotency key is 1 to 128 letters, digits and . _ : -.",
+                "An idempotency key is 1 to 128 printable ASCII characters without spaces.",
             );
         }
         const signals = [AbortSignal.timeout(timeoutMs)];
@@ -131,10 +149,14 @@ export function createClient(options: ClientOptions) {
                 headers: {
                     authorization: `Bearer ${apiKey}`,
                     accept: "application/json",
-                    ...(body === undefined ? {} : { "content-type": "application/json" }),
+                    ...(extra.archive
+                        ? { "content-type": "application/gzip" }
+                        : body === undefined
+                          ? {}
+                          : { "content-type": "application/json" }),
                     ...(extra.idempotencyKey ? { "idempotency-key": extra.idempotencyKey } : {}),
                 },
-                body: body === undefined ? undefined : JSON.stringify(body),
+                body: extra.archive ?? (body === undefined ? undefined : JSON.stringify(body)),
                 // Never ambient browser credentials, and never forward the key elsewhere.
                 credentials: "omit",
                 redirect: "error",
@@ -195,13 +217,22 @@ export function createClient(options: ClientOptions) {
         return parsed.data;
     }
 
-    const seg = encodeURIComponent;
+    const seg = (id: string) => {
+        if (!id || id === "." || id === "..") {
+            throw new LaunchpadConfigError("A resource ID is required.");
+        }
+        return encodeURIComponent(id);
+    };
     const query = (params: Record<string, string | number | undefined>) => {
         const entries = Object.entries(params).filter(([, v]) => v !== undefined);
         return entries.length === 0
             ? ""
-            : `?${entries.map(([k, v]) => `${seg(k)}=${seg(String(v))}`).join("&")}`;
+            : `?${new URLSearchParams(entries.map(([k, v]) => [k, String(v)])).toString()}`;
     };
+    const org = (id: string) => `/organizations/${seg(id)}`;
+    const app = (o: string, id: string) => `${org(o)}/apps/${seg(id)}`;
+    const alias = (o: string, id: string) => `${org(o)}/aliases/${seg(id)}`;
+    const deployment = (o: string, id: string) => `${org(o)}/deployments/${seg(id)}`;
     return {
         // What this key is: its organization, scopes, project limits and expiry.
         key: { get: () => request("GET", "/key", loose(keyInfoSchema)) },
@@ -235,6 +266,92 @@ export function createClient(options: ClientOptions) {
                     `/organizations/${seg(organizationId)}/projects`,
                     loose(createdProjectSchema),
                     input,
+                ),
+        },
+        artifacts: {
+            upload: (
+                o: string,
+                projectId: string,
+                archive: Blob,
+                options?: Pick<RequestOptions, "signal">,
+            ) =>
+                request(
+                    "POST",
+                    `${org(o)}/projects/${seg(projectId)}/artifacts`,
+                    loose(artifactSchema),
+                    undefined,
+                    {
+                        signal: options?.signal,
+                        archive,
+                    },
+                ),
+        },
+        apps: {
+            list: (o: string) => request("GET", `${org(o)}/apps`, z.array(loose(appSchema))),
+            get: (o: string, id: string) => request("GET", app(o, id), loose(appSchema)),
+            create: (o: string, projectId: string, input: z.input<typeof createAppSchema>) =>
+                request(
+                    "POST",
+                    `${org(o)}/projects/${seg(projectId)}/apps`,
+                    loose(appSchema),
+                    input,
+                ),
+            shutdown: (o: string, id: string) =>
+                request("DELETE", app(o, id), loose(appShutdownSchema)),
+        },
+        deployments: {
+            list: (o: string, appId: string) =>
+                request("GET", `${app(o, appId)}/deployments`, z.array(loose(deploymentSchema))),
+            create: (
+                o: string,
+                appId: string,
+                input: z.input<typeof createDeploymentSchema>,
+                options?: Pick<RequestOptions, "signal">,
+            ) =>
+                request("POST", `${app(o, appId)}/deployments`, loose(deploymentSchema), input, {
+                    signal: options?.signal,
+                }),
+            get: (o: string, id: string) =>
+                request("GET", deployment(o, id), loose(deploymentSchema)),
+            events: (o: string, id: string, cursor?: { after?: string; limit?: number }) =>
+                request(
+                    "GET",
+                    `${deployment(o, id)}/events${query(cursor ?? {})}`,
+                    z.array(loose(deploymentEventSchema)),
+                ),
+            delete: (o: string, id: string) =>
+                request("DELETE", deployment(o, id), loose(deploymentDeletionSchema)),
+        },
+        aliases: {
+            list: (o: string, appId: string) =>
+                request("GET", `${app(o, appId)}/aliases`, z.array(loose(aliasSchema))),
+            get: (o: string, id: string) => request("GET", alias(o, id), loose(aliasSchema)),
+            create: (o: string, appId: string, input: z.input<typeof createAliasSchema>) =>
+                request("POST", `${app(o, appId)}/aliases`, loose(aliasSchema), input),
+            promote: (
+                o: string,
+                id: string,
+                input: z.input<typeof promoteAliasSchema>,
+                options: RequestOptions & { idempotencyKey: string },
+            ) =>
+                request(
+                    "POST",
+                    `${alias(o, id)}/promotions`,
+                    loose(promotionOperationSchema),
+                    input,
+                    options,
+                ),
+            withdraw: (
+                o: string,
+                id: string,
+                input: z.input<typeof withdrawAliasSchema>,
+                options: RequestOptions & { idempotencyKey: string },
+            ) => request("DELETE", alias(o, id), loose(promotionOperationSchema), input, options),
+            operations: (o: string, id: string) =>
+                request(
+                    "GET",
+                    `${alias(o, id)}/operations`,
+                    z.array(loose(promotionOperationSchema)),
                 ),
         },
     };

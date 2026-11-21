@@ -16,6 +16,8 @@ import {
 } from "@launchpad-kit/services";
 import { SITE, tarGz } from "@launchpad-kit/services/testing";
 import { sql } from "kysely";
+import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 // The real built server (Nitro, Elysia, PostgreSQL) over HTTP: a streamed archive upload, an
@@ -117,7 +119,11 @@ beforeAll(async () => {
             testDb.db,
             owner,
             org,
-            { name: "ci", scopes: ["app:read", "app:deploy", "app:delete"], expiresInDays: 1 },
+            {
+                name: "ci",
+                scopes: ["app:read", "app:deploy", "app:delete", "app:alias:manage", "app:promote"],
+                expiresInDays: 1,
+            },
             sessionId,
         )
     ).secret;
@@ -146,6 +152,109 @@ const call = (base: string, method: string, route: string, body?: unknown, raw?:
 };
 
 describe("deployments through the built server", () => {
+    it(
+        "uses the built CLI to upload and deploy and the built MCP to promote separately",
+        { timeout: 60_000 },
+        async () => {
+            const base = await startServer({
+                LAUNCHPAD_DEPLOYMENTS: "on",
+                LAUNCHPAD_ALIASES: "on",
+                LAUNCHPAD_APPS_DOMAIN: "sites.example.net",
+            });
+            const env = {
+                PATH: process.env.PATH ?? "",
+                HOME: dataDir,
+                LAUNCHPAD_CONTROLLER: base,
+                LAUNCHPAD_API_KEY: key,
+                LAUNCHPAD_ORG: org,
+            };
+            const cli = async (...args: string[]) => {
+                const proc = Bun.spawn(
+                    ["bun", path.resolve("../cli/dist/index.js"), "--json", ...args],
+                    {
+                        cwd: dataDir,
+                        env,
+                        stdout: "pipe",
+                        stderr: "pipe",
+                    },
+                );
+                const [code, stdout, stderr] = await Promise.all([
+                    proc.exited,
+                    new Response(proc.stdout).text(),
+                    new Response(proc.stderr).text(),
+                ]);
+                expect(code, stderr).toBe(0);
+                return JSON.parse(stdout) as unknown;
+            };
+            const fixture = path.join(dataDir, "client.tgz");
+            await fs.writeFile(
+                fixture,
+                tarGz([...SITE, { name: "client.txt", content: "client" }]),
+            );
+            const artifact = artifactSchema.parse(
+                await cli("artifact", "upload", project, fixture),
+            );
+            const app = appSchema.parse(await cli("app", "create", project, "client"));
+            const result = (await cli("alias", "create", app.id, "prod")) as { id: string };
+            const deployment = deploymentSchema.parse(
+                await cli("app", "deploy", app.id, "--artifact", artifact.id),
+            );
+            expect(deployment.status).toBe("queued");
+            const aliasRow = () =>
+                testDb.db
+                    .selectFrom("app_alias")
+                    .select(["state", "target_deployment_id"])
+                    .where("id", "=", result.id)
+                    .executeTakeFirstOrThrow();
+            expect(await aliasRow()).toEqual({ state: "unbound", target_deployment_id: null });
+            // Only stand in for the worker's completed build, not for the promotion API.
+            await sql`update deployment set status = 'succeeded', image_tag = 'fixture:built',
+            image_id = 'sha256:' || repeat('a', 64), finished_at = now()
+            where id = ${deployment.id}`.execute(testDb.db);
+            const mcp = new Client({ name: "launchpad-integration", version: "1.0.0" });
+            const transport = new StdioClientTransport({
+                command: "bun",
+                args: [
+                    path.resolve("../mcp/dist/index.js"),
+                    "--allow-promote",
+                    "--allowed-projects",
+                    project,
+                ],
+                cwd: dataDir,
+                env,
+            });
+            try {
+                await mcp.connect(transport);
+                const intent = {
+                    app_id: app.id,
+                    alias_id: result.id,
+                    deployment_id: deployment.id,
+                    expected_generation: "0",
+                    idempotency_key: "client-release",
+                };
+                expect(
+                    (await mcp.callTool({ name: "promote_alias", arguments: intent })).isError,
+                ).toBe(true);
+                expect(await aliasRow()).toEqual({ state: "unbound", target_deployment_id: null });
+                const accepted = await mcp.callTool({
+                    name: "promote_alias",
+                    arguments: { ...intent, confirm: true },
+                });
+                expect(accepted.isError, JSON.stringify(accepted)).toBe(false);
+                expect(accepted.structuredContent).toMatchObject({
+                    data: {
+                        status: "queued",
+                        generation: "1",
+                        previousTargetDeploymentId: null,
+                        desiredTargetDeploymentId: deployment.id,
+                    },
+                });
+                expect(await aliasRow()).toEqual({ state: "binding", target_deployment_id: null });
+            } finally {
+                await mcp.close();
+            }
+        },
+    );
     it(
         "streams an upload, creates an app and queues a deployment",
         { timeout: 60_000 },

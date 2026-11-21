@@ -312,10 +312,16 @@ gone) and `failed-clean` (it was not destroyed) are allowed. A held deletion doe
 counting toward quota and shows only as `desiredState` `deleting`; look at the deployment's events for
 `deletion-reconciliation-needed`.
 
-## Removed: preview deployment
+## Apps, deployments and aliases
+
+In an organization, use **Apps and deployments** to upload an archive, deploy it to its own URL,
+and separately promote a succeeded deployment to a chosen stable alias. Admins and owners with
+a fresh session can request operator review of held work; only instance operators can verify
+evidence and reconcile it. The API key form offers separate app read, deploy, promote,
+alias-management and deletion scopes.
 
 The preview runtime (previews, deployments, deletion and expiry, the artifact upload endpoint, the
 dashboard preview pages and the `preview:*` key scopes) was removed. Migration 018 drops the old
 tables/data unconditionally and revokes their keys. A stored key that still holds a `preview:*` scope is refused at
-authentication. Uploads are project-scoped, under `app:deploy`; see
+authentication. Current uploads are project-scoped, under `app:deploy`; see
 [deployments](../../docs/deployments.md).

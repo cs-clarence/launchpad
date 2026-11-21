@@ -1,6 +1,7 @@
 import { createFileRoute, Link, redirect, useRouter } from "@tanstack/react-router";
 import { useState } from "react";
 import { ApiKeys } from "../components/api-keys";
+import { DeploymentApps } from "../components/deployment-apps";
 import { apiRequest } from "../lib/api";
 import { getOrganizationViewFn } from "../server/data";
 import { getCurrentUser } from "../server/session";
@@ -78,6 +79,12 @@ function Organization() {
             ) : null}
 
             <fieldset className="min-w-0 space-y-10" disabled={keysLocked}>
+                <DeploymentApps
+                    key={view.organization.id}
+                    organizationId={view.organization.id}
+                    role={view.organization.role}
+                    projects={view.projects}
+                />
                 <section className="space-y-4">
                     <h2 className="h3">Projects</h2>
                     {view.projects.length === 0 ? (
