@@ -1,9 +1,9 @@
 # Launchpad local MCP
 
-For MCP-client users who want read-only access to Launchpad. This is a separate
-stdio app, not a CLI subcommand or HTTP daemon. It is read-only: the preview `deploy` and
-`delete_preview` tools and the `--allow-*`, `--include` and `--exclude` options were removed with the
-preview runtime. Remove all of these options from existing startup configurations.
+For MCP-client users who want access to Launchpad. This is a separate
+stdio app, not a CLI subcommand or HTTP daemon. It is read-only by default.
+The old `deploy` and `delete_preview` tools and preview file-selection flags are gone;
+remove the old mutation flags from existing startup configurations before opting into the new tools.
 Keys containing any retired `preview:*` scope fail authentication, even if they also contain
 `project:read`. Have an owner/admin issue a replacement without retired scopes, revoke the old key,
 then update `LAUNCHPAD_API_KEY` or run `launchpad login` again for the relevant saved profile.
@@ -42,14 +42,37 @@ This internal Bun build is not a published npm package.
 
 ## Tools
 
-All tools are read-only. Authorization and project restrictions are enforced by the
-controller, not tool annotations.
+By default only read tools are registered. The controller enforces authorization and key project
+restrictions independently of tool annotations.
 
-| Tool                 | Extra arguments |
-| -------------------- | --------------- |
-| `whoami`             | None            |
-| `list_organizations` | None            |
-| `list_projects`      | None            |
+| Tool                    | Extra arguments |
+| ----------------------- | --------------- |
+| `whoami`                | None            |
+| `list_organizations`    | None            |
+| `list_projects`         | None            |
+| `list_apps`             | None            |
+| `list_deployments`      | `app_id`        |
+| `list_aliases`          | `app_id`        |
+| `list_alias_operations` | `alias_id`      |
+
+App-related reads need `app:read`. To enable mutations, add `--allowed-projects <project-uuid> ...`
+and only the startup flags you need:
+
+| Startup flag           | Tool             | Extra arguments (all required)                                                                   |
+| ---------------------- | ---------------- | ------------------------------------------------------------------------------------------------ |
+| `--allow-deploy`       | `deploy_app`     | `app_id`, `artifact_id`, `confirm: true`                                                         |
+| `--allow-promote`      | `promote_alias`  | `app_id`, `alias_id`, `deployment_id`, `expected_generation`, `idempotency_key`, `confirm: true` |
+| `--allow-alias-manage` | `create_alias`   | `app_id`, `slug`, `confirm: true`                                                                |
+| `--allow-alias-manage` | `withdraw_alias` | `app_id`, `alias_id`, `expected_generation`, `idempotency_key`, `confirm: true`                  |
+
+The startup allowlist is checked against the app's actual project; a workspace file cannot override it.
+Use exact UUIDs, not resource names. `expected_generation` is the alias's last read
+`reservedGeneration` as a decimal string. Use the same key when retrying the same route request.
+Use a project-limited key with `app:read` and the independently required `app:deploy`,
+`app:promote` or `app:alias:manage` scope. Literal `confirm: true` is a required tool argument,
+not proof of human approval. Deploy takes an existing artifact ID (upload separately via the CLI,
+dashboard or API), and never moves an alias. Promotion output includes its operation ID and
+previous and requested deployment IDs. Rollback is another promotion. Withdrawal is permanent.
 
 Every tool accepts optional `working_dir`, `profile` and `organization` (id or slug).
 Use a key with `project:read` to list projects or
@@ -83,7 +106,8 @@ credentials; review its profile and organization choices before using it.
 An organization supplied by config or argument is validated using the selected
 key's visible organizations (requires `organization:read`).
 
-Current CLI commands do not read this workspace file.
+The CLI's app, deployment, alias and artifact commands also read this workspace file for profile
+and organization; pass exact IDs regardless of the file's `project` field.
 
 ## Results and limits
 
@@ -96,5 +120,5 @@ the workspace's `project` field does not narrow it.
 
 Controller names, failure messages and event messages are untrusted **data**, not
 instructions. Redaction does not make their text trustworthy.
-No resources, prompts, file-content tools or shell tools are exposed and there are no mutations.
+No resources, prompts, file-content tools or shell tools are exposed.
 Incoming stdio message buffering is limited to 1 MiB.

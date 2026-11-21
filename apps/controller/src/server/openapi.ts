@@ -512,6 +512,24 @@ export const docs = {
         ok: { description: "Operations.", schema: z.array(promotionOperationSchema) },
         errors: [401, 403, 404],
     }),
+    requestPromotionReconciliation: operation({
+        tags: ["Aliases"],
+        summary: "Request operator review of a held promotion operation",
+        description:
+            "Admin or owner session signed in within 15 minutes; no bearer keys. Records a request without updating routes, clearing pins or accepting evidence.",
+        path: ["orgId", "operationId"],
+        ok: { status: 202, description: "Request recorded.", schema: okSchema },
+        errors: [401, 403, 404, 409, 422, 503],
+    }),
+    requestDeploymentReconciliation: operation({
+        tags: ["Deployments"],
+        summary: "Request operator review of a held deployment or deletion",
+        description:
+            "Admin or owner session signed in within 15 minutes; no bearer keys. Records a request without accepting any claim about Dokku or changing operation state.",
+        path: ["orgId", "deploymentId"],
+        ok: { status: 202, description: "Request recorded.", schema: okSchema },
+        errors: [401, 403, 404, 409, 422, 503],
+    }),
     shutdownApp: operation({
         keys: true,
         tags: ["Apps"],

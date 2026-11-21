@@ -14,6 +14,10 @@ import { toolError, toolResult } from "./output";
 
 const KEY = "lp_" + "a".repeat(43);
 const PROJECT = "11111111-1111-4111-8111-111111111111";
+const APP = "22222222-2222-4222-8222-222222222222";
+const ALIAS = "33333333-3333-4333-8333-333333333333";
+const DEPLOYMENT = "44444444-4444-4444-8444-444444444444";
+const OPERATION = "55555555-5555-4555-8555-555555555555";
 const NOW = "2026-11-15T00:00:00.000Z";
 let dir = "";
 const cleanups: (() => Promise<void>)[] = [];
@@ -27,6 +31,7 @@ afterEach(async () => {
 
 function fixture(options: ServerOptions = {}, failure = false) {
     const calls: string[] = [];
+    const writes: RequestInit[] = [];
     const ctx = createContext(
         {
             LAUNCHPAD_CONTROLLER: "https://control.example.com",
@@ -35,9 +40,9 @@ function fixture(options: ServerOptions = {}, failure = false) {
         },
         {
             fetch: (async (url: string, init: RequestInit) => {
-                expect(init.method ?? "GET").toBe("GET");
                 const u = new URL(url);
                 calls.push(u.pathname + u.search);
+                if (init.method !== "GET") writes.push(init);
                 if (failure)
                     return Response.json(
                         { code: "forbidden", status: 403, title: "Not permitted" },
@@ -70,15 +75,54 @@ function fixture(options: ServerOptions = {}, failure = false) {
                             createdAt: NOW,
                         },
                     ]);
+                if (u.pathname.endsWith(`/apps/${APP}`))
+                    return Response.json({
+                        id: APP,
+                        projectId: PROJECT,
+                        slug: "web",
+                        state: "active",
+                        createdAt: NOW,
+                    });
+                if (u.pathname.endsWith(`/aliases/${ALIAS}`))
+                    return Response.json({
+                        id: ALIAS,
+                        appId: APP,
+                        slug: "prod",
+                        hostname: "prod.example.net",
+                        state: "unbound",
+                        targetDeploymentId: null,
+                        reservedGeneration: "0",
+                        committedGeneration: "0",
+                        createdAt: NOW,
+                    });
+                if (u.pathname.endsWith(`/aliases/${ALIAS}/promotions`))
+                    return Response.json(
+                        {
+                            id: OPERATION,
+                            aliasId: ALIAS,
+                            action: "bind",
+                            status: "queued",
+                            generation: "1",
+                            expectedGeneration: "0",
+                            previousTargetDeploymentId: null,
+                            desiredTargetDeploymentId: DEPLOYMENT,
+                            supersedesOperationId: null,
+                            supersededByOperationId: null,
+                            failureCode: null,
+                            createdAt: NOW,
+                            finishedAt: null,
+                        },
+                        { status: 202 },
+                    );
                 throw new Error("Unexpected request");
             }) as typeof fetch,
         },
     );
-    return { server: createMcpServer(ctx, options), calls };
+    return { server: createMcpServer(ctx, options), calls, writes };
 }
 
 async function connect(options: ServerOptions = {}, failure = false) {
-    const { server, calls } = fixture(options, failure);
+    const { server, calls, writes } = fixture(options, failure);
     const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
     const client = new Client({ name: "test", version: "1" });
     await server.connect(serverTransport);
@@ -87,8 +131,83 @@ async function connect(options: ServerOptions = {}, failure = false) {
         await client.close();
         await server.close();
     });
-    return { client, calls };
+    return { client, calls, writes };
 }
+
+describe("MCP mutation boundary", () => {
+    const intent = {
+        app_id: APP,
+        alias_id: ALIAS,
+        deployment_id: DEPLOYMENT,
+        expected_generation: "0",
+        idempotency_key: "release-1",
+        confirm: true,
+    };
+
+    it("does not bundle promotion or alias management with deployment", async () => {
+        const { client } = await connect({
+            workingDir: dir,
+            allowDeploy: true,
+            allowedProjects: [PROJECT],
+        });
+        const names = (await client.listTools()).tools.map((tool) => tool.name);
+        expect(names).toContain("deploy_app");
+        expect(names).not.toContain("promote_alias");
+        expect(names).not.toContain("withdraw_alias");
+        expect(names).not.toContain("create_alias");
+    });
+
+    it("refuses unconfirmed requests and number generations before HTTP", async () => {
+        const { client, calls } = await connect({
+            workingDir: dir,
+            allowPromote: true,
+            allowedProjects: [PROJECT],
+        });
+        for (const args of [
+            { ...intent, confirm: false },
+            { ...intent, expected_generation: 0 },
+            { ...intent, alias_id: "production" },
+        ]) {
+            expect(
+                (await client.callTool({ name: "promote_alias", arguments: args })).isError,
+            ).toBe(true);
+        }
+        expect(calls).toEqual([]);
+    });
+
+    it("checks the app's actual project before forwarding an exact confirmed intent", async () => {
+        const wrong = await connect({
+            workingDir: dir,
+            allowPromote: true,
+            allowedProjects: [APP],
+        });
+        expect(
+            (await wrong.client.callTool({ name: "promote_alias", arguments: intent })).isError,
+        ).toBe(true);
+        expect(wrong.writes).toEqual([]);
+
+        const good = await connect({
+            workingDir: dir,
+            allowPromote: true,
+            allowedProjects: [PROJECT],
+        });
+        const result = await good.client.callTool({ name: "promote_alias", arguments: intent });
+        expect(result.isError).toBe(false);
+        expect(result.structuredContent).toMatchObject({
+            data: {
+                id: OPERATION,
+                previousTargetDeploymentId: null,
+                desiredTargetDeploymentId: DEPLOYMENT,
+            },
+        });
+        expect(good.writes).toHaveLength(1);
+        expect(new Headers(good.writes[0]!.headers).get("idempotency-key")).toBe("release-1");
+        expect(JSON.parse(good.writes[0]!.body as string)).toEqual({
+            targetDeploymentId: DEPLOYMENT,
+            expectedGeneration: "0",
+        });
+    });
+});
 
 describe("read-only MCP protocol", () => {
     it("dispatches all resource reads through client-core with stable ids and cursors", async () => {
@@ -108,6 +227,10 @@ describe("read-only MCP protocol", () => {
         const { client } = await connect({ shared: true });
         const { tools } = await client.listTools();
         expect(tools.map((t) => t.name).sort()).toEqual([
+            "list_alias_operations",
+            "list_aliases",
+            "list_apps",
+            "list_deployments",
             "list_organizations",
             "list_projects",
             "whoami",

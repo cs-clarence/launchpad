@@ -82,7 +82,7 @@ compatible. A change to a schema that the REST API uses follows the REST rule to
 **MCP tool list** (`apps/mcp/src/server.ts`). Tool names, their input schemas and the shape
 of their results are the interface an agent depends on. Breaking: renaming or removing a
 tool, removing or retyping an input or a result field, making an input required, or changing
-what a tool is allowed to do (the tool set is read-only; any mutating tool stays opt-in). New tools and new optional inputs are compatible. Any new
+what a tool is allowed to do (the default tool set is read-only; mutations stay opt-in). New tools and new optional inputs are compatible. Any new
 mutating tool is a **security-relevant** change: it needs its own review and release note.
 
 **CLI** (`launchpad`). Command names, flags, exit codes and the documented output of
@@ -98,6 +98,22 @@ Breaking: a migration that cannot run on the previous release's data, a changed 
 manifest format without reading the old one, a renamed or removed admin command or option, a
 changed configuration variable name or meaning, or a change to the fixed uid, data
 directory layout or required mounts of the images. State each in the upgrade notes.
+
+## Immutable deployment client cutover
+
+**Breaking for preview clients.** The `/previews` endpoints, old preview dashboard pages,
+legacy SDK methods and CLI `deploy`/`previews`/`deployments` commands are gone. The old MCP
+`deploy`, `delete_preview` and preview file-selection flags are not supported. Replace them
+with the [immutable deployment workflows](deployments.md) and remove old MCP mutation flags
+before enabling the new tools explicitly. There are no compatibility redirects or stubs.
+
+Migration 018 drops preview data unconditionally and revokes keys containing any
+`preview:*` scope. Do not reuse or auto-upgrade those keys. Issue project-limited keys with
+only the required `app:*` scopes, and update clients together with the controller. Deploy
+does not promote; changing stable traffic takes a separate, explicitly authorized action.
+To roll back only the clients, use a compatible immutable-model version or disable mutations;
+do not point a retired preview client at the new controller. For an upgrade across 018,
+follow the [pre-P2b cutover runbook](deployment-cutover.md).
 
 ## Release checklist
 

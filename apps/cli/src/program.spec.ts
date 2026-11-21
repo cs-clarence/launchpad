@@ -85,6 +85,29 @@ async function cli(args: string[], options: Parameters<typeof fakeIo>[0] = {}) {
 const loggedIn = () =>
     cli(["login", "--controller", CONTROLLER, "--key-stdin"], { stdin: `${KEY}\n` });
 
+it("rejects destructive app and routing commands without explicit confirmation", async () => {
+    for (const args of [
+        ["app", "shutdown", "app-id"],
+        ["deployment", "delete", "deployment-id"],
+        [
+            "alias",
+            "promote",
+            "alias-id",
+            "deployment-id",
+            "--expected-generation",
+            "0",
+            "--idempotency-key",
+            "r1",
+        ],
+        ["alias", "withdraw", "alias-id", "--expected-generation", "0", "--idempotency-key", "r2"],
+    ]) {
+        // This happens before credential resolution, let alone a network request.
+        const result = await cli(args);
+        expect(result.code).toBe(EXIT.usage);
+        expect(result.err).toContain("Confirm");
+    }
+});
+
 beforeEach(async () => {
     controllerDown = false;
     dir = await fs.mkdtemp(path.join(os.tmpdir(), "launchpad-cli-"));

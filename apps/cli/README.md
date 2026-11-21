@@ -10,6 +10,14 @@ launchpad whoami
 launchpad profile list | use <name>
 launchpad org list | use <slug-or-id>
 launchpad projects list
+launchpad artifact upload <project-id> <archive-or-directory> [--directory]
+launchpad app list | create <project-id> <slug>
+launchpad app deploy <app-id> --artifact <id> [--spa] [--ttl <duration>]
+launchpad app deployments <app-id> | shutdown <app-id> --confirm
+launchpad deployment get <id> | events <id> [--after <sequence>] | delete <id> --confirm
+launchpad alias list <app-id> | create <app-id> <slug> | operations <id>
+launchpad alias promote <alias-id> <deployment-id> --expected-generation <generation> --idempotency-key <key> --confirm
+launchpad alias withdraw <alias-id> --expected-generation <generation> --idempotency-key <key> --confirm
 ```
 
 Global options: `--json` (machine-readable output; errors become `{"error":{"code","message"}}` on stderr)
@@ -29,17 +37,20 @@ and `--profile <name>`.
   the key's organization.
 - **Exit codes:** 0 success, 1 other failure, 2 usage, 3 not logged in or the key is rejected (401/403),
   4 not found, 5 controller unreachable, timed out or unexpected answer, 6 credential file or profile unusable,
-  7 and 8 are reserved for the app deploy command (not yet present).
+  7 and 8 are reserved. Queuing a deployment or routing operation exits successfully; check status separately.
 
 ## Workspace file
 
-Current CLI commands do not read `launchpad.json` and do not accept `--project`.
-`projects list` uses the selected credential profile or environment organization.
-Workspace-file resolution is currently used only by the [MCP app](../mcp/README.md#project-context).
+App, deployment, alias and artifact commands read the nearest `launchpad.json` for profile and
+organization context (see [workspace resolution](../mcp/README.md#project-context)). An explicit
+`--profile` wins. Pass exact IDs for the affected project or resource; a workspace file's `project`
+does not select a mutation target. Other CLI commands use the saved profile or environment.
 
-Preview deployment was removed (`deploy`, `previews` and `deployments` no longer exist, and the controller
-has no such endpoints); the app deploy command arrives with the immutable deployment model. The old
-`name` field of `launchpad.json` is no longer accepted.
+The old `deploy`, `previews` and `deployments` commands are gone. `app deploy` queues an immutable
+deployment and does not promote it. Roll back via `alias promote` with an older retained deployment.
+Reuse the same idempotency key and generation for a retry of the exact same routing request.
+See the [deployment walkthrough](../../docs/deployments.md). The old `name` field of `launchpad.json`
+is no longer accepted.
 
 - Output and errors hide anything shaped like a key and strip terminal escape
   sequences/control bytes. Serialized JSON stays valid.

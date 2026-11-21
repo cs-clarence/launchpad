@@ -118,11 +118,29 @@ async function main() {
         const server = Bun.serve({
             hostname: "127.0.0.1",
             port: 0,
-            fetch(request) {
+            async fetch(request) {
                 const url = new URL(request.url);
-                return url.pathname === "/api/v1/organizations"
-                    ? Response.json([])
-                    : new Response("not found", { status: 404 });
+                if (url.pathname === "/api/v1/organizations") return Response.json([]);
+                if (
+                    url.pathname === "/api/v1/organizations/test/projects/project/artifacts" &&
+                    request.method === "POST" &&
+                    request.headers.get("content-type") === "application/gzip" &&
+                    (await request.arrayBuffer()).byteLength === 3
+                ) {
+                    return Response.json(
+                        {
+                            id: "11111111-1111-4111-8111-111111111111",
+                            digest: "a".repeat(64),
+                            sizeBytes: 3,
+                            expandedBytes: 3,
+                            entryCount: 1,
+                            createdAt: "2026-11-21T00:00:00Z",
+                            reused: false,
+                        },
+                        { status: 201 },
+                    );
+                }
+                return new Response("not found", { status: 404 });
             },
         });
         writeFileSync(
@@ -132,6 +150,8 @@ import { parseDuration } from "@launchpad-kit/contracts";
 const client = createClient({ baseUrl: "http://127.0.0.1:${server.port}", apiKey: "lp_" + "a".repeat(30) });
 const organizations = await client.organizations.list();
 if (!Array.isArray(organizations) || organizations.length !== 0) throw new Error("unexpected answer");
+const uploaded = await client.artifacts.upload("test", "project", new Blob([new Uint8Array([31, 139, 8])]));
+if (uploaded.sizeBytes !== 3) throw new Error("unexpected upload response");
 if (typeof parseDuration !== "function") throw new Error("contracts export missing");
 console.log("sdk ok");
 `,
@@ -209,7 +229,8 @@ const options: ClientOptions = { baseUrl: "https://launchpad.example.com", apiKe
 const client = createClient(options);
 const organizations: ReturnType<typeof client.organizations.list> = client.organizations.list();
 const seconds: number | null = parseDuration("1h");
-void organizations; void seconds;
+const promote: typeof client.aliases.promote = client.aliases.promote;
+void organizations; void seconds; void promote;
 `,
         );
         const tsc = await exec(

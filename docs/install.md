@@ -5,6 +5,10 @@ guide wires the artifacts and explains the checks; it does not supply a producti
 Compose stack, TLS ingress, host ports, a Dokku backup, or permission to expose
 the controller publicly. Those are the [separate production follow-up](plans/production-compose-follow-up.md).
 
+After enabling deployment and (optionally) alias routing, use the
+[dashboard or CLI walkthrough](deployments.md#deploy-from-the-dashboard-or-cli)
+to deploy to an immutable preview URL and separately choose whether to promote.
+
 1. Provision one PostgreSQL database **owned by the runtime role**, a durable data
    volume, and a separate Dokku host. Use one Launchpad database and data directory
    per Dokku host. Provide a PostgreSQL client at least as new as the server for

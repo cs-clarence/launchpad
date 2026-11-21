@@ -6,8 +6,9 @@ The controller has operator login, organizations, members, projects, optional
 email invitations and recovery, and an OpenAPI reference. The earlier preview deployment runtime was
 removed. Its replacement, the immutable app model, is switched off by default
 (`LAUNCHPAD_DEPLOYMENTS`); when on, apps, uploads, deployments and manual deletion work through the API
-and an enabled worker (see [deployments](docs/deployments.md) and
-[the plan](docs/plans/deployment-model.md); aliases and promotion are not built). Nothing is published or deployed from this
+and an enabled worker. With aliases enabled separately, promote an existing deployment to a stable
+hostname without rebuilding it. See the [dashboard, CLI, MCP and API deployment guide](docs/deployments.md).
+Nothing is published or deployed from this
 repository's CI. A production Compose
 setup and release machinery are still to come (see [the plan](docs/plans/application.md)). See
 [Controller](#controller) below, [the controller README](apps/controller/README.md) and
@@ -117,8 +118,8 @@ that talks to the controller. The workspace follows Pureform's Bun/Omni layout:
 apps/
   controller/      TanStack Start + React, mounted Elysia 2 RC API, Skeleton 5
   worker/          Deployment worker (idle unless LAUNCHPAD_DEPLOYMENTS=on; builds, loads and deletes)
-  cli/             Bun CLI: login, profiles, orgs, projects
-  mcp/             Local stdio MCP server (read-only tools)
+  cli/             Bun CLI: profiles, projects, apps, deployments, aliases
+  mcp/             Local stdio MCP server (read-only by default)
 packages/
   auth/            Better Auth configuration, operator setup and recovery, mailer
   contracts/       Versioned API shapes (zod only, browser-safe)

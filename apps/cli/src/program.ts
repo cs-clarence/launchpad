@@ -8,9 +8,8 @@ import {
     useOrganization,
     useProfile,
     whoami,
-    workspaceContext,
-    ClientCoreError,
 } from "@launchpad-kit/client-core";
+import { addAppCommands } from "./app-commands";
 import { describe, EXIT, ExitWith } from "./errors";
 import type { Io } from "./io";
 import { safeOutput } from "./output";
@@ -28,12 +27,6 @@ const text = (rows: string[][]) => {
         )
         .join("\n");
 };
-
-// "never" is a preview with no expiry; a preview that is going away says so instead.
-const expiry = (p: { state: string; expiresAt: string | null }) =>
-    p.state !== "active" ? p.state : (p.expiresAt ?? "never");
-
-const shellArg = (value: string) => `'${value.replace(/'/g, "'\\''")}'`;
 
 // Where a key comes from. Never a command-line value: that lands in shell history and
 // in the process list.
@@ -232,6 +225,7 @@ export function buildProgram(rawIo: Io) {
             );
         });
 
+    addAppCommands(program, io.context, io.workingDir ?? process.cwd(), io.out);
     return program;
 }
 

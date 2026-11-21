@@ -22,6 +22,7 @@ import {
     readRouterCredential,
     readDriftDatabase,
     reconcileDeployment,
+    RECONCILIATION_REQUESTED,
     republishRecoveryAlias,
     supersedeOperation,
 } from "@launchpad-kit/services";
@@ -400,6 +401,32 @@ program
         console.log(
             `Withdrew ${result.hostname} at generation ${result.generation}. Its hostname stays reserved on the router for the old alias.`,
         );
+    });
+
+program
+    .command("reconciliation-requests")
+    .description(
+        "List the latest 100 reconciliation requests for operator review, including historical requests",
+    )
+    .action(async () => {
+        const requests = await withDatabase((db) =>
+            db
+                .selectFrom("audit_event")
+                .select([
+                    "occurred_at as requestedAt",
+                    "actor",
+                    "organization_id as organizationId",
+                    "target_type as kind",
+                    "target_id as targetId",
+                    "detail",
+                ])
+                .where("action", "=", RECONCILIATION_REQUESTED)
+                .orderBy("occurred_at", "desc")
+                .orderBy("id", "desc")
+                .limit(100)
+                .execute(),
+        );
+        console.log(JSON.stringify(requests, null, 2));
     });
 
 program

@@ -23,6 +23,7 @@ import {
     getDeployment,
     requestAppShutdown,
     requestPromotion,
+    requestReconciliation,
     requestWithdrawal,
     requestDeploymentDeletion,
     listApps,
@@ -279,9 +280,10 @@ export function createApi(deps: {
                     );
                 }
                 // After the key check: a key is told what it cannot do, not to sign in again.
+                const sessionAge = Date.now() - (caller.sessionCreatedAt?.getTime() ?? NaN);
                 if (
                     options.fresh &&
-                    Date.now() - (caller.sessionCreatedAt?.getTime() ?? 0) > FRESH_SESSION_MS
+                    (!Number.isFinite(sessionAge) || sessionAge > FRESH_SESSION_MS)
                 ) {
                     throw new ServiceError("forbidden", "Sign in again to do this.");
                 }
@@ -312,6 +314,31 @@ export function createApi(deps: {
     }
 
     const body = (request: Request) => request.json().catch(() => undefined);
+
+    function reconciliationRequest(
+        request: Request,
+        set: { status?: number | string },
+        organizationId: string,
+        kind: "deployment" | "promotion",
+        id: string,
+    ) {
+        return respond(
+            request,
+            set,
+            null,
+            (p) => {
+                if (request.body) {
+                    throw new ServiceError(
+                        "invalid",
+                        "Send a request without a body; only the operator may record evidence.",
+                    );
+                }
+                return requestReconciliation(db, p, organizationId, deployments, { kind, id });
+            },
+            202,
+            { fresh: true },
+        );
+    }
 
     return (
         new Elysia({ prefix: "/api" })
@@ -933,6 +960,30 @@ export function createApi(deps: {
                             );
                             return events.map((event) => ({ ...event, seq: String(event.seq) }));
                         },
+                    ),
+            )
+            .post(
+                "/v1/organizations/:orgId/promotion-operations/:operationId/reconciliation-requests",
+                { detail: docs.requestPromotionReconciliation },
+                ({ request, set, params }) =>
+                    reconciliationRequest(
+                        request,
+                        set,
+                        params.orgId,
+                        "promotion",
+                        params.operationId,
+                    ),
+            )
+            .post(
+                "/v1/organizations/:orgId/deployments/:deploymentId/reconciliation-requests",
+                { detail: docs.requestDeploymentReconciliation },
+                ({ request, set, params }) =>
+                    reconciliationRequest(
+                        request,
+                        set,
+                        params.orgId,
+                        "deployment",
+                        params.deploymentId,
                     ),
             )
             .get("/v1/status", { detail: docs.getStatus }, ({ request, set }) =>

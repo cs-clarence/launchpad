@@ -466,8 +466,9 @@ and must match `reserved_generation`, not the last committed generation.
 Read responses expose both generations, the committed target and pending intent.
 Implementation schemas must not accept a JSON number for a bigint generation.
 Stale generations return 409 without routing side effects. Unknown remote
-outcomes are exposed, not disguised as success. Promotion reconciliation stays
-session-only with authorized admin/owner and recent authentication.
+outcomes are exposed, not disguised as success. Only an authorized admin/owner
+with a recent session can request review. A request is audit-only: the
+instance operator verifies external evidence before settling the operation.
 
 Old `/previews` contracts are intentionally replaced before initial publication,
 with all clients and OpenAPI updated together. This is a documented breaking API,
@@ -504,8 +505,8 @@ not a hidden compatibility change.
   create, repoint or withdraw stable routes.
   Old preview-only keys do not automatically gain promotion permission. Current
   organization roles/project restrictions remain enforced; propose deployer and
-  above may promote when their key explicitly allows it. Reconciliation remains
-  admin/owner only.
+  above may promote when their key explicitly allows it. Reconciliation requests
+  are admin/owner only; the actual verification and repair stay operator-only.
 - Dashboard: one app with an alias list and deployment history. Candidate
   releases expose “Open preview” and “Promote to production”; previous retained
   releases expose rollback via promotion. Choose the alias explicitly, with
@@ -532,7 +533,7 @@ operator status never grants organization membership.
 | Promote or roll back alias                        | `app:promote`                                          | deployer     |
 | Delete unpinned deployment                        | `app:delete`                                           | deployer     |
 | Shut down app (withdraw all aliases, then delete) | All of `app:delete`, `app:alias:manage`, `app:promote` | admin        |
-| Reconcile uncertain routing/deletion              | No keys; session and recent authentication             | admin        |
+| Request review of uncertain routing/deletion      | No keys; session and recent authentication             | admin        |
 
 Migration revokes every API key containing any legacy `preview:*` scope, with
 audit counts, and invalidates its sessions only if a separate account-recovery

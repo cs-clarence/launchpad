@@ -232,7 +232,13 @@ repairs anything or reopens the recovery gate. See [operator usage and exit
 statuses](drift.md). `recovery-clear` and `recovery-republish-alias` use the same
 inventory readers under the exclusive maintenance lock; see the [restore runbook](restore.md).
 
-**Planned, not implemented:** automatic retention expiry.
+**Implemented (P6):** the dashboard, SDK, CLI and MCP use immutable apps, deployments and
+separately authorized alias mutations. `launchpad artifact upload`, `launchpad app deploy`
+and `launchpad alias promote` are separate commands. `launchpad-admin reconciliation-requests`
+shows audit history from recent admin/owner sessions; recording a request does not reconcile
+remote state. See [deployment commands](deployments.md) and the [client cutover](releasing.md#immutable-deployment-client-cutover).
+
+**Planned, not implemented:** automatic retention expiry or extension after creation.
 See [the design](design/deployment-modes.md) and
 [routing experiment](decisions/deployment-alias-routing.md). Do not configure those
 names against the current binary; the deployment change updates examples, tasks and
