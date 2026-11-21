@@ -2,7 +2,8 @@
 
 The alias router: the private **control plane**, the public **data plane** and the operator commands.
 For operators and contributors. **Private and not yet wired in:** nothing in the controller or worker
-uses it, and it has no image or Compose service yet (R3 of
+uses it at run time, and it has an image and an unstarted Compose service in
+[`docker-compose.yaml`](../../docker-compose.yaml) (R3 of
 [the plan](../../docs/plans/production-alias-router.md)). The routing rules live in
 [`@launchpad-kit/alias-router`](../../packages/alias-router/README.md); this app only binds them to
 sockets, owns the process lock and reads secrets safely.

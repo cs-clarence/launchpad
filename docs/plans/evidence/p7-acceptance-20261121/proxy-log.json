@@ -1,0 +1,714 @@
+[
+    {
+        "seq": 1,
+        "at": "2026-11-21T01:40:26.433Z",
+        "method": "POST",
+        "path": "/v1/deployments",
+        "request": {
+            "hostname": "w-cwgwplot88-preview.live.example.com"
+        },
+        "rule": null,
+        "outcome": "forwarded",
+        "routerStatus": 200,
+        "callerGone": false
+    },
+    {
+        "seq": 2,
+        "at": "2026-11-21T01:40:26.489Z",
+        "method": "POST",
+        "path": "/v1/routes",
+        "request": {
+            "hostname": "view-production-g6lefwhmh8.live.example.com",
+            "generation": "1",
+            "operationId": "e11206ca-db85-4a23-bde6-06a242f07053",
+            "aliasId": "79c9f49c-e429-4b81-8690-40ca851876cc",
+            "targetDeploymentId": "d248d83a-a690-4ca2-afd4-ba763ed3d1f3"
+        },
+        "rule": null,
+        "outcome": "forwarded",
+        "routerStatus": 200,
+        "callerGone": false
+    },
+    {
+        "seq": 3,
+        "at": "2026-11-21T01:40:26.540Z",
+        "method": "GET",
+        "path": "/v1/routes/view-production-g6lefwhmh8.live.example.com",
+        "request": {},
+        "rule": null,
+        "outcome": "forwarded",
+        "routerStatus": 200,
+        "callerGone": false
+    },
+    {
+        "seq": 4,
+        "at": "2026-11-21T01:40:28.567Z",
+        "method": "POST",
+        "path": "/v1/deployments",
+        "request": {
+            "hostname": "w-cwgwplot88-preview.live.example.com"
+        },
+        "rule": null,
+        "outcome": "forwarded",
+        "routerStatus": 200,
+        "callerGone": false
+    },
+    {
+        "seq": 5,
+        "at": "2026-11-21T01:40:28.575Z",
+        "method": "POST",
+        "path": "/v1/routes",
+        "request": {
+            "hostname": "view-staging-hi51jh2e3x.live.example.com",
+            "generation": "1",
+            "operationId": "f5e313fd-12e0-49f6-adec-6c749715747b",
+            "aliasId": "33c06750-18de-49c1-af87-9ef2e38b7afe",
+            "targetDeploymentId": "d248d83a-a690-4ca2-afd4-ba763ed3d1f3"
+        },
+        "rule": null,
+        "outcome": "forwarded",
+        "routerStatus": 200,
+        "callerGone": false
+    },
+    {
+        "seq": 6,
+        "at": "2026-11-21T01:40:28.594Z",
+        "method": "GET",
+        "path": "/v1/routes/view-staging-hi51jh2e3x.live.example.com",
+        "request": {},
+        "rule": null,
+        "outcome": "forwarded",
+        "routerStatus": 200,
+        "callerGone": false
+    },
+    {
+        "seq": 7,
+        "at": "2026-11-21T01:40:30.639Z",
+        "method": "POST",
+        "path": "/v1/deployments",
+        "request": {
+            "hostname": "w-lmdhgb2snx-preview.live.example.com"
+        },
+        "rule": null,
+        "outcome": "forwarded",
+        "routerStatus": 200,
+        "callerGone": false
+    },
+    {
+        "seq": 8,
+        "at": "2026-11-21T01:40:30.670Z",
+        "method": "POST",
+        "path": "/v1/routes",
+        "request": {
+            "hostname": "view-production-g6lefwhmh8.live.example.com",
+            "generation": "2",
+            "operationId": "0df9a59b-ab6c-43d8-b924-a250c33daa3a",
+            "aliasId": "79c9f49c-e429-4b81-8690-40ca851876cc",
+            "targetDeploymentId": "67e191ec-1db7-4c48-9f8b-a53cdf8e7597"
+        },
+        "rule": null,
+        "outcome": "forwarded",
+        "routerStatus": 200,
+        "callerGone": false
+    },
+    {
+        "seq": 9,
+        "at": "2026-11-21T01:40:30.727Z",
+        "method": "GET",
+        "path": "/v1/routes/view-production-g6lefwhmh8.live.example.com",
+        "request": {},
+        "rule": null,
+        "outcome": "forwarded",
+        "routerStatus": 200,
+        "callerGone": false
+    },
+    {
+        "seq": 10,
+        "at": "2026-11-21T01:40:32.811Z",
+        "method": "POST",
+        "path": "/v1/deployments",
+        "request": {
+            "hostname": "w-cwgwplot88-preview.live.example.com"
+        },
+        "rule": null,
+        "outcome": "forwarded",
+        "routerStatus": 200,
+        "callerGone": false
+    },
+    {
+        "seq": 11,
+        "at": "2026-11-21T01:40:32.838Z",
+        "method": "POST",
+        "path": "/v1/routes",
+        "request": {
+            "hostname": "view-production-g6lefwhmh8.live.example.com",
+            "generation": "3",
+            "operationId": "cf26b152-1db5-4688-9bfe-4a0b1efb7c6a",
+            "aliasId": "79c9f49c-e429-4b81-8690-40ca851876cc",
+            "targetDeploymentId": "d248d83a-a690-4ca2-afd4-ba763ed3d1f3"
+        },
+        "rule": null,
+        "outcome": "forwarded",
+        "routerStatus": 200,
+        "callerGone": false
+    },
+    {
+        "seq": 12,
+        "at": "2026-11-21T01:40:32.886Z",
+        "method": "GET",
+        "path": "/v1/routes/view-production-g6lefwhmh8.live.example.com",
+        "request": {},
+        "rule": null,
+        "outcome": "forwarded",
+        "routerStatus": 200,
+        "callerGone": false
+    },
+    {
+        "seq": 13,
+        "at": "2026-11-21T01:40:42.114Z",
+        "method": "POST",
+        "path": "/v1/deployments",
+        "request": {
+            "hostname": "w-lmdhgb2snx-preview.live.example.com"
+        },
+        "rule": null,
+        "outcome": "forwarded",
+        "routerStatus": 200,
+        "callerGone": false
+    },
+    {
+        "seq": 14,
+        "at": "2026-11-21T01:40:42.145Z",
+        "method": "POST",
+        "path": "/v1/routes",
+        "request": {
+            "hostname": "view-production-g6lefwhmh8.live.example.com",
+            "generation": "4",
+            "operationId": "836b3647-83f5-4056-a408-c92b0512545c",
+            "aliasId": "79c9f49c-e429-4b81-8690-40ca851876cc",
+            "targetDeploymentId": "67e191ec-1db7-4c48-9f8b-a53cdf8e7597"
+        },
+        "rule": null,
+        "outcome": "forwarded",
+        "routerStatus": 200,
+        "callerGone": false
+    },
+    {
+        "seq": 15,
+        "at": "2026-11-21T01:40:42.200Z",
+        "method": "GET",
+        "path": "/v1/routes/view-production-g6lefwhmh8.live.example.com",
+        "request": {},
+        "rule": null,
+        "outcome": "forwarded",
+        "routerStatus": 200,
+        "callerGone": false
+    },
+    {
+        "seq": 16,
+        "at": "2026-11-21T01:40:44.273Z",
+        "method": "POST",
+        "path": "/v1/deployments",
+        "request": {
+            "hostname": "w-cwgwplot88-preview.live.example.com"
+        },
+        "rule": null,
+        "outcome": "forwarded",
+        "routerStatus": 200,
+        "callerGone": false
+    },
+    {
+        "seq": 17,
+        "at": "2026-11-21T01:40:44.299Z",
+        "method": "POST",
+        "path": "/v1/routes",
+        "request": {
+            "hostname": "view-production-g6lefwhmh8.live.example.com",
+            "generation": "5",
+            "operationId": "c687d138-1997-4267-8ca9-a818cef15358",
+            "aliasId": "79c9f49c-e429-4b81-8690-40ca851876cc",
+            "targetDeploymentId": "d248d83a-a690-4ca2-afd4-ba763ed3d1f3"
+        },
+        "rule": null,
+        "outcome": "forwarded",
+        "routerStatus": 200,
+        "callerGone": false
+    },
+    {
+        "seq": 18,
+        "at": "2026-11-21T01:40:44.355Z",
+        "method": "GET",
+        "path": "/v1/routes/view-production-g6lefwhmh8.live.example.com",
+        "request": {},
+        "rule": null,
+        "outcome": "forwarded",
+        "routerStatus": 200,
+        "callerGone": false
+    },
+    {
+        "seq": 19,
+        "at": "2026-11-21T01:43:04.645Z",
+        "method": "POST",
+        "path": "/v1/deployments",
+        "request": {
+            "hostname": "w-0wv9vy97hh-preview.live.example.com"
+        },
+        "rule": null,
+        "outcome": "forwarded",
+        "routerStatus": 200,
+        "callerGone": false
+    },
+    {
+        "seq": 20,
+        "at": "2026-11-21T01:43:04.678Z",
+        "method": "POST",
+        "path": "/v1/routes",
+        "request": {
+            "hostname": "view-race-y545en2g07.live.example.com",
+            "generation": "1",
+            "operationId": "09a38d24-86fa-4a98-b205-8b577ee528da",
+            "aliasId": "ac05c3db-332b-496d-a4a1-c5c3822c4001",
+            "targetDeploymentId": "37715b61-6191-45e3-85bc-7abea82bc52b"
+        },
+        "rule": null,
+        "outcome": "forwarded",
+        "routerStatus": 200,
+        "callerGone": false
+    },
+    {
+        "seq": 21,
+        "at": "2026-11-21T01:43:04.739Z",
+        "method": "GET",
+        "path": "/v1/routes/view-race-y545en2g07.live.example.com",
+        "request": {},
+        "rule": null,
+        "outcome": "forwarded",
+        "routerStatus": 200,
+        "callerGone": false
+    },
+    {
+        "seq": 22,
+        "at": "2026-11-21T01:44:08.522Z",
+        "method": "POST",
+        "path": "/v1/deployments",
+        "request": {
+            "hostname": "w-aafywrnr13-preview.live.example.com"
+        },
+        "rule": null,
+        "outcome": "forwarded",
+        "routerStatus": 200,
+        "callerGone": false
+    },
+    {
+        "seq": 23,
+        "at": "2026-11-21T01:44:08.534Z",
+        "method": "POST",
+        "path": "/v1/routes",
+        "request": {
+            "hostname": "view-race-y545en2g07.live.example.com",
+            "generation": "2",
+            "operationId": "4e128159-607c-4d7e-a9e7-5ebf354b6b74",
+            "aliasId": "ac05c3db-332b-496d-a4a1-c5c3822c4001",
+            "targetDeploymentId": "065f7852-0bbd-4fca-96db-9469810d1b4c"
+        },
+        "rule": null,
+        "outcome": "forwarded",
+        "routerStatus": 200,
+        "callerGone": false
+    },
+    {
+        "seq": 24,
+        "at": "2026-11-21T01:44:08.555Z",
+        "method": "GET",
+        "path": "/v1/routes/view-race-y545en2g07.live.example.com",
+        "request": {},
+        "rule": null,
+        "outcome": "forwarded",
+        "routerStatus": 200,
+        "callerGone": false
+    },
+    {
+        "seq": 25,
+        "at": "2026-11-21T01:45:15.401Z",
+        "method": "POST",
+        "path": "/v1/deployments",
+        "request": {
+            "hostname": "w-ws83a6xczv-preview.live.example.com"
+        },
+        "rule": null,
+        "outcome": "forwarded",
+        "routerStatus": 200,
+        "callerGone": false
+    },
+    {
+        "seq": 26,
+        "at": "2026-11-21T01:45:15.442Z",
+        "method": "POST",
+        "path": "/v1/routes",
+        "request": {
+            "hostname": "view-race-y545en2g07.live.example.com",
+            "generation": "3",
+            "operationId": "1405b1cd-0cd2-4136-98e6-dc25f283ca90",
+            "aliasId": "ac05c3db-332b-496d-a4a1-c5c3822c4001",
+            "targetDeploymentId": "8ecb67b0-a486-4b84-978b-19e996be5b60"
+        },
+        "rule": null,
+        "outcome": "forwarded",
+        "routerStatus": 200,
+        "callerGone": false
+    },
+    {
+        "seq": 27,
+        "at": "2026-11-21T01:45:15.512Z",
+        "method": "GET",
+        "path": "/v1/routes/view-race-y545en2g07.live.example.com",
+        "request": {},
+        "rule": null,
+        "outcome": "forwarded",
+        "routerStatus": 200,
+        "callerGone": false
+    },
+    {
+        "seq": 28,
+        "at": "2026-11-21T01:46:20.621Z",
+        "method": "POST",
+        "path": "/v1/deployments",
+        "request": {
+            "hostname": "w-p48an5l1oo-preview.live.example.com"
+        },
+        "rule": null,
+        "outcome": "forwarded",
+        "routerStatus": 200,
+        "callerGone": false
+    },
+    {
+        "seq": 29,
+        "at": "2026-11-21T01:46:20.653Z",
+        "method": "POST",
+        "path": "/v1/routes",
+        "request": {
+            "hostname": "view-race-y545en2g07.live.example.com",
+            "generation": "4",
+            "operationId": "3f95cb14-d140-4703-83cb-fd5c644d0a03",
+            "aliasId": "ac05c3db-332b-496d-a4a1-c5c3822c4001",
+            "targetDeploymentId": "1c8c2496-3ec6-4df7-b4a4-c14f982673cf"
+        },
+        "rule": null,
+        "outcome": "forwarded",
+        "routerStatus": 200,
+        "callerGone": false
+    },
+    {
+        "seq": 30,
+        "at": "2026-11-21T01:46:20.709Z",
+        "method": "GET",
+        "path": "/v1/routes/view-race-y545en2g07.live.example.com",
+        "request": {},
+        "rule": null,
+        "outcome": "forwarded",
+        "routerStatus": 200,
+        "callerGone": false
+    },
+    {
+        "seq": 31,
+        "at": "2026-11-21T01:46:22.765Z",
+        "method": "POST",
+        "path": "/v1/routes",
+        "request": {
+            "hostname": "view-staging-hi51jh2e3x.live.example.com",
+            "generation": "2",
+            "operationId": "3ddc4a0d-9e20-4009-8166-78b604bb62b6",
+            "aliasId": "33c06750-18de-49c1-af87-9ef2e38b7afe",
+            "targetDeploymentId": null
+        },
+        "rule": null,
+        "outcome": "forwarded",
+        "routerStatus": 200,
+        "callerGone": false
+    },
+    {
+        "seq": 32,
+        "at": "2026-11-21T01:46:22.777Z",
+        "method": "GET",
+        "path": "/v1/routes/view-staging-hi51jh2e3x.live.example.com",
+        "request": {},
+        "rule": null,
+        "outcome": "forwarded",
+        "routerStatus": 200,
+        "callerGone": false
+    },
+    {
+        "seq": 33,
+        "at": "2026-11-21T01:46:24.824Z",
+        "method": "POST",
+        "path": "/v1/routes",
+        "request": {
+            "hostname": "view-production-g6lefwhmh8.live.example.com",
+            "generation": "6",
+            "operationId": "a3245f1a-0c39-47cc-aa59-27f19abe16fa",
+            "aliasId": "79c9f49c-e429-4b81-8690-40ca851876cc",
+            "targetDeploymentId": null
+        },
+        "rule": null,
+        "outcome": "forwarded",
+        "routerStatus": 200,
+        "callerGone": false
+    },
+    {
+        "seq": 34,
+        "at": "2026-11-21T01:46:24.871Z",
+        "method": "GET",
+        "path": "/v1/routes/view-production-g6lefwhmh8.live.example.com",
+        "request": {},
+        "rule": null,
+        "outcome": "forwarded",
+        "routerStatus": 200,
+        "callerGone": false
+    },
+    {
+        "seq": 35,
+        "at": "2026-11-21T01:48:41.905Z",
+        "method": "POST",
+        "path": "/v1/deployments",
+        "request": {
+            "hostname": "w-f5oz9ym6rf-preview.live.example.com"
+        },
+        "rule": null,
+        "outcome": "forwarded",
+        "routerStatus": 200,
+        "callerGone": false
+    },
+    {
+        "seq": 36,
+        "at": "2026-11-21T01:48:41.916Z",
+        "method": "POST",
+        "path": "/v1/routes",
+        "request": {
+            "hostname": "view-ack-ffzd6qx8oz.live.example.com",
+            "generation": "1",
+            "operationId": "5a3f09d5-fbe8-45a0-ad78-c074b47c6858",
+            "aliasId": "9262d1bc-ad3a-46f2-b9a3-0edf95aa708b",
+            "targetDeploymentId": "2d59e604-d33a-47ab-83c2-a5f87a955952"
+        },
+        "rule": null,
+        "outcome": "forwarded",
+        "routerStatus": 200,
+        "callerGone": false
+    },
+    {
+        "seq": 37,
+        "at": "2026-11-21T01:48:41.936Z",
+        "method": "GET",
+        "path": "/v1/routes/view-ack-ffzd6qx8oz.live.example.com",
+        "request": {},
+        "rule": null,
+        "outcome": "forwarded",
+        "routerStatus": 200,
+        "callerGone": false
+    },
+    {
+        "seq": 38,
+        "at": "2026-11-21T01:48:43.960Z",
+        "method": "POST",
+        "path": "/v1/deployments",
+        "request": {
+            "hostname": "w-5u8x8v2lma-preview.live.example.com"
+        },
+        "rule": null,
+        "outcome": "forwarded",
+        "routerStatus": 200,
+        "callerGone": false
+    },
+    {
+        "seq": 39,
+        "at": "2026-11-21T01:48:43.985Z",
+        "method": "POST",
+        "path": "/v1/routes",
+        "request": {
+            "hostname": "view-ack-ffzd6qx8oz.live.example.com",
+            "generation": "2",
+            "operationId": "450d1726-47fc-4d9f-8c97-11dc946fe5ae",
+            "aliasId": "9262d1bc-ad3a-46f2-b9a3-0edf95aa708b",
+            "targetDeploymentId": "b2b53e88-597f-4b5b-b8f7-3732c686ff9c"
+        },
+        "rule": "lost-ack",
+        "outcome": "response-dropped",
+        "routerStatus": 200,
+        "callerGone": null
+    },
+    {
+        "seq": 40,
+        "at": "2026-11-21T01:48:45.621Z",
+        "method": "GET",
+        "path": "/v1/routes/view-ack-ffzd6qx8oz.live.example.com",
+        "request": {},
+        "rule": null,
+        "outcome": "forwarded",
+        "routerStatus": 200,
+        "callerGone": false
+    },
+    {
+        "seq": 41,
+        "at": "2026-11-21T01:48:46.021Z",
+        "method": "POST",
+        "path": "/v1/deployments",
+        "request": {
+            "hostname": "w-5u8x8v2lma-preview.live.example.com"
+        },
+        "rule": null,
+        "outcome": "forwarded",
+        "routerStatus": 200,
+        "callerGone": false
+    },
+    {
+        "seq": 42,
+        "at": "2026-11-21T01:48:46.046Z",
+        "method": "POST",
+        "path": "/v1/routes",
+        "request": {
+            "hostname": "view-ack-ffzd6qx8oz.live.example.com",
+            "generation": "3",
+            "operationId": "9df70478-d86f-4cff-b8b0-d2130c17fd69",
+            "aliasId": "9262d1bc-ad3a-46f2-b9a3-0edf95aa708b",
+            "targetDeploymentId": "b2b53e88-597f-4b5b-b8f7-3732c686ff9c"
+        },
+        "rule": null,
+        "outcome": "forwarded",
+        "routerStatus": 200,
+        "callerGone": false
+    },
+    {
+        "seq": 43,
+        "at": "2026-11-21T01:48:46.085Z",
+        "method": "GET",
+        "path": "/v1/routes/view-ack-ffzd6qx8oz.live.example.com",
+        "request": {},
+        "rule": null,
+        "outcome": "forwarded",
+        "routerStatus": 200,
+        "callerGone": false
+    },
+    {
+        "seq": 44,
+        "at": "2026-11-21T01:48:48.133Z",
+        "method": "POST",
+        "path": "/v1/deployments",
+        "request": {
+            "hostname": "w-f5oz9ym6rf-preview.live.example.com"
+        },
+        "rule": null,
+        "outcome": "forwarded",
+        "routerStatus": 200,
+        "callerGone": false
+    },
+    {
+        "seq": 45,
+        "at": "2026-11-21T01:48:48.157Z",
+        "method": "POST",
+        "path": "/v1/routes",
+        "request": {
+            "hostname": "view-stale-b70yblwaul.live.example.com",
+            "generation": "1",
+            "operationId": "dff28c03-42f9-4ee9-99d2-1a2eb9d05ce3",
+            "aliasId": "39da8b8a-5440-4830-8445-06a1d09c246e",
+            "targetDeploymentId": "2d59e604-d33a-47ab-83c2-a5f87a955952"
+        },
+        "rule": null,
+        "outcome": "forwarded",
+        "routerStatus": 200,
+        "callerGone": false
+    },
+    {
+        "seq": 46,
+        "at": "2026-11-21T01:48:48.224Z",
+        "method": "GET",
+        "path": "/v1/routes/view-stale-b70yblwaul.live.example.com",
+        "request": {},
+        "rule": null,
+        "outcome": "forwarded",
+        "routerStatus": 200,
+        "callerGone": false
+    },
+    {
+        "seq": 47,
+        "at": "2026-11-21T01:48:50.284Z",
+        "method": "POST",
+        "path": "/v1/deployments",
+        "request": {
+            "hostname": "w-5u8x8v2lma-preview.live.example.com"
+        },
+        "rule": null,
+        "outcome": "forwarded",
+        "routerStatus": 200,
+        "callerGone": false
+    },
+    {
+        "seq": 48,
+        "at": "2026-11-21T01:48:50.309Z",
+        "method": "POST",
+        "path": "/v1/routes",
+        "request": {
+            "hostname": "view-stale-b70yblwaul.live.example.com",
+            "generation": "2",
+            "operationId": "3c870089-758c-4937-a3e9-b5e9042e2204",
+            "aliasId": "39da8b8a-5440-4830-8445-06a1d09c246e",
+            "targetDeploymentId": "b2b53e88-597f-4b5b-b8f7-3732c686ff9c"
+        },
+        "rule": "stale-hold",
+        "outcome": "released",
+        "routerStatus": 409,
+        "callerGone": false
+    },
+    {
+        "seq": 49,
+        "at": "2026-11-21T01:53:52.768Z",
+        "method": "GET",
+        "path": "/v1/routes/view-stale-b70yblwaul.live.example.com",
+        "request": {},
+        "rule": null,
+        "outcome": "forwarded",
+        "routerStatus": 200,
+        "callerGone": false
+    },
+    {
+        "seq": 50,
+        "at": "2026-11-21T01:53:53.981Z",
+        "method": "POST",
+        "path": "/v1/deployments",
+        "request": {
+            "hostname": "w-f5oz9ym6rf-preview.live.example.com"
+        },
+        "rule": null,
+        "outcome": "forwarded",
+        "routerStatus": 200,
+        "callerGone": false
+    },
+    {
+        "seq": 51,
+        "at": "2026-11-21T01:53:54.021Z",
+        "method": "POST",
+        "path": "/v1/routes",
+        "request": {
+            "hostname": "view-stale-b70yblwaul.live.example.com",
+            "generation": "3",
+            "operationId": "e2e95b8c-7965-4696-8913-e200dd48feb0",
+            "aliasId": "39da8b8a-5440-4830-8445-06a1d09c246e",
+            "targetDeploymentId": "2d59e604-d33a-47ab-83c2-a5f87a955952"
+        },
+        "rule": null,
+        "outcome": "forwarded",
+        "routerStatus": 200,
+        "callerGone": false
+    },
+    {
+        "seq": 52,
+        "at": "2026-11-21T01:53:54.117Z",
+        "method": "GET",
+        "path": "/v1/routes/view-stale-b70yblwaul.live.example.com",
+        "request": {},
+        "rule": null,
+        "outcome": "forwarded",
+        "routerStatus": 200,
+        "callerGone": false
+    }
+]

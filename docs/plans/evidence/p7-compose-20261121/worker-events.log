@@ -1,0 +1,5 @@
+{"event":"deployment-worker-started"}
+{"event":"deployment-run-ended","deploymentId":"48703bce-f954-441a-a456-ce2c509726b4","status":"authority-lost"}
+{"event":"stopped"}
+{"event":"deployment-worker-started"}
+{"event":"deployment-reconciliation-needed","deploymentId":"48703bce-f954-441a-a456-ce2c509726b4"}

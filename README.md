@@ -9,105 +9,57 @@ removed. Its replacement, the immutable app model, is switched off by default
 and an enabled worker. With aliases enabled separately, promote an existing deployment to a stable
 hostname without rebuilding it. See the [dashboard, CLI, MCP and API deployment guide](docs/deployments.md).
 Nothing is published or deployed from this
-repository's CI. A production Compose
-setup and release machinery are still to come (see [the plan](docs/plans/application.md)). See
+repository's CI. A production-shaped Compose stack exists but has never run as production (see [production Compose](docs/production-compose.md)). See
 [Controller](#controller) below, [the controller README](apps/controller/README.md) and
-[the worker README](apps/worker/README.md). The Docker commands in the earlier sections
-manage the existing Dokku engine, not the controller.
+[the worker README](apps/worker/README.md).
 
 ## Configuration
 
-On a fresh checkout, copy the example and edit `.env.local`:
+`docker-compose.yaml` defines the whole stack (PostgreSQL, controller, worker, Dokku and
+the alias router); see [production Compose](docs/production-compose.md). Copy the example
+and replace every `CHANGE_ME`:
 
 ```sh
-cp .env.local.example .env.local
+cp docker-compose.env.example docker-compose.env
 ```
 
-`.env.local.example` documents all supported settings. `.env.local` is ignored
-by Git and excluded from the Docker build context. Keep plugins and other image
-customizations in `containers/dokku/Dockerfile`.
+`docker-compose.env` is ignored by Git and excluded from Docker build contexts. Keep
+plugins and other image customizations in `containers/dokku/Dockerfile`.
 
-Compose does not automatically load `.env.local`. Pass `--env-file .env.local`
-on every command. Exported shell variables override values in that file.
-Run commands from the repository root: `DOKKU_DATA_DIR=${PWD}/.data/dokku`
-keeps Dokku state in the Git-ignored `.data/dokku/` directory while providing
-absolute host paths for Docker bind mounts. Use the physical repository path
-(not a symlink) so Dokku's sibling containers resolve mounts correctly.
+Compose does not load `docker-compose.env` on its own: pass `--env-file docker-compose.env`
+on every command. Exported shell variables override values in that file. The host paths in
+it (`DOKKU_DATA_DIR` and the credential files) must exist and be absolute physical paths.
 
 ## Run
 
-Validate configuration, then build and start:
+Validate the configuration, then build and start only Dokku (the other services need
+their credential files and are described in [production Compose](docs/production-compose.md)):
 
 ```sh
-docker compose --env-file .env.local config --quiet
-docker compose --env-file .env.local up -d --build
+docker compose --env-file docker-compose.env config --quiet
+docker compose --env-file docker-compose.env up -d --build dokku
+docker compose --env-file docker-compose.env exec dokku dokku apps:list
 ```
 
-Check status and interact with Dokku:
-
-```sh
-docker compose --env-file .env.local ps
-docker compose --env-file .env.local logs -f dokku
-docker compose --env-file .env.local exec dokku dokku apps:list
-```
-
-If this is an existing installation, explicitly update its global app domain
-after changing `DOKKU_HOSTNAME`:
-
-```sh
-docker compose --env-file .env.local exec dokku dokku domains:set-global example.com
-```
-
-Replace `example.com` with your configured hostname. Existing app domains may
-need separate updates; inspect them with `dokku domains:report <app>`.
-
-## Cloudflare Tunnel
-
-For cloudflared running on the host, route `*.example.com` to
-`http://127.0.0.1:9080`. Match the address and port to `DOKKU_BIND_IP` and
-`DOKKU_HTTP_PORT`; leave the HTTP Host Header override unset.
-
-An app named `view-demo` uses `view-demo.example.com`. Cloudflared in a
-container cannot reach the host through its own `127.0.0.1`; that setup needs
-separate networking configuration.
-
-The default published ports are local-only. Dokku's Docker socket mount grants
-host-level control. Only deploy trusted workloads. Enable `http-auth` separately
-for each app that needs protection, and use HTTPS when sharing credentials.
-
-Dokku state persists in `DOKKU_DATA_DIR`. Changing that path does not migrate
-state. App volumes and databases require their own backup and lifecycle handling.
-Docker-managed images, containers, build cache, and volumes still live in the
-host Docker engine's storage; this setting only relocates Dokku's state.
+Dokku's published ports are loopback-only by default (SSH 32222, HTTP 32181,
+HTTPS 32443; see the bindings in `docker-compose.env.example`). Its Docker socket mount
+grants host-level control, so only deploy trusted workloads. Dokku state persists in
+`DOKKU_DATA_DIR`; changing that path does not migrate state. App volumes and databases need
+their own backup handling.
 
 ## Test project
 
-`examples/hello/` contains a minimal static Nginx site. After starting Dokku:
+`examples/hello/` contains a minimal static Nginx site. With Dokku running:
 
 ```sh
-docker compose --env-file .env.local up -d --wait --wait-timeout 180
 docker build -t launchpad/hello:v1 examples/hello
-# Only create the app on its first deployment.
-docker compose --env-file .env.local exec dokku dokku apps:create view-demo
-docker compose --env-file .env.local exec dokku dokku git:from-image view-demo launchpad/hello:v1
+docker compose --env-file docker-compose.env exec dokku dokku apps:create hello
+docker compose --env-file docker-compose.env exec dokku dokku git:from-image hello launchpad/hello:v1
 ```
 
-After configuring your own domain in place of `example.com`, open
-`https://view-demo.example.com` using that domain. For a local
-check without DNS or the tunnel:
-
-```sh
-curl --fail -H 'Host: view-demo.example.com' http://127.0.0.1:9080
-```
-
-Use a new image tag (for example `v2`) for each update and pass that tag to
-`git:from-image` again. An unchanged tag can cause Dokku to skip deployment.
-The demo is public; installing `http-auth` does not enable password protection.
-
-The containerized setup can warn that its port-listening deployment check
-cannot enter a sibling container's PID namespace. The demo passed the uptime
-check and HTTP verification, but that warning means the port check did not run.
-Sharing the host PID namespace would expand host access and is not enabled here.
+Use a new image tag for each update and pass it to `git:from-image` again; an unchanged
+tag can cause Dokku to skip deployment. The app is public: installing `http-auth` does not
+enable password protection.
 
 ## Controller
 
@@ -154,8 +106,7 @@ does not start the app. The controller Dockerfile is in
 `apps/controller/Dockerfile` (and the worker's in `apps/worker/`), separate from the Dokku image in `containers/dokku/` (`containers/` holds images of external software).
 
 Authentication, organizations, projects and email flows are implemented and tested against a disposable PostgreSQL (and, opt-in, a disposable
-Dokku); see the controller and worker READMEs for configuration and first run. No controller,
-worker or PostgreSQL service has been added to Compose yet.
+Dokku); see the controller and worker READMEs for configuration and first run.
 
 See [CONTRIBUTING.md](CONTRIBUTING.md), [tooling](docs/tooling.md), and
 [package patterns](docs/patterns/README.md), and [deployments](docs/deployments.md). Keep these docs current when setup

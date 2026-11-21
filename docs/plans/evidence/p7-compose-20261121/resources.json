@@ -1,0 +1,65 @@
+{
+    "run": "54e9c3",
+    "dir": "/tmp/opencode/lpc-54e9c3",
+    "composeProject": "lpc-54e9c3",
+    "containers": [
+        "lpc-54e9c3-postgres-1",
+        "lpc-54e9c3-controller-1",
+        "lpc-54e9c3-worker-1",
+        "lpc-54e9c3-dokku-1",
+        "lpc-54e9c3-router-1",
+        "(admin run containers: lpc-54e9c3-admin-run-*)",
+        "lpc-54e9c3-helper-*"
+    ],
+    "volumes": [
+        "lpc-54e9c3_postgres-data",
+        "lpc-54e9c3_launchpad-data",
+        "lpc-54e9c3_router-state",
+        "lpc-54e9c3_restore-data"
+    ],
+    "networks": ["lpc-54e9c3_database", "lpc-54e9c3_backend", "lpc-54e9c3_apps"],
+    "networkAttachments": "none: Compose could not attach Dokku to the default bridge (see README); the dedicated apps network replaced it",
+    "images": [
+        "launchpad/controller:lpc-54e9c3",
+        "launchpad/worker:lpc-54e9c3",
+        "launchpad/router:lpc-54e9c3",
+        "launchpad/admin:lpc-54e9c3",
+        "lpc-54e9c3/dokku:test",
+        "launchpad/site:48703bcef954441aa456ce2c509726b4 (product build image of the interrupted fixture)"
+    ],
+    "hostPorts": {
+        "controller": 42180,
+        "dokkuSsh": 42222,
+        "previewHttp": 42181,
+        "previewHttps": 42443,
+        "routerData": 42182,
+        "bind": "127.0.0.1"
+    },
+    "dirsRootOwnedByDockerHelperCleanup": ["/tmp/opencode/lpc-54e9c3/dokku"],
+    "fixtureApps": "lp-test-* inside this run's Dokku only (dies with its state dir); app containers/images created in the HOST engine are recorded below as discovered",
+    "discovered": [
+        {
+            "app": "lp-2htd64xc1u",
+            "container": "lp-2htd64xc1u.web.1",
+            "images": [
+                "dokku/lp-2htd64xc1u:latest",
+                "launchpad/site:e9fa0acdb8f848cbbea9610b0a9a26b5"
+            ]
+        },
+        {
+            "app": "lp-f1gnwrspsq",
+            "container": "lp-f1gnwrspsq.web.1",
+            "images": [
+                "dokku/lp-f1gnwrspsq:latest",
+                "launchpad/site:bfc2c8ec0cce48bdaa39ae088a62c5bb"
+            ],
+            "note": "deleted via API"
+        },
+        {
+            "app": "lp-wmkw0jrp2l",
+            "images": ["launchpad/site:48703bcef954441aa456ce2c509726b4"],
+            "note": "interrupted by busy worker stop; deployment reconciliation-needed; destroyed by exact name"
+        }
+    ],
+    "databases": ["launchpad_restore (inside lpc-54e9c3_postgres-data)"]
+}

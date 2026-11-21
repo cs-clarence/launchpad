@@ -51,6 +51,35 @@ and cleanup are recorded in [the experiment evidence](routing-experiment-evidenc
 This does not authorize starting production. Immutable-model integration remains
 gated on a complete experiment pass and independent evidence review.
 
+**Slice status (2026-11-21, after the disposable rehearsal).** Evidence:
+[`evidence/p7-compose-20261121/`](evidence/p7-compose-20261121/README.md). Production has not been
+started and **no cleanup of old resources was executed**.
+
+- **Slice 1 (topology proof): done for deployments on, aliases off.** Unique project, volumes, keys and
+  loopback ports; worker-to-Dokku SSH with pinned host key, host-visible Dokku mounts, image loading, proxy
+  readiness, one fixture deploy/probe/delete and exact-name teardown (verified absent) all worked. The
+  "Dokku joins the default bridge via Compose" design **failed** (the engine rejects Compose's aliases) and
+  was replaced by a dedicated `apps` network plus `network:set --global initial-network`.
+- **Slice 2 (configuration): done and now run once.** Open items closed: external images and the
+  `dokku-http-auth` plugin are pinned (tag plus digest, commit), resource limits are set from measurements
+  (small rehearsal only), `check:compose` asserts both. Four configuration defects fixed (plugin
+  `--committish` syntax, default-bridge attachment, Dokku healthcheck and start period, password-file
+  ownership doc). The user approved loopback port 32182 for the router data plane.
+  **Blocker found:** `LAUNCHPAD_ALIASES=on` cannot work because the worker and controller require an HTTPS or
+  `http://127.0.0.1` router control URL and the router control plane is plain HTTP on the private network
+  (`http://router:3081`); needs a decision (TLS on the control plane or a loopback path).
+- **Slice 3 (backup/restore): partly done.** From the stack: admin `backup`, `verify-backup`, restore into a
+  fresh database and data volume, `migrate --status`, `check-restore`, and artifacts surviving
+  recreation. **Not done:** startup schema guards and failed-restore recovery, rollback to the previous
+  image with its pre-upgrade backup, `recovery-clear` and starting a controller on the restored data, TLS
+  option pass-through to the PostgreSQL clients, the credential-reset command, Dokku-state and router-state
+  backup, revoked credentials unusable after restore.
+- **Slice 2/behavior observed:** a worker stopped mid-deploy ends the run `authority-lost` at once and the
+  deployment becomes `reconciliation-needed` after the lease (about 170 s); the graceful-stop claim "finishes
+  within the 25-minute grace" is false for in-flight deployments.
+- **Not done:** slice 4 (domains, ingress, TLS, installation rehearsal with aliases, upgrade/restart), slice 5
+  (cleanup), a reusable opt-in task for this rehearsal (it was run by hand), the stable worker id.
+
 Queued. Application milestones 0 to 6 are built (milestone 6 closed 2026-11-18, `docs/plans/milestone-6-release.md`).
 The user requested one draft production-preparation PR on 2026-11-19, with this
 plan committed first and the package-scope rename next. Its initial implementation
@@ -115,7 +144,7 @@ Items the milestone 6 review deferred to this work:
 - **TLS and connection options.** `backup`/`restore` pass only host, port, user, password, database
   and `sslmode` to the PostgreSQL clients; options such as `sslrootcert` are dropped. Pass them
   through, or document the limit, before a TLS-strict database is used.
-- **Base images by digest.** Pin `oven/bun`, `docker` and the Dokku base by digest (a release
+- **Base images by digest (done 2026-11-21 for the application, router, worker and Dokku images and Postgres).** Pin `oven/bun`, `docker` and the Dokku base by digest (a release
   checklist gate in `docs/releasing.md`).
 - **Operator install, end to end,** from published artifacts on a clean machine: only possible once
   the stack exists and names are decided.
@@ -125,7 +154,7 @@ Items the milestone 6 review deferred to this work:
 - **Kind:** large operational integration, delivered in small PRs.
 - **Risk:** High: Docker access is host-root-equivalent; routing untrusted previews
   alongside management can expose credentials; cleanup permanently deletes data.
-- **Observed:** the root `docker-compose.yml` currently runs only Dokku, mounts the
+- **Observed:** the root `docker-compose.yml` (since replaced by `docker-compose.yaml`) then ran only Dokku, mounted the
   host Docker socket and `.data/dokku`, and publishes loopback ports 3022, 9080 and 8443. Its image recipe is the root `Dockerfile`. Controller/worker recipes and
   their ignore files are now beside their apps. Both apps use UID/GID 10001 and
   share `/data`. Migrations and restore are explicit admin operations.
@@ -154,8 +183,8 @@ These are proposals for approval, not assumptions already authorized.
    host isolation only when its Docker engine is inside the VM: mounting the main
    host's socket still grants main-host control. Do not expose an unauthenticated
    Docker API on TCP. The operator chooses the topology and its security boundary.
-2. **Separate production configuration:** add `compose.production.yaml`, keeping
-   the existing Dokku-only file usable until cleanup/cutover. Move only the external
+2. **Production configuration:** `docker-compose.yaml` replaces the Dokku-only
+   file without adopting its persistent state. Move only the external
    Dokku recipe to `containers/dokku/Dockerfile`; keep application recipes beside
    their projects. Use explicit Compose project identity and no fixed container
    names for new application services.
@@ -180,13 +209,13 @@ These are proposals for approval, not assumptions already authorized.
 6. **Ingress is configurable, not a mandatory provider or access policy.**
    The operator independently chooses public HTTPS or private access (Tailscale,
    another VPN, a tunnel or a reverse proxy) for management and previews. Keep the
-   management origin (`LAUNCHPAD_BASE_URL`), preview domain
-   (planned `LAUNCHPAD_APPS_DOMAIN`) and worker's internal proxy/probe address
-   (planned `LAUNCHPAD_APPS_PROXY_URL`) separate. Alias control and probes use
+   management origin (`LAUNCHPAD_BASE_URL`), apps domain
+   (`LAUNCHPAD_APPS_DOMAIN`) and worker's internal proxy/probe address
+   (`LAUNCHPAD_APPS_PROXY_URL`) separate. Alias control and probes use
    separate `LAUNCHPAD_ALIAS_CONTROL_URL` and `LAUNCHPAD_ALIAS_PROBE_URL`.
-   These new names belong to the proposed immutable-model change; the current
-   binary still uses `LAUNCHPAD_PREVIEW_DOMAIN` and `LAUNCHPAD_PREVIEW_PROXY_URL`.
-   Do not put the planned names into live settings until that change ships.
+   These are the current names, implemented by the immutable-model change; the
+   removed `LAUNCHPAD_PREVIEW_DOMAIN` and `LAUNCHPAD_PREVIEW_PROXY_URL` make the
+   controller and worker refuse to start.
    Public browser/client URLs must not
    accidentally use Docker service DNS names; the internal probe need not use the
    public preview route. Loopback bindings remain safe defaults, with an explicit
@@ -323,6 +352,27 @@ Record what was deleted and what was deliberately retained.
 **Undo:** stopping is reversible; **persistent-data deletion is not**, unless
 the user elected and verified an offline archive. Stop before irreversible work
 if ownership, dependencies or backup scope are unclear.
+
+## Outstanding follow-ups after the bundled P7 PR
+
+For maintainers planning the next production milestones. The [disposable Compose
+record](evidence/p7-compose-20261121/README.md) is the baseline. These checks are
+exit criteria, not authorization to start production or delete existing state.
+
+| Priority                | Follow-up                                                                                                                                                                                                                                                                                  | Close when                                                                                                                                                                                                                               |
+| ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Functional blocker      | Secure the router control connection. Choose private HTTPS or a literal loopback topology without weakening URL validation or publishing the control port.                                                                                                                                 | An aliases-on Compose run starts and exercises bind, promote, withdraw and reconciliation through both router planes.                                                                                                                    |
+| Cutover gate            | Choose separate management and apps registrable domains, configure app wildcard DNS and HTTPS ingress, and settle proxy trust.                                                                                                                                                             | The intended clients can reach deployment and alias hosts; app ingress cannot reach management; management cookies stay off app hosts; forwarded IPs are trusted only from the intended proxy; database, Docker and SSH are not exposed. |
+| Install follow-up       | Make fresh-host bootstrap repeatable, including Dokku's `initial-network`, pinned SSH trust, storage ownership, migrations, operator setup and router init.                                                                                                                                | A clean disposable install follows the runbook successfully without an undocumented manual fix.                                                                                                                                          |
+| Reliability gate        | Decide whether to drain in-flight deploys on shutdown or explicitly support the current stop-and-reconcile behavior.                                                                                                                                                                       | A stop during deployment has a documented, rehearsed recovery path; the stop-grace setting is not represented as a drain guarantee.                                                                                                      |
+| Recovery gate           | Add procedures for Dokku and router state backups; test post-restore startup, failed restore, reconciliation against a newer router, `recovery-clear`, and Compose upgrade and rollback. Finish PostgreSQL client TLS-option handling and settle how restored credentials are invalidated. | Disposable drills demonstrate a safe return to service, including the mutation gate, schema compatibility and revoked credentials staying unusable.                                                                                      |
+| Capacity gate           | Measure large archives, concurrent deploys, many apps, backup/restore and first startup. Account separately for Docker builds outside service limits.                                                                                                                                      | Limits are based on representative load; database loss, worker liveness and host reboot are rehearsed.                                                                                                                                   |
+| Security and operations | Confirm the single-host, root-equivalent Docker socket threat model. Assess file-based database secrets, read-only root filesystems and SMTP if the installation needs email.                                                                                                              | The operator explicitly accepts the boundary or selects a more isolated topology; each optional hardening item is adopted or deferred with a reason.                                                                                     |
+| Reproducibility         | Support app-base digest references and assess pinning OS packages installed by the admin image and Dokku.                                                                                                                                                                                  | The app base can be built from a verified digest; remaining package inputs have an explicit pin or update policy.                                                                                                                        |
+
+Legacy cleanup is separately gated on an approved exact target list; it does not
+block a fresh install. Automatic expiry and retention extension are product
+follow-ups, not Compose defects.
 
 ## Verification and handback
 

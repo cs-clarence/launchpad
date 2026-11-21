@@ -26,15 +26,15 @@ same Omni tasks; package-level scripts are the commands Omni executes.
 
 These tasks need no server, Docker, PostgreSQL or Dokku:
 
-| Command                        | Coverage                                                                     |
-| ------------------------------ | ---------------------------------------------------------------------------- |
-| `omni -i run build`            | Controller's production Bun output, CLI, library builds and declarations     |
-| `omni -i run check`            | `check:types`, `check:lint` (warnings fail), `check:format` and `check:deps` |
-| `omni -i run check:deps`       | Package, Omni-graph, import and catalog dependencies agree                   |
-| `omni -i run test`             | Unit tests only: services, auth, the Elysia adapter and the tooling          |
-| `omni -i run format`           | Format the whole repository                                                  |
-| `omni -i run check:compose`    | Existing Dokku Compose syntax (needs the Docker CLI)                         |
-| `omni -i run check test build` | The full local gate, in one graph                                            |
+| Command                        | Coverage                                                                                   |
+| ------------------------------ | ------------------------------------------------------------------------------------------ |
+| `omni -i run build`            | Controller's production Bun output, CLI, library builds and declarations                   |
+| `omni -i run check`            | `check:types`, `check:lint` (warnings fail), `check:format` and `check:deps`               |
+| `omni -i run check:deps`       | Package, Omni-graph, import and catalog dependencies agree                                 |
+| `omni -i run test`             | Unit tests only: services, auth, the Elysia adapter and the tooling                        |
+| `omni -i run format`           | Format the whole repository                                                                |
+| `omni -i run check:compose`    | Compose render and shape assertions for `docker-compose.yaml` (Docker CLI; starts nothing) |
+| `omni -i run check test build` | The full local gate, in one graph                                                          |
 
 `check:types` for the controller builds it first: the route tree is generated and
 git-ignored. Integration tests need a disposable PostgreSQL and are never part of
@@ -94,6 +94,18 @@ router, with no published host ports. It needs Docker and host `ssh-keygen`/`ope
 uses the host engine socket (root-equivalent), and must not be run without explicit
 permission to start disposable services. See
 [scope and evidence](docs/plans/routing-experiment-evidence.md). It is not in CI.
+
+The full-stack P7 rehearsal is separately opt-in:
+`LAUNCHPAD_ACCEPTANCE_REHEARSAL=1 omni -i run test:acceptance:rehearsal -p @launchpad-kit/tooling`.
+It builds the controller, worker and router images, starts a disposable PostgreSQL and Dokku
+(`launchpad/dokku:0.38.34`) with no published host ports, and drives the worked acceptance example
+over the real HTTP API (about 20 minutes, mostly a real five-minute lease expiry). It needs Docker
+and host `ssh-keygen` and `tar`, uses the host engine socket (root-equivalent), and must not be run
+without explicit permission to start disposable services. `LAUNCHPAD_ACCEPTANCE_FAST_LEASE=1`
+expires the stale lease by SQL instead of waiting (for iterating on the harness only) and
+`LAUNCHPAD_ACCEPTANCE_RACE_ROUNDS` sets the number of promotion-versus-deletion rounds (default 3).
+Resources are recorded in `/tmp/opencode/lp-accept-*/resources.json` before creation and removed
+by exact name. It is not in CI. See [the acceptance record](docs/plans/deployment-p7-acceptance.md).
 
 Operator and development tasks live in the controller project:
 

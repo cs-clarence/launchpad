@@ -10,17 +10,20 @@
 # /data must be shared with the worker: mount the same volume in both (a named volume picks up
 # the image's ownership; a bind-mounted host directory must be owned by 10001:10001 and mode
 # 0700). Without a mount each container gets its own anonymous volume. The base images are
-# pinned by tag here and must be pinned by digest before a release. The default build is the
+# pinned by tag and digest. The default build is the
 # controller; `--target admin` builds the one-off operator image with the PostgreSQL client tools.
 ARG BUN_VERSION=1.4.4
+# Index digests verified with `docker buildx imagetools inspect` on 2026-11-21; change them with the tag.
+ARG BUN_DIGEST=sha256:1d22548f177f4ff38e0c15baa3c2c46c6c2060ba2d1bc573bb4720b407548f1d
+ARG BUN_SLIM_DIGEST=sha256:1846adf22496bd711036aae8be147e57bdebbaea2e5264e3e0b5af1db187d9a4
 
-FROM oven/bun:${BUN_VERSION} AS build
+FROM oven/bun:${BUN_VERSION}@${BUN_DIGEST} AS build
 WORKDIR /app
 COPY . .
 RUN bun install --frozen-lockfile
 RUN bun run --filter @launchpad-kit/controller build
 
-FROM oven/bun:${BUN_VERSION}-slim AS base
+FROM oven/bun:${BUN_VERSION}-slim@${BUN_SLIM_DIGEST} AS base
 ARG LAUNCHPAD_UID=10001
 # The release version, recorded in backups and shown in the operator status. Pass it at build
 # time (`--build-arg LAUNCHPAD_VERSION=<version>`); an image built without it reports `unknown`.

@@ -1,0 +1,436 @@
+[
+    {
+        "id": "S1",
+        "title": "Upload once",
+        "result": "pass",
+        "mechanism": "HTTP API; one SQL count of artifact rows",
+        "observations": {
+            "artifactId": "65a58a3f-8b62-4ade-be00-75d451eb344a",
+            "digest": "126d046c7200b240fd919ba6e4e44703dd6d5c36cb68e1ed73d83232b89e6bab",
+            "secondUploadReused": true,
+            "artifactRows": 1
+        }
+    },
+    {
+        "id": "S2",
+        "title": "Deploy A and B from one artifact into distinct Dokku apps and hostnames",
+        "result": "pass",
+        "mechanism": "HTTP API; SQL read of deployment rows; docker image inspect; probe of Dokku's proxy",
+        "observations": {
+            "deployments": [
+                {
+                    "id": "67e191ec-1db7-4c48-9f8b-a53cdf8e7597",
+                    "app": "lp-q0yuzco8w1",
+                    "hostname": "w-lmdhgb2snx-preview.live.example.com",
+                    "imageId": "sha256:cb05b94311e4ef2f812072f1956f57bc79b4f9195e99d97e2ba10698a62b07cc"
+                },
+                {
+                    "id": "d248d83a-a690-4ca2-afd4-ba763ed3d1f3",
+                    "app": "lp-g6ih0du6zl",
+                    "hostname": "w-cwgwplot88-preview.live.example.com",
+                    "imageId": "sha256:7b69a4eab607106fbaa8f68db2d5756ccf1071b25610891e498aee891d7c7350"
+                }
+            ],
+            "oneArtifact": true,
+            "deploymentRunsEnded": 2
+        }
+    },
+    {
+        "id": "S3",
+        "title": "Bind production and staging to A",
+        "result": "pass",
+        "mechanism": "HTTP API; router control read (read-only); probe of the router data plane",
+        "observations": {
+            "aliases": {
+                "production": {
+                    "id": "79c9f49c-e429-4b81-8690-40ca851876cc",
+                    "appId": "de590f3a-a1ed-423d-bbea-12cbe35d11f2",
+                    "slug": "production",
+                    "hostname": "view-production-g6lefwhmh8.live.example.com",
+                    "state": "unbound",
+                    "targetDeploymentId": null,
+                    "reservedGeneration": "0",
+                    "committedGeneration": "0",
+                    "createdAt": "2026-11-21T01:40:24.892Z"
+                },
+                "staging": {
+                    "id": "33c06750-18de-49c1-af87-9ef2e38b7afe",
+                    "appId": "de590f3a-a1ed-423d-bbea-12cbe35d11f2",
+                    "slug": "staging",
+                    "hostname": "view-staging-hi51jh2e3x.live.example.com",
+                    "state": "unbound",
+                    "targetDeploymentId": null,
+                    "reservedGeneration": "0",
+                    "committedGeneration": "0",
+                    "createdAt": "2026-11-21T01:40:24.909Z"
+                }
+            },
+            "unboundStatuses": [404, 404],
+            "routes": {
+                "production": {
+                    "generation": "1",
+                    "target": "d248d83a-a690-4ca2-afd4-ba763ed3d1f3",
+                    "operationId": "e11206ca-db85-4a23-bde6-06a242f07053"
+                },
+                "staging": {
+                    "generation": "1",
+                    "target": "d248d83a-a690-4ca2-afd4-ba763ed3d1f3",
+                    "operationId": "f5e313fd-12e0-49f6-adec-6c749715747b"
+                }
+            },
+            "states": {
+                "production": {
+                    "state": "bound",
+                    "target": "d248d83a-a690-4ca2-afd4-ba763ed3d1f3",
+                    "reserved": "1",
+                    "committed": "1"
+                },
+                "staging": {
+                    "state": "bound",
+                    "target": "d248d83a-a690-4ca2-afd4-ba763ed3d1f3",
+                    "reserved": "1",
+                    "committed": "1"
+                }
+            }
+        }
+    },
+    {
+        "id": "S4",
+        "title": "Promote only production to B",
+        "result": "pass",
+        "mechanism": "HTTP API; router control read; probe of the router data plane",
+        "observations": {
+            "production": {
+                "state": "bound",
+                "target": "67e191ec-1db7-4c48-9f8b-a53cdf8e7597",
+                "reserved": "2",
+                "committed": "2"
+            },
+            "staging": {
+                "state": "bound",
+                "target": "d248d83a-a690-4ca2-afd4-ba763ed3d1f3",
+                "reserved": "1",
+                "committed": "1"
+            },
+            "routes": {
+                "production": {
+                    "generation": "2",
+                    "target": "67e191ec-1db7-4c48-9f8b-a53cdf8e7597",
+                    "operationId": "0df9a59b-ab6c-43d8-b924-a250c33daa3a"
+                },
+                "staging": {
+                    "generation": "1",
+                    "target": "d248d83a-a690-4ca2-afd4-ba763ed3d1f3",
+                    "operationId": "f5e313fd-12e0-49f6-adec-6c749715747b"
+                }
+            }
+        }
+    },
+    {
+        "id": "S5",
+        "title": "Roll back production to A without a rebuild",
+        "result": "pass",
+        "mechanism": "HTTP API; docker image/container inspect; worker log event count",
+        "observations": {
+            "imageIdsIdentical": true,
+            "fingerprints": {
+                "A": {
+                    "image": "sha256:7b69a4eab607106fbaa8f68db2d5756ccf1071b25610891e498aee891d7c7350",
+                    "dokkuImage": "sha256:49708a562f54d13d270fa77e3a1155e9e699f7d4a096b13c2fd2a1c28d229ae3",
+                    "containers": [
+                        "11359a250e243266c713bc3ae4c3b6c7a7b631f922f277c00fbda63790af081b 2026-11-21T01:38:54.153604899Z"
+                    ]
+                },
+                "B": {
+                    "image": "sha256:cb05b94311e4ef2f812072f1956f57bc79b4f9195e99d97e2ba10698a62b07cc",
+                    "dokkuImage": "sha256:32b63475eec456010dcfe9244c74f6ba08c7d7299d909b12bda08496ceb41217",
+                    "containers": [
+                        "941907482d77588e39eb683dedea9d040a6137b5b7740f2378453a5ce1273a08 2026-11-21T01:39:55.833275597Z"
+                    ]
+                }
+            },
+            "deploymentRunsEndedBefore": 2,
+            "deploymentRunsEndedAfter": 2,
+            "production": {
+                "state": "bound",
+                "target": "d248d83a-a690-4ca2-afd4-ba763ed3d1f3",
+                "reserved": "3",
+                "committed": "3"
+            }
+        }
+    },
+    {
+        "id": "S6",
+        "title": "A failed candidate C cannot change aliases or A",
+        "result": "pass",
+        "mechanism": "HTTP API; stored archive damaged through the shared data volume (root helper); docker inspect; router control read",
+        "observations": {
+            "candidate": "cc03a1f7-626f-43a4-85c0-16a4083183ac",
+            "failureCode": "step-failed",
+            "aliasesUnchanged": [
+                {
+                    "state": "bound",
+                    "target": "d248d83a-a690-4ca2-afd4-ba763ed3d1f3",
+                    "reserved": "3",
+                    "committed": "3"
+                },
+                {
+                    "state": "bound",
+                    "target": "d248d83a-a690-4ca2-afd4-ba763ed3d1f3",
+                    "reserved": "1",
+                    "committed": "1"
+                }
+            ],
+            "routesUnchanged": [
+                {
+                    "generation": "3",
+                    "target": "d248d83a-a690-4ca2-afd4-ba763ed3d1f3",
+                    "operationId": "cf26b152-1db5-4688-9bfe-4a0b1efb7c6a"
+                },
+                {
+                    "generation": "1",
+                    "target": "d248d83a-a690-4ca2-afd4-ba763ed3d1f3",
+                    "operationId": "f5e313fd-12e0-49f6-adec-6c749715747b"
+                }
+            ],
+            "aAndBContainersAndImagesUnchanged": true
+        }
+    },
+    {
+        "id": "S7",
+        "title": "Two concurrent promotions at the same expected generation: exactly one is accepted",
+        "result": "pass",
+        "mechanism": "HTTP API; SQL count of operations at the contested generation",
+        "observations": {
+            "expectedGeneration": "3",
+            "statuses": [202, 409],
+            "operationsAtExpectedGeneration": 1,
+            "refusal": "conflict",
+            "production": {
+                "state": "bound",
+                "target": "67e191ec-1db7-4c48-9f8b-a53cdf8e7597",
+                "reserved": "4",
+                "committed": "4"
+            }
+        }
+    },
+    {
+        "id": "S8",
+        "title": "Promotion races deletion of the same deployment: the pin wins or the deletion wins, never both",
+        "result": "pass",
+        "mechanism": "HTTP API (simultaneous requests); SQL read of pins and deployment state; docker exec dokku apps:exists",
+        "observations": {
+            "rounds": [
+                {
+                    "round": 1,
+                    "candidate": "67e191ec-1db7-4c48-9f8b-a53cdf8e7597",
+                    "promotionStatus": 409,
+                    "deletionStatus": 202,
+                    "winner": "deletion"
+                },
+                {
+                    "round": 2,
+                    "candidate": "c906624e-c8c6-4966-8cda-9ee06d067901",
+                    "promotionStatus": 409,
+                    "deletionStatus": 202,
+                    "winner": "deletion"
+                },
+                {
+                    "round": 3,
+                    "candidate": "37715b61-6191-45e3-85bc-7abea82bc52b",
+                    "promotionStatus": 202,
+                    "deletionStatus": 409,
+                    "winner": "pin"
+                },
+                {
+                    "round": 4,
+                    "candidate": "065f7852-0bbd-4fca-96db-9469810d1b4c",
+                    "promotionStatus": 202,
+                    "deletionStatus": 409,
+                    "winner": "pin"
+                },
+                {
+                    "round": 5,
+                    "candidate": "8ecb67b0-a486-4b84-978b-19e996be5b60",
+                    "promotionStatus": 202,
+                    "deletionStatus": 409,
+                    "winner": "pin"
+                },
+                {
+                    "round": 6,
+                    "candidate": "1c8c2496-3ec6-4df7-b4a4-c14f982673cf",
+                    "promotionStatus": 202,
+                    "deletionStatus": 409,
+                    "winner": "pin"
+                }
+            ],
+            "outcomes": {
+                "pinWon": 4,
+                "deletionWon": 2
+            }
+        }
+    },
+    {
+        "id": "S9",
+        "title": "Withdrawing one of two aliases does not unpin A; manual DELETE refuses while pinned",
+        "result": "pass",
+        "mechanism": "HTTP API; SQL read of pins; probe of the router data plane",
+        "observations": {
+            "stagingWithdrawn": {
+                "state": "withdrawn",
+                "target": null,
+                "reserved": "2",
+                "committed": "2"
+            },
+            "productionStillOnA": {
+                "state": "bound",
+                "target": "d248d83a-a690-4ca2-afd4-ba763ed3d1f3",
+                "reserved": "5",
+                "committed": "5"
+            },
+            "pinsOfA": {
+                "id": "d248d83a-a690-4ca2-afd4-ba763ed3d1f3",
+                "desired_state": "active",
+                "last_unpinned_at": null,
+                "aliased": true,
+                "open_operation": false
+            },
+            "deleteWhilePinnedStatus": 409
+        }
+    },
+    {
+        "id": "S10",
+        "title": "Final withdrawal releases the last pin and starts the rollback window; manual DELETE waives time only",
+        "result": "pass",
+        "mechanism": "HTTP API; SQL read of pins and last_unpinned_at",
+        "observations": {
+            "aliasProduction": {
+                "state": "withdrawn",
+                "target": null,
+                "reserved": "6",
+                "committed": "6"
+            },
+            "pinsOfA": {
+                "id": "d248d83a-a690-4ca2-afd4-ba763ed3d1f3",
+                "desired_state": "active",
+                "last_unpinned_at": "2026-11-21T01:46:24.884526+00:00",
+                "aliased": false,
+                "open_operation": false
+            },
+            "secondsSinceUnpinnedAtDelete": 0,
+            "manualDeleteStatus": 202,
+            "aDokkuAppRemoved": true
+        }
+    },
+    {
+        "id": "S11",
+        "title": "A lost acknowledgement keeps both candidates pinned until an authoritative readback",
+        "result": "pass",
+        "mechanism": "HTTP API; proxy fault (the router's reply is dropped after it commits); SQL read of pins; operator promotion-reconcile (controller image)",
+        "observations": {
+            "heldOperation": {
+                "id": "450d1726-47fc-4d9f-8c97-11dc946fe5ae",
+                "status": "reconciliation-needed",
+                "failureCode": "route-outcome-unknown"
+            },
+            "aliasWhileHeld": {
+                "state": "binding-uncertain",
+                "target": "2d59e604-d33a-47ab-83c2-a5f87a955952",
+                "reserved": "2",
+                "committed": "1"
+            },
+            "routerRouteWhileHeld": {
+                "generation": "2",
+                "target": "b2b53e88-597f-4b5b-b8f7-3732c686ff9c",
+                "operationId": "450d1726-47fc-4d9f-8c97-11dc946fe5ae"
+            },
+            "pinsWhileHeld": [
+                {
+                    "id": "2d59e604-d33a-47ab-83c2-a5f87a955952",
+                    "desired_state": "active",
+                    "last_unpinned_at": null,
+                    "aliased": true,
+                    "open_operation": true
+                },
+                {
+                    "id": "b2b53e88-597f-4b5b-b8f7-3732c686ff9c",
+                    "desired_state": "active",
+                    "last_unpinned_at": null,
+                    "aliased": false,
+                    "open_operation": true
+                }
+            ],
+            "deleteStatusesWhileHeld": [409, 409],
+            "newPromotionWhileHeld": 409,
+            "correctiveGeneration": "3",
+            "pinsAfterReadback": [
+                {
+                    "id": "2d59e604-d33a-47ab-83c2-a5f87a955952",
+                    "desired_state": "active",
+                    "last_unpinned_at": "2026-11-21T01:48:46.096653+00:00",
+                    "aliased": false,
+                    "open_operation": false
+                },
+                {
+                    "id": "b2b53e88-597f-4b5b-b8f7-3732c686ff9c",
+                    "desired_state": "active",
+                    "last_unpinned_at": null,
+                    "aliased": true,
+                    "open_operation": false
+                }
+            ],
+            "aliasAfter": {
+                "state": "bound",
+                "target": "b2b53e88-597f-4b5b-b8f7-3732c686ff9c",
+                "reserved": "3",
+                "committed": "3"
+            }
+        }
+    },
+    {
+        "id": "S12",
+        "title": "A stale worker cannot finalize database state or undo a newer router generation",
+        "result": "pass",
+        "mechanism": "HTTP API; proxy fault (the authenticated route write is held in the network); docker pause of worker 1; real lease expiry (SQL expiry when LAUNCHPAD_ACCEPTANCE_FAST_LEASE=1); worker 2 started; operator promotion-reconcile; SQL snapshots including xmin; router control read; Postgres log_statement=mod counts",
+        "observations": {
+            "operation": "3c870089-758c-4937-a3e9-b5e9042e2204",
+            "staleGeneration": "2",
+            "claimBeforePause": {
+                "status": "applying",
+                "stepPending": "dispatch",
+                "attempt": 1
+            },
+            "leaseExpiry": "waited for real expiry",
+            "heldByWorker2": {
+                "status": "reconciliation-needed",
+                "failureCode": "route-outcome-unknown"
+            },
+            "correctiveOperation": {
+                "id": "e2e95b8c-7965-4696-8913-e200dd48feb0",
+                "generation": "3"
+            },
+            "routerBeforeRelease": {
+                "generation": "3",
+                "target": "2d59e604-d33a-47ab-83c2-a5f87a955952",
+                "operationId": "e2e95b8c-7965-4696-8913-e200dd48feb0"
+            },
+            "staleWriteRouterStatus": 409,
+            "staleWriteCallerGone": false,
+            "routerAfterRelease": {
+                "generation": "3",
+                "target": "2d59e604-d33a-47ab-83c2-a5f87a955952",
+                "operationId": "e2e95b8c-7965-4696-8913-e200dd48feb0"
+            },
+            "staleWorkerEvents": [
+                {
+                    "event": "promotion-run-ended",
+                    "operationId": "3c870089-758c-4937-a3e9-b5e9042e2204",
+                    "status": "authority-lost"
+                }
+            ],
+            "databaseSnapshotUnchanged": true,
+            "snapshotRows": 6,
+            "postgresMutatingStatementsAfterResume": {}
+        }
+    }
+]

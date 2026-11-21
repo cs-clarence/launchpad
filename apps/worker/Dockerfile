@@ -13,21 +13,25 @@
 # - Use a stop grace period of at least 30 seconds so cancellation reaches local subprocesses.
 #   Stopping the worker does not prove an already dispatched Dokku operation stopped.
 # - Mount the shared /data volume as described in the controller recipe. The base images are
-#   pinned by tag and must be pinned by digest before a release. The `docker` client inside the
+#   pinned by tag and digest. The `docker` client inside the
 #   image has no buildx plugin, so the worker's `docker build` uses the classic
 #   builder (a deprecation notice on stderr is expected).
 ARG BUN_VERSION=1.4.4
+# Index digests verified with `docker buildx imagetools inspect` on 2026-11-21; change them with the tag.
+ARG BUN_DIGEST=sha256:1d22548f177f4ff38e0c15baa3c2c46c6c2060ba2d1bc573bb4720b407548f1d
+ARG BUN_SLIM_DIGEST=sha256:1846adf22496bd711036aae8be147e57bdebbaea2e5264e3e0b5af1db187d9a4
 ARG DOCKER_CLI_VERSION=28
+ARG DOCKER_CLI_DIGEST=sha256:625d9431a9f54c5a2bc90f24f0e1c3d55b1349fd857dd85035f98c2c9acbdd4d
 
-FROM oven/bun:${BUN_VERSION} AS build
+FROM oven/bun:${BUN_VERSION}@${BUN_DIGEST} AS build
 WORKDIR /app
 COPY . .
 RUN bun install --frozen-lockfile
 RUN bun run --filter @launchpad-kit/worker build
 
-FROM docker:${DOCKER_CLI_VERSION}-cli AS docker-cli
+FROM docker:${DOCKER_CLI_VERSION}-cli@${DOCKER_CLI_DIGEST} AS docker-cli
 
-FROM oven/bun:${BUN_VERSION}-slim AS runtime
+FROM oven/bun:${BUN_VERSION}-slim@${BUN_SLIM_DIGEST} AS runtime
 ARG LAUNCHPAD_UID=10001
 # The release version, recorded in backups and shown in the operator status. Pass it at build
 # time (`--build-arg LAUNCHPAD_VERSION=<version>`); an image built without it reports `unknown`.
