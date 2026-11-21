@@ -4,10 +4,11 @@ For an instance operator restoring a **matched** database dump and archive
 directory. This procedure includes the steps that `restore` cannot perform
 or prove. `restore` never contacts Dokku. Back up the target database first.
 
-After normal operation resumes, the dashboard can record an org admin's request
-for operator review of held work. This never verifies restored state, clears the
-recovery gate, releases a pin or authorizes a repair. Use the operator checks in
-this runbook, not dashboard requests, to complete recovery.
+When management ingress is available, the dashboard can record an org admin's
+request for operator review of held work even if the model recovery gate is still
+set. This does not change the procedure below: keep ingress closed for the restore.
+A request never verifies restored state, clears the gate, releases a pin or authorizes
+a repair. Use the operator checks in this runbook to complete recovery.
 
 1. Close **all management access** at the private ingress (including API-key
    access); keep it closed through restore and credential reconciliation.

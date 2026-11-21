@@ -496,7 +496,19 @@ describe("apps and deployments over HTTP", () => {
                 })
             ).status,
         ).toBe(422);
-        expect((await request()).status).toBe(202);
+        await markDeploymentRecoveryBlocked(dataDir);
+        try {
+            expect((await request()).status).toBe(202);
+            expect(
+                (
+                    await call(api, "full", "POST", `${base()}/projects/${p1}/apps`, {
+                        body: { slug: "still-blocked" },
+                    })
+                ).status,
+            ).toBe(503);
+        } finally {
+            await fs.unlink(path.join(dataDir, "maintenance", "deployment-recovery-blocked"));
+        }
         await sql`update "session" set "createdAt" = now() - interval '16 minutes' where "userId" = ${user}`.execute(
             testDb.db,
         );

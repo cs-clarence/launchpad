@@ -1,6 +1,7 @@
 import type { Command } from "@commander-js/extra-typings";
 import {
     appClient,
+    ClientCoreError,
     checkLocation,
     packDirectory,
     readArchive,
@@ -8,7 +9,7 @@ import {
     workspaceContext,
     type Context,
 } from "@launchpad-kit/client-core";
-import { realpath } from "node:fs/promises";
+import { lstat, realpath } from "node:fs/promises";
 import path from "node:path";
 
 export function addAppCommands(
@@ -71,13 +72,19 @@ export function addAppCommands(
         .option("--directory", "pack the given directory rather than reading a .tar.gz")
         .action(async (projectId, source, options, command) => {
             const file = path.resolve(workingDir, source);
+            if (options.directory && (await lstat(file)).isSymbolicLink()) {
+                throw new ClientCoreError(
+                    "bad-input",
+                    "The output directory must not be a symlink.",
+                );
+            }
             const store = await realpath(context.store.directory).catch(
                 () => context.store.directory,
             );
             const location = await realpath(file);
             checkLocation(location, [store]);
             const packed = options.directory
-                ? await packDirectory(file, undefined, {
+                ? await packDirectory(location, undefined, {
                       include: ["**/*"],
                       exclude: ["**/launchpad.json"],
                       prefix: "",

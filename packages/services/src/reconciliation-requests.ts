@@ -1,8 +1,8 @@
 import type { Database } from "@launchpad-kit/database";
 import type { Kysely } from "kysely";
-import { requireDeploymentsOn, type AppDeps } from "./apps";
+import type { DeploymentSettings } from "./app-routing-config";
+import { requireDeploymentsOn } from "./apps";
 import type { Principal } from "./authorization";
-import { withModelMutation } from "./deployment-recovery";
 import { ServiceError } from "./errors";
 import { isUuid } from "./ids";
 import { recordAudit, requireMembership } from "./organizations";
@@ -15,14 +15,16 @@ export async function requestReconciliation(
     db: Kysely<Database>,
     principal: Principal,
     organizationId: string,
-    deps: AppDeps,
+    settings: DeploymentSettings,
     target: { kind: "promotion" | "deployment"; id: string },
 ) {
     if (principal.credentialId) throw new ServiceError("forbidden", "A session is required.");
     await requireMembership(db, principal, organizationId, "app:request-reconciliation");
     if (!isUuid(target.id)) throw new ServiceError("not-found", "Resource not found.");
-    requireDeploymentsOn(deps.settings);
-    return withModelMutation(db, deps.dataDir, async (trx) => {
+    requireDeploymentsOn(settings);
+    // This writes only audit history, not the deployment model. Keep the handoff
+    // available while recovery is blocked if management ingress is open.
+    return db.transaction().execute(async (trx) => {
         const table = target.kind === "promotion" ? "promotion_operation" : "deployment";
         const resource = await trx
             .selectFrom(table)

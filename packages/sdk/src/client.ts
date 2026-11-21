@@ -306,7 +306,7 @@ export function createClient(options: ClientOptions) {
                 o: string,
                 appId: string,
                 input: z.input<typeof createDeploymentSchema>,
-                options?: RequestOptions,
+                options?: Pick<RequestOptions, "signal">,
             ) =>
                 request("POST", `${app(o, appId)}/deployments`, loose(deploymentSchema), input, {
                     signal: options?.signal,

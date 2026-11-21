@@ -333,7 +333,10 @@ export function createApi(deps: {
                         "Send a request without a body; only the operator may record evidence.",
                     );
                 }
-                return requestReconciliation(db, p, organizationId, deployments, { kind, id });
+                return requestReconciliation(db, p, organizationId, deployments.settings, {
+                    kind,
+                    id,
+                });
             },
             202,
             { fresh: true },
