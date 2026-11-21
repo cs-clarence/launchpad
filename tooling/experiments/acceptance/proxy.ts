@@ -10,7 +10,7 @@
 //
 // Only identifiers of route writes are recorded, never a header or a token.
 import http from "node:http";
-import { pickRule, summarize, type FaultRule } from "./rules";
+import { isFaultRule, pickRule, summarize, type FaultRule } from "./rules";
 
 const ROUTER = { hostname: "router", port: 8081 };
 const HOP = new Set(["connection", "keep-alive", "transfer-encoding", "te", "upgrade", "trailer"]);
@@ -24,6 +24,7 @@ interface Entry {
     rule: string | null;
     outcome: "forwarded" | "held" | "released" | "response-dropped" | "router-unreachable";
     routerStatus: number | null;
+    routerConflict: boolean;
     callerGone: boolean | null;
 }
 const log: Entry[] = [];
@@ -44,6 +45,10 @@ function forward(method: string, url: string, headers: http.IncomingHttpHeaders,
                 (incoming) => {
                     const chunks: Buffer[] = [];
                     incoming.on("data", (chunk: Buffer) => chunks.push(chunk));
+                    incoming.once("error", reject);
+                    incoming.once("close", () => {
+                        if (!incoming.complete) reject(new Error("Incomplete router response."));
+                    });
                     incoming.on("end", () => {
                         const reply: http.OutgoingHttpHeaders = {};
                         for (const [name, value] of Object.entries(incoming.headers)) {
@@ -58,6 +63,7 @@ function forward(method: string, url: string, headers: http.IncomingHttpHeaders,
                 },
             );
             upstream.on("error", reject);
+            upstream.setTimeout(10_000, () => upstream.destroy(new Error("Router timed out.")));
             upstream.end(body);
         },
     );
@@ -90,6 +96,7 @@ const proxy = http.createServer((request, response) => {
             rule: null,
             outcome: "forwarded",
             routerStatus: null,
+            routerConflict: false,
             callerGone: null,
         };
         log.push(entry);
@@ -100,6 +107,13 @@ const proxy = http.createServer((request, response) => {
         }
         const relay = (reply: Awaited<ReturnType<typeof forward>>) => {
             entry.routerStatus = reply.status;
+            const payload = parse(reply.body);
+            entry.routerConflict =
+                reply.status === 409 &&
+                typeof payload === "object" &&
+                payload !== null &&
+                "error" in payload &&
+                payload.error === "conflict";
             entry.callerGone = request.socket.destroyed;
             if (request.socket.destroyed) return;
             response.writeHead(reply.status, reply.headers);
@@ -140,15 +154,15 @@ const admin = http.createServer((request, response) => {
                 .writeHead(status, { "content-type": "application/json" })
                 .end(JSON.stringify(value));
         if (request.method === "POST" && url === "/rules") {
-            const rule = parse(Buffer.concat(chunks)) as FaultRule | null;
-            if (!rule?.id || !["hold", "drop-response"].includes(rule.action)) {
+            const rule = parse(Buffer.concat(chunks));
+            if (!isFaultRule(rule) || rules.some((existing) => existing.id === rule.id)) {
                 return json(400, { error: "invalid rule" });
             }
             rules.push(rule);
             return json(200, { ok: true });
         }
         if (request.method === "POST" && url.startsWith("/release/")) {
-            const release = held.get(decodeURIComponent(url.slice("/release/".length)));
+            const release = held.get(url.slice("/release/".length));
             if (!release) return json(404, { error: "nothing held" });
             release();
             return json(200, { ok: true });

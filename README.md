@@ -37,7 +37,7 @@ their credential files and are described in [production Compose](docs/production
 
 ```sh
 docker compose --env-file docker-compose.env config --quiet
-docker compose --env-file docker-compose.env up -d --build dokku
+docker compose --env-file docker-compose.env up -d --build --wait --wait-timeout 420 dokku
 docker compose --env-file docker-compose.env exec dokku dokku apps:list
 ```
 
@@ -52,11 +52,14 @@ their own backup handling.
 `examples/hello/` contains a minimal static Nginx site. With Dokku running:
 
 ```sh
+docker compose --env-file docker-compose.env exec dokku \
+  dokku network:set --global initial-network launchpad-apps
 docker build -t launchpad/hello:v1 examples/hello
 docker compose --env-file docker-compose.env exec dokku dokku apps:create hello
 docker compose --env-file docker-compose.env exec dokku dokku git:from-image hello launchpad/hello:v1
 ```
 
+Use your configured `LAUNCHPAD_APPS_NETWORK` instead if you changed its default.
 Use a new image tag for each update and pass it to `git:from-image` again; an unchanged
 tag can cause Dokku to skip deployment. The app is public: installing `http-auth` does not
 enable password protection.

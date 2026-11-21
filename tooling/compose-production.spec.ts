@@ -60,6 +60,13 @@ describe("docker-compose.yaml", () => {
         expect(example.LAUNCHPAD_AUTH_SECRET).toStartWith("CHANGE_ME");
     });
 
+    it("excludes the local Compose secrets from each root Docker build context", () => {
+        for (const app of ["controller", "worker", "router"]) {
+            const ignore = new URL(`../apps/${app}/Dockerfile.dockerignore`, import.meta.url);
+            expect(readFileSync(ignore, "utf8").split(/\r?\n/)).toContain("docker-compose.env");
+        }
+    });
+
     it("is safe with only the required settings: features off, loopback bindings", () => {
         const required = Object.fromEntries(
             requiredVariables(loadRaw()).map((name) => [name, example[name]!]),

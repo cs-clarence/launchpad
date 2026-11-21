@@ -49,6 +49,14 @@ export async function command(args: string[], allowFailure = false, stdin?: stri
 
 export const randomHex = (bytes: number) => randomBytes(bytes).toString("hex");
 
+export function raceRounds(raw: string | undefined): number {
+    const count = Number(raw ?? "3");
+    if (!Number.isSafeInteger(count) || count < 1) {
+        throw new Error("LAUNCHPAD_ACCEPTANCE_RACE_ROUNDS must be a positive integer.");
+    }
+    return count;
+}
+
 // "Absent" only when Docker says so: a failed inspection (the engine unreachable, say) proves nothing.
 const NOT_FOUND = /\bno such (container|image|network|volume|object)\b|\bnetwork \S+ not found\b/i;
 export const confirmedAbsent = (result: { code: number; err: string }) =>
@@ -64,7 +72,12 @@ export function createDocker(r: Resources) {
             args = [...args];
             args.splice(1, 0, "--name", name);
         }
-        return command(["docker", ...args], allowFailure, stdin);
+        // Match the host socket mounted in the worker and Dokku, regardless of the CLI context.
+        return command(
+            ["docker", "--host", "unix:///var/run/docker.sock", ...args],
+            allowFailure,
+            stdin,
+        );
     };
     return { docker, persist };
 }

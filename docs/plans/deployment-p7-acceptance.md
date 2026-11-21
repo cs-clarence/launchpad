@@ -20,6 +20,9 @@ engine, derived from this run's own database. Unlike the Compose rehearsal, this
 harness uses a tag-only PostgreSQL image and a local Dokku tag whose build
 provenance is not verified by the harness.
 
+After this run, PR review tightened the harness's assertions and cleanup. The
+checked-in evidence remains the original run, not a rerun of the hardened harness.
+
 | Scenario                                                                                                                                                                                  | Result | Mechanism beyond the HTTP API                                                   |
 | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------ | ------------------------------------------------------------------------------- |
 | S1 upload once (second upload reused)                                                                                                                                                     | pass   | SQL count                                                                       |

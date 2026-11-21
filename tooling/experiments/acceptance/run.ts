@@ -7,6 +7,7 @@ import {
     confirmedAbsent,
     createDocker,
     randomHex,
+    raceRounds,
     type Evidence,
     type Resources,
 } from "./harness";
@@ -21,6 +22,7 @@ if (process.env.LAUNCHPAD_ACCEPTANCE_REHEARSAL !== "1") {
     );
 }
 
+const rounds = raceRounds(process.env.LAUNCHPAD_ACCEPTANCE_RACE_ROUNDS);
 const root = process.cwd();
 const source = `${root}/tooling/experiments/acceptance`;
 const APPS_DOMAIN = "live.example.com";
@@ -61,11 +63,35 @@ const cleanup: string[] = [];
 let failure: unknown;
 const secretPaths = ["credentials", "dokku", "data", "controller.env", "worker.env", "site"];
 
+function cleanupFailed(message: string) {
+    cleanup.push(`${message}: FAILED OR UNVERIFIED`);
+    failure ??= new Error(message);
+}
+
+async function record(label: string, write: () => Promise<unknown>) {
+    try {
+        await write();
+    } catch {
+        cleanupFailed(label);
+    }
+}
+
+// A failed Docker invocation cannot vouch for absence and must not stop unrelated teardown.
+async function cleanupDocker(args: string[]) {
+    try {
+        return await docker(args, true);
+    } catch {
+        cleanupFailed(`Docker ${args.slice(0, 2).join(" ")}`);
+        return { code: -1, out: "", err: "" };
+    }
+}
+
 async function removeVolumeFree(name: string) {
-    await docker(["rm", "-f", "-v", name], true);
-    const absent = confirmedAbsent(await docker(["inspect", name], true));
+    await cleanupDocker(["rm", "-f", "-v", name]);
+    const absent = confirmedAbsent(await cleanupDocker(["container", "inspect", name]));
     cleanup.push(`container ${name}: ${absent ? "absent" : "LEFTOVER OR UNVERIFIED"}`);
     if (!absent) failure ??= new Error("Container cleanup incomplete.");
+    return absent;
 }
 
 let world: World | undefined;
@@ -402,36 +428,46 @@ try {
         routerToken,
         instanceId,
     });
-    await runScenarios(world, evidence);
+    await runScenarios(world, evidence, rounds);
 } catch (error) {
     failure = error;
-    await writeFile(`${dir}/failure.log`, String(error));
+    await record("Write failure.log", () => writeFile(`${dir}/failure.log`, String(error)));
     console.error(String(error));
 } finally {
-    await writeFile(`${dir}/evidence.json`, JSON.stringify(evidence, null, 2));
-    if (world) await world.finish();
-    const dokkuLog = await docker(["logs", r.containers.dokku], true);
-    await writeFile(`${dir}/dokku.log`, `${dokkuLog.out}\n${dokkuLog.err}`);
+    await record("Write evidence.json", () =>
+        writeFile(`${dir}/evidence.json`, JSON.stringify(evidence, null, 2)),
+    );
+    // No worker may dispatch another effect while we take inventory and sweep fixtures.
+    for (const name of [r.containers.worker1, r.containers.worker2]) {
+        await cleanupDocker(["unpause", name]); // A failed scenario may have left worker 1 paused.
+    }
+    const worker1Gone = await removeVolumeFree(r.containers.worker1);
+    const worker2Gone = await removeVolumeFree(r.containers.worker2);
+    const settled = worker1Gone && worker2Gone;
+    const builtWorld = world;
+    if (builtWorld) await record("Write proxy-log.json", () => builtWorld.finish());
+    const dokkuLog = await cleanupDocker(["logs", r.containers.dokku]);
+    await record("Write dokku.log", () =>
+        writeFile(`${dir}/dokku.log`, `${dokkuLog.out}\n${dokkuLog.err}`),
+    );
 
     // Names the product chose: those recorded as they were reported, plus whatever this run's own
     // database still holds. Only the product's fixed name shapes are ever acted on.
-    const fromDatabase = await docker(
-        [
-            "exec",
-            r.containers.postgres,
-            "psql",
-            "-U",
-            "launchpad",
-            "-d",
-            "launchpad",
-            "-At",
-            "-F",
-            " ",
-            "-c",
-            "select id, app_name from deployment",
-        ],
-        true,
-    );
+    const fromDatabase = await cleanupDocker([
+        "exec",
+        r.containers.postgres,
+        "psql",
+        "-U",
+        "launchpad",
+        "-d",
+        "launchpad",
+        "-At",
+        "-F",
+        " ",
+        "-c",
+        "select id, app_name from deployment",
+    ]);
+    if (world && fromDatabase.code) cleanupFailed("Read fixture inventory from PostgreSQL");
     const known = new Map(r.discovered.map((entry) => [entry.deploymentId, entry]));
     if (!fromDatabase.code) {
         for (const line of fromDatabase.out.split("\n").filter(Boolean)) {
@@ -445,63 +481,72 @@ try {
     const fixtures = [...known.values()].filter(
         (entry) => NAME.app.test(entry.app) && NAME.tag.test(entry.imageTag),
     );
-    for (const fixture of fixtures) {
-        const destroyed = await docker(
-            ["exec", r.containers.dokku, "dokku", "--force", "apps:destroy", fixture.app],
-            true,
-        );
+    if (!settled) cleanupFailed("Fixture sweep skipped: worker absence not confirmed");
+    for (const fixture of settled ? fixtures : []) {
+        const destroyed = await cleanupDocker([
+            "exec",
+            r.containers.dokku,
+            "dokku",
+            "--force",
+            "apps:destroy",
+            fixture.app,
+        ]);
         cleanup.push(
             `app ${fixture.app}: ${destroyed.code === 0 ? "destroyed" : "not destroyed (already absent or unreachable)"}`,
         );
-        const leftover = await docker(
-            ["ps", "-aq", "--filter", `label=com.dokku.app-name=${fixture.app}`],
-            true,
-        );
-        for (const container of leftover.out.split("\n").filter(Boolean)) {
-            await docker(["rm", "-f", "-v", container], true);
-        }
-        const images = await docker(
-            [
-                "image",
-                "ls",
-                "--format",
-                "{{.Repository}}:{{.Tag}}",
-                "--filter",
-                `reference=dokku/${fixture.app}`,
-            ],
-            true,
-        );
-        for (const tag of images.out.split("\n").filter(Boolean)) {
-            if (tag.startsWith(`dokku/${fixture.app}:`)) await docker(["rmi", tag], true);
-        }
-        await docker(["rmi", fixture.imageTag], true);
-    }
-    for (const fixture of fixtures) {
-        const containers = await docker([
+        const leftover = await cleanupDocker([
             "ps",
             "-aq",
             "--filter",
             `label=com.dokku.app-name=${fixture.app}`,
         ]);
-        const dokkuImages = await docker([
+        if (leftover.code) cleanupFailed(`List fixture containers for ${fixture.app}`);
+        for (const container of leftover.out.split("\n").filter(Boolean)) {
+            await cleanupDocker(["rm", "-f", "-v", container]);
+        }
+        const images = await cleanupDocker([
+            "image",
+            "ls",
+            "--format",
+            "{{.Repository}}:{{.Tag}}",
+            "--filter",
+            `reference=dokku/${fixture.app}`,
+        ]);
+        if (images.code) cleanupFailed(`List fixture images for ${fixture.app}`);
+        for (const tag of images.out.split("\n").filter(Boolean)) {
+            if (tag.startsWith(`dokku/${fixture.app}:`)) await cleanupDocker(["rmi", tag]);
+        }
+        await cleanupDocker(["rmi", fixture.imageTag]);
+    }
+    for (const fixture of fixtures) {
+        const containers = await cleanupDocker([
+            "ps",
+            "-aq",
+            "--filter",
+            `label=com.dokku.app-name=${fixture.app}`,
+        ]);
+        const dokkuImages = await cleanupDocker([
             "image",
             "ls",
             "-q",
             "--filter",
             `reference=dokku/${fixture.app}`,
         ]);
-        const source = await docker(["image", "inspect", fixture.imageTag], true);
-        const absent = !containers.out && !dokkuImages.out && confirmedAbsent(source);
+        const source = await cleanupDocker(["image", "inspect", fixture.imageTag]);
+        const absent =
+            settled &&
+            !containers.code &&
+            !dokkuImages.code &&
+            !containers.out &&
+            !dokkuImages.out &&
+            confirmedAbsent(source);
         cleanup.push(
             `fixture ${fixture.app}: ${absent ? "containers and image tags absent" : "LEFTOVER OR UNVERIFIED"}`,
         );
         if (!absent) failure ??= new Error("Fixture cleanup incomplete.");
     }
 
-    // Workers share the proxy's network namespace: remove them first.
     for (const name of [
-        r.containers.worker1,
-        r.containers.worker2,
         r.containers.controller,
         r.containers.proxy,
         r.containers.router,
@@ -510,40 +555,24 @@ try {
     ]) {
         await removeVolumeFree(name);
     }
-    for (const name of r.helpers) {
-        await docker(["rm", "-f", "-v", name], true);
-        const absent = confirmedAbsent(await docker(["inspect", name], true));
-        cleanup.push(`helper ${name}: ${absent ? "absent" : "LEFTOVER OR UNVERIFIED"}`);
-        if (!absent) failure ??= new Error("Helper cleanup incomplete.");
-    }
-    await docker(["network", "rm", r.network], true);
-    for (const volume of r.volumes) {
-        await docker(["volume", "rm", "-f", volume], true);
-        const absent = confirmedAbsent(await docker(["volume", "inspect", volume], true));
-        cleanup.push(`volume ${volume}: ${absent ? "absent" : "LEFTOVER OR UNVERIFIED"}`);
-        if (!absent) failure ??= new Error("Volume cleanup incomplete.");
-    }
     // Secrets and state, removed while the worker image (root helper) still exists.
     for (const name of secretPaths) {
         await rm(`${dir}/${name}`, { recursive: true, force: true }).catch(() => undefined);
     }
-    const removed = await docker(
-        [
-            "run",
-            "--rm",
-            "--pull=never",
-            "--user",
-            "0",
-            "--entrypoint",
-            "rm",
-            "-v",
-            `${dir}:/experiment`,
-            r.images.worker,
-            "-rf",
-            ...secretPaths.map((name) => `/experiment/${name}`),
-        ],
-        true,
-    );
+    const removed = await cleanupDocker([
+        "run",
+        "--rm",
+        "--pull=never",
+        "--user",
+        "0",
+        "--entrypoint",
+        "rm",
+        "-v",
+        `${dir}:/experiment`,
+        r.images.worker,
+        "-rf",
+        ...secretPaths.map((name) => `/experiment/${name}`),
+    ]);
     if (removed.code) {
         cleanup.push("secret/state removal helper: FAILED");
         failure ??= new Error("Secret/state removal helper failed.");
@@ -556,16 +585,30 @@ try {
         cleanup.push(`secret/state path ${name}: ${absent ? "absent" : "LEFTOVER"}`);
         if (!absent) failure ??= new Error("Secret/state cleanup incomplete; see cleanup.log.");
     }
-    for (const image of Object.values(r.images)) await docker(["rmi", image], true);
+    // Include the last helper, which was registered by the secret/state removal above.
+    for (const name of r.helpers) {
+        await cleanupDocker(["rm", "-f", "-v", name]);
+        const absent = confirmedAbsent(await cleanupDocker(["container", "inspect", name]));
+        cleanup.push(`helper ${name}: ${absent ? "absent" : "LEFTOVER OR UNVERIFIED"}`);
+        if (!absent) failure ??= new Error("Helper cleanup incomplete.");
+    }
+    await cleanupDocker(["network", "rm", r.network]);
+    for (const volume of r.volumes) {
+        await cleanupDocker(["volume", "rm", "-f", volume]);
+        const absent = confirmedAbsent(await cleanupDocker(["volume", "inspect", volume]));
+        cleanup.push(`volume ${volume}: ${absent ? "absent" : "LEFTOVER OR UNVERIFIED"}`);
+        if (!absent) failure ??= new Error("Volume cleanup incomplete.");
+    }
+    for (const image of Object.values(r.images)) await cleanupDocker(["rmi", image]);
     for (const [kind, name] of [
         ["network", r.network],
         ...Object.values(r.images).map((image) => ["image", image] as const),
     ] as const) {
-        const absent = confirmedAbsent(await docker([kind, "inspect", name], true));
+        const absent = confirmedAbsent(await cleanupDocker([kind, "inspect", name]));
         cleanup.push(`${kind} ${name}: ${absent ? "absent" : "LEFTOVER OR UNVERIFIED"}`);
         if (!absent) failure ??= new Error("Network/image cleanup incomplete.");
     }
-    await writeFile(`${dir}/cleanup.log`, cleanup.join("\n"));
+    await record("Write cleanup.log", () => writeFile(`${dir}/cleanup.log`, cleanup.join("\n")));
     console.log(cleanup.join("\n"));
     console.log(`Evidence directory: ${dir}`);
 }

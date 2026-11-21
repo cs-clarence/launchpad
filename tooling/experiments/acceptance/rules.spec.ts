@@ -1,5 +1,6 @@
 import { describe, expect, it } from "bun:test";
-import { matches, pickRule, summarize, type FaultRule } from "./rules";
+import { raceRounds } from "./harness";
+import { isFaultRule, matches, pickRule, summarize, type FaultRule } from "./rules";
 
 const rule = (over: Partial<FaultRule> = {}): FaultRule => ({
     id: "r1",
@@ -17,6 +18,16 @@ const write = {
 };
 
 describe("fault rules", () => {
+    it("rejects malformed rules and reusable holds", () => {
+        expect(isFaultRule(rule({ body: {} }))).toBe(true);
+        expect(isFaultRule(rule({ once: false }))).toBe(false);
+        expect(isFaultRule(rule({ action: "drop-response", once: false }))).toBe(true);
+        for (const invalid of [null, [], undefined, { generation: 3 }]) {
+            expect(isFaultRule({ ...rule(), body: invalid })).toBe(false);
+        }
+        expect(isFaultRule({ ...rule(), method: null })).toBe(false);
+        expect(isFaultRule({ ...rule(), pathPrefix: "" })).toBe(false);
+    });
     it("matches by method, path prefix and string-compared body fields", () => {
         expect(matches(rule(), write)).toBe(true);
         expect(matches(rule(), { ...write, method: "GET" })).toBe(false);
@@ -42,4 +53,12 @@ describe("fault rules", () => {
         ).toEqual({ hostname: "h", generation: "7", targetDeploymentId: null });
         expect(summarize("not an object")).toEqual({});
     });
+});
+
+it("requires at least one race round before provisioning", () => {
+    expect(raceRounds(undefined)).toBe(3);
+    expect(raceRounds("6")).toBe(6);
+    for (const invalid of ["", "0", "-1", "NaN", "1.5", "Infinity"]) {
+        expect(() => raceRounds(invalid)).toThrow("must be a positive integer");
+    }
 });

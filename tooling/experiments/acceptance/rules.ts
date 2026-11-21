@@ -19,6 +19,26 @@ export interface RequestShape {
     body: unknown;
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+    return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+export function isFaultRule(value: unknown): value is FaultRule {
+    return (
+        isRecord(value) &&
+        typeof value.id === "string" &&
+        /^[a-zA-Z0-9_-]+$/.test(value.id) &&
+        typeof value.method === "string" &&
+        /^[A-Z]+$/.test(value.method) &&
+        typeof value.pathPrefix === "string" &&
+        value.pathPrefix.startsWith("/") &&
+        isRecord(value.body) &&
+        Object.values(value.body).every((field) => typeof field === "string") &&
+        typeof value.once === "boolean" &&
+        (value.action === "drop-response" || (value.action === "hold" && value.once))
+    );
+}
+
 export function matches(rule: FaultRule, request: RequestShape): boolean {
     if (rule.method !== request.method || !request.path.startsWith(rule.pathPrefix)) return false;
     const entries = Object.entries(rule.body);

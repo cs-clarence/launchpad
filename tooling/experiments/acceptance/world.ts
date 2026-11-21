@@ -64,6 +64,7 @@ export async function buildWorld(input: WorldInput): Promise<World> {
     // creates a project and issues the API key everything after this uses.
     const signIn = async (who: { email: string; password: string }) => {
         const response = await fetch(`${controller}/api/auth/sign-in/email`, {
+            signal: AbortSignal.timeout(10_000),
             method: "POST",
             headers: { "content-type": "application/json", origin: input.baseUrl },
             body: JSON.stringify(who),
@@ -76,6 +77,7 @@ export async function buildWorld(input: WorldInput): Promise<World> {
     };
     const withCookie = async (cookie: string, method: string, path: string, body?: unknown) => {
         const response = await fetch(`${controller}/api/v1${path}`, {
+            signal: AbortSignal.timeout(10_000),
             method,
             headers: { cookie, origin: input.baseUrl, "content-type": "application/json" },
             body: body === undefined ? undefined : JSON.stringify(body),
@@ -173,7 +175,6 @@ export async function buildWorld(input: WorldInput): Promise<World> {
 
     const workerName = (which: 1 | 2) =>
         which === 1 ? r.containers.worker1 : r.containers.worker2;
-    const started = new Set<string>();
     const mounts = [
         "-v",
         "/var/run/docker.sock:/var/run/docker.sock",
@@ -203,6 +204,9 @@ export async function buildWorld(input: WorldInput): Promise<World> {
                 },
                 signal: AbortSignal.timeout(10_000),
             });
+            if (response.status !== 200) {
+                throw new Error(`Router route read returned ${response.status}.`);
+            }
             const body = (await response.json()) as {
                 route: null | {
                     generation: string;
@@ -211,16 +215,25 @@ export async function buildWorld(input: WorldInput): Promise<World> {
                     target: { deploymentId: string } | null;
                 };
             };
+            if (body.route === undefined) throw new Error("Router reply did not include a route.");
             return { status: response.status, route: body.route };
         },
         proxy: {
-            addRule: async (rule: FaultRule) => void (await proxyAdmin("POST", "/rules", rule)),
+            async addRule(rule: FaultRule) {
+                const reply = await proxyAdmin("POST", "/rules", rule);
+                if (reply.status !== 200) throw new Error(`Proxy rejected rule ${rule.id}.`);
+            },
             release: async (id) => (await proxyAdmin("POST", `/release/${id}`)).status === 200,
-            log: async () => (await proxyAdmin("GET", "/log")).body as never,
+            async log() {
+                const reply = await proxyAdmin("GET", "/log");
+                if (reply.status !== 200 || !Array.isArray(reply.body)) {
+                    throw new Error("Could not read proxy evidence.");
+                }
+                return reply.body;
+            },
         },
         async startWorker(which) {
             const name = workerName(which);
-            started.add(name);
             await docker([
                 "run",
                 "-d",
@@ -249,7 +262,7 @@ export async function buildWorld(input: WorldInput): Promise<World> {
         stopWorker: (which) =>
             docker(["stop", "--time", "30", workerName(which)], true).then(() => undefined),
         async workerEvents(which) {
-            const logs = await docker(["logs", workerName(which)], true);
+            const logs = await docker(["logs", workerName(which)]);
             return `${logs.out}\n${logs.err}`.split("\n").flatMap((line) => {
                 try {
                     const parsed = JSON.parse(line) as Record<string, unknown>;
@@ -372,18 +385,10 @@ export async function buildWorld(input: WorldInput): Promise<World> {
             ]);
         },
         async finish() {
-            try {
-                await writeFile(
-                    `${dir}/proxy-log.json`,
-                    JSON.stringify(await world.proxy.log(), null, 2),
-                );
-            } catch {
-                // The proxy may be gone on a failed run.
-            }
-            for (const name of started) {
-                await docker(["unpause", name], true);
-                await docker(["stop", "--time", "30", name], true);
-            }
+            await writeFile(
+                `${dir}/proxy-log.json`,
+                JSON.stringify(await world.proxy.log(), null, 2),
+            );
         },
     };
     return world;

@@ -86,9 +86,8 @@ async function until<T>(
 }
 
 const FAST_LEASE = process.env.LAUNCHPAD_ACCEPTANCE_FAST_LEASE === "1";
-const RACE_ROUNDS = Number(process.env.LAUNCHPAD_ACCEPTANCE_RACE_ROUNDS ?? 3);
 
-export async function runScenarios(w: World, evidence: Evidence[]) {
+export async function runScenarios(w: World, evidence: Evidence[], raceRounds: number) {
     const { api } = w;
     const page = (title: string) => `<!doctype html><title>${title}</title><h1>${title}</h1>\n`;
 
@@ -248,9 +247,20 @@ export async function runScenarios(w: World, evidence: Evidence[]) {
             await w.sql<{ app_name: string }>(`select app_name from deployment where id = '${id}'`)
         )[0]!.app_name;
 
-    const dokkuHas = async (app: string) =>
-        (await w.docker(["exec", w.r.containers.dokku, "dokku", "apps:exists", app], true)).code ===
-        0;
+    const dokkuHas = async (app: string) => {
+        assert.match(app, /^lp-[a-z0-9]{10}$/);
+        const result = await w.docker(
+            ["exec", w.r.containers.dokku, "dokku", "apps:exists", app],
+            true,
+        );
+        if (result.code === 0) return true;
+        if (
+            [1, 20].includes(result.code) &&
+            new RegExp(`\\bApp ${app} does not exist\\b`, "i").test(`${result.out}\n${result.err}`)
+        )
+            return false;
+        throw new Error(`Could not verify Dokku app ${app} (exit ${result.code}).`);
+    };
     // Image identities and the container of a deployment's own Dokku app.
     const fingerprint = async (id: string) => {
         const app = await appNameOf(id);
@@ -365,7 +375,19 @@ export async function runScenarios(w: World, evidence: Evidence[]) {
                 assert.deepEqual(probe, { status: 200, deployment: w.compact(row.id) });
             }
             baseline = { A: await fingerprint(A), B: await fingerprint(B) };
-            runsAfterDeploys = await deploymentRunsEnded();
+            runsAfterDeploys = await until(
+                "both deployment run-end events",
+                async () => {
+                    const events = (await w.workerEvents(1)).filter(
+                        (entry) => entry.event === "deployment-run-ended",
+                    );
+                    return (
+                        [A, B].every((id) => events.some((entry) => entry.deploymentId === id)) &&
+                        events.length
+                    );
+                },
+                30_000,
+            );
             return {
                 deployments: rows.map((row) => ({
                     id: row.id,
@@ -537,7 +559,7 @@ export async function runScenarios(w: World, evidence: Evidence[]) {
             const race = await createAlias(app, "race");
             const rounds: Json[] = [];
             let candidate = B;
-            for (let round = 1; round <= RACE_ROUNDS; round++) {
+            for (let round = 1; round <= raceRounds; round++) {
                 if (round > 1) candidate = (await deployed(app, artifact)).id;
                 assert.equal(await pinned(candidate), false, "the candidate starts unpinned");
                 const alias = await getAlias(race.id);
@@ -713,6 +735,16 @@ export async function runScenarios(w: World, evidence: Evidence[]) {
             const committed = await route(ack.hostname);
             assert.equal(committed?.target, L2);
             assert.equal(committed?.generation, String(generation));
+            assert.equal(committed?.operationId, op.id);
+            const dropped = (await w.proxy.log()).find(
+                (entry) =>
+                    entry.rule === "lost-ack" &&
+                    entry.outcome === "response-dropped" &&
+                    entry.routerStatus === 200 &&
+                    entry.request?.operationId === op.id &&
+                    entry.request?.generation === String(generation),
+            );
+            assert.ok(dropped, "proxy did not record dropping the successful reply");
             const heldPins = await pins([L1, L2]);
             for (const pin of heldPins) assert.equal(pin.aliased || pin.open_operation, true);
             const refusals = [
@@ -739,6 +771,7 @@ export async function runScenarios(w: World, evidence: Evidence[]) {
                 heldOperation: { id: held.id, status: held.status, failureCode: held.failureCode },
                 aliasWhileHeld: alias,
                 routerRouteWhileHeld: committed,
+                droppedReply: dropped,
                 pinsWhileHeld: heldPins,
                 deleteStatusesWhileHeld: refusals,
                 newPromotionWhileHeld: refused.status,
@@ -852,10 +885,6 @@ export async function runScenarios(w: World, evidence: Evidence[]) {
                  from deployment where id in (${idList([L1, L2])})
                  order by kind, id`;
             const snapshotBefore = await w.sql<Json>(snapshotQuery);
-            const [{ at: resumeAt }] = await w.sql<{ at: string }>(
-                `select to_char(clock_timestamp() at time zone 'utc', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') as at`,
-            );
-
             // The delayed write now reaches the router, after a newer generation was acknowledged.
             assert.equal(await w.proxy.release(ruleId), true);
             const released = await until(
@@ -865,6 +894,8 @@ export async function runScenarios(w: World, evidence: Evidence[]) {
                         (entry) =>
                             entry.rule === ruleId &&
                             entry.outcome === "released" &&
+                            entry.request?.operationId === op.id &&
+                            entry.request?.generation === String(staleGeneration) &&
                             entry.routerStatus,
                     ),
                 30_000,
@@ -872,10 +903,14 @@ export async function runScenarios(w: World, evidence: Evidence[]) {
             );
             const afterRelease = await route(stale.hostname);
             assert.deepEqual(afterRelease, newer, "the stale write changed the router");
-            assert.notEqual(released.routerStatus, 200, "the router accepted the stale write");
+            assert.equal(released.routerStatus, 409, "expected a conflict for the stale write");
+            assert.equal(released.routerConflict, true, "expected the router's conflict error");
             await served(stale.hostname, L1);
 
             // Only now does the stale worker run again.
+            const [{ at: resumeAt }] = await w.sql<{ at: string }>(
+                `select to_char(clock_timestamp() at time zone 'utc', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') as at`,
+            );
             await w.unpauseWorker(1);
             await until(
                 "the stale worker to end its run",
@@ -919,7 +954,7 @@ export async function runScenarios(w: World, evidence: Evidence[]) {
                 staleWorkerEvents: staleRun,
                 databaseSnapshotUnchanged: true,
                 snapshotRows: snapshotAfter.length,
-                postgresMutatingStatementsAfterResume: writes,
+                postgresMutatingStatementsInResumeWindow: writes,
             };
         },
     );
