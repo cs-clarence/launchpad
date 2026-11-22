@@ -1,17 +1,21 @@
 import { chmod, lstat, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
+import { setTimeout as delay } from "node:timers/promises";
 import {
     NAME,
     command,
     confirmedAbsent,
     createDocker,
+    dokkuIdle,
     randomHex,
     raceRounds,
     type Evidence,
     type Resources,
 } from "./harness";
 import { runScenarios, type World } from "./scenarios";
+import { createRestoreDrill } from "./restore";
+import { buildWorld } from "./world";
 
 // Opt-in full-stack rehearsal: the built controller, worker and router images against a
 // disposable PostgreSQL and a disposable Dokku, driving the worked acceptance example over the
@@ -25,7 +29,23 @@ if (process.env.LAUNCHPAD_ACCEPTANCE_REHEARSAL !== "1") {
 const rounds = raceRounds(process.env.LAUNCHPAD_ACCEPTANCE_RACE_ROUNDS);
 const root = process.cwd();
 const source = `${root}/tooling/experiments/acceptance`;
-const APPS_DOMAIN = "live.example.com";
+// This separate smoke mode intentionally uses the operator's public wildcard.
+const ingressDomain = process.env.LAUNCHPAD_ACCEPTANCE_INGRESS_DOMAIN;
+const restoreDrill = process.env.LAUNCHPAD_ACCEPTANCE_RESTORE_DRILL === "1";
+if (
+    restoreDrill &&
+    (ingressDomain !== undefined || process.env.LAUNCHPAD_ACCEPTANCE_FAST_LEASE === "1")
+) {
+    throw new Error("The restore drill cannot use public ingress or fast lease mode.");
+}
+if (
+    ingressDomain !== undefined &&
+    (!/^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/.test(ingressDomain) ||
+        ingressDomain.length > 200)
+) {
+    throw new Error("LAUNCHPAD_ACCEPTANCE_INGRESS_DOMAIN must be a lowercase DNS domain.");
+}
+const APPS_DOMAIN = ingressDomain ?? "live.example.com";
 const BASE_URL = "https://control.example.net";
 await mkdir("/tmp/opencode", { recursive: true });
 const dir = await mkdtemp("/tmp/opencode/lp-accept-");
@@ -49,11 +69,30 @@ const r: Resources = {
         worker: `${id}/worker:test`,
         router: `${id}/router:test`,
     },
+    ...(restoreDrill
+        ? {
+              restore: {
+                  adminImage: `${id}/admin:test`,
+                  controller: `${id}-restored-controller`,
+                  database: "launchpad_restored",
+                  directory: "restore",
+              },
+          }
+        : {}),
     volumes: [],
     helpers: [],
     discovered: [],
 };
-const { docker, persist } = createDocker(r);
+const { docker: rawDocker, persist } = createDocker(r);
+const interrupt = new AbortController();
+const signal = interrupt.signal;
+const onSigint = () => interrupt.abort(new Error("Rehearsal interrupted by SIGINT."));
+const onSigterm = () => interrupt.abort(new Error("Rehearsal interrupted by SIGTERM."));
+const sleep = (ms: number) => delay(ms, undefined, { signal });
+const docker: typeof rawDocker = async (...args) => {
+    signal.throwIfAborted();
+    return rawDocker(...args);
+};
 // The resource contract is on disk before anything is created.
 await persist();
 console.log(`Resources recorded before creation: ${dir}/resources.json`);
@@ -61,7 +100,16 @@ console.log(`Resources recorded before creation: ${dir}/resources.json`);
 const evidence: Evidence[] = [];
 const cleanup: string[] = [];
 let failure: unknown;
-const secretPaths = ["credentials", "dokku", "data", "controller.env", "worker.env", "site"];
+const secretPaths = [
+    "credentials",
+    "dokku",
+    "data",
+    "controller.env",
+    "worker.env",
+    "site",
+    ...(r.restore ? [r.restore.directory, "restore.env"] : []),
+];
+const images = [...Object.values(r.images), ...(r.restore ? [r.restore.adminImage] : [])];
 
 function cleanupFailed(message: string) {
     cleanup.push(`${message}: FAILED OR UNVERIFIED`);
@@ -79,7 +127,7 @@ async function record(label: string, write: () => Promise<unknown>) {
 // A failed Docker invocation cannot vouch for absence and must not stop unrelated teardown.
 async function cleanupDocker(args: string[]) {
     try {
-        return await docker(args, true);
+        return await rawDocker(args, true);
     } catch {
         cleanupFailed(`Docker ${args.slice(0, 2).join(" ")}`);
         return { code: -1, out: "", err: "" };
@@ -95,6 +143,8 @@ async function removeVolumeFree(name: string) {
 }
 
 let world: World | undefined;
+process.on("SIGINT", onSigint);
+process.on("SIGTERM", onSigterm);
 try {
     const operatorPassword = randomHex(12);
     const annPassword = randomHex(12);
@@ -105,6 +155,10 @@ try {
     await mkdir(`${dir}/data`);
     await mkdir(`${dir}/dokku`);
     await mkdir(`${dir}/site`);
+    if (r.restore) {
+        await mkdir(`${dir}/${r.restore.directory}`, { mode: 0o700 });
+        await mkdir(`${dir}/${r.restore.directory}/data`, { mode: 0o700 });
+    }
     await command([
         "ssh-keygen",
         "-q",
@@ -130,6 +184,21 @@ try {
             image,
             "-t",
             r.images[name],
+            ".",
+        ]);
+    }
+    if (r.restore) {
+        await docker([
+            "build",
+            "-q",
+            "--target",
+            "admin",
+            "--build-arg",
+            "LAUNCHPAD_VERSION=acceptance",
+            "-f",
+            "apps/controller/Dockerfile",
+            "-t",
+            r.restore.adminImage,
             ".",
         ]);
     }
@@ -167,7 +236,7 @@ try {
         const logs = await docker(["logs", r.containers.postgres], true);
         const text = `${logs.out}\n${logs.err}`;
         pgReady = (text.match(/ready to accept connections/g) ?? []).length >= 2;
-        if (!pgReady) await Bun.sleep(1000);
+        if (!pgReady) await sleep(1000);
     }
     if (!pgReady) throw new Error("Disposable PostgreSQL did not become ready.");
 
@@ -208,7 +277,7 @@ try {
         );
         lastReadiness = `${check.out}\n${check.err}`;
         dokkuReady = !check.code;
-        if (!dokkuReady) await Bun.sleep(1000);
+        if (!dokkuReady) await sleep(1000);
     }
     if (!dokkuReady) throw new Error(`Disposable Dokku did not initialize: ${lastReadiness}`);
     const hostKey = (
@@ -273,20 +342,11 @@ try {
         ...routerEnv,
         r.images.router,
     ]);
-    for (let i = 0, healthy = false; !healthy; i++) {
-        if (i >= 60) throw new Error("The router did not become healthy.");
-        healthy =
-            (
-                await docker(
-                    ["exec", r.containers.router, "bun", "dist/index.js", "healthcheck"],
-                    true,
-                )
-            ).code === 0;
-        if (!healthy) await Bun.sleep(500);
-    }
+    await waitForRouter();
 
+    const databaseUrl = `postgres://launchpad:${dbPassword}@postgres:5432/launchpad`;
     const sharedWorker = [
-        `DATABASE_URL=postgres://launchpad:${dbPassword}@postgres:5432/launchpad`,
+        `DATABASE_URL=${databaseUrl}`,
         "LAUNCHPAD_DATA_DIR=/data",
         `LAUNCHPAD_BASE_URL=${BASE_URL}`,
         `LAUNCHPAD_APPS_DOMAIN=${APPS_DOMAIN}`,
@@ -338,7 +398,7 @@ try {
         `${dir}:/experiment`,
         r.images.worker,
         "-c",
-        "chown -R 10001:10001 /experiment/credentials /experiment/data",
+        `chown -R 10001:10001 /experiment/credentials /experiment/data${r.restore ? " /experiment/restore" : ""}`,
     ]);
 
     await docker([
@@ -359,11 +419,11 @@ try {
         if (i >= 60) throw new Error("The control proxy did not become ready.");
         const logs = await docker(["logs", r.containers.proxy], true);
         ready = `${logs.out}\n${logs.err}`.includes("control-proxy ready");
-        if (!ready) await Bun.sleep(500);
+        if (!ready) await sleep(500);
     }
 
     const adminEnv = ["--env-file", `${dir}/controller.env`];
-    const migrate = await docker([
+    await docker([
         "run",
         "--rm",
         "--network",
@@ -420,7 +480,29 @@ try {
     const socketGroup = (await command(["stat", "-c", "%g", "/var/run/docker.sock"])).out;
 
     world = await buildWorld({
-        migrateOutput: migrate.out,
+        r,
+        dir,
+        docker,
+        persist,
+        signal,
+        sleep,
+        baseUrl: BASE_URL,
+        appsDomain: APPS_DOMAIN,
+        ingressSmoke: ingressDomain !== undefined,
+        ...(r.restore
+            ? {
+                  restore: createRestoreDrill({
+                      r,
+                      fixture: r.restore,
+                      docker,
+                      databaseUrl,
+                      stateVolume,
+                      routerEnv,
+                      waitForRouter,
+                      sleep,
+                  }),
+              }
+            : {}),
         operator: { email: "operator@example.com", password: operatorPassword },
         ann: { email: "ann@example.com", password: annPassword },
         socketGroup,
@@ -429,10 +511,11 @@ try {
         instanceId,
     });
     await runScenarios(world, evidence, rounds);
+    signal.throwIfAborted();
 } catch (error) {
-    failure = error;
-    await record("Write failure.log", () => writeFile(`${dir}/failure.log`, String(error)));
-    console.error(String(error));
+    failure = signal.aborted ? signal.reason : error;
+    await record("Write failure.log", () => writeFile(`${dir}/failure.log`, String(failure)));
+    console.error(String(failure));
 } finally {
     await record("Write evidence.json", () =>
         writeFile(`${dir}/evidence.json`, JSON.stringify(evidence, null, 2)),
@@ -443,7 +526,10 @@ try {
     }
     const worker1Gone = await removeVolumeFree(r.containers.worker1);
     const worker2Gone = await removeVolumeFree(r.containers.worker2);
-    const settled = worker1Gone && worker2Gone;
+    // Stop the API surfaces before taking the final inventory.
+    const restoredControllerGone = r.restore ? await removeVolumeFree(r.restore.controller) : true;
+    const controllerGone = await removeVolumeFree(r.containers.controller);
+    const writersGone = worker1Gone && worker2Gone && restoredControllerGone && controllerGone;
     const builtWorld = world;
     if (builtWorld) await record("Write proxy-log.json", () => builtWorld.finish());
     const dokkuLog = await cleanupDocker(["logs", r.containers.dokku]);
@@ -481,7 +567,25 @@ try {
     const fixtures = [...known.values()].filter(
         (entry) => NAME.app.test(entry.app) && NAME.tag.test(entry.imageTag),
     );
-    if (!settled) cleanupFailed("Fixture sweep skipped: worker absence not confirmed");
+    r.discovered = fixtures;
+    const inventorySaved = await persist().then(
+        () => true,
+        () => {
+            cleanupFailed("Persist final fixture inventory");
+            return false;
+        },
+    );
+    const inventoryComplete = !world || fromDatabase.code === 0;
+    const settled =
+        writersGone &&
+        inventoryComplete &&
+        inventorySaved &&
+        (fixtures.length === 0 || (await waitForDokkuIdle()));
+    if (!settled)
+        cleanupFailed(
+            "Fixture sweep skipped: writer absence, inventory or Dokku settlement unverified",
+        );
+    let destroyFailed = false;
     for (const fixture of settled ? fixtures : []) {
         const destroyed = await cleanupDocker([
             "exec",
@@ -494,6 +598,13 @@ try {
         cleanup.push(
             `app ${fixture.app}: ${destroyed.code === 0 ? "destroyed" : "not destroyed (already absent or unreachable)"}`,
         );
+        destroyFailed ||= destroyed.code !== 0;
+    }
+    const canRemoveDokku = settled && (!destroyFailed || (await waitForDokkuIdle()));
+    if (!canRemoveDokku)
+        cleanupFailed(`Preserving ${r.containers.dokku} and its state for recovery`);
+    const dokkuGone = canRemoveDokku && (await removeVolumeFree(r.containers.dokku));
+    for (const fixture of settled && dokkuGone ? fixtures : []) {
         const leftover = await cleanupDocker([
             "ps",
             "-aq",
@@ -535,6 +646,7 @@ try {
         const source = await cleanupDocker(["image", "inspect", fixture.imageTag]);
         const absent =
             settled &&
+            dokkuGone &&
             !containers.code &&
             !dokkuImages.code &&
             !containers.out &&
@@ -546,38 +658,40 @@ try {
         if (!absent) failure ??= new Error("Fixture cleanup incomplete.");
     }
 
-    for (const name of [
-        r.containers.controller,
-        r.containers.proxy,
-        r.containers.router,
-        r.containers.postgres,
-        r.containers.dokku,
-    ]) {
-        await removeVolumeFree(name);
-    }
-    // Secrets and state, removed while the worker image (root helper) still exists.
-    for (const name of secretPaths) {
+    await removeVolumeFree(r.containers.proxy);
+    await removeVolumeFree(r.containers.router);
+    const preservePostgres = !writersGone || !inventorySaved || !inventoryComplete;
+    if (preservePostgres)
+        cleanupFailed(`Preserving ${r.containers.postgres} for inventory recovery`);
+    const postgresGone = !preservePostgres && (await removeVolumeFree(r.containers.postgres));
+    // Keep writer mounts and the archives that belong to a retained database.
+    // Remove the other paths while the worker image (root helper) still exists.
+    const retainedPaths = secretPaths.filter((name) =>
+        name === "dokku" ? !dokkuGone : !postgresGone,
+    );
+    for (const name of retainedPaths) cleanup.push(`secret/state path ${name}: preserved`);
+    const removablePaths = secretPaths.filter((name) => !retainedPaths.includes(name));
+    for (const name of removablePaths) {
         await rm(`${dir}/${name}`, { recursive: true, force: true }).catch(() => undefined);
     }
-    const removed = await cleanupDocker([
-        "run",
-        "--rm",
-        "--pull=never",
-        "--user",
-        "0",
-        "--entrypoint",
-        "rm",
-        "-v",
-        `${dir}:/experiment`,
-        r.images.worker,
-        "-rf",
-        ...secretPaths.map((name) => `/experiment/${name}`),
-    ]);
-    if (removed.code) {
-        cleanup.push("secret/state removal helper: FAILED");
-        failure ??= new Error("Secret/state removal helper failed.");
+    if (removablePaths.length > 0) {
+        const removed = await cleanupDocker([
+            "run",
+            "--rm",
+            "--pull=never",
+            "--user",
+            "0",
+            "--entrypoint",
+            "rm",
+            "-v",
+            `${dir}:/experiment`,
+            r.images.worker,
+            "-rf",
+            ...removablePaths.map((name) => `/experiment/${name}`),
+        ]);
+        if (removed.code) cleanupFailed("Secret/state removal helper");
     }
-    for (const name of secretPaths) {
+    for (const name of removablePaths) {
         const absent = await lstat(`${dir}/${name}`).then(
             () => false,
             (error: NodeJS.ErrnoException) => error.code === "ENOENT",
@@ -592,17 +706,18 @@ try {
         cleanup.push(`helper ${name}: ${absent ? "absent" : "LEFTOVER OR UNVERIFIED"}`);
         if (!absent) failure ??= new Error("Helper cleanup incomplete.");
     }
-    await cleanupDocker(["network", "rm", r.network]);
+    const preserveNetwork = !dokkuGone || !postgresGone;
+    if (!preserveNetwork) await cleanupDocker(["network", "rm", r.network]);
     for (const volume of r.volumes) {
         await cleanupDocker(["volume", "rm", "-f", volume]);
         const absent = confirmedAbsent(await cleanupDocker(["volume", "inspect", volume]));
         cleanup.push(`volume ${volume}: ${absent ? "absent" : "LEFTOVER OR UNVERIFIED"}`);
         if (!absent) failure ??= new Error("Volume cleanup incomplete.");
     }
-    for (const image of Object.values(r.images)) await cleanupDocker(["rmi", image]);
+    for (const image of images) await cleanupDocker(["rmi", image]);
     for (const [kind, name] of [
-        ["network", r.network],
-        ...Object.values(r.images).map((image) => ["image", image] as const),
+        ...(preserveNetwork ? [] : [["network", r.network] as const]),
+        ...images.map((image) => ["image", image] as const),
     ] as const) {
         const absent = confirmedAbsent(await cleanupDocker([kind, "inspect", name]));
         cleanup.push(`${kind} ${name}: ${absent ? "absent" : "LEFTOVER OR UNVERIFIED"}`);
@@ -611,29 +726,34 @@ try {
     await record("Write cleanup.log", () => writeFile(`${dir}/cleanup.log`, cleanup.join("\n")));
     console.log(cleanup.join("\n"));
     console.log(`Evidence directory: ${dir}`);
+    process.off("SIGINT", onSigint);
+    process.off("SIGTERM", onSigterm);
 }
+if (signal.aborted) throw signal.reason;
 if (failure) throw failure;
 if (evidence.some((entry) => entry.result !== "pass")) {
     throw new Error("A scenario failed; see evidence.json.");
 }
 
-async function buildWorld(input: {
-    migrateOutput: string;
-    operator: { email: string; password: string };
-    ann: { email: string; password: string };
-    socketGroup: string;
-    epoch: string;
-    routerToken: string;
-    instanceId: string;
-}): Promise<World> {
-    const { buildWorld: build } = await import("./world");
-    return build({
-        r,
-        dir,
-        docker,
-        persist,
-        baseUrl: BASE_URL,
-        appsDomain: APPS_DOMAIN,
-        ...input,
-    });
+async function waitForRouter() {
+    for (let i = 0; i < 60; i++) {
+        const result = await docker(
+            ["exec", r.containers.router, "bun", "dist/index.js", "healthcheck"],
+            true,
+        );
+        if (result.code === 0) return;
+        await sleep(500);
+    }
+    throw new Error("The router did not become healthy.");
+}
+
+async function waitForDokkuIdle() {
+    const deadline = performance.now() + 301_000;
+    do {
+        const processes = await cleanupDocker(["top", r.containers.dokku, "-eo", "pid,comm,args"]);
+        if (processes.code !== 0) return confirmedAbsent(processes);
+        if (dokkuIdle(processes)) return true;
+        await delay(1000);
+    } while (performance.now() < deadline);
+    return false;
 }

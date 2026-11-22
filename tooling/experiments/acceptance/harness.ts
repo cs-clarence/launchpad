@@ -1,5 +1,5 @@
 import { randomBytes } from "node:crypto";
-import { writeFile } from "node:fs/promises";
+import { rename, writeFile } from "node:fs/promises";
 
 export type Result = { out: string; err: string; code: number };
 
@@ -16,6 +16,12 @@ export interface Resources {
         worker2: string;
     };
     images: { controller: string; worker: string; router: string };
+    restore?: {
+        adminImage: string;
+        controller: string;
+        database: string;
+        directory: string;
+    };
     volumes: string[];
     helpers: string[];
     // Fixture apps and image tags are chosen by the product, not by this harness. Each is recorded
@@ -49,6 +55,19 @@ export async function command(args: string[], allowFailure = false, stdin?: stri
 
 export const randomHex = (bytes: number) => randomBytes(bytes).toString("hex");
 
+// Docker requires PID to filter host ps output to the fixture's processes.
+export function dokkuIdle(result: Result): boolean {
+    const [header, ...commands] = result.out.split("\n");
+    return (
+        result.code === 0 &&
+        /^PID\s+COMMAND\s+COMMAND$/.test(header ?? "") &&
+        commands.length > 0 &&
+        !commands.some((line) =>
+            /(?:^|[\s/])(?:dokku|docker|sshcommand)(?=\s|$)|sshd:\s+dokku\b/.test(line),
+        )
+    );
+}
+
 export function raceRounds(raw: string | undefined): number {
     const count = Number(raw ?? "3");
     if (!Number.isSafeInteger(count) || count < 1) {
@@ -63,7 +82,17 @@ export const confirmedAbsent = (result: { code: number; err: string }) =>
     result.code !== 0 && NOT_FOUND.test(result.err);
 
 export function createDocker(r: Resources) {
-    const persist = () => writeFile(`${r.dir}/resources.json`, JSON.stringify(r, null, 2));
+    const inventory = `${r.dir}/resources.json`;
+    let pending = Promise.resolve();
+    const persist = () => {
+        const write = pending.then(async () => {
+            // Keep the last good inventory if a write is interrupted or fails.
+            await writeFile(`${inventory}.next`, JSON.stringify(r, null, 2));
+            await rename(`${inventory}.next`, inventory);
+        });
+        pending = write.catch(() => undefined);
+        return write;
+    };
     const docker = async (args: string[], allowFailure = false, stdin?: string) => {
         if (args[0] === "run" && !args.includes("--name")) {
             const name = `${r.network.replace(/-net$/, "")}-helper-${r.helpers.length + 1}`;

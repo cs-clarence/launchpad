@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { writeFile } from "node:fs/promises";
 import type { Evidence, Resources } from "./harness";
+import { INGRESS_MARKER_HEADER } from "./ingress";
 import type { FaultRule } from "./rules";
 
 type Json = Record<string, any>;
@@ -37,6 +38,7 @@ export interface World {
     org: string;
     project: string;
     compact: (id: string) => string;
+    signal: AbortSignal;
     api(
         method: string,
         path: string,
@@ -46,6 +48,30 @@ export interface World {
     sql<T = Json>(query: string): Promise<T[]>;
     probeRouter(host: string): Promise<{ status: number; deployment: string | null }>;
     probeDokku(host: string): Promise<{ status: number; deployment: string | null }>;
+    smokeIngress?<T>(
+        deploymentHosts: string[],
+        aliasHost: string,
+        test: (marker: string) => Promise<T>,
+    ): Promise<T>;
+    restoreDrill?: {
+        snapshot(): Promise<void>;
+        restore(): Promise<{
+            restoreStartedAt: string;
+            routerEpoch: string;
+            routerEpochNote: string;
+        }>;
+        rotate(host: string): Promise<{
+            before: string;
+            after: string;
+            oldTokenStatus: number;
+            oldEpochStatus: number;
+        }>;
+        raiseCounters(): Promise<void>;
+        republish(aliasId: string): Promise<void>;
+        requireEarlyRefusal(aliasId: string): Promise<void>;
+        waitForRecovery(started: string): Promise<number>;
+        clear(): Promise<void>;
+    };
     routerRoute(host: string): Promise<RouteRead>;
     proxy: {
         addRule(rule: FaultRule): Promise<void>;
@@ -97,6 +123,7 @@ export async function runScenarios(w: World, evidence: Evidence[], raceRounds: n
         mechanism: string,
         run: () => Promise<Record<string, unknown>>,
     ) => {
+        w.signal.throwIfAborted();
         console.log(`scenario ${id}: ${title}`);
         try {
             const observations = await run();
@@ -401,6 +428,153 @@ export async function runScenarios(w: World, evidence: Evidence[], raceRounds: n
         },
     );
 
+    if (w.restoreDrill) {
+        const drill = w.restoreDrill;
+        let backupGeneration = "";
+        let newerGeneration = "";
+        let restoreStartedAt = "";
+        let recordedEpoch = "";
+        const gate = async () => {
+            const [row] = await w.sql<{ value: string }>(
+                "select value from instance_state where key = 'deployment_recovery'",
+            );
+            return row?.value;
+        };
+        const requireRoute = async (target: string, generation: string) => {
+            const row = (await w.routerRoute(prod.hostname)).route;
+            assert.equal(row?.aliasId, prod.id);
+            assert.equal(row?.target?.deploymentId, target);
+            assert.equal(row?.generation, generation);
+            return served(prod.hostname, target);
+        };
+        const requireBlocked = async (target: string, key: string) => {
+            const view = await aliasView(prod.id); // A 200 proves the restored credential is valid.
+            const count = (await operations(prod.id)).length;
+            const reply = await promoteRaw(prod.id, target, view.reserved, key);
+            assert.equal(reply.status, 503);
+            assert.equal(reply.body.code, "unavailable");
+            assert.match(reply.body.title, /recovery is in progress/);
+            assert.deepEqual(await aliasView(prod.id), view);
+            assert.equal((await operations(prod.id)).length, count);
+            assert.equal(await gate(), "blocked");
+            return reply.status;
+        };
+        await scenario(
+            "R1",
+            "Back up A, then promote the live router to B",
+            "Built admin backup and verify-backup; HTTP and both router planes",
+            async () => {
+                prod = await createAlias(app, "production");
+                backupGeneration = (await promote(prod.id, A, "restore-bind-a")).generation;
+                await requireRoute(A, backupGeneration);
+                await drill.snapshot();
+                newerGeneration = (await promote(prod.id, B, "restore-live-b")).generation;
+                assert.ok(BigInt(newerGeneration) > BigInt(backupGeneration));
+                await requireRoute(B, newerGeneration);
+                return {
+                    aliasId: prod.id,
+                    backupGeneration,
+                    newerGeneration,
+                    targetBeforeBackup: A,
+                    liveTarget: B,
+                };
+            },
+        );
+        await scenario(
+            "R2",
+            "Restore into an empty database with writes blocked",
+            "Stopped fixture writers; real restore, migration status and check-restore; marker and authenticated API",
+            async () => {
+                const marker = await drill.restore();
+                restoreStartedAt = marker.restoreStartedAt;
+                recordedEpoch = marker.routerEpoch;
+                assert.equal(marker.routerEpochNote, "recorded");
+                assert.match(recordedEpoch, /^[0-9a-f-]{36}$/);
+                const view = await aliasView(prod.id);
+                assert.equal(view.target, A);
+                assert.equal(view.committed, backupGeneration);
+                assert.equal(view.reserved, backupGeneration);
+                const liveStatus = await requireRoute(B, newerGeneration);
+                const mutationStatus = await requireBlocked(B, "restore-before-rotation");
+                return {
+                    restoreStartedAt,
+                    recordedEpoch,
+                    database: view,
+                    liveStatus,
+                    mutationStatus,
+                };
+            },
+        );
+        await scenario(
+            "R3",
+            "Rotate and raise the fence; reject early republish and clear",
+            "Managed router rotation; built admin counter repair and early refusals; HTTP and both router planes",
+            async () => {
+                const epochs = await drill.rotate(prod.hostname);
+                assert.equal(epochs.before, recordedEpoch);
+                assert.notEqual(epochs.after, epochs.before);
+                assert.equal(epochs.oldTokenStatus, 401);
+                assert.equal(epochs.oldEpochStatus, 401);
+                await requireRoute(B, newerGeneration);
+                await drill.raiseCounters();
+                const raised = await aliasView(prod.id);
+                assert.equal(raised.committed, backupGeneration);
+                assert.equal(raised.reserved, newerGeneration);
+                assert.equal(raised.target, A);
+                await drill.requireEarlyRefusal(prod.id);
+                assert.deepEqual(await aliasView(prod.id), raised);
+                const liveStatus = await requireRoute(B, newerGeneration);
+                const mutationStatus = await requireBlocked(B, "restore-after-rotation");
+                return {
+                    epochs,
+                    raised,
+                    liveStatus,
+                    mutationStatus,
+                    earlyRepublishAndClearRefused: true,
+                };
+            },
+        );
+        // Preserve the pre-wait evidence while the real timer is running.
+        await writeFile(`${w.dir}/evidence.json`, JSON.stringify(evidence, null, 2));
+        await scenario(
+            "R4",
+            "Republish A after the real recovery wait, clear, then promote B again",
+            "Dokku process check; built admin republish and recovery-clear without overrides; SQL, HTTP and both router planes",
+            async () => {
+                const elapsedMs = await drill.waitForRecovery(restoreStartedAt);
+                await drill.republish(prod.id);
+                const repaired = await aliasView(prod.id);
+                const republishedGeneration = repaired.committed;
+                assert.equal(repaired.reserved, republishedGeneration);
+                assert.equal(repaired.target, A);
+                assert.ok(BigInt(republishedGeneration) > BigInt(newerGeneration));
+                const republishedStatus = await requireRoute(A, republishedGeneration);
+                const mutationStatus = await requireBlocked(B, "restore-after-republish");
+                await drill.clear();
+                assert.equal(await gate(), "ready");
+                await w.startWorker(2);
+                const promotion = await promote(prod.id, B, "restore-resume-b");
+                assert.ok(BigInt(promotion.generation) > BigInt(republishedGeneration));
+                const liveStatus = await requireRoute(B, promotion.generation);
+                const view = await aliasView(prod.id);
+                assert.equal(view.committed, promotion.generation);
+                assert.equal(view.target, B);
+                await w.stopWorker(2);
+                return {
+                    elapsedMs,
+                    repaired,
+                    republishedStatus,
+                    mutationStatus,
+                    gate: "ready",
+                    promotion,
+                    database: view,
+                    liveStatus,
+                };
+            },
+        );
+        return;
+    }
+
     await scenario(
         "S3",
         "Bind production and staging to A",
@@ -429,6 +603,62 @@ export async function runScenarios(w: World, evidence: Evidence[], raceRounds: n
             };
         },
     );
+
+    if (w.smokeIngress) {
+        const smoke = w.smokeIngress;
+        await scenario(
+            "Ingress",
+            "Public deployment and alias hosts through the loopback ingress",
+            "Public HTTPS via Cloudflare; exact-host fixture forwarding to Dokku and the router data plane",
+            async () => {
+                const aHost = (await getDeployment(A)).hostname as string;
+                const bHost = (await getDeployment(B)).hostname as string;
+                assert.equal(new Set([aHost, bHost, prod.hostname]).size, 3);
+                const probe = async (
+                    marker: string,
+                    hostname: string,
+                    deployment: string | null,
+                ) => {
+                    const response = await fetch(`https://${hostname}/`, {
+                        cache: "no-store",
+                        redirect: "error",
+                        signal: AbortSignal.any([w.signal, AbortSignal.timeout(15_000)]),
+                    });
+                    const body = await response.text();
+                    const identity = response.headers.get("x-launchpad-deployment");
+                    const expected = deployment === null ? null : w.compact(deployment);
+                    assert.equal(response.status, expected === null ? 404 : 200, hostname);
+                    assert.equal(response.headers.get(INGRESS_MARKER_HEADER), marker, hostname);
+                    assert.equal(identity, expected, hostname);
+                    if (expected !== null) assert.ok(body.includes("Launchpad acceptance"));
+                    return { status: response.status, identity, forwarded: true };
+                };
+                return smoke([aHost, bHost], prod.hostname, async (marker) => {
+                    const before = {
+                        a: await probe(marker, aHost, A),
+                        b: await probe(marker, bHost, B),
+                        alias: await probe(marker, prod.hostname, A),
+                    };
+                    await promote(prod.id, B, "ingress-promote-b");
+                    const after = {
+                        a: await probe(marker, aHost, A),
+                        b: await probe(marker, bHost, B),
+                        alias: await probe(marker, prod.hostname, B),
+                    };
+                    const alias = await getAlias(prod.id);
+                    const withdrawal = ok(
+                        await withdrawRaw(prod.id, alias.reservedGeneration, "ingress-withdraw"),
+                        202,
+                        "withdraw public fixture alias",
+                    );
+                    await waitOperation(prod.id, withdrawal.id, "succeeded");
+                    return { before, after, withdrawn: await probe(marker, prod.hostname, null) };
+                });
+            },
+        );
+        await w.stopWorker(1);
+        return;
+    }
 
     await scenario(
         "S4",
@@ -603,6 +833,7 @@ export async function runScenarios(w: World, evidence: Evidence[], raceRounds: n
                     );
                     assert.notEqual((await aliasView(race.id)).target, candidate);
                     assert.equal(await pinned(candidate), false);
+                    assert.equal(await dokkuHas(await appNameOf(candidate)), false);
                     const refused = await promoteRaw(
                         race.id,
                         candidate,
@@ -912,7 +1143,7 @@ export async function runScenarios(w: World, evidence: Evidence[], raceRounds: n
                 `select to_char(clock_timestamp() at time zone 'utc', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') as at`,
             );
             await w.unpauseWorker(1);
-            await until(
+            const ended = await until(
                 "the stale worker to end its run",
                 async () =>
                     (await w.workerEvents(1)).find(
@@ -922,6 +1153,7 @@ export async function runScenarios(w: World, evidence: Evidence[], raceRounds: n
                 120_000,
                 1000,
             );
+            assert.equal(ended.status, "authority-lost");
             await sleep(5000);
             const staleRun = (await w.workerEvents(1)).filter(
                 (entry) => entry.operationId === op.id,
@@ -935,7 +1167,6 @@ export async function runScenarios(w: World, evidence: Evidence[], raceRounds: n
             const writes = await w.databaseWrites(resumeAt);
             assert.deepEqual(await route(stale.hostname), newer);
             await served(stale.hostname, L1);
-            await w.stopWorker(1);
             return {
                 operation: op.id,
                 staleGeneration: String(staleGeneration),
@@ -958,4 +1189,159 @@ export async function runScenarios(w: World, evidence: Evidence[], raceRounds: n
             };
         },
     );
+
+    // Isolate the corrective chain from the other aliases so no unrelated pin can mask a
+    // premature release. Reuse this fixture for shutdown once the chain is settled.
+    let chain!: {
+        appId: string;
+        priorId: string;
+        candidateId: string;
+        alias: { id: string; hostname: string };
+    };
+    await scenario(
+        "S13",
+        "An uncertain correction retains both targets until a later correction settles the chain",
+        "HTTP API; two committed router replies dropped by the proxy; SQL pin reads; operator promotion-reconcile",
+        async () => {
+            const { id: appId } = await createApp("chain");
+            const prior = await deployed(appId, artifact);
+            const candidate = await deployed(appId, artifact);
+            const chainAlias = await createAlias(appId, "release");
+            chain = { appId, priorId: prior.id, candidateId: candidate.id, alias: chainAlias };
+            const base = await promote(chainAlias.id, prior.id, "chain-bind");
+            const dropNextReply = (id: string, previousGeneration: string) =>
+                w.proxy.addRule({
+                    id,
+                    action: "drop-response",
+                    method: "POST",
+                    pathPrefix: "/v1/routes",
+                    body: {
+                        hostname: chainAlias.hostname,
+                        generation: String(BigInt(previousGeneration) + 1n),
+                    },
+                    once: true,
+                });
+            const assertHeld = async (id: string, target: string, rule: string) => {
+                const held = await waitOperation(chainAlias.id, id, "reconciliation-needed");
+                assert.deepEqual(await route(chainAlias.hostname), {
+                    generation: held.generation,
+                    target,
+                    operationId: id,
+                });
+                assert.ok(
+                    (await w.proxy.log()).some(
+                        (entry) =>
+                            entry.rule === rule &&
+                            entry.outcome === "response-dropped" &&
+                            entry.routerStatus === 200 &&
+                            entry.request?.operationId === id,
+                    ),
+                    `No successful router reply dropped for ${id}.`,
+                );
+                await served(chainAlias.hostname, target);
+                return held.generation as string;
+            };
+            const correct = async (id: string, target: string) => {
+                const result = await w.reconcile(id, target);
+                assert.equal(result.code, 0, result.err.slice(0, 500));
+                const correction = (await operations(chainAlias.id)).find(
+                    (entry) => entry.supersedesOperationId === id,
+                );
+                assert.ok(correction, `No correction for ${id}.`);
+                return correction.id as string;
+            };
+
+            await dropNextReply("chain-first", base.generation);
+            const first = ok(
+                await promoteRaw(chainAlias.id, candidate.id, base.generation, "chain-promote"),
+                202,
+                "promote chain candidate",
+            );
+            const firstGeneration = await assertHeld(first.id, candidate.id, "chain-first");
+            await dropNextReply("chain-correction", firstGeneration);
+            // Correct back to the prior target. The first operation still pins the candidate
+            // even though neither the corrective intent nor the live route needs it now.
+            const correction = await correct(first.id, prior.id);
+            const correctionGeneration = await assertHeld(correction, prior.id, "chain-correction");
+            const heldPins = await pins([prior.id, candidate.id]);
+            assert.equal(heldPins.length, 2);
+            for (const pin of heldPins) assert.ok(pin.aliased || pin.open_operation);
+            const heldDeleteStatuses = [
+                (await deleteDeployment(prior.id)).status,
+                (await deleteDeployment(candidate.id)).status,
+            ];
+            assert.deepEqual(heldDeleteStatuses, [409, 409]);
+
+            const final = await correct(correction, prior.id);
+            const settled = await waitOperation(chainAlias.id, final, "succeeded");
+            assert.ok(BigInt(settled.generation) > BigInt(correctionGeneration));
+            const history = await operations(chainAlias.id);
+            for (const id of [first.id, correction]) {
+                assert.equal(history.find((entry) => entry.id === id)?.status, "superseded");
+            }
+            assert.deepEqual(await route(chainAlias.hostname), {
+                generation: settled.generation,
+                target: prior.id,
+                operationId: final,
+            });
+            const finalPins = await pins([prior.id, candidate.id]);
+            assert.equal(finalPins.find((pin) => pin.id === prior.id)?.aliased, true);
+            const released = finalPins.find((pin) => pin.id === candidate.id);
+            assert.equal(released?.aliased, false);
+            assert.equal(released.open_operation, false);
+            assert.ok(released.last_unpinned_at);
+            return { first: first.id, correction, final, heldPins, heldDeleteStatuses, finalPins };
+        },
+    );
+
+    await scenario(
+        "S14",
+        "App shutdown withdraws routes before a separate request can queue deletion",
+        "HTTP API; router control and data planes; SQL reads of app and deletion state; Dokku apps:exists",
+        async () => {
+            const { appId, priorId, candidateId, alias: chainAlias } = chain;
+            const shutdown = async () =>
+                ok(await api("DELETE", `/apps/${appId}`), 202, "shut down app");
+            const first = await shutdown();
+            assert.equal(first.state, "shutting-down");
+            assert.equal(first.withdrawalsQueued, 1);
+            assert.equal(first.deletionsQueued, 0);
+            const withdrawal = (await operations(chainAlias.id)).find(
+                (entry) => entry.action === "withdraw",
+            );
+            assert.ok(withdrawal, "No shutdown withdrawal was queued.");
+            await waitOperation(chainAlias.id, withdrawal.id, "succeeded");
+            await served(chainAlias.hostname, null);
+            assert.deepEqual(await route(chainAlias.hostname), {
+                generation: withdrawal.generation,
+                target: null,
+                operationId: withdrawal.id,
+            });
+            const deletionCount = () =>
+                w.sql<{ n: number }>(
+                    `select count(*)::int as n from deployment_deletion_operation
+                     where app_id = '${appId}'`,
+                );
+            assert.deepEqual(await deletionCount(), [{ n: 0 }]);
+            const names = [await appNameOf(priorId), await appNameOf(candidateId)];
+            for (const name of names) assert.equal(await dokkuHas(name), true);
+            const second = await shutdown();
+            assert.equal(second.withdrawalsQueued, 0);
+            assert.equal(second.deletionsQueued, 2);
+            await until(
+                "the final deletion to settle app shutdown",
+                async () =>
+                    (
+                        await w.sql<{ state: string }>(
+                            `select state from app where id = '${appId}'`,
+                        )
+                    )[0]?.state === "deleted",
+                180_000,
+            );
+            for (const name of names) assert.equal(await dokkuHas(name), false);
+            await served(chainAlias.hostname, null);
+            return { first, second, withdrawal: withdrawal.id, removedApps: names };
+        },
+    );
+    await w.stopWorker(1);
 }

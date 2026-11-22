@@ -115,6 +115,15 @@ Rules that keep the graph correct:
   verifies their absence. Never in CI or a default task. The `rules.ts` fault matching has a unit
   test that runs with `test:unit`. Evidence and results:
   [P7 acceptance](plans/deployment-p7-acceptance.md).
+  `LAUNCHPAD_ACCEPTANCE_INGRESS_DOMAIN` opts into the separate public ingress
+  smoke mode: a temporary exact-host listener on `127.0.0.1:9080` forwards only
+  the selected fixture requests. Wildcard DNS must already point to the tunnel,
+  and the connector must have a matching wildcard ingress route forwarding to
+  `http://127.0.0.1:9080` from its network namespace.
+  `LAUNCHPAD_ACCEPTANCE_RESTORE_DRILL=1` opts into a separate isolated restore
+  run using the built `admin` image and an empty second database and archive
+  directory. It includes the real writer drain and 25-minute recovery wait and
+  cannot be combined with public ingress or fast lease mode.
 - **Omni loads `.env.local`** from the repository root and the project into task
   environments without expanding variables, and task `env.vars` override the shell. For
   a default that the shell may override, apply it in the command

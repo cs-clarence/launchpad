@@ -64,7 +64,11 @@ experiment and its production-router rehearsal) and `acceptance/` (the full-stac
 `run.ts` creates and cleans up resources, `world.ts` is the HTTP/SQL/docker access layer,
 `scenarios.ts` is the worked example, `proxy.ts` and `rules.ts` the control-plane fault proxy).
 They are never imported by packages or apps, never in CI, and record every resource before
-creating it.
+creating it. The separately opted-in public ingress smoke uses `acceptance/ingress.ts`
+for an in-process loopback listener, closed in `finally`.
+The opt-in restore mode uses `acceptance/restore.ts` for fixture admin commands,
+managed router rotation and the real recovery wait; assertions and evidence stay
+in `scenarios.ts`.
 
 The health endpoint reports static metadata, not PostgreSQL/Dokku readiness.
 Key administration is a dedicated organization-page component in

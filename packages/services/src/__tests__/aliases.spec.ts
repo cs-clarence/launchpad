@@ -139,6 +139,18 @@ describe("aliases", () => {
         ).toEqual({ action: "alias.created" });
     });
 
+    it("uses a changed hostname template and domain only for future aliases", async () => {
+        const app = await newApp();
+        const prior = await create(app.id, "prior");
+        const next = await create(app.id, "next", "dee", {
+            LAUNCHPAD_APPS_DOMAIN: "new.example.net",
+            LAUNCHPAD_ALIAS_HOSTNAME_TEMPLATE: "{slug}-{id}-view",
+        });
+        expect(prior.hostname).toMatch(/^view-prior-[a-z0-9]{10}\.sites\.example\.net$/);
+        expect(next.hostname).toMatch(/^next-[a-z0-9]{10}-view\.new\.example\.net$/);
+        expect(await getAlias(testDb.db, people.vic!, org, prior.id)).toEqual(prior);
+    });
+
     it("refuses a duplicate slug, a viewer, another project's key and another organization", async () => {
         const app = await newApp();
         await create(app.id, "stable");

@@ -106,6 +106,25 @@ expires the stale lease by SQL instead of waiting (for iterating on the harness 
 `LAUNCHPAD_ACCEPTANCE_RACE_ROUNDS` sets the number of promotion-versus-deletion rounds (default 3).
 Resources are recorded in `/tmp/opencode/lp-accept-*/resources.json` before creation and removed
 by exact name. It is not in CI. See [the acceptance record](docs/plans/deployment-p7-acceptance.md).
+SIGINT and SIGTERM delivered to the harness cancel its waits and signal-aware
+requests. An in-flight Docker command can delay cleanup until it exits or
+reaches its 15-minute deadline. Do not force-kill the harness during cleanup.
+If cleanup cannot verify settlement or save the inventory, it leaves the
+affected fixture resources for diagnosis; see `cleanup.log` and `resources.json`.
+
+With explicit approval to serve throwaway sites through an existing HTTPS
+wildcard, set `LAUNCHPAD_ACCEPTANCE_INGRESS_DOMAIN` as well. This runs a separate
+smoke test instead of the full story: after S3 it briefly binds `127.0.0.1:9080`,
+serves only two fixture deployment hosts and one fixture alias, and checks public
+HTTPS before promotion, after promotion and after withdrawal. The test neither
+configures the tunnel nor exposes the controller or router control port. It
+requires a run-specific forwarding marker even on the withdrawn alias's 404.
+
+For the separate end-to-end restore drill, also set
+`LAUNCHPAD_ACCEPTANCE_RESTORE_DRILL=1` (without ingress or fast lease mode).
+It uses the built admin image and a second disposable database, leaves the
+source intact, and waits out both the writer drain and the real recovery gate.
+Allow more than 30 minutes. See [the drill procedure](docs/plans/deployment-p7-acceptance.md#repeat-the-restore-drill-against-a-newer-router).
 
 Operator and development tasks live in the controller project:
 

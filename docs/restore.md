@@ -157,7 +157,8 @@ a repair. Use the operator checks in this runbook to complete recovery.
    withdrawal at the next generation and never touches a known alias, or restore its alias. A withdrawn
    hostname stays reserved on the router for the old alias, so do not create a new alias with the same
    hostname. If a known alias still disagrees with its restored committed route or is
-   missing its route or withdrawal tombstone, run
+   missing its route or withdrawal tombstone, wait at least **25 minutes from the
+   recorded restore start** before running
    `bun .output/admin.mjs recovery-republish-alias --alias <restored-alias-uuid>`.
    This publishes the database's committed target (or withdrawal) above both generation
    fences and checks the exact route and served identity. It supersedes the affected

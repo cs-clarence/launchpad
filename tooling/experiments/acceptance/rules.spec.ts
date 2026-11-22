@@ -1,5 +1,8 @@
 import { describe, expect, it } from "bun:test";
-import { raceRounds } from "./harness";
+import { mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { createDocker, dokkuIdle, raceRounds, type Resources } from "./harness";
 import { isFaultRule, matches, pickRule, summarize, type FaultRule } from "./rules";
 
 const rule = (over: Partial<FaultRule> = {}): FaultRule => ({
@@ -16,6 +19,64 @@ const write = {
     path: "/v1/routes",
     body: { hostname: "a.example", generation: 3 },
 };
+
+describe("Dokku fixture settlement", () => {
+    const header = "PID COMMAND          COMMAND";
+    const daemons = "1 tini /usr/bin/tini\n2 sshd sshd: /usr/sbin/sshd -D [listener]";
+    const listing = (out: string, code = 0) => ({ out, code, err: "" });
+
+    it("requires a usable process listing and rejects active SSH or Docker/Dokku work", () => {
+        expect(dokkuIdle(listing(`${header}\n${daemons}`))).toBe(true);
+        for (const line of [
+            "3 bash /bin/bash /usr/bin/dokku apps:destroy lp-1234567890",
+            "3 docker /usr/bin/docker container rm app",
+            "3 sshd sshd: dokku@notty",
+        ]) {
+            expect(dokkuIdle(listing(`${header}\n${daemons}\n${line}`))).toBe(false);
+        }
+        expect(dokkuIdle(listing(header))).toBe(false);
+        expect(dokkuIdle(listing(daemons))).toBe(false);
+        expect(dokkuIdle(listing(`${header}\n${daemons}`, 1))).toBe(false);
+    });
+});
+
+it("keeps the last complete fixture inventory when a new write fails", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "lp-inventory-"));
+    const r: Resources = {
+        dir,
+        network: "fixture-net",
+        containers: {
+            controller: "controller",
+            dokku: "dokku",
+            postgres: "postgres",
+            router: "router",
+            proxy: "proxy",
+            worker1: "worker1",
+            worker2: "worker2",
+        },
+        images: { controller: "controller", worker: "worker", router: "router" },
+        volumes: [],
+        helpers: [],
+        discovered: [],
+    };
+    try {
+        const { persist } = createDocker(r);
+        await persist();
+        const previous = await readFile(join(dir, "resources.json"), "utf8");
+        const temp = join(dir, "resources.json.next");
+        await mkdir(temp);
+        r.helpers.push("fixture-helper");
+        await expect(persist()).rejects.toThrow();
+        expect(await readFile(join(dir, "resources.json"), "utf8")).toBe(previous);
+        await rm(temp, { recursive: true });
+        await persist();
+        expect(JSON.parse(await readFile(join(dir, "resources.json"), "utf8")).helpers).toEqual([
+            "fixture-helper",
+        ]);
+    } finally {
+        await rm(dir, { recursive: true, force: true });
+    }
+});
 
 describe("fault rules", () => {
     it("rejects malformed rules and reusable holds", () => {
