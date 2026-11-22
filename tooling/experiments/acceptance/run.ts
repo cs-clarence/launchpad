@@ -663,29 +663,33 @@ try {
     const preservePostgres = !writersGone || !inventorySaved || !inventoryComplete;
     if (preservePostgres)
         cleanupFailed(`Preserving ${r.containers.postgres} for inventory recovery`);
-    else await removeVolumeFree(r.containers.postgres);
-    // Secrets and state, removed while the worker image (root helper) still exists.
-    const removablePaths = secretPaths.filter((name) => name !== "dokku" || dokkuGone);
+    const postgresGone = !preservePostgres && (await removeVolumeFree(r.containers.postgres));
+    // Keep writer mounts and the archives that belong to a retained database.
+    // Remove the other paths while the worker image (root helper) still exists.
+    const retainedPaths = secretPaths.filter((name) =>
+        name === "dokku" ? !dokkuGone : !postgresGone,
+    );
+    for (const name of retainedPaths) cleanup.push(`secret/state path ${name}: preserved`);
+    const removablePaths = secretPaths.filter((name) => !retainedPaths.includes(name));
     for (const name of removablePaths) {
         await rm(`${dir}/${name}`, { recursive: true, force: true }).catch(() => undefined);
     }
-    const removed = await cleanupDocker([
-        "run",
-        "--rm",
-        "--pull=never",
-        "--user",
-        "0",
-        "--entrypoint",
-        "rm",
-        "-v",
-        `${dir}:/experiment`,
-        r.images.worker,
-        "-rf",
-        ...removablePaths.map((name) => `/experiment/${name}`),
-    ]);
-    if (removed.code) {
-        cleanup.push("secret/state removal helper: FAILED");
-        failure ??= new Error("Secret/state removal helper failed.");
+    if (removablePaths.length > 0) {
+        const removed = await cleanupDocker([
+            "run",
+            "--rm",
+            "--pull=never",
+            "--user",
+            "0",
+            "--entrypoint",
+            "rm",
+            "-v",
+            `${dir}:/experiment`,
+            r.images.worker,
+            "-rf",
+            ...removablePaths.map((name) => `/experiment/${name}`),
+        ]);
+        if (removed.code) cleanupFailed("Secret/state removal helper");
     }
     for (const name of removablePaths) {
         const absent = await lstat(`${dir}/${name}`).then(
@@ -702,7 +706,7 @@ try {
         cleanup.push(`helper ${name}: ${absent ? "absent" : "LEFTOVER OR UNVERIFIED"}`);
         if (!absent) failure ??= new Error("Helper cleanup incomplete.");
     }
-    const preserveNetwork = !dokkuGone || preservePostgres;
+    const preserveNetwork = !dokkuGone || !postgresGone;
     if (!preserveNetwork) await cleanupDocker(["network", "rm", r.network]);
     for (const volume of r.volumes) {
         await cleanupDocker(["volume", "rm", "-f", volume]);
