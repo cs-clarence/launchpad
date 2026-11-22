@@ -57,19 +57,66 @@ export async function columnExists(db: Kysely<any>, table: string, column: strin
     return rows[0]?.present === true;
 }
 
+// PostgreSQL 17 libpq environment equivalents. In particular, sslpassword has no
+// equivalent: never silently discard it (or any unrecognized connection option).
+const PG_QUERY_ENV = new Map([
+    ["host", "PGHOST"],
+    ["sslmode", "PGSSLMODE"],
+    ["sslrootcert", "PGSSLROOTCERT"],
+    ["sslcert", "PGSSLCERT"],
+    ["sslkey", "PGSSLKEY"],
+    ["sslcrl", "PGSSLCRL"],
+    ["sslcrldir", "PGSSLCRLDIR"],
+    ["sslsni", "PGSSLSNI"],
+    ["sslcompression", "PGSSLCOMPRESSION"],
+    ["sslcertmode", "PGSSLCERTMODE"],
+    ["sslnegotiation", "PGSSLNEGOTIATION"],
+    ["ssl_min_protocol_version", "PGSSLMINPROTOCOLVERSION"],
+    ["ssl_max_protocol_version", "PGSSLMAXPROTOCOLVERSION"],
+    ["channel_binding", "PGCHANNELBINDING"],
+    ["gssencmode", "PGGSSENCMODE"],
+    ["connect_timeout", "PGCONNECT_TIMEOUT"],
+]);
+
 export function pgEnvironment(databaseUrl: string): Record<string, string> {
-    const url = new URL(databaseUrl);
+    let url: URL;
+    try {
+        url = new URL(databaseUrl);
+    } catch {
+        // URL errors may retain the input, including passwords, on the error object.
+        throw new BackupError("DATABASE_URL must be a valid PostgreSQL URL.");
+    }
+    if (!["postgres:", "postgresql:"].includes(url.protocol) || url.hash) {
+        throw new BackupError("DATABASE_URL must be a PostgreSQL URL without a fragment.");
+    }
     const env: Record<string, string> = {};
-    // libpq wants an IPv6 address without the brackets a URL puts around it.
-    const host = (url.searchParams.get("host") ?? url.hostname).replace(/^\[(.*)\]$/, "$1");
-    if (host) env.PGHOST = decodeURIComponent(host);
-    if (url.port) env.PGPORT = url.port;
-    if (url.username) env.PGUSER = decodeURIComponent(url.username);
-    if (url.password) env.PGPASSWORD = decodeURIComponent(url.password);
-    const database = decodeURIComponent(url.pathname.replace(/^\//, ""));
-    if (database) env.PGDATABASE = database;
-    const sslmode = url.searchParams.get("sslmode");
-    if (sslmode) env.PGSSLMODE = sslmode;
+    try {
+        // libpq wants an IPv6 address without the brackets a URL puts around it.
+        if (url.hostname) env.PGHOST = decodeURIComponent(url.hostname).replace(/^\[(.*)\]$/, "$1");
+        if (url.port) env.PGPORT = url.port;
+        if (url.username) env.PGUSER = decodeURIComponent(url.username);
+        if (url.password) env.PGPASSWORD = decodeURIComponent(url.password);
+        const database = decodeURIComponent(url.pathname.replace(/^\//, ""));
+        if (database) env.PGDATABASE = database;
+    } catch {
+        throw new BackupError("DATABASE_URL contains invalid URL encoding.");
+    }
+    const seen = new Set<string>();
+    for (const [key, value] of url.searchParams) {
+        const variable = PG_QUERY_ENV.get(key);
+        if (!variable || seen.has(key) || !value || value.includes("\0")) {
+            // Neither names nor values are echoed: either may contain secret input.
+            throw new BackupError(
+                "DATABASE_URL has unsupported, duplicate or empty connection options; see docs/backup.md.",
+            );
+        }
+        seen.add(key);
+        // URLSearchParams has already decoded this value.
+        env[variable] = key === "host" ? value.replace(/^\[(.*)\]$/, "$1") : value;
+    }
+    if (Object.values(env).some((value) => value.includes("\0"))) {
+        throw new BackupError("DATABASE_URL contains a NUL character.");
+    }
     return env;
 }
 
@@ -132,6 +179,8 @@ async function dumpDatabase(options: BackupOptions, snapshot: string, file: stri
 // meanwhile is only an extra file that is not copied. Nothing collects archives while the previews
 // are removed; the app model's collection will have to be stopped before a backup.
 export async function createBackup(options: BackupOptions): Promise<BackupManifest> {
+    // Refuse lossy connection settings before reading the database or creating files.
+    pgEnvironment(options.databaseUrl);
     const { db } = options;
     // A database that is BEHIND this build can be backed up (that is what comes before migrating);
     // one a newer build already migrated cannot: this build would not know what it dumped.
