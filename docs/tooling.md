@@ -117,7 +117,9 @@ Rules that keep the graph correct:
   [P7 acceptance](plans/deployment-p7-acceptance.md).
   `LAUNCHPAD_ACCEPTANCE_INGRESS_DOMAIN` opts into the separate public ingress
   smoke mode: a temporary exact-host listener on `127.0.0.1:9080` forwards only
-  the selected fixture requests. The wildcard must already point to that address.
+  the selected fixture requests. Wildcard DNS must already point to the tunnel,
+  and the connector must have a matching wildcard ingress route forwarding to
+  `http://127.0.0.1:9080` from its network namespace.
   `LAUNCHPAD_ACCEPTANCE_RESTORE_DRILL=1` opts into a separate isolated restore
   run using the built `admin` image and an empty second database and archive
   directory. It includes the real writer drain and 25-minute recovery wait and

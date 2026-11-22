@@ -1,5 +1,5 @@
 import { randomBytes } from "node:crypto";
-import { writeFile } from "node:fs/promises";
+import { rename, writeFile } from "node:fs/promises";
 
 export type Result = { out: string; err: string; code: number };
 
@@ -82,7 +82,17 @@ export const confirmedAbsent = (result: { code: number; err: string }) =>
     result.code !== 0 && NOT_FOUND.test(result.err);
 
 export function createDocker(r: Resources) {
-    const persist = () => writeFile(`${r.dir}/resources.json`, JSON.stringify(r, null, 2));
+    const inventory = `${r.dir}/resources.json`;
+    let pending = Promise.resolve();
+    const persist = () => {
+        const write = pending.then(async () => {
+            // Keep the last good inventory if a write is interrupted or fails.
+            await writeFile(`${inventory}.next`, JSON.stringify(r, null, 2));
+            await rename(`${inventory}.next`, inventory);
+        });
+        pending = write.catch(() => undefined);
+        return write;
+    };
     const docker = async (args: string[], allowFailure = false, stdin?: string) => {
         if (args[0] === "run" && !args.includes("--name")) {
             const name = `${r.network.replace(/-net$/, "")}-helper-${r.helpers.length + 1}`;

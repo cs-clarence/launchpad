@@ -485,6 +485,7 @@ try {
         docker,
         persist,
         signal,
+        sleep,
         baseUrl: BASE_URL,
         appsDomain: APPS_DOMAIN,
         ingressSmoke: ingressDomain !== undefined,
@@ -526,8 +527,9 @@ try {
     const worker1Gone = await removeVolumeFree(r.containers.worker1);
     const worker2Gone = await removeVolumeFree(r.containers.worker2);
     // Stop the API surfaces before taking the final inventory.
-    if (r.restore) await removeVolumeFree(r.restore.controller);
-    await removeVolumeFree(r.containers.controller);
+    const restoredControllerGone = r.restore ? await removeVolumeFree(r.restore.controller) : true;
+    const controllerGone = await removeVolumeFree(r.containers.controller);
+    const writersGone = worker1Gone && worker2Gone && restoredControllerGone && controllerGone;
     const builtWorld = world;
     if (builtWorld) await record("Write proxy-log.json", () => builtWorld.finish());
     const dokkuLog = await cleanupDocker(["logs", r.containers.dokku]);
@@ -565,27 +567,25 @@ try {
     const fixtures = [...known.values()].filter(
         (entry) => NAME.app.test(entry.app) && NAME.tag.test(entry.imageTag),
     );
-    let settled = worker1Gone && worker2Gone;
-    if (settled && fixtures.length > 0) {
-        const deadline = performance.now() + 301_000;
-        settled = false;
-        do {
-            const processes = await cleanupDocker([
-                "top",
-                r.containers.dokku,
-                "-eo",
-                "pid,comm,args",
-            ]);
-            if (processes.code !== 0) break;
-            if (dokkuIdle(processes)) {
-                settled = true;
-                break;
-            }
-            await delay(1000);
-        } while (performance.now() < deadline);
-    }
+    r.discovered = fixtures;
+    const inventorySaved = await persist().then(
+        () => true,
+        () => {
+            cleanupFailed("Persist final fixture inventory");
+            return false;
+        },
+    );
+    const inventoryComplete = !world || fromDatabase.code === 0;
+    const settled =
+        writersGone &&
+        inventoryComplete &&
+        inventorySaved &&
+        (fixtures.length === 0 || (await waitForDokkuIdle()));
     if (!settled)
-        cleanupFailed("Fixture sweep skipped: worker absence or Dokku settlement unverified");
+        cleanupFailed(
+            "Fixture sweep skipped: writer absence, inventory or Dokku settlement unverified",
+        );
+    let destroyFailed = false;
     for (const fixture of settled ? fixtures : []) {
         const destroyed = await cleanupDocker([
             "exec",
@@ -598,8 +598,12 @@ try {
         cleanup.push(
             `app ${fixture.app}: ${destroyed.code === 0 ? "destroyed" : "not destroyed (already absent or unreachable)"}`,
         );
+        destroyFailed ||= destroyed.code !== 0;
     }
-    const dokkuGone = await removeVolumeFree(r.containers.dokku);
+    const canRemoveDokku = settled && (!destroyFailed || (await waitForDokkuIdle()));
+    if (!canRemoveDokku)
+        cleanupFailed(`Preserving ${r.containers.dokku} and its state for recovery`);
+    const dokkuGone = canRemoveDokku && (await removeVolumeFree(r.containers.dokku));
     for (const fixture of settled && dokkuGone ? fixtures : []) {
         const leftover = await cleanupDocker([
             "ps",
@@ -654,11 +658,15 @@ try {
         if (!absent) failure ??= new Error("Fixture cleanup incomplete.");
     }
 
-    for (const name of [r.containers.proxy, r.containers.router, r.containers.postgres]) {
-        await removeVolumeFree(name);
-    }
+    await removeVolumeFree(r.containers.proxy);
+    await removeVolumeFree(r.containers.router);
+    const preservePostgres = !writersGone || !inventorySaved || !inventoryComplete;
+    if (preservePostgres)
+        cleanupFailed(`Preserving ${r.containers.postgres} for inventory recovery`);
+    else await removeVolumeFree(r.containers.postgres);
     // Secrets and state, removed while the worker image (root helper) still exists.
-    for (const name of secretPaths) {
+    const removablePaths = secretPaths.filter((name) => name !== "dokku" || dokkuGone);
+    for (const name of removablePaths) {
         await rm(`${dir}/${name}`, { recursive: true, force: true }).catch(() => undefined);
     }
     const removed = await cleanupDocker([
@@ -673,13 +681,13 @@ try {
         `${dir}:/experiment`,
         r.images.worker,
         "-rf",
-        ...secretPaths.map((name) => `/experiment/${name}`),
+        ...removablePaths.map((name) => `/experiment/${name}`),
     ]);
     if (removed.code) {
         cleanup.push("secret/state removal helper: FAILED");
         failure ??= new Error("Secret/state removal helper failed.");
     }
-    for (const name of secretPaths) {
+    for (const name of removablePaths) {
         const absent = await lstat(`${dir}/${name}`).then(
             () => false,
             (error: NodeJS.ErrnoException) => error.code === "ENOENT",
@@ -694,7 +702,8 @@ try {
         cleanup.push(`helper ${name}: ${absent ? "absent" : "LEFTOVER OR UNVERIFIED"}`);
         if (!absent) failure ??= new Error("Helper cleanup incomplete.");
     }
-    await cleanupDocker(["network", "rm", r.network]);
+    const preserveNetwork = !dokkuGone || preservePostgres;
+    if (!preserveNetwork) await cleanupDocker(["network", "rm", r.network]);
     for (const volume of r.volumes) {
         await cleanupDocker(["volume", "rm", "-f", volume]);
         const absent = confirmedAbsent(await cleanupDocker(["volume", "inspect", volume]));
@@ -703,7 +712,7 @@ try {
     }
     for (const image of images) await cleanupDocker(["rmi", image]);
     for (const [kind, name] of [
-        ["network", r.network],
+        ...(preserveNetwork ? [] : [["network", r.network] as const]),
         ...images.map((image) => ["image", image] as const),
     ] as const) {
         const absent = confirmedAbsent(await cleanupDocker([kind, "inspect", name]));
@@ -732,4 +741,15 @@ async function waitForRouter() {
         await sleep(500);
     }
     throw new Error("The router did not become healthy.");
+}
+
+async function waitForDokkuIdle() {
+    const deadline = performance.now() + 301_000;
+    do {
+        const processes = await cleanupDocker(["top", r.containers.dokku, "-eo", "pid,comm,args"]);
+        if (processes.code !== 0) return confirmedAbsent(processes);
+        if (dokkuIdle(processes)) return true;
+        await delay(1000);
+    } while (performance.now() < deadline);
+    return false;
 }

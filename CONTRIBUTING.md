@@ -106,9 +106,11 @@ expires the stale lease by SQL instead of waiting (for iterating on the harness 
 `LAUNCHPAD_ACCEPTANCE_RACE_ROUNDS` sets the number of promotion-versus-deletion rounds (default 3).
 Resources are recorded in `/tmp/opencode/lp-accept-*/resources.json` before creation and removed
 by exact name. It is not in CI. See [the acceptance record](docs/plans/deployment-p7-acceptance.md).
-SIGINT and SIGTERM delivered to the harness cancel its waits and lead to cleanup.
-Do not force-kill it while cleanup is running; consult the run inventory if
-cleanup is interrupted or cannot verify absence.
+SIGINT and SIGTERM delivered to the harness cancel its waits and signal-aware
+requests. An in-flight Docker command can delay cleanup until it exits or
+reaches its 15-minute deadline. Do not force-kill the harness during cleanup.
+If cleanup cannot verify settlement or save the inventory, it leaves the
+affected fixture resources for diagnosis; see `cleanup.log` and `resources.json`.
 
 With explicit approval to serve throwaway sites through an existing HTTPS
 wildcard, set `LAUNCHPAD_ACCEPTANCE_INGRESS_DOMAIN` as well. This runs a separate

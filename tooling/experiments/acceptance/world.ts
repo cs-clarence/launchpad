@@ -17,6 +17,7 @@ export interface WorldInput {
     docker: Docker;
     persist: () => Promise<void>;
     signal: AbortSignal;
+    sleep: (ms: number) => Promise<void>;
     baseUrl: string;
     appsDomain: string;
     operator: { email: string; password: string };
@@ -58,16 +59,19 @@ export async function buildWorld(input: WorldInput): Promise<World> {
         const origin = `http://${await ipOf(name)}:3000`;
         for (let i = 0; i < 90; i++) {
             const up = await fetch(`${origin}/api/health`, {
-                signal: AbortSignal.timeout(2000),
+                signal: deadline(2000),
             }).then(
                 (response) => response.status === 200,
-                () => false,
+                () => {
+                    signal.throwIfAborted();
+                    return false;
+                },
             );
             if (up) {
                 controller = origin;
                 return;
             }
-            await Bun.sleep(1000);
+            await input.sleep(1000);
         }
         throw new Error(`The fixture controller ${name} did not start.`);
     };
@@ -338,7 +342,7 @@ export async function buildWorld(input: WorldInput): Promise<World> {
                 if (i >= 60) {
                     throw new Error(`${name} did not start: ${logs.out}${logs.err}`.slice(0, 2000));
                 }
-                await Bun.sleep(500);
+                await input.sleep(500);
             }
         },
         pauseWorker: (which) => docker(["pause", workerName(which)]).then(() => undefined),

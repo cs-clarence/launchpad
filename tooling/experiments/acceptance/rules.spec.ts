@@ -1,5 +1,8 @@
 import { describe, expect, it } from "bun:test";
-import { dokkuIdle, raceRounds } from "./harness";
+import { mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { createDocker, dokkuIdle, raceRounds, type Resources } from "./harness";
 import { isFaultRule, matches, pickRule, summarize, type FaultRule } from "./rules";
 
 const rule = (over: Partial<FaultRule> = {}): FaultRule => ({
@@ -35,6 +38,44 @@ describe("Dokku fixture settlement", () => {
         expect(dokkuIdle(listing(daemons))).toBe(false);
         expect(dokkuIdle(listing(`${header}\n${daemons}`, 1))).toBe(false);
     });
+});
+
+it("keeps the last complete fixture inventory when a new write fails", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "lp-inventory-"));
+    const r: Resources = {
+        dir,
+        network: "fixture-net",
+        containers: {
+            controller: "controller",
+            dokku: "dokku",
+            postgres: "postgres",
+            router: "router",
+            proxy: "proxy",
+            worker1: "worker1",
+            worker2: "worker2",
+        },
+        images: { controller: "controller", worker: "worker", router: "router" },
+        volumes: [],
+        helpers: [],
+        discovered: [],
+    };
+    try {
+        const { persist } = createDocker(r);
+        await persist();
+        const previous = await readFile(join(dir, "resources.json"), "utf8");
+        const temp = join(dir, "resources.json.next");
+        await mkdir(temp);
+        r.helpers.push("fixture-helper");
+        await expect(persist()).rejects.toThrow();
+        expect(await readFile(join(dir, "resources.json"), "utf8")).toBe(previous);
+        await rm(temp, { recursive: true });
+        await persist();
+        expect(JSON.parse(await readFile(join(dir, "resources.json"), "utf8")).helpers).toEqual([
+            "fixture-helper",
+        ]);
+    } finally {
+        await rm(dir, { recursive: true, force: true });
+    }
 });
 
 describe("fault rules", () => {
