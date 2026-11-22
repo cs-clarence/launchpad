@@ -141,9 +141,11 @@ Items the milestone 6 review deferred to this work:
 - **Credential reset after a restore** is manual (`docs/restore.md` step 4). Consider
   `launchpad-admin` commands that revoke every restored API key and session, so a mistake cannot
   leave revoked access working.
-- **TLS and connection options.** `backup`/`restore` pass only host, port, user, password, database
-  and `sslmode` to the PostgreSQL clients; options such as `sslrootcert` are dropped. Pass them
-  through, or document the limit, before a TLS-strict database is used.
+- **TLS and connection options (code prepared 2026-11-22).** `backup`/`restore` now
+  preserve the allowlisted PostgreSQL 17 TLS options and refuse unknown, duplicate
+  or empty query options. See [the exact contract](../backup.md#database-connection-options)
+  and [slice checks](production-pg-client-options.md). Live TLS verification and
+  Bun/libpq compatibility remain unproven; do not infer them from unit tests.
 - **Base images by digest (done 2026-11-21 for the application, router, worker and Dokku images and Postgres).** Pin `oven/bun`, `docker` and the Dokku base by digest (a release
   checklist gate in `docs/releasing.md`).
 - **Operator install, end to end,** from published artifacts on a clean machine: only possible once
@@ -374,19 +376,25 @@ Legacy cleanup is separately gated on an approved exact target list; it does not
 block a fresh install. Automatic expiry and retention extension are product
 follow-ups, not Compose defects.
 
-### Next implementation decision: private router control
+### Private router control: approved implementation
 
 Recommend private HTTPS over Compose DNS, rather than sharing the router's network
 namespace with the worker and one-off admin commands. HTTPS keeps the router off
 the database network and retains the existing HTTPS-or-literal-loopback client
 rule. Keep the control port unpublished and the data-plane path unchanged.
 
-Before implementing, agree on who provisions and rotates the server key and the
-trust anchor for the `router` DNS name. The router gets the server key; only the
-router control client in the worker and admin should get the private CA, if one
-is used. Check verified TLS, refusal of an untrusted certificate or wrong server
-name, no published control port, then bind, promote, withdraw and reconcile in
-an explicitly authorized disposable Compose run. Until that passes, leave
+The user approved operator-provisioned certificates and explicit operator
+rotation on 2026-11-22. Native control HTTPS and scoped client CA trust are
+prepared; [the implementation/check plan](production-router-control-tls.md) and
+[operator procedure](../production-compose.md#router-control-certificates) record
+the contract. The router gets the server key; only control clients in worker,
+admin and the router's verified health checker get the public CA bundle. The
+CA private key is never mounted. Loopback checks verify trusted TLS, refusal of
+an untrusted certificate or wrong server name, bind, promote and withdraw;
+Compose assertions keep the control port unpublished. Bind, promote, withdraw
+and reconciliation passed in one aliases-on disposable Compose run on 2026-11-22
+(see the P7 acceptance record); certificate and CA rotation also passed there; upgrade and restore remain unrehearsed.
+Until that passes, leave
 aliases off. Undo pre-cutover by reverting the transport configuration; once
 aliases are live, quiesce mutation dispatch and preserve router state and pins
 before reverting. Do not fall back to plaintext on the bridge.

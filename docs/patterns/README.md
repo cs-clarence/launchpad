@@ -58,6 +58,13 @@ one allowlisted `environment` per service, YAML anchors for the settings the con
 must share, secrets as `${VAR:?}`, admin in a profile) with `docker-compose.env.example`;
 its shape is asserted by `tooling/compose-production.ts` (`check:compose`, and a unit
 spec in `test`). Run once on disposable infrastructure, never as production; see [production Compose](../production-compose.md).
+Native router-control TLS is configured in `packages/alias-router/src/host/config.ts`
+and bound by `apps/router/src/serve.ts`. Only control clients receive
+`LAUNCHPAD_ALIAS_CONTROL_CA_FILE` (worker and admin); their trust is scoped per
+request in `packages/alias-router/src/control-client.ts`, never set globally.
+The router health client also verifies its control certificate. Compose server
+certificate/key mounts belong only to the router; an aliases-on Compose rehearsal
+is still outstanding.
 
 Opt-in disposable rehearsals live under `tooling/experiments/`: `routing/` (the router
 experiment and its production-router rehearsal) and `acceptance/` (the full-stack P7 rehearsal:

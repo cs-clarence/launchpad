@@ -309,6 +309,14 @@ The base images are pinned by tag and must be pinned by digest before a release.
 bundled into `.output/migrations` (controller); the worker does not run migrations. `backup` and
 `restore` need a `pg_dump`/`pg_restore` at least as new as the server, which the image does not
 carry: mount one and set `LAUNCHPAD_PG_DUMP` / `LAUNCHPAD_PG_RESTORE`.
+The shared `pgEnvironment` adapter preserves the
+[documented PostgreSQL client options](backup.md#database-connection-options) and
+rejects unsupported or ambiguous query settings; its listener-free regression
+tests run with the controller's default unit task.
+The router's focused `test:control:tls` task uses OpenSSL-generated fixture CA
+and server certificates and loopback listeners, without PostgreSQL or Docker.
+Its native control TLS and scoped worker/admin trust are configured by
+[the Compose certificate contract](production-compose.md#router-control-certificates).
 
 `omni -i run test:images -p @launchpad-kit/tooling` builds both, checks them (non-root, no secret in a
 layer, no `.env`, `.git`, key or source file, the expected files present), runs `migrate` from the
