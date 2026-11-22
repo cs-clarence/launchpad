@@ -153,9 +153,13 @@ To change a pin, change the tag and its digest together (the Dockerfile `ARG`s; 
 `BUN_VERSION`, `DOCKER_CLI_VERSION` or `DOKKU_VERSION` makes the digest mismatch and the build fail
 closed), review the upstream diff, and re-run `check:compose`.
 
-Not pinned: `LAUNCHPAD_BASE_IMAGE` (`nginx:1.27-alpine`): the worker's template check rejects a
-digest reference, so it stays a tag until the product accepts one. The Debian/Ubuntu packages the
-admin image and Dokku's first start install are not pinned either.
+The app base (`LAUNCHPAD_BASE_IMAGE`) defaults to the tag `nginx:1.27-alpine`.
+For repeatable builds, set it to a trusted image pinned by SHA-256 digest. Use
+`docker buildx imagetools inspect nginx:1.27-alpine` to obtain and verify the
+manifest digest before adding it to the reference. The worker accepts digest and
+tag-plus-digest references and passes the reference to Docker unchanged. The
+disposable Compose rehearsal used the tag, not a digest pin. The Debian/Ubuntu
+packages the admin image and Dokku's first start install are not pinned.
 
 ## Resource limits
 

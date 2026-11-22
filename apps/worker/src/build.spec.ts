@@ -49,6 +49,14 @@ async function setup(entries: FixtureEntry[], dockerBody: string, spa = false) {
 const signal = () => new AbortController().signal;
 
 describe("building the image", () => {
+    it("passes an operator-supplied digest pin through to Docker unchanged", async () => {
+        const { context, deps, seen } = await setup(SITE, "exit 0");
+        const baseImage = `nginx:1.27-alpine@sha256:${"b".repeat(64)}`;
+        await buildImage(context, { ...deps, baseImage }, signal());
+        const recipe = await fs.readFile(path.join(seen, "Dockerfile"), "utf8");
+        expect(recipe.split("\n")[0]).toBe(`FROM ${baseImage}`);
+    });
+
     it("hands docker exactly the fixed template, the site, and a unique tag", async () => {
         const { context, deps, seen } = await setup(SITE, "exit 0", true);
         expect(await buildImage(context, deps, signal())).toEqual({ imageTag: imageTagFor(ID) });

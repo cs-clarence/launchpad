@@ -569,6 +569,24 @@ describe("apps", () => {
 });
 
 describe("creating a deployment", () => {
+    it("uses a changed hostname template and domain only for future deployments", async () => {
+        const app = await newApp();
+        const artifactId = await artifactFor(p1);
+        const queue = (extra: Record<string, string> = {}) =>
+            createDeployment(testDb.db, people.dee!, org, app.id, { artifactId }, deps(extra));
+        const prior = await queue();
+        await finish(prior.id);
+        const next = await queue({
+            LAUNCHPAD_APPS_DOMAIN: "new.example.net",
+            LAUNCHPAD_DEPLOYMENT_HOSTNAME_TEMPLATE: "next-{slug}-{id}",
+        });
+        expect(prior.hostname).toMatch(/-preview\.sites\.example\.net$/);
+        expect(next.hostname).toMatch(/^next-.*-[a-z0-9]{10}\.new\.example\.net$/);
+        expect(await getDeployment(testDb.db, people.vic!, org, prior.id)).toMatchObject({
+            hostname: prior.hostname,
+        });
+    });
+
     it("queues it with a permanent identity, reservations and a first event", async () => {
         const app = await newApp();
         const artifact = await artifactFor(p1);

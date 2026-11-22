@@ -368,11 +368,44 @@ exit criteria, not authorization to start production or delete existing state.
 | Recovery gate           | Add procedures for Dokku and router state backups; test post-restore startup, failed restore, reconciliation against a newer router, `recovery-clear`, and Compose upgrade and rollback. Finish PostgreSQL client TLS-option handling and settle how restored credentials are invalidated. | Disposable drills demonstrate a safe return to service, including the mutation gate, schema compatibility and revoked credentials staying unusable.                                                                                      |
 | Capacity gate           | Measure large archives, concurrent deploys, many apps, backup/restore and first startup. Account separately for Docker builds outside service limits.                                                                                                                                      | Limits are based on representative load; database loss, worker liveness and host reboot are rehearsed.                                                                                                                                   |
 | Security and operations | Confirm the single-host, root-equivalent Docker socket threat model. Assess file-based database secrets, read-only root filesystems and SMTP if the installation needs email.                                                                                                              | The operator explicitly accepts the boundary or selects a more isolated topology; each optional hardening item is adopted or deferred with a reason.                                                                                     |
-| Reproducibility         | Support app-base digest references and assess pinning OS packages installed by the admin image and Dokku.                                                                                                                                                                                  | The app base can be built from a verified digest; remaining package inputs have an explicit pin or update policy.                                                                                                                        |
+| Reproducibility         | Rehearse the existing app-base digest support with a verified registry digest; assess pinning OS packages installed by the admin image and Dokku.                                                                                                                                          | The app base can be built from a verified digest; remaining package inputs have an explicit pin or update policy.                                                                                                                        |
 
 Legacy cleanup is separately gated on an approved exact target list; it does not
 block a fresh install. Automatic expiry and retention extension are product
 follow-ups, not Compose defects.
+
+### Next implementation decision: private router control
+
+Recommend private HTTPS over Compose DNS, rather than sharing the router's network
+namespace with the worker and one-off admin commands. HTTPS keeps the router off
+the database network and retains the existing HTTPS-or-literal-loopback client
+rule. Keep the control port unpublished and the data-plane path unchanged.
+
+Before implementing, agree on who provisions and rotates the server key and the
+trust anchor for the `router` DNS name. The router gets the server key; only the
+router control client in the worker and admin should get the private CA, if one
+is used. Check verified TLS, refusal of an untrusted certificate or wrong server
+name, no published control port, then bind, promote, withdraw and reconcile in
+an explicitly authorized disposable Compose run. Until that passes, leave
+aliases off. Undo pre-cutover by reverting the transport configuration; once
+aliases are live, quiesce mutation dispatch and preserve router state and pins
+before reverting. Do not fall back to plaintext on the bridge.
+
+### Public app ingress
+
+A wildcard tunnel can point at one loopback app ingress. Preserve the requested
+`Host` and select the backend from the hostname, not from the backend's HTTP
+response: immutable deployment names go to Dokku and alias names go to the
+router's data plane. If routing by the generated name shapes, require
+nonoverlapping deployment and alias templates; changing either template must not
+break routing for existing names. Never fall back to Dokku on a router 404: an
+unbound or withdrawn alias is supposed to stay a 404.
+
+Before connecting a real wildcard, prove those routes with synthetic hostnames
+on a disposable ingress. Check a known deployment and alias, an unknown host,
+and a withdrawn alias. None may reach management, router control or Dokku SSH.
+Keep management on a different registrable domain and a separate private
+listener. Undo by removing only the new app ingress route or binding.
 
 ## Verification and handback
 

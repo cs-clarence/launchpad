@@ -1,5 +1,7 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import { command, NAME, type Resources } from "./harness";
+import { withIngress } from "./ingress";
+import type { createRestoreDrill } from "./restore";
 import type { FaultRule } from "./rules";
 import type { World } from "./scenarios";
 
@@ -14,6 +16,7 @@ export interface WorldInput {
     dir: string;
     docker: Docker;
     persist: () => Promise<void>;
+    signal: AbortSignal;
     baseUrl: string;
     appsDomain: string;
     operator: { email: string; password: string };
@@ -22,12 +25,15 @@ export interface WorldInput {
     epoch: string;
     routerToken: string;
     instanceId: string;
+    ingressSmoke?: boolean;
+    restore?: ReturnType<typeof createRestoreDrill>;
 }
 
 const compact = (id: string) => id.replaceAll("-", "");
 
 export async function buildWorld(input: WorldInput): Promise<World> {
-    const { r, dir, docker } = input;
+    const { r, dir, docker, signal } = input;
+    const deadline = (ms: number) => AbortSignal.any([signal, AbortSignal.timeout(ms)]);
     const ipOf = async (container: string) => {
         const out = (
             await docker([
@@ -40,25 +46,32 @@ export async function buildWorld(input: WorldInput): Promise<World> {
         if (!/^\d+\.\d+\.\d+\.\d+$/.test(out)) throw new Error(`No address for ${container}.`);
         return out;
     };
-    const controller = `http://${await ipOf(r.containers.controller)}:3000`;
-    const routerIp = await ipOf(r.containers.router);
+    let controller: string;
+    let routerIp = await ipOf(r.containers.router);
     const dokkuIp = await ipOf(r.containers.dokku);
     const proxyIp = await ipOf(r.containers.proxy);
+    let database = "launchpad";
+    let routerAuth = { epoch: input.epoch, token: input.routerToken };
 
     // Bounded wait for the process to be up, not a fixed delay.
-    for (let i = 0, up = false; !up; i++) {
-        if (i >= 90) {
-            const logs = await docker(["logs", r.containers.controller], true);
-            throw new Error(
-                `The controller did not start: ${logs.out}\n${logs.err}`.slice(0, 2000),
+    const useController = async (name: string) => {
+        const origin = `http://${await ipOf(name)}:3000`;
+        for (let i = 0; i < 90; i++) {
+            const up = await fetch(`${origin}/api/health`, {
+                signal: AbortSignal.timeout(2000),
+            }).then(
+                (response) => response.status === 200,
+                () => false,
             );
+            if (up) {
+                controller = origin;
+                return;
+            }
+            await Bun.sleep(1000);
         }
-        up = await fetch(`${controller}/api/health`, { signal: AbortSignal.timeout(2000) }).then(
-            (response) => response.status === 200,
-            () => false,
-        );
-        if (!up) await Bun.sleep(1000);
-    }
+        throw new Error(`The fixture controller ${name} did not start.`);
+    };
+    await useController(r.containers.controller);
 
     // Bootstrap through the real HTTP surface: the operator creates the organization, its owner
     // creates a project and issues the API key everything after this uses.
@@ -124,7 +137,7 @@ export async function buildWorld(input: WorldInput): Promise<World> {
             method,
             headers,
             body: payload,
-            signal: AbortSignal.timeout(60_000),
+            signal: deadline(60_000),
         });
         const text = await response.text();
         let parsed: unknown = text;
@@ -144,7 +157,7 @@ export async function buildWorld(input: WorldInput): Promise<World> {
             "-U",
             "launchpad",
             "-d",
-            "launchpad",
+            database,
             "-At",
             "-c",
             `select coalesce(json_agg(t), '[]'::json) from (${query}) t`,
@@ -155,7 +168,7 @@ export async function buildWorld(input: WorldInput): Promise<World> {
     const identity = async (base: string, host: string) => {
         const response = await fetch(`${base}/`, {
             headers: { host },
-            signal: AbortSignal.timeout(15_000),
+            signal: deadline(15_000),
         });
         await response.arrayBuffer();
         return {
@@ -175,14 +188,17 @@ export async function buildWorld(input: WorldInput): Promise<World> {
 
     const workerName = (which: 1 | 2) =>
         which === 1 ? r.containers.worker1 : r.containers.worker2;
-    const mounts = [
-        "-v",
-        "/var/run/docker.sock:/var/run/docker.sock",
-        "-v",
-        `${dir}/credentials:/credentials:ro`,
-        "-v",
-        `${dir}/data:/data`,
-    ];
+    const restore = input.restore;
+    let restored = false;
+    const readRoute = (host: string, auth: typeof routerAuth) =>
+        fetch(`http://${routerIp}:8081/v1/routes/${host}`, {
+            headers: {
+                authorization: `Bearer ${auth.token}`,
+                "x-launchpad-instance": input.instanceId,
+                "x-launchpad-epoch": auth.epoch,
+            },
+            signal: AbortSignal.timeout(10_000),
+        });
 
     const world: World = {
         r,
@@ -191,19 +207,81 @@ export async function buildWorld(input: WorldInput): Promise<World> {
         org: org.id,
         project: project.id,
         compact,
+        signal,
         api,
         sql,
         probeRouter: (host) => identity(`http://${routerIp}:8080`, host),
         probeDokku: (host) => identity(`http://${dokkuIp}:80`, host),
+        ...(restore
+            ? {
+                  restoreDrill: {
+                      snapshot: restore.snapshot,
+                      async restore() {
+                          const marker = await restore.restore();
+                          await useController(restore.controller);
+                          database = restore.database;
+                          restored = true;
+                          return marker;
+                      },
+                      async rotate(host: string) {
+                          const before = routerAuth;
+                          routerAuth = await restore.rotate();
+                          routerIp = await ipOf(r.containers.router);
+                          const statusWith = async (auth: typeof routerAuth) => {
+                              const response = await readRoute(host, auth);
+                              await response.body?.cancel();
+                              return response.status;
+                          };
+                          return {
+                              before: before.epoch,
+                              after: routerAuth.epoch,
+                              oldTokenStatus: await statusWith({
+                                  ...routerAuth,
+                                  token: before.token,
+                              }),
+                              oldEpochStatus: await statusWith({
+                                  ...routerAuth,
+                                  epoch: before.epoch,
+                              }),
+                          };
+                      },
+                      raiseCounters: restore.raiseCounters,
+                      republish: restore.republish,
+                      requireEarlyRefusal: restore.requireEarlyRefusal,
+                      waitForRecovery: restore.waitForRecovery,
+                      clear: restore.clear,
+                  },
+              }
+            : {}),
+        ...(input.ingressSmoke
+            ? {
+                  smokeIngress: (deploymentHosts, aliasHost, test) => {
+                      const suffix = `.${input.appsDomain}`;
+                      for (const hostname of [...deploymentHosts, aliasHost]) {
+                          if (
+                              !hostname.endsWith(suffix) ||
+                              !/^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/.test(
+                                  hostname.slice(0, -suffix.length),
+                              )
+                          ) {
+                              throw new Error("Fixture hostname is outside the wildcard domain.");
+                          }
+                      }
+                      return withIngress(
+                          new Map([
+                              ...deploymentHosts.map(
+                                  (hostname) =>
+                                      [hostname, new URL(`http://${dokkuIp}:80/`)] as const,
+                              ),
+                              [aliasHost, new URL(`http://${routerIp}:8080/`)],
+                          ]),
+                          test,
+                      );
+                  },
+              }
+            : {}),
         async routerRoute(host) {
-            const response = await fetch(`http://${routerIp}:8081/v1/routes/${host}`, {
-                headers: {
-                    authorization: `Bearer ${input.routerToken}`,
-                    "x-launchpad-instance": input.instanceId,
-                    "x-launchpad-epoch": input.epoch,
-                },
-                signal: AbortSignal.timeout(10_000),
-            });
+            const response = await readRoute(host, routerAuth);
             if (response.status !== 200) {
                 throw new Error(`Router route read returned ${response.status}.`);
             }
@@ -245,7 +323,13 @@ export async function buildWorld(input: WorldInput): Promise<World> {
                 input.socketGroup,
                 "--env-file",
                 `${dir}/worker.env`,
-                ...mounts,
+                ...(restored && restore ? ["--env-file", restore.override] : []),
+                "-v",
+                "/var/run/docker.sock:/var/run/docker.sock",
+                "-v",
+                `${dir}/credentials:/credentials:ro`,
+                "-v",
+                `${restored && restore ? restore.dataDir : `${dir}/data`}:/data`,
                 r.images.worker,
             ]);
             for (let i = 0; ; i++) {

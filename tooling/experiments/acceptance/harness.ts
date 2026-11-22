@@ -16,6 +16,12 @@ export interface Resources {
         worker2: string;
     };
     images: { controller: string; worker: string; router: string };
+    restore?: {
+        adminImage: string;
+        controller: string;
+        database: string;
+        directory: string;
+    };
     volumes: string[];
     helpers: string[];
     // Fixture apps and image tags are chosen by the product, not by this harness. Each is recorded
@@ -48,6 +54,19 @@ export async function command(args: string[], allowFailure = false, stdin?: stri
 }
 
 export const randomHex = (bytes: number) => randomBytes(bytes).toString("hex");
+
+// Docker requires PID to filter host ps output to the fixture's processes.
+export function dokkuIdle(result: Result): boolean {
+    const [header, ...commands] = result.out.split("\n");
+    return (
+        result.code === 0 &&
+        /^PID\s+COMMAND\s+COMMAND$/.test(header ?? "") &&
+        commands.length > 0 &&
+        !commands.some((line) =>
+            /(?:^|[\s/])(?:dokku|docker|sshcommand)(?=\s|$)|sshd:\s+dokku\b/.test(line),
+        )
+    );
+}
 
 export function raceRounds(raw: string | undefined): number {
     const count = Number(raw ?? "3");
