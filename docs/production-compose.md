@@ -252,8 +252,10 @@ for the remaining decisions and their verification criteria.
   refused, port 3081 unpublished), then bound, promoted, reconciled a held promotion,
   withdrew and deleted, with exact-scope cleanup ([record](plans/deployment-p7-acceptance.md#aliases-on-compose-rehearsal-2026-11-22)).
   The [rotation procedure](#router-control-certificates) was also rehearsed there
-  (certificate-only, then CA via an old+new bundle). Not covered: upgrade, restore
-  with aliases, public ingress, and the full S1–S14 matrix on this topology.
+  (certificate-only, then CA via an old+new bundle), and so was recovery: backup,
+  restore into a fresh database, managed router rotation, the full 25-minute gate,
+  republish, `recovery-clear` and a resumed promotion. Not covered: upgrade and
+  rollback, live PostgreSQL TLS, public ingress, and the full S1–S14 matrix on this topology.
 - **Dokku is not on the engine's default bridge.** Compose cannot attach a service to it (the engine
   rejects the aliases Compose sends), so app containers live on the `apps` network. Without the
   `initial-network` setting (kept in `DOKKU_DATA_DIR`) apps would land on the default bridge, where

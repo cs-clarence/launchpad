@@ -393,7 +393,7 @@ CA private key is never mounted. Loopback checks verify trusted TLS, refusal of
 an untrusted certificate or wrong server name, bind, promote and withdraw;
 Compose assertions keep the control port unpublished. Bind, promote, withdraw
 and reconciliation passed in one aliases-on disposable Compose run on 2026-11-22
-(see the P7 acceptance record); certificate and CA rotation also passed there; upgrade and restore remain unrehearsed.
+(see the P7 acceptance record); certificate and CA rotation also passed there; restore and recovery also passed (2026-11-23); upgrade and rollback remain unrehearsed.
 Until that passes, leave
 aliases off. Undo pre-cutover by reverting the transport configuration; once
 aliases are live, quiesce mutation dispatch and preserve router state and pins

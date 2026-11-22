@@ -157,8 +157,22 @@ new-only bundle, recreating the router (and for the CA steps the worker) each ti
 Fingerprints changed each step, the alias kept serving B, routing state, token and
 epoch were unchanged (the same credentials authenticated throughout), and a client
 trusting only the old CA was refused. The reconcile, withdraw and delete steps then
-ran on the rotated certificates, and cleanup was verified. This does not rehearse
-restart under load, restore or upgrade with aliases.
+ran on the rotated certificates, and cleanup was verified.
+
+A later run (`/tmp/opencode/lp-compose-tls-HOBz7z4N/`, started detached after an
+earlier attempt was killed by SIGTERM during the wait) added the recovery drill and
+passed end to end on the Compose stack: `backup` and `verify-backup` with the alias at A
+and writers quiesced, promotion to B, writers stopped and a 301-second drain, `restore`
+into a fresh database with `migrate --status` and `check-restore`, the restored
+controller refusing a promotion while the router still served B, managed router
+rotation against the restored database (old credentials 401), counters raised, early
+republish and early `recovery-clear` refused, the full wait (1,501 s from the recorded
+restore start), republish of A, `recovery-clear`, and a resumed promotion to B at a
+higher router generation (3 to 4). The reconcile, withdraw and delete steps then ran
+on the restored stack and cleanup was verified. Earlier attempts failed on fixture
+bugs only (an override that replaced the images; a credentials directory the
+unprivileged router could not traverse). Not rehearsed: upgrade or rollback with
+aliases, live PostgreSQL TLS backup/restore, and Dokku-state backup.
 
 ## Still open
 

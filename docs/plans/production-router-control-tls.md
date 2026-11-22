@@ -52,5 +52,5 @@ Independent security review and live Compose validation remain handback gates.
 
 An aliases-on disposable Compose run later passed (Docker DNS, mounts, bind,
 promotion, reconciliation, withdrawal; see the P7 acceptance record). Still open:
-restore and upgrade with aliases (certificate and CA rotation passed in that run). Production
+upgrade and rollback with aliases (certificate and CA rotation, restore and recovery passed in later runs). Production
 has not been started.
