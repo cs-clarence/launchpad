@@ -22,6 +22,7 @@ export interface AppRoutingConfig {
     appsDomain: string;
     appsProxyUrl: URL;
     aliasControlUrl: URL;
+    aliasControlCaFile?: string;
     aliasProbeUrl: URL;
     aliasInstanceId: string;
     // Paths only: the secret and the epoch are read by the code that uses them, never here.
@@ -289,17 +290,25 @@ export function parseAppRoutingConfig(env: Env): AppRoutingSettings {
             throw new Error(`${name}: ${(error as Error).message}`);
         }
     };
+    const controlUrl = url(
+        "LAUNCHPAD_ALIAS_CONTROL_URL",
+        required(env, "LAUNCHPAD_ALIAS_CONTROL_URL"),
+    );
+    const controlCa = env.LAUNCHPAD_ALIAS_CONTROL_CA_FILE;
+    if (controlCa && controlUrl.protocol !== "https:") {
+        throw new Error("LAUNCHPAD_ALIAS_CONTROL_CA_FILE only applies to an https control URL.");
+    }
     return {
         enabled: true,
         appsDomain,
+        ...(controlCa
+            ? { aliasControlCaFile: absolutePath("LAUNCHPAD_ALIAS_CONTROL_CA_FILE", controlCa) }
+            : {}),
         appsProxyUrl: proxyOrigin(
             "LAUNCHPAD_APPS_PROXY_URL",
             required(env, "LAUNCHPAD_APPS_PROXY_URL"),
         ),
-        aliasControlUrl: url(
-            "LAUNCHPAD_ALIAS_CONTROL_URL",
-            required(env, "LAUNCHPAD_ALIAS_CONTROL_URL"),
-        ),
+        aliasControlUrl: controlUrl,
         aliasProbeUrl: url("LAUNCHPAD_ALIAS_PROBE_URL", required(env, "LAUNCHPAD_ALIAS_PROBE_URL")),
         aliasInstanceId: instanceId,
         aliasControlTokenFile: absolutePath(

@@ -8,6 +8,14 @@ export interface Listen {
     port: number;
 }
 
+export interface ControlTls {
+    certFile: string;
+    keyFile: string;
+    // Public CA and DNS name used by the router's own verified health client.
+    caFile: string;
+    serverName: string;
+}
+
 export interface RouterHostConfig {
     stateFile: string;
     instanceId: string;
@@ -15,6 +23,7 @@ export interface RouterHostConfig {
     control: Listen;
     data: Listen;
     controlPrivateNetwork: boolean;
+    controlTls?: ControlTls | null;
     upstreamOrigin: URL;
     upstreamCaFile: string | null;
 }
@@ -104,6 +113,33 @@ export function parseRouterHostConfig(env: Env): RouterHostConfig {
     if (ca !== undefined && ca !== "" && origin.protocol !== "https:") {
         throw new Error("LAUNCHPAD_ROUTER_UPSTREAM_CA_FILE only applies to an https upstream.");
     }
+    const tlsNames = [
+        "LAUNCHPAD_ROUTER_CONTROL_TLS_CERT_FILE",
+        "LAUNCHPAD_ROUTER_CONTROL_TLS_KEY_FILE",
+        "LAUNCHPAD_ROUTER_CONTROL_TLS_CA_FILE",
+        "LAUNCHPAD_ROUTER_CONTROL_TLS_SERVER_NAME",
+    ];
+    let controlTls: ControlTls | null = null;
+    if (tlsNames.some((name) => env[name] !== undefined && env[name] !== "")) {
+        for (const name of tlsNames) required(env, name);
+        const serverName = env.LAUNCHPAD_ROUTER_CONTROL_TLS_SERVER_NAME!;
+        // Compose service names such as `router` are single-label DNS names,
+        // unlike public app hostnames. Keep their labels canonical too.
+        if (
+            !hostnameSchema.safeParse(serverName).success &&
+            !/^[a-z](?:[a-z0-9-]{0,61}[a-z0-9])?$/.test(serverName)
+        ) {
+            throw new Error(
+                "LAUNCHPAD_ROUTER_CONTROL_TLS_SERVER_NAME must be a lowercase DNS name.",
+            );
+        }
+        controlTls = {
+            certFile: absolutePath(tlsNames[0]!, env[tlsNames[0]!]!),
+            keyFile: absolutePath(tlsNames[1]!, env[tlsNames[1]!]!),
+            caFile: absolutePath(tlsNames[2]!, env[tlsNames[2]!]!),
+            serverName,
+        };
+    }
     return {
         stateFile: absolutePath(
             "LAUNCHPAD_ROUTER_STATE_FILE",
@@ -114,6 +150,7 @@ export function parseRouterHostConfig(env: Env): RouterHostConfig {
         control,
         data,
         controlPrivateNetwork,
+        controlTls,
         upstreamOrigin: origin,
         upstreamCaFile: ca ? absolutePath("LAUNCHPAD_ROUTER_UPSTREAM_CA_FILE", ca) : null,
     };

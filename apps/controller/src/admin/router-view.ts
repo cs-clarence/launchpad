@@ -37,6 +37,7 @@ export function routerSessionFromEnv(
     const client = () =>
         createRouterControlClient({
             baseUrl: routing.aliasControlUrl,
+            caFile: routing.aliasControlCaFile,
             credentials: {
                 instanceId: routing.aliasInstanceId,
                 epoch: readRouterCredential(routing.aliasRouterEpochFile, false),

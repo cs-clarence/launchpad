@@ -12,6 +12,38 @@ const valid = {
 };
 
 describe("parseRouterHostConfig", () => {
+    it("requires all control TLS settings together, with plain absolute file paths", () => {
+        const tls = {
+            LAUNCHPAD_ROUTER_CONTROL_TLS_CERT_FILE: "/tls/server.pem",
+            LAUNCHPAD_ROUTER_CONTROL_TLS_KEY_FILE: "/tls/server.key",
+            LAUNCHPAD_ROUTER_CONTROL_TLS_CA_FILE: "/tls/ca.pem",
+            LAUNCHPAD_ROUTER_CONTROL_TLS_SERVER_NAME: "router",
+        };
+        expect(parseRouterHostConfig({ ...valid, ...tls }).controlTls).toEqual({
+            certFile: "/tls/server.pem",
+            keyFile: "/tls/server.key",
+            caFile: "/tls/ca.pem",
+            serverName: "router",
+        });
+        for (const key of Object.keys(tls)) {
+            expect(() => parseRouterHostConfig({ ...valid, ...tls, [key]: "" })).toThrow(key);
+        }
+        expect(() =>
+            parseRouterHostConfig({
+                ...valid,
+                ...tls,
+                LAUNCHPAD_ROUTER_CONTROL_TLS_KEY_FILE: "key.pem",
+            }),
+        ).toThrow("absolute");
+        expect(() =>
+            parseRouterHostConfig({
+                ...valid,
+                ...tls,
+                LAUNCHPAD_ROUTER_CONTROL_TLS_SERVER_NAME: "router/path",
+            }),
+        ).toThrow("DNS name");
+    });
+
     it("accepts a complete configuration and carries no secret", () => {
         const config = parseRouterHostConfig(valid);
         expect(config).toMatchObject({

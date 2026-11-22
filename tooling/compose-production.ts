@@ -312,8 +312,20 @@ export function assertProduction(model: Json, env: Env): string[] {
     ) {
         fail("router and worker must agree on the instance id.");
     }
-    if (environment.worker!.LAUNCHPAD_ALIAS_CONTROL_URL !== "http://router:3081")
-        fail("worker must reach the router control plane privately.");
+    for (const name of ["worker", "admin"]) {
+        if (environment[name]!.LAUNCHPAD_ALIAS_CONTROL_URL !== "https://router:3081")
+            fail(`${name} must reach the router control plane over private HTTPS.`);
+        if (environment[name]!.LAUNCHPAD_ALIAS_CONTROL_CA_FILE !== "/tls/control-ca.pem")
+            fail(`${name} must use its router-control CA file.`);
+    }
+    for (const [key, value] of Object.entries({
+        LAUNCHPAD_ROUTER_CONTROL_TLS_CERT_FILE: "/tls/server.pem",
+        LAUNCHPAD_ROUTER_CONTROL_TLS_KEY_FILE: "/tls/server.key",
+        LAUNCHPAD_ROUTER_CONTROL_TLS_CA_FILE: "/tls/control-ca.pem",
+        LAUNCHPAD_ROUTER_CONTROL_TLS_SERVER_NAME: "router",
+    })) {
+        if (environment.router![key] !== value) fail(`router must configure ${key}.`);
+    }
     if (environment.worker!.LAUNCHPAD_ALIAS_PROBE_URL !== "http://router:3080")
         fail("worker must probe the router data plane privately.");
 
@@ -356,6 +368,27 @@ export function assertProduction(model: Json, env: Env): string[] {
     for (const name of ["controller", "postgres", "router"]) {
         if (mounts(name).some((mount) => mount.target.startsWith("/credentials")))
             fail(`${name} must not mount credentials.`);
+    }
+    for (const name of ["worker", "admin", "router"]) {
+        const ca = mounts(name).find((mount) => mount.target === "/tls/control-ca.pem");
+        if (ca?.type !== "bind" || !ca.readOnly || ca.source !== env.LAUNCHPAD_ROUTER_TLS_CA_FILE)
+            fail(`${name} must bind the public router-control CA read-only.`);
+    }
+    for (const [target, source] of [
+        ["/tls/server.pem", env.LAUNCHPAD_ROUTER_TLS_CERT_FILE],
+        ["/tls/server.key", env.LAUNCHPAD_ROUTER_TLS_KEY_FILE],
+    ]) {
+        const mount = mounts("router").find((item) => item.target === target);
+        if (mount?.type !== "bind" || !mount.readOnly || mount.source !== source)
+            fail(`router must bind ${target} read-only.`);
+        for (const name of SERVICES.filter((name) => name !== "router")) {
+            if (mounts(name).some((item) => item.target === target || item.source === source))
+                fail(`${name} must not mount the router server certificate or key.`);
+        }
+    }
+    for (const name of ["controller", "postgres", "dokku"]) {
+        if (mounts(name).some((item) => item.source === env.LAUNCHPAD_ROUTER_TLS_CA_FILE))
+            fail(`${name} must not receive the router-control CA.`);
     }
     const backup = mounts("admin").find((mount) => mount.target === "/backups");
     if (backup?.source !== env.LAUNCHPAD_BACKUP_DIR)

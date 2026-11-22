@@ -66,6 +66,9 @@ inspect and exercise local artifacts, never publish them. The operator
 
 The alias router's integration suite likewise opens loopback listeners (and needs `openssl`) but no
 database: `omni -i run test:integration -p @launchpad-kit/alias-router`.
+The router app's full integration suite also needs the disposable PostgreSQL
+for managed rotation. Its focused control-TLS check needs only `openssl` and
+loopback listeners: `omni -i run test:control:tls -p @launchpad-kit/router`.
 
 The controller's built-server integration also drives `launchpad artifact upload`,
 `launchpad app deploy` and a separately confirmed MCP promotion through the real

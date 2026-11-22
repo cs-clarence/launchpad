@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { readFileSync } from "node:fs";
 import {
     authenticationSchema,
     deploymentSchema,
@@ -12,7 +13,10 @@ import {
 } from "./protocol";
 
 export type RouterControlFailure = "not-sent" | "rejected" | "uncertain";
-type Send = (input: URL, init: RequestInit) => Promise<Response>;
+type Send = (
+    input: URL,
+    init: RequestInit & { tls?: { ca: string; rejectUnauthorized: true } },
+) => Promise<Response>;
 
 export class RouterControlError extends Error {
     constructor(readonly kind: RouterControlFailure) {
@@ -104,6 +108,8 @@ export function createRouterControlClient(options: {
     baseUrl: URL;
     credentials: { instanceId: string; epoch: string; token: string };
     timeoutMs?: number;
+    // Trust only this public CA bundle for this client's HTTPS calls, not globally.
+    caFile?: string;
     fetch?: Send;
 }) {
     const url = new URL(options.baseUrl);
@@ -123,6 +129,16 @@ export function createRouterControlClient(options: {
     const credentials = authenticationSchema.safeParse(options.credentials);
     if (!credentials.success) throw new Error("Invalid router control credentials.");
     const authority = credentials.data;
+    let ca: string | undefined;
+    if (options.caFile !== undefined) {
+        if (url.protocol !== "https:") throw new Error("Router control CA requires HTTPS.");
+        try {
+            ca = readFileSync(options.caFile, "utf8");
+            if (!ca.includes("-----BEGIN CERTIFICATE-----")) throw new Error();
+        } catch {
+            throw new Error("The router control CA file cannot be read or holds no certificate.");
+        }
+    }
     const send = options.fetch ?? globalThis.fetch;
     url.pathname = `${url.pathname.replace(/\/+$/, "")}/`;
 
@@ -138,6 +154,7 @@ export function createRouterControlClient(options: {
         try {
             const { status, data } = await untilAbort(requestSignal, async () => {
                 const response = await send(new URL(path, url), {
+                    ...(ca ? { tls: { ca, rejectUnauthorized: true as const } } : {}),
                     method: body === undefined ? "GET" : "POST",
                     headers: {
                         authorization: `Bearer ${authority.token}`,

@@ -58,7 +58,8 @@ x-remote-settings: &remote-settings
   DOKKU_SSH_KNOWN_HOSTS_PATH: /credentials/dokku/known_hosts
   LAUNCHPAD_APPS_PROXY_URL: http://dokku:80
   LAUNCHPAD_ALIAS_INSTANCE_ID: ${LAUNCHPAD_ALIAS_INSTANCE_ID:?set the router instance UUID}
-  LAUNCHPAD_ALIAS_CONTROL_URL: http://router:3081
+  LAUNCHPAD_ALIAS_CONTROL_URL: https://router:3081
+  LAUNCHPAD_ALIAS_CONTROL_CA_FILE: /tls/control-ca.pem
   LAUNCHPAD_ALIAS_PROBE_URL: http://router:3080
   LAUNCHPAD_ALIAS_CONTROL_TOKEN_FILE: /credentials/router/control-token
   LAUNCHPAD_ALIAS_ROUTER_EPOCH_FILE: /credentials/router/epoch
@@ -95,6 +96,14 @@ x-router-epoch: &router-epoch
   type: bind
   source: ${LAUNCHPAD_ROUTER_EPOCH_FILE:?set the host path of the router epoch file}
   target: /credentials/router/epoch
+  read_only: true
+  bind:
+    create_host_path: false
+
+x-router-ca: &router-ca
+  type: bind
+  source: ${LAUNCHPAD_ROUTER_TLS_CA_FILE:?set the host path of the public router CA bundle}
+  target: /tls/control-ca.pem
   read_only: true
   bind:
     create_host_path: false
@@ -206,6 +215,7 @@ services:
       - *dokku-known-hosts
       - *router-token
       - *router-epoch
+      - *router-ca
     networks: [database, backend]
     healthcheck:
       test:
@@ -288,11 +298,28 @@ services:
       LAUNCHPAD_ROUTER_CONTROL_LISTEN: 0.0.0.0:3081
       LAUNCHPAD_ROUTER_CONTROL_PRIVATE_NETWORK: "1"
       LAUNCHPAD_ROUTER_DATA_LISTEN: 0.0.0.0:3080
+      LAUNCHPAD_ROUTER_CONTROL_TLS_CERT_FILE: /tls/server.pem
+      LAUNCHPAD_ROUTER_CONTROL_TLS_KEY_FILE: /tls/server.key
+      LAUNCHPAD_ROUTER_CONTROL_TLS_CA_FILE: /tls/control-ca.pem
+      LAUNCHPAD_ROUTER_CONTROL_TLS_SERVER_NAME: router
     # Only the data plane is published. The control plane (3081) never is.
     ports:
       - "${PREVIEW_BIND_IP:-127.0.0.1}:${ROUTER_DATA_HOST_PORT:-32182}:3080"
     volumes:
       - router-state:/state
+      - *router-ca
+      - type: bind
+        source: ${LAUNCHPAD_ROUTER_TLS_CERT_FILE:?set the host path of the router certificate chain (DNS router)}
+        target: /tls/server.pem
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${LAUNCHPAD_ROUTER_TLS_KEY_FILE:?set the host path of the router TLS private key}
+        target: /tls/server.key
+        read_only: true
+        bind:
+          create_host_path: false
     networks: [backend]
     healthcheck:
       test: ["CMD", "bun", "dist/index.js", "healthcheck"]
@@ -336,6 +363,7 @@ services:
       - *dokku-known-hosts
       - *router-token
       - *router-epoch
+      - *router-ca
     networks: [database, backend]
     logging: *logging
 

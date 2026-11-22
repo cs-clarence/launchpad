@@ -61,7 +61,7 @@ async function main(): Promise<void> {
             return fail(`${command} takes no arguments`);
         }
         if (command === "healthcheck") {
-            const healthy = await checkHealth(config.control);
+            const healthy = await checkHealth(config.control, fetch, 3000, config.controlTls);
             process.stdout.write(healthy ? "ok\n" : "unhealthy\n");
             process.exit(healthy ? 0 : 1);
         }

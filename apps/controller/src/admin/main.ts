@@ -456,6 +456,7 @@ program
         };
         const client = createRouterControlClient({
             baseUrl: url,
+            caFile: routing.aliasControlCaFile,
             credentials: {
                 ...authority,
                 token: readRouterCredential(routing.aliasControlTokenFile, true),
