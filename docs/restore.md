@@ -62,30 +62,24 @@ a repair. Use the operator checks in this runbook to complete recovery.
    jobs have not touched Dokku and are not probed. `--no-dokku` is only a partial check.
    Missing archives require repair before a deployment; an unreachable Dokku
    is an error, not a missing app. The check changes nothing.
-4. **Before starting any controller**, deal with restored credentials, because the restored
-   database holds the sessions, keys, emailed tokens and invitations of the backup moment.
-   If no complete and trustworthy record of what was revoked since the backup is available,
-   run `bun .output/admin.mjs revoke-all-credentials
-   --i-understand-this-signs-everyone-out` with every controller stopped. It deletes every
-   restored session and emailed token and revokes every API key and open invitation in one
-   audited transaction (it prints the counts). Notify key owners and reissue only what they
-   still need after access is reopened. It changes no password: use `reset-password` for any
-   account that must lose access, because the restored password still signs in. Credentials
-   issued while it runs are not revoked, which is why the controller must be stopped.
-   If you do have such a record, you may instead reconcile individually, but **invitations
-   are credentials too**: any invitation revoked after the backup is still open in the
-   restored database until it expires. Revoke each one through an authorized member's session
-   (`DELETE /api/v1/organizations/{orgId}/invitations/{invitationId}`) before management
-   access reopens, in addition to the keys and memberships below.
-   **Sessions and passwords need an action too.** A session ended after the backup, and a
-   password replaced after it, are both restored as they were at the backup moment: the old
-   session is valid again until it expires (seven days) and the old password signs in again.
-   There is no per-session endpoint. For **every** user whose session was ended, or whose
-   password was changed (for example after a suspected compromise), run `reset-password`
-   with a new undisclosed password **before access reopens**: it replaces the password and
-   ends all of that user's sessions and keys. Keep the gateway deny in force for that identity
-   until it is verified safe. If you cannot enumerate those users with confidence, use the
-   command above, which ends every session, and reset the passwords you cannot vouch for.
+4. **Before starting any controller**, run `bun .output/admin.mjs revoke-all-credentials
+   --i-understand-this-signs-everyone-out` with every controller stopped. The restored
+   database holds the sessions, API keys, emailed tokens and invitations of the backup
+   moment, and none of them can be trusted: a session or key revoked after the backup is
+   valid again, and so are an unused password-reset token and an open invitation. The
+   command deletes every restored session and emailed token and revokes every API key and
+   open invitation in one audited transaction (it prints the counts). It is the only supported
+   way to end emailed tokens and sessions for every user, so it is required even when you hold
+   a complete record of what was revoked since the backup; do not rely on timing to expire
+   tokens. Notify key owners and reissue only what they still need after access is reopened,
+   and re-invite anyone who still needs an invitation. Credentials issued while it runs are not
+   revoked, which is why the controller must be stopped.
+   **It changes no password.** A password replaced after the backup is restored as it was, so
+   the old password signs in again. For **every** user whose password was changed since the
+   backup (for example after a suspected compromise), or who must lose access, run
+   `reset-password` with a new undisclosed password **before access reopens**, and keep the
+   gateway deny in force for that identity until it is verified safe. If you cannot enumerate
+   those users with confidence, treat every password as unverified and reset them.
 
     Then start the restored controller with normal ingress still closed. Use temporary
     access-gateway rules (or an equivalently restricted private maintenance path)
