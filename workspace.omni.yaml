@@ -15,11 +15,11 @@ projections:
   - id: swe-docs
     source: git
     uri: https://github.com/cs-clarence/swe-docs
-    rev: 0e22c39dbc934dd54f90c99dc4a85ec30c004c69
+    rev: 55c6b99914ac2ec3bf0e3e2f5559c18bcccb2dc6
   - id: swe-skills
     source: git
     uri: https://github.com/cs-clarence/swe-skills
-    rev: 57fdd47cc8244b24b3dcdde46d6e6cf2e4ee5b39
+    rev: ec0429ca15c5b405367c29ad24095ffd4697837c
 
 ignore:
   files:
