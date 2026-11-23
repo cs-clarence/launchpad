@@ -237,6 +237,24 @@ export function assertProduction(model: Json, env: Env): string[] {
     if (!/\bss -ltn\b.*:80\b/.test(JSON.stringify(services.dokku?.healthcheck?.test ?? "")))
         fail("The dokku healthcheck must require the HTTP proxy to listen.");
 
+    // Read-only root filesystems for the Launchpad services, with the one small tmpfs they need.
+    for (const name of ["controller", "worker", "router", "admin"]) {
+        if (services[name]?.read_only !== true)
+            fail(`${name} must have a read-only root filesystem.`);
+        const mounts = (services[name]?.tmpfs ?? []) as unknown[];
+        // Short form "/tmp:size=Nm" or long form with a size; an unsized tmpfs is unbounded.
+        const bounded = mounts.some((mount) =>
+            typeof mount === "string"
+                ? /^\/tmp:size=\d+[mg]$/.test(mount)
+                : (mount as any)?.target === "/tmp" && Number((mount as any)?.tmpfs?.size) > 0,
+        );
+        if (!bounded) fail(`${name} must mount a bounded tmpfs at /tmp.`);
+    }
+    for (const name of ["postgres", "dokku"]) {
+        if (services[name]?.read_only === true)
+            fail(`${name} was not verified with a read-only root filesystem.`);
+    }
+
     // Restart, profile and stop behavior.
     for (const name of RESTARTED) {
         if (services[name]?.restart !== "unless-stopped")
@@ -258,6 +276,16 @@ export function assertProduction(model: Json, env: Env): string[] {
         fail("worker stop_grace_period must be at least 25m.");
     if (!(services.worker?.group_add ?? []).length)
         fail("worker needs the Docker socket's group (group_add).");
+
+    // Deployments are built on this base: it must be a tag plus digest unless the operator
+    // overrides it. (The rendered model carries the default when the setting is unset.)
+    if (
+        !/^(?:[a-z0-9.-]+(?::\d+)?\/)?[a-z0-9._/-]+:[A-Za-z0-9._-]+@sha256:[0-9a-f]{64}$/.test(
+            String(services.worker?.environment?.LAUNCHPAD_BASE_IMAGE ?? ""),
+        ) &&
+        !env.LAUNCHPAD_BASE_IMAGE
+    )
+        fail("The default app base image must be a tag pinned by sha256 digest.");
 
     // Environment: allowlisted, matching and safe by default.
     const environment = Object.fromEntries(
