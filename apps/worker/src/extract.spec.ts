@@ -60,6 +60,27 @@ describe("extracting a site", () => {
         }
     });
 
+    it("extracts an archive within the limits however well it compresses", async () => {
+        // 8 MiB of zeros compresses to a few KiB: far beyond tar's default 1000:1 guard.
+        const { file, out } = await archive([
+            { name: "index.html", content: "<!doctype html>" },
+            { name: "zeros.bin", content: "\0".repeat(8 * 1024 * 1024) },
+        ]);
+        expect((await fs.stat(file)).size * 1000).toBeLessThan(8 * 1024 * 1024);
+        expect((await extractSite(file, out, LIMITS)).fileCount).toBe(2);
+        expect((await fs.stat(path.join(out, "zeros.bin"))).size).toBe(8 * 1024 * 1024);
+    });
+
+    it("still refuses what exceeds the expanded-size limit, however well it compresses", async () => {
+        const { file, out } = await archive([
+            { name: "index.html", content: "<!doctype html>" },
+            { name: "zeros.bin", content: "\0".repeat(8 * 1024 * 1024) },
+        ]);
+        await expect(
+            extractSite(file, out, { ...LIMITS, maxExpandedBytes: 4 * 1024 * 1024 }),
+        ).rejects.toThrow(/expands beyond/);
+    });
+
     it("applies the size limits it is given", async () => {
         const { file, out } = await archive(SITE);
         await expect(extractSite(file, out, { ...LIMITS, maxEntries: 1 })).rejects.toThrow(
