@@ -38,5 +38,27 @@ disabled database unit task skipped).
 
 Independent read-only security review found no blocking findings in the
 allowlist/refusal behavior. The reviewer inspected code but did not rerun checks.
-Live PostgreSQL TLS backup/restore, including Bun SQL/libpq compatibility, remains
-unverified. No production database or stored state was changed.
+
+### Disposable PostgreSQL TLS drill (2026-11-23)
+
+The built admin image backed up and verified a source database, restored into a
+fresh database, and verified no pending migrations and the restored fixture
+operator. No controller or worker was serving the fixture. The pinned
+PostgreSQL 17 server required TLS for TCP connections. The URL used
+`sslmode=verify-full` and `sslrootcert` pointing at a read-only CA file.
+
+- Bun SQL reported an encrypted session in `pg_stat_ssl` with only
+  `DATABASE_URL`; it rejected the wrong CA and an IP address missing from the
+  server certificate. A separate test with `NODE_EXTRA_CA_CERTS` pointing to the
+  correct CA still refused a wrong CA named in the URL.
+- libpq `pg_dump` independently accepted the trusted certificate and rejected
+  both the wrong CA and the wrong host. The real admin backup also refused
+  both negative cases.
+- PostgreSQL, helper containers, fixture images, private keys and data were
+  verified absent after cleanup.
+
+Evidence: `/tmp/opencode/lp-pg-tls-BuWn4ZUr/`. This verifies server authentication
+with the built Bun and PostgreSQL 17 tools. It does not test mutual TLS, CRLs,
+direct TLS negotiation, or every allowlisted option. It does not make the
+bundled production Compose PostgreSQL service a TLS listener. No production
+database or stored state was changed.

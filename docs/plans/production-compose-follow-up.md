@@ -144,8 +144,14 @@ Items the milestone 6 review deferred to this work:
 - **TLS and connection options (code prepared 2026-11-22).** `backup`/`restore` now
   preserve the allowlisted PostgreSQL 17 TLS options and refuse unknown, duplicate
   or empty query options. See [the exact contract](../backup.md#database-connection-options)
-  and [slice checks](production-pg-client-options.md). Live TLS verification and
-  Bun/libpq compatibility remain unproven; do not infer them from unit tests.
+  and [slice checks](production-pg-client-options.md). A later disposable drill
+  verified Bun SQL and libpq against a TLS-required PostgreSQL 17 server, including
+  wrong-CA and wrong-host refusal and a backup/restore with the built admin.
+- **Separate state backups (same-host drill passed 2026-11-23).** Offline
+  Dokku and router archives restored to fresh destinations, preserving the host
+  key, app inventory and active route. Both data paths and a new promotion
+  passed. See [scope and evidence](production-state-backup-rehearsal.md).
+  Host-loss recovery remains unverified.
 - **Base images by digest (done 2026-11-21 for the application, router, worker and Dokku images and Postgres).** Pin `oven/bun`, `docker` and the Dokku base by digest (a release
   checklist gate in `docs/releasing.md`).
 - **Operator install, end to end,** from published artifacts on a clean machine: only possible once

@@ -182,6 +182,20 @@ Copy the whole directory to private storage. Restore and its recovery steps are 
 [restore](restore.md); preserve its full remote-settling wait. The backup does **not**
 cover Dokku state (`DOKKU_DATA_DIR`) or the router state volume.
 
+For separate Dokku and router-state copies, stop and settle the writers, stop
+Dokku and the router, and take private offline archives that preserve numeric
+owners and permissions. Store their checksums separately and verify extraction
+into fresh destinations before any replacement. Treat the archives as secrets:
+Dokku state includes SSH host keys. Keep the source state offline while testing
+the replacement; never run two authorities for the same fixture.
+
+The [disposable state drill](plans/production-state-backup-rehearsal.md#result-2026-11-23)
+verified a same-host restore using the existing Docker apps network, images and
+containers. It does not recover those resources after host loss. Check served
+deployment identities as well as container health. Do not roll back router
+state under a live database; follow the [recovery procedure](restore.md) for
+generation and epoch handling.
+
 ## Images and pins
 
 Base images are pinned by tag **and** index digest; `check:compose` fails on an unpinned
@@ -254,7 +268,7 @@ for the remaining decisions and their verification criteria.
   (certificate-only, then CA via an old+new bundle), and so was recovery: backup,
   restore into a fresh database, managed router rotation, the full 25-minute gate,
   republish, `recovery-clear` and a resumed promotion. Not covered: upgrade and
-  rollback, live PostgreSQL TLS, public ingress, and the full S1–S14 matrix on this topology.
+  rollback, public ingress, and the full S1–S14 matrix on this topology.
 - **Dokku is not on the engine's default bridge.** Compose cannot attach a service to it (the engine
   rejects the aliases Compose sends), so app containers live on the `apps` network. Without the
   `initial-network` setting (kept in `DOKKU_DATA_DIR`) apps would land on the default bridge, where
@@ -274,7 +288,8 @@ for the remaining decisions and their verification criteria.
 - **Backup of Dokku state and the router state volume** is not covered by `backup`; a
   credential-reset command remains slice 3. PostgreSQL client TLS options now have an
   [explicit translation/refusal contract](backup.md#database-connection-options), unit-tested
-  without a live TLS database; Bun/libpq TLS compatibility still needs a drill.
+  and [verified with a disposable TLS-required PostgreSQL 17 server](plans/production-pg-client-options.md#disposable-postgresql-tls-drill-2026-11-23).
+  The bundled Compose PostgreSQL service is still private-network-only, not configured for TLS.
 - **No SMTP, no read-only root filesystems, no secrets manager.** The database URL (with
   its password) is a container environment variable visible to anyone who can inspect
   containers.

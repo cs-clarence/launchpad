@@ -85,4 +85,8 @@ does not inherit ambient `PG*` settings. These translations apply only to the
 PostgreSQL client tools: they do not add TLS features to Bun SQL, which also
 connects during backup/restore. Verify both clients against the intended database
 before relying on remote TLS; the unit checks do not establish live certificate
-verification or Bun/libpq compatibility.
+verification or Bun/libpq compatibility. A
+[disposable TLS drill](plans/production-pg-client-options.md#disposable-postgresql-tls-drill-2026-11-23)
+verified the built admin with PostgreSQL 17 using `sslmode=verify-full` and
+`sslrootcert` in `DATABASE_URL` alone. It does not cover all TLS options or
+replace verification against your own endpoint.
