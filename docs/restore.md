@@ -76,8 +76,16 @@ a repair. Use the operator checks in this runbook to complete recovery.
    are credentials too**: any invitation revoked after the backup is still open in the
    restored database until it expires. Revoke each one through an authorized member's session
    (`DELETE /api/v1/organizations/{orgId}/invitations/{invitationId}`) before management
-   access reopens, in addition to the keys and memberships below. When in doubt, use the
-   command above.
+   access reopens, in addition to the keys and memberships below.
+   **Sessions and passwords need an action too.** A session ended after the backup, and a
+   password replaced after it, are both restored as they were at the backup moment: the old
+   session is valid again until it expires (seven days) and the old password signs in again.
+   There is no per-session endpoint. For **every** user whose session was ended, or whose
+   password was changed (for example after a suspected compromise), run `reset-password`
+   with a new undisclosed password **before access reopens**: it replaces the password and
+   ends all of that user's sessions and keys. Keep the gateway deny in force for that identity
+   until it is verified safe. If you cannot enumerate those users with confidence, use the
+   command above, which ends every session, and reset the passwords you cannot vouch for.
 
     Then start the restored controller with normal ingress still closed. Use temporary
     access-gateway rules (or an equivalently restricted private maintenance path)
@@ -141,8 +149,9 @@ a repair. Use the operator checks in this runbook to complete recovery.
     management ingress closed until a reliable block exists.
     Revoked credentials are handled **before the controller starts**, as described at the top
     of this step. Account changes made since the backup (a removed user, a changed password)
-    are not reconstructed: review them against the external record, including credentials for
-    users removed since the backup. If membership/role changes cannot be
+    are **not** reconstructed. Each changed password, and each user removed since the backup,
+    needs the `reset-password` action described there (plus a gateway deny for a removed user)
+    before access reopens. If membership/role changes cannot be
     reconstructed, validate **every restored membership and role** with
     organization owners and remove any unverified access before reopening;
     otherwise keep ingress closed. Do not assume that stopped workers prevent
