@@ -4,6 +4,13 @@ For an instance operator restoring a **matched** database dump and archive
 directory. This procedure includes the steps that `restore` cannot perform
 or prove. `restore` never contacts Dokku. Back up the target database first.
 
+For loss of the whole host, the database/archive backup is only one part of the
+recovery set. Also recover Dokku and router state, the recorded container images,
+network settings and credentials. See the [clean-host rehearsal and its
+checks](plans/production-fresh-host-recovery.md). Dokku service health is not
+enough: verify the expected deployment identities on preview and alias routes
+before reopening writes.
+
 When management ingress is available, the dashboard can record an org admin's
 request for operator review of held work even if the model recovery gate is still
 set. This does not change the procedure below: keep ingress closed for the restore.

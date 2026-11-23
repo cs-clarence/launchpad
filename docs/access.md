@@ -4,6 +4,8 @@ For an instance operator deciding which network can reach management versus
 previews. Launchpad does not configure a tunnel, reverse proxy, DNS or TLS.
 Do not expose the controller directly to the public internet: the production
 ingress and threat review are [follow-up work](plans/production-compose-follow-up.md).
+Use the [disposable Caddy example](ingress-example.md) to check the ingress
+contract without choosing an installation's DNS, proxy or access gateway.
 
 1. Choose a private management origin, e.g.
    `https://control.example.internal`, and an apps domain on a **different
