@@ -1,13 +1,13 @@
 # Production Compose stack
 
 For an operator preparing a single-host Launchpad installation with
-[`docker-compose.yaml`](../docker-compose.yaml). **This is prepared
-configuration. It has been started once, by hand, on disposable infrastructure
-(2026-11-21, [evidence](plans/evidence/p7-compose-20261121/README.md)) with
-deployments on and aliases off; it has never been started as production.** Its
-shape is checked by `omni -i run check:compose`. The rehearsal fixed four
-configuration defects and found one blocker: **`LAUNCHPAD_ALIASES=on` does not work
-with this file** (see [What is NOT production-ready](#what-is-not-production-ready)).
+[`docker-compose.yaml`](../docker-compose.yaml). **This configuration has
+been rehearsed on disposable infrastructure, never started as production.**
+The [first run](plans/evidence/p7-compose-20261121/README.md) used deployments on
+and aliases off. [Later runs](plans/deployment-p7-acceptance.md#aliases-on-compose-rehearsal-2026-11-22)
+verified aliases, private router-control TLS, certificate rotation and recovery.
+Its shape is checked by `omni -i run check:compose`; see
+[What is NOT production-ready](#what-is-not-production-ready) for the remaining gates.
 Targeting `dokku` starts only that service, but Compose still requires the full
 environment to render the file. This is not an in-place migration from the old
 Dokku-only file: the project and default ports changed, and existing Dokku data
@@ -53,6 +53,10 @@ Check that no port is occupied before use; never stop whatever owns a port.
    target). Use absolute physical paths: Dokku's host-path settings are derived from
    `DOKKU_DATA_DIR` and must equal what the host engine sees. Only chown a directory
    you just created; never recursively on an existing user path.
+   The root of the new Dokku state bind must be traversable by Dokku's
+   unprivileged user inside the container. Use mode `0755` for that new mount
+   root, not `0700`: Dokku cannot create `/home/dokku/VHOST` otherwise. Keep
+   credentials outside this directory with their own restrictive modes.
 3. Copy `docker-compose.env.example` to `docker-compose.env` (ignored by
    Git) and replace every placeholder. Generate secrets through your secret workflow,
    never in chat or Git; use only URL-safe characters in `POSTGRES_PASSWORD` (it is
@@ -62,6 +66,9 @@ Check that no port is occupied before use; never stop whatever owns a port.
    requires the token file to be a regular file owned by 10001 with mode 0600; because
    these are bind mounts, set that ownership on the host files
    ([install](install.md), step 6).
+   Provision the router's certificate, private key and public CA bundle per
+   [router control certificates](#router-control-certificates). These files are
+   required to start the router even when aliases are off.
 5. Render without starting anything:
 
     ```sh
@@ -108,12 +115,57 @@ Each step is a deliberate operator action. `up` never starts `admin`.
 7. Leave `LAUNCHPAD_DEPLOYMENTS` off until private routing and a
    [backup/restore rehearsal](restore.md) have passed; then enable deployments in
    `docker-compose.env` and recreate the controller and worker **together** (they must
-   agree). **Keep `LAUNCHPAD_ALIASES=off`:** the worker
-   and controller then refuse to start, because `LAUNCHPAD_ALIAS_CONTROL_URL` must be HTTPS or
-   `http://127.0.0.1` and this file points it at `http://router:3081`.
+   agree). Keep `LAUNCHPAD_ALIASES=off` until you verify private `https://router:3081`
+   with your own certificates and intended routing, and complete the remaining
+   cutover checks for your installation. The disposable rehearsal used a fixture CA.
 
 Never use `compose down -v` or `docker volume rm` against this project without an exact,
 reviewed target list: the volumes hold the database, the archives and the router state.
+
+## Router control certificates
+
+For the operator owning issuance, renewal and rotation. Before first start,
+obtain an unexpired PEM server certificate with **DNS SAN `router`** and
+server-auth usage, signed by your private CA. `LAUNCHPAD_ROUTER_TLS_CERT_FILE`
+names its certificate chain (leaf then intermediates); `LAUNCHPAD_ROUTER_TLS_KEY_FILE`
+names its matching, unencrypted PEM key. The key must be a regular file, not a
+symlink, mode 0600 and owned by uid 10001. The certificate and the public issuing
+CA bundle (`LAUNCHPAD_ROUTER_TLS_CA_FILE`) must be readable by uid 10001.
+Use dedicated files and preserve private permissions; never recursively change
+ownership on existing user directories.
+
+Compose mounts server certificate/key only into the router. The public CA bundle
+goes only to worker, admin and the router's own health client, not controller,
+PostgreSQL, Dokku or app containers. The CA **private key stays offline/outside
+the stack**. Each control client trusts that bundle only for router-control
+requests, with hostname verification still enabled; there is no global TLS
+override or plaintext fallback. The router health client dials the configured
+listener locally and verifies its certificate for `router`. Neither control port 3081
+nor CA credentials are published. Data port 3080 remains separate HTTP.
+
+Before expiration, issue a new matching certificate/key for the same SAN.
+Quiesce alias mutation dispatch and wait for in-flight promotions to settle; if
+an outcome is uncertain, preserve its pins and use the reconciliation procedure
+instead of retrying. Replace only the approved certificate files, retain a
+private rollback copy of the old still-valid pair, then recreate the router
+(`docker compose ... up -d --force-recreate router`). Recreating is important:
+replacing a host file atomically does not update an existing file bind mount.
+Require healthy verified TLS and authenticated admin route readback before
+resuming dispatch. Certificate/key are loaded at router startup, not hot-reloaded.
+
+For a CA change, first deploy a bundle containing both old and new public CAs
+and recreate worker, admin invocations and router so all file binds see it.
+Then change the server certificate/key and recreate the router. Verify control
+readback before resuming. Only after all clients have switched, remove the old
+CA and recreate affected services again. Keep old/new materials private until
+rollback is no longer needed. Monitor expiration externally; there is no
+automatic issuer, renewal or certificate-expiry alarm.
+
+Certificate-only rotation must not run `router init` or `rotate`, delete routing
+state, change tokens/epochs, or release deployment pins. If verification fails,
+leave mutations quiescent and restore the still-valid certificate/trust
+configuration; never bypass verification or revert to HTTP on the bridge.
+Public app and management ingress TLS are separate and remain unconfigured.
 
 ## Backup
 
@@ -129,6 +181,20 @@ docker compose ... run --rm admin verify-backup /backups/launchpad-<date>
 Copy the whole directory to private storage. Restore and its recovery steps are in
 [restore](restore.md); preserve its full remote-settling wait. The backup does **not**
 cover Dokku state (`DOKKU_DATA_DIR`) or the router state volume.
+
+For separate Dokku and router-state copies, stop and settle the writers, stop
+Dokku and the router, and take private offline archives that preserve numeric
+owners and permissions. Store their checksums separately and verify extraction
+into fresh destinations before any replacement. Treat the archives as secrets:
+Dokku state includes SSH host keys. Keep the source state offline while testing
+the replacement; never run two authorities for the same fixture.
+
+The [disposable state drill](plans/production-state-backup-rehearsal.md#result-2026-11-23)
+verified a same-host restore using the existing Docker apps network, images and
+containers. It does not recover those resources after host loss. Check served
+deployment identities as well as container health. Do not roll back router
+state under a live database; follow the [recovery procedure](restore.md) for
+generation and epoch handling.
 
 ## Images and pins
 
@@ -192,12 +258,17 @@ for the remaining decisions and their verification criteria.
   worker SSH to Dokku, one fixture deploy/probe/delete, backup, fresh-database restore with
   `check-restore`, and recreate-keeps-artifacts worked
   ([evidence](plans/evidence/p7-compose-20261121/README.md)). This is not a production claim.
-- **Alias routing is blocked.** `LAUNCHPAD_ALIASES=on` makes the worker and controller exit
-  (`LAUNCHPAD_ALIAS_CONTROL_URL must be https, or http to 127.0.0.1 or [::1]`) because the router's
-  control plane is plain HTTP on a private network. It needs a product/topology decision (TLS on the
-  control plane, or a loopback path). The router's path after `init` was not exercised in this
-  stack; the harness-based [acceptance run](plans/deployment-p7-acceptance.md) covers the router
-  separately.
+- **Alias routing in Compose was rehearsed on disposable infrastructure.**
+  The plaintext-control blocker is fixed: native HTTPS, per-client CA
+  trust and read-only mounts. One aliases-on instance of this file started healthy,
+  verified the CA over Compose DNS (untrusted, wrong-name and plaintext requests
+  refused, port 3081 unpublished), then bound, promoted, reconciled a held promotion,
+  withdrew and deleted, with exact-scope cleanup ([record](plans/deployment-p7-acceptance.md#aliases-on-compose-rehearsal-2026-11-22)).
+  The [rotation procedure](#router-control-certificates) was also rehearsed there
+  (certificate-only, then CA via an old+new bundle), and so was recovery: backup,
+  restore into a fresh database, managed router rotation, the full 25-minute gate,
+  republish, `recovery-clear` and a resumed promotion. Not covered: upgrade and
+  rollback, public ingress, and the full S1–S14 matrix on this topology.
 - **Dokku is not on the engine's default bridge.** Compose cannot attach a service to it (the engine
   rejects the aliases Compose sends), so app containers live on the `apps` network. Without the
   `initial-network` setting (kept in `DOKKU_DATA_DIR`) apps would land on the default bridge, where
@@ -206,16 +277,19 @@ for the remaining decisions and their verification criteria.
   `authority-lost` immediately, and the deployment became `reconciliation-needed` after the lease
   expired (about 170 s); the 25-minute grace did not make it finish. Stop the worker only when
   idle, or expect an operator `deployment-reconcile`.
-- **TLS, ingress and domains are undecided.** Nothing terminates HTTPS; every host
+- **Ingress TLS and domains are undecided.** Private router-control TLS does not
+  terminate app or management HTTPS; every host
   binding is loopback. The management origin must be HTTPS and the apps domain a
   separate registrable domain before deployments can be enabled for real users.
 - **One host, one engine.** The worker and Dokku share the host's Docker engine.
   Access to its socket is root-equivalent on that host; the stack gives no isolation
   from hostile uploaded sites beyond Dokku's own.
 - **Resource limits come from one small rehearsal** (above).
-- **Backup of Dokku state and the router state volume** is not covered by `backup`; the
-  TLS-option pass-through to the PostgreSQL clients and a credential-reset command remain
-  slice 3. A restore followed by starting a controller and `recovery-clear` was not run here.
+- **Backup of Dokku state and the router state volume** is not covered by `backup`; a
+  credential-reset command remains slice 3. PostgreSQL client TLS options now have an
+  [explicit translation/refusal contract](backup.md#database-connection-options), unit-tested
+  and [verified with a disposable TLS-required PostgreSQL 17 server](plans/production-pg-client-options.md#disposable-postgresql-tls-drill-2026-11-23).
+  The bundled Compose PostgreSQL service is still private-network-only, not configured for TLS.
 - **No SMTP, no read-only root filesystems, no secrets manager.** The database URL (with
   its password) is a container environment variable visible to anyone who can inspect
   containers.

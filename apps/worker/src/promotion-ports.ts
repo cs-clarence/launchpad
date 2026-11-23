@@ -15,6 +15,7 @@ export interface PromotionPortsDeps {
     settings: Pick<
         AppRoutingConfig,
         | "aliasControlUrl"
+        | "aliasControlCaFile"
         | "aliasProbeUrl"
         | "aliasInstanceId"
         | "aliasControlTokenFile"
@@ -40,6 +41,7 @@ export function createPromotionPorts({
             };
             const client = createRouterControlClient({
                 baseUrl: base,
+                caFile: settings.aliasControlCaFile,
                 ...(controlTimeoutMs === undefined ? {} : { timeoutMs: controlTimeoutMs }),
                 credentials: {
                     ...authority,

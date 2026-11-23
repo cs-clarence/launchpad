@@ -118,14 +118,70 @@ Evidence and exact-name cleanup are in `/tmp/opencode/lp-accept-wqaOme/`
 remained; only the two pre-existing connectors were present. This exercised
 the disposable topology, not production Compose or management ingress.
 
+## Six-round rerun after harness review (2026-11-22)
+
+The disposable full-stack harness passed S1–S14 with six race rounds and real
+lease expiry. Promotion and deletion each won three races; neither was accepted
+together, and the deletion-wins cases exercised the Dokku-absence assertion.
+S12 again recorded a 409 for the delayed router write, an unchanged database
+snapshot, and an `authority-lost` worker exit, not an attempted stale SQL write.
+
+The Omni wrapper timed out, but its child continued through all scenarios and
+verified cleanup. This result comes from `evidence.json`, `resources.json` and
+`cleanup.log` under `/tmp/opencode/lp-accept-L1nnvp/`, not an Omni exit status.
+No recorded fixture resources remained; only the two pre-existing connectors
+were running. This rerun did not repeat the separate public ingress or restore
+modes and did not exercise production Compose.
+
+## Aliases-on Compose rehearsal (2026-11-22)
+
+Authorized by "run aliases on compose": one disposable instance of the current
+`docker-compose.yaml` with deployments and aliases on, a fixture CA, isolated
+state and loopback-only ports. Driven by a throwaway script in
+`/tmp/opencode/lp-compose-tls-PKA5ipG1/` (`resources.json`, `evidence.json`,
+`cleanup.log`); no reusable task was added. It passed: healthy start over HTTPS
+control, CA verification and refusal of untrusted/wrong-name/plaintext requests,
+two immutable deployments, bind and promotion with matching identity headers,
+admin `promotion-reconcile` above an injected router generation (4 → 5), withdrawal
+(404 and tombstone), deletion, and verified removal of every fixture resource.
+The two connectors were not touched.
+
+Three earlier attempts stopped at Dokku health: the fixture's new Dokku state
+directory was mode 0700 and Dokku could not create `/home/dokku/VHOST`. Production
+Compose docs now require 0755 on that new mount root.
+
+A second run (`/tmp/opencode/lp-compose-tls-RWhHYbI3/`) added a rotation phase after
+the first promotion and passed everything above again. It replaced the router
+certificate under the same CA, then rotated the CA through an old+new bundle and a
+new-only bundle, recreating the router (and for the CA steps the worker) each time.
+Fingerprints changed each step, the alias kept serving B, routing state, token and
+epoch were unchanged (the same credentials authenticated throughout), and a client
+trusting only the old CA was refused. The reconcile, withdraw and delete steps then
+ran on the rotated certificates, and cleanup was verified.
+
+A later run (`/tmp/opencode/lp-compose-tls-HOBz7z4N/`, started detached after an
+earlier attempt was killed by SIGTERM during the wait) added the recovery drill and
+passed end to end on the Compose stack: `backup` and `verify-backup` with the alias at A
+and writers quiesced, promotion to B, writers stopped and a 301-second drain, `restore`
+into a fresh database with `migrate --status` and `check-restore`, the restored
+controller refusing a promotion while the router still served B, managed router
+rotation against the restored database (old credentials 401), counters raised, early
+republish and early `recovery-clear` refused, the full wait (1,501 s from the recorded
+restore start), republish of A, `recovery-clear`, and a resumed promotion to B at a
+higher router generation (3 to 4). The reconcile, withdraw and delete steps then ran
+on the restored stack and cleanup was verified. Earlier attempts failed on fixture
+bugs only (an override that replaced the images; a credentials directory the
+unprivileged router could not traverse). Not rehearsed: upgrade or rollback with
+aliases, live PostgreSQL TLS backup/restore, and Dokku-state backup.
+
 ## Still open
 
 - Scheduled GC waiting for the later deadline (automatic expiry is not built).
 - The held-after-authentication router write (covered in `packages/alias-router`).
-- CI and verification of the review follow-ups. Independent review identified
-  cancellation, Dokku settlement, ingress 404 provenance and separate stale
-  token/epoch checks; the harness now checks each explicitly. The results above
-  predate those review changes.
+- CI and verification of the remaining mode-specific review follow-ups:
+  signal-driven cancellation, public ingress 404 provenance and the separate
+  stale-token/stale-epoch checks in the restore drill. The full-stack rerun
+  verified normal completion and Dokku-settled cleanup, not those modes.
 
 ## Repeat the restore drill against a newer router
 

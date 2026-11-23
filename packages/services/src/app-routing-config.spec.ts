@@ -18,6 +18,24 @@ const valid = {
 };
 
 describe("parseAppRoutingConfig", () => {
+    it("accepts a control-scoped CA only for HTTPS and validates its path", () => {
+        const env = { ...valid, LAUNCHPAD_ALIAS_CONTROL_CA_FILE: "/tls/control-ca.pem" };
+        const config = parseAppRoutingConfig(env);
+        expect(config.enabled && config.aliasControlCaFile).toBe("/tls/control-ca.pem");
+        expect(() =>
+            parseAppRoutingConfig({
+                ...env,
+                LAUNCHPAD_ALIAS_CONTROL_URL: "http://127.0.0.1:3081",
+            }),
+        ).toThrow("https");
+        expect(() =>
+            parseAppRoutingConfig({
+                ...env,
+                LAUNCHPAD_ALIAS_CONTROL_CA_FILE: "/tls/../ca.pem",
+            }),
+        ).toThrow("absolute");
+    });
+
     it("is off, and reads nothing else, while the apps domain is unset", () => {
         expect(parseAppRoutingConfig({})).toEqual({ enabled: false });
         expect(parseAppRoutingConfig({ LAUNCHPAD_APPS_DOMAIN: "" })).toEqual({ enabled: false });

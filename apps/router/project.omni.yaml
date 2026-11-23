@@ -19,6 +19,14 @@ tasks:
   test:integration:
     enabled: true
 
+  test:control:tls:
+    description: Verified control TLS over loopback (openssl; no PostgreSQL or Docker)
+    exec: bun --bun vitest run --config vitest.config.integration.ts src/__tests__/control-tls.spec.ts
+    dependencies:
+      - ^build
+    cache:
+      enabled: false
+
   test:
     enabled: true
 

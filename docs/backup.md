@@ -41,3 +41,53 @@ Dokku state, the alias router database or any site datastore; back those up sepa
 If an archive is missing or has the wrong digest, repair
 the source first; a partial database dump is not a working backup. See
 [restore](restore.md) to rehearse recovery.
+
+## Database connection options
+
+For both `backup` and `restore`, `DATABASE_URL` must use `postgres://` or
+`postgresql://`. Host, port, user, password and database come from the URL;
+the optional `host` query parameter overrides the host (including a Unix socket
+directory). Query values are percent-decoded exactly once; `+` is literal
+and a space is `%20`.
+
+The PostgreSQL 17 client tools receive these query options through libpq
+environment variables, not command-line arguments:
+
+| Query option               | Client environment variable |
+| -------------------------- | --------------------------- |
+| `host`                     | `PGHOST`                    |
+| `sslmode`                  | `PGSSLMODE`                 |
+| `sslrootcert`              | `PGSSLROOTCERT`             |
+| `sslcert`                  | `PGSSLCERT`                 |
+| `sslkey`                   | `PGSSLKEY`                  |
+| `sslcrl`                   | `PGSSLCRL`                  |
+| `sslcrldir`                | `PGSSLCRLDIR`               |
+| `sslsni`                   | `PGSSLSNI`                  |
+| `sslcompression`           | `PGSSLCOMPRESSION`          |
+| `sslcertmode`              | `PGSSLCERTMODE`             |
+| `sslnegotiation`           | `PGSSLNEGOTIATION`          |
+| `ssl_min_protocol_version` | `PGSSLMINPROTOCOLVERSION`   |
+| `ssl_max_protocol_version` | `PGSSLMAXPROTOCOLVERSION`   |
+| `channel_binding`          | `PGCHANNELBINDING`          |
+| `gssencmode`               | `PGGSSENCMODE`              |
+| `connect_timeout`          | `PGCONNECT_TIMEOUT`         |
+
+Omitted options retain libpq's defaults; values follow
+[PostgreSQL 17's connection parameter reference](https://www.postgresql.org/docs/17/libpq-connect.html#LIBPQ-PARAMKEYWORDS).
+Unknown, duplicate, empty or NUL-containing query options are refused, rather
+than silently ignored. URL fragments are also refused. In particular,
+`sslpassword` has no libpq environment equivalent and is unsupported; service
+files and query overrides of user/password/port/database are unsupported too.
+Connection option errors do not print the URL or option contents.
+
+Certificate paths must exist and be readable inside the admin process/container;
+mount certificate files read-only when using Compose. The subprocess environment
+does not inherit ambient `PG*` settings. These translations apply only to the
+PostgreSQL client tools: they do not add TLS features to Bun SQL, which also
+connects during backup/restore. Verify both clients against the intended database
+before relying on remote TLS; the unit checks do not establish live certificate
+verification or Bun/libpq compatibility. A
+[disposable TLS drill](plans/production-pg-client-options.md#disposable-postgresql-tls-drill-2026-11-23)
+verified the built admin with PostgreSQL 17 using `sslmode=verify-full` and
+`sslrootcert` in `DATABASE_URL` alone. It does not cover all TLS options or
+replace verification against your own endpoint.

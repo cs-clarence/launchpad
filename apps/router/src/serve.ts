@@ -6,6 +6,8 @@ import {
     type RouterHostConfig,
 } from "@launchpad-kit/alias-router";
 import { acquireProcessLock } from "./lock";
+import { readFileSync } from "node:fs";
+import { readOwnerFile } from "./secret";
 
 // Limits Bun.serve lets us set. It exposes neither a header-size limit, a header-read timeout nor a
 // connection cap, so those stay Bun's defaults; an operator's firewall or front proxy covers them
@@ -33,6 +35,7 @@ export function startRouter(
         | "data"
         | "upstreamOrigin"
         | "upstreamCaFile"
+        | "controlTls"
     >,
 ): RunningRouter {
     const lock = acquireProcessLock(config.stateFile);
@@ -60,6 +63,14 @@ export function startRouter(
         const data = createDataHandler(store, { upstream });
         const fixed = () => new Response("Internal error\n", { status: 500 });
         const controlServer = Bun.serve({
+            ...(config.controlTls
+                ? {
+                      tls: {
+                          cert: readFileSync(config.controlTls.certFile),
+                          key: readOwnerFile(config.controlTls.keyFile, 64 * 1024),
+                      },
+                  }
+                : {}),
             hostname: config.control.host,
             port: config.control.port,
             idleTimeout: CONTROL_IDLE_SECONDS,

@@ -41,6 +41,14 @@ tasks:
     # The renderer gets a minimal environment, so .env.local never leaks into it.
     exec: sh -c 'cd "$(git rev-parse --show-toplevel)" && bun tooling/compose-production.ts'
 
+  check:compose:rehearsal:
+    description: Render and check the disposable aliases-on fixture model (Docker CLI; starts nothing)
+    exec: sh -c 'cd "$(git rev-parse --show-toplevel)" && bun tooling/experiments/compose/preflight.ts'
+
+  test:compose:rehearsal:
+    description: Opt-in disposable aliases-on Compose baseline (local Docker, host OpenSSL, ssh-keygen and tar)
+    exec: sh -c 'cd "$(git rev-parse --show-toplevel)" && bun tooling/experiments/compose/run.ts'
+
   check:versions:
     description: Every shipped package has the same version and is watched by cog.toml
     exec: sh -c 'cd "$(git rev-parse --show-toplevel)" && bun tooling/versions.ts check'

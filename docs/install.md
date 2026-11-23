@@ -90,6 +90,10 @@ to deploy to an immutable preview URL and separately choose whether to promote.
    `LAUNCHPAD_ALIAS_CONTROL_TOKEN_FILE` (mode 0600, owned by the worker's user) and
    `LAUNCHPAD_ALIAS_ROUTER_EPOCH_FILE`. The token file must be a regular file (not a symlink) owned by the worker's user with no group or
    other access; a Kubernetes or Docker secret mounted as a symlink or root-owned 0444 is refused.
+   With a private issuing CA, set `LAUNCHPAD_ALIAS_CONTROL_CA_FILE` to a read-only
+   PEM CA bundle in both worker and admin environments. It requires an HTTPS
+   control URL and affects only router-control requests, not app probes or other
+   HTTPS traffic. The server certificate must match the control URL's hostname.
    The worker re-reads both files for each promotion, so
    after an offline router rotation update them before resuming workers (see the
    [router guide](../apps/router/README.md)). A promotion is held, never retried, when the router's

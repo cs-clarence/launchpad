@@ -50,6 +50,9 @@ describe("docker-compose.yaml", () => {
             "LAUNCHPAD_DOKKU_KNOWN_HOSTS_FILE",
             "LAUNCHPAD_DOKKU_SSH_KEY_FILE",
             "LAUNCHPAD_ROUTER_EPOCH_FILE",
+            "LAUNCHPAD_ROUTER_TLS_CA_FILE",
+            "LAUNCHPAD_ROUTER_TLS_CERT_FILE",
+            "LAUNCHPAD_ROUTER_TLS_KEY_FILE",
             "LAUNCHPAD_ROUTER_TOKEN_FILE",
             "POSTGRES_PASSWORD",
         ]);
@@ -94,6 +97,33 @@ describe("docker-compose.yaml", () => {
         expect(mutate((m) => m.services.router.ports.push("127.0.0.1:3081:3081"))).toContain(
             "control port",
         );
+        expect(
+            mutate(
+                (m) =>
+                    (m.services.worker.environment.LAUNCHPAD_ALIAS_CONTROL_URL =
+                        "http://router:3081"),
+            ),
+        ).toContain("private HTTPS");
+        expect(
+            mutate(
+                (m) => delete m.services.router.environment.LAUNCHPAD_ROUTER_CONTROL_TLS_KEY_FILE,
+            ),
+        ).toContain("TLS_KEY_FILE");
+        expect(
+            mutate((m) =>
+                m.services.worker.volumes.push(
+                    m.services.router.volumes.find((v: any) => v.target === "/tls/server.key"),
+                ),
+            ),
+        ).toContain("must not mount the router server");
+        expect(
+            mutate(
+                (m) =>
+                    (m.services.admin.volumes = m.services.admin.volumes.filter(
+                        (v: any) => v.target !== "/tls/control-ca.pem",
+                    )),
+            ),
+        ).toContain("public router-control CA");
         expect(mutate((m) => (m.services.worker.stop_grace_period = "10m"))).toContain(
             "stop_grace_period",
         );
