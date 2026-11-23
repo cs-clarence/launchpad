@@ -54,7 +54,7 @@ export function fixtureDocker(plan: Fixture, files?: { env: string; override: st
         run: (args: string[], allowFailure = false, input?: string) =>
             run(args, input, false, allowFailure),
         read: (
-            args: ["ps" | "inspect" | "top", ...string[]],
+            args: ["ps" | "inspect" | "top" | "stats", ...string[]],
             timeoutMs: number,
             signal?: AbortSignal,
         ) => run(args, undefined, false, args[0] === "top", { timeoutMs, signal }),

@@ -4,6 +4,20 @@ import type { Fixture } from "./docker";
 type RecordStep = (name: string, observations?: object) => Promise<void>;
 type Wait = <T>(label: string, read: () => Promise<T | false>, seconds?: number) => Promise<T>;
 
+export interface ScenarioContext {
+    project: string;
+    api: <T>(
+        method: string,
+        route: string,
+        expected: number[],
+        data?: object | ArrayBuffer,
+        keyed?: boolean,
+    ) => Promise<T>;
+    wait: Wait;
+    record: RecordStep;
+    inventory: () => Promise<void>;
+}
+
 export async function aliasScenario(options: {
     plan: Fixture;
     operatorPassword: string;
@@ -13,6 +27,8 @@ export async function aliasScenario(options: {
     record: RecordStep;
     wait: Wait;
     inventory: () => Promise<void>;
+    // Optional follow-up on the same authenticated session, after the alias flow.
+    extra?: (context: ScenarioContext) => Promise<void>;
 }) {
     const { plan, signal, wait, record } = options;
     const origin = plan.env.LAUNCHPAD_BASE_URL!;
@@ -213,4 +229,5 @@ export async function aliasScenario(options: {
         );
     }
     await record("Both deployments deleted through the API");
+    await options.extra?.({ project, api, wait, record, inventory: options.inventory });
 }

@@ -132,7 +132,10 @@ It uses the local Docker socket (root-equivalent), OpenSSL, `ssh-keygen` and
 `tar`, and runs only on a trusted host. It binds loopback ports, records an
 inventory under `/tmp/opencode/lp-compose-*`, and stops writers and retains
 the fixture if it cannot verify deletion and Dokku settlement. It never
-force-destroys Dokku apps. It is not in CI or the default tests. See the
+force-destroys Dokku apps. It is not in CI or the default tests. Two opt-in modes extend the
+baseline: `LAUNCHPAD_COMPOSE_READ_ONLY=1` runs the application services with read-only root
+filesystems, and `LAUNCHPAD_COMPOSE_CAPACITY=1` adds timed uploads and deploys at the default
+limits, concurrent deploys and a backup, with sampled peak resource use (about 16 minutes). See the
 [rehearsal plan](docs/plans/production-compose-rehearsal.md) for limitations.
 
 For the separate end-to-end restore drill, also set

@@ -124,6 +124,40 @@ describe("docker-compose.yaml", () => {
                     )),
             ),
         ).toContain("public router-control CA");
+        expect(
+            mutate(
+                (m) => (m.services.worker.environment.LAUNCHPAD_BASE_IMAGE = "nginx:1.27-alpine"),
+            ),
+        ).toContain("app base image must be a tag pinned");
+        expect(mutate((m) => delete m.services.controller.read_only)).toContain(
+            "controller must have a read-only root filesystem",
+        );
+        expect(mutate((m) => (m.services.worker.tmpfs = []))).toContain(
+            "worker must mount a bounded tmpfs",
+        );
+        expect(mutate((m) => (m.services.worker.tmpfs = ["/tmp"]))).toContain(
+            "worker must mount a bounded tmpfs",
+        );
+        expect(
+            mutate((m) => {
+                m.services.worker.tmpfs = [];
+                m.services.worker.volumes.push({ type: "tmpfs", target: "/tmp" });
+            }),
+        ).toContain("worker must mount a bounded tmpfs");
+        // A sized long-form tmpfs under `volumes` is equivalent and must pass.
+        expect(
+            mutate((m) => {
+                m.services.worker.tmpfs = [];
+                m.services.worker.volumes.push({
+                    type: "tmpfs",
+                    target: "/tmp",
+                    tmpfs: { size: 67108864 },
+                });
+            }),
+        ).not.toContain("worker must mount a bounded tmpfs");
+        expect(mutate((m) => (m.services.postgres.read_only = true))).toContain(
+            "postgres was not verified",
+        );
         expect(mutate((m) => (m.services.worker.stop_grace_period = "10m"))).toContain(
             "stop_grace_period",
         );

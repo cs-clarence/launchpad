@@ -7,6 +7,7 @@ import { fixtureDocker } from "./docker";
 import { planFixture } from "./fixture";
 import { fixtureDeploymentGone, readInventory, type Deployment } from "./inventory";
 import { aliasScenario } from "./scenario";
+import { capacityScenario, parseStats, peaks, type Sample } from "./capacity";
 import { controlProbePassed, controlProbes, safeProbeOutcome } from "./tls-probe";
 
 if (Bun.env.LAUNCHPAD_COMPOSE_REHEARSAL !== "1")
@@ -42,6 +43,14 @@ async function candidatePorts() {
 }
 
 const plan = planFixture(random(12), await candidatePorts(), socket.gid);
+// Opt-in hardening experiment: a read-only root filesystem with a small /tmp for the
+// application services. Everything else about the baseline is unchanged.
+const readOnly = Bun.env.LAUNCHPAD_COMPOSE_READ_ONLY === "1";
+if (readOnly) {
+    const services = plan.override.services as Record<string, Record<string, unknown>>;
+    for (const name of ["controller", "worker", "router", "admin"])
+        services[name] = { ...services[name], read_only: true, tmpfs: ["/tmp:size=64m"] };
+}
 const { version } = await Bun.file(new URL("../../../package.json", import.meta.url)).json();
 if (typeof version !== "string" || !/^[0-9A-Za-z.+-]+$/.test(version))
     throw new Error("Cannot determine the repository build version.");
@@ -72,17 +81,35 @@ const inventory = {
     source: null as { revision: string; dirty: boolean; version: string } | null,
     networks: Object.values(plan.networks),
     volumes: Object.values(plan.volumes),
-    helpers: ["ownership", "cleanup", "init", "migrate", "status", "operator", "owner"].map(
-        (s) => `${project}-${s}`,
-    ),
+    helpers: [
+        "ownership",
+        "cleanup",
+        "init",
+        "migrate",
+        "status",
+        "operator",
+        "owner",
+        "capback",
+        "capverify",
+    ].map((s) => `${project}-${s}`),
     deployments: [] as Deployment[],
 };
 const evidence: object[] = [];
 const privateWrite = (name: string, value: string) => writeFile(file(name), value, { mode: 0o600 });
-async function persist() {
+// One writer at a time: concurrent callers (parallel deployments) would otherwise share the
+// temporary file and one rename would find it already consumed. A failure is reported to its own
+// caller without blocking later writes.
+let queue: Promise<unknown> = Promise.resolve();
+function serial<T>(work: () => Promise<T>): Promise<T> {
+    const next = queue.then(work, work);
+    queue = next.catch(() => undefined);
+    return next;
+}
+async function writeInventory() {
     await privateWrite("resources.json.next", JSON.stringify(inventory, null, 2));
     await rename(file("resources.json.next"), file("resources.json"));
 }
+const persist = () => serial(writeInventory);
 async function record(name: string, observations?: object) {
     evidence.push({ name, observations });
     await privateWrite("evidence.json", JSON.stringify(evidence, null, 2));
@@ -221,7 +248,9 @@ async function health(service: string) {
         service === "dokku" ? 660 : 420,
     );
 }
-async function readDeployments() {
+// Reads and records are serialized together, so an older snapshot can never overwrite a newer one.
+const readDeployments = () => serial(readDeploymentsNow);
+async function readDeploymentsNow() {
     const { out } = await docker.compose([
         "exec",
         "-T",
@@ -239,7 +268,7 @@ async function readDeployments() {
         "select id, app_name, desired_state from deployment",
     ]);
     inventory.deployments = readInventory(out, inventory.deployments);
-    await persist();
+    await writeInventory();
 }
 const changeCompose = (args: string[], input?: string) => {
     abort.signal.throwIfAborted();
@@ -288,7 +317,80 @@ const fixedPaths = [
     "override.json",
     "index.html",
     "site.tar.gz",
+    "capacity",
 ];
+const capacity = Bun.env.LAUNCHPAD_COMPOSE_CAPACITY === "1";
+let sampler: Sample[] | undefined;
+async function sampleOnce() {
+    const ids = (
+        await docker.run([
+            "ps",
+            "-q",
+            "--no-trunc",
+            "--filter",
+            `label=com.docker.compose.project=${project}`,
+        ])
+    ).out
+        .split("\n")
+        .filter(Boolean);
+    if (!ids.length) return [];
+    const { out } = await docker.read(
+        ["stats", "--no-stream", "--format", "{{json .}}", ...ids],
+        30_000,
+        abort.signal,
+    );
+    return parseStats(out);
+}
+async function measure<T>(label: string, run: () => Promise<T>) {
+    sampler = [];
+    const samples = sampler;
+    let running = true;
+    const loop = (async () => {
+        while (running) {
+            try {
+                samples.push(...(await sampleOnce()));
+            } catch {
+                // A missed sample never decides a result; the scenario itself does.
+            }
+        }
+    })();
+    const started = performance.now();
+    let seconds = 0;
+    try {
+        const value = await run();
+        seconds = Math.round((performance.now() - started) / 100) / 10;
+        // Duration is the work's; peaks include the sample that was in flight when it ended.
+        running = false;
+        await loop;
+        return { value, seconds, peaks: peaks(samples) };
+    } finally {
+        running = false;
+        await loop;
+        void label;
+    }
+}
+async function makeArchives() {
+    const dir = file("capacity");
+    await mkdir(dir, { mode: 0o700 });
+    const build = async (name: string, script: string) => {
+        await mkdir(`${dir}/${name}`, { mode: 0o700 });
+        await command([
+            "sh",
+            "-ec",
+            `cd "${dir}/${name}" && printf '<!doctype html><title>${name}</title>\\n' > index.html && ${script} && tar -czf "${dir}/${name}.tar.gz" -C "${dir}/${name}" .`,
+        ]);
+        return Bun.file(`${dir}/${name}.tar.gz`).arrayBuffer();
+    };
+    return {
+        small: await Bun.file(file("site.tar.gz")).arrayBuffer(),
+        "near-limit": await build("near", "head -c 44M /dev/urandom > blob.bin"),
+        "expanded-limit": await build("expanded", "head -c 190M /dev/zero > zeros.bin"),
+        "many-files": await build(
+            "files",
+            "i=0; while [ $i -lt 4500 ]; do printf x > f$i.txt; i=$((i+1)); done",
+        ),
+    };
+}
 let ready = false;
 let broughtUp = false;
 let activeWriters = false;
@@ -492,7 +594,7 @@ try {
     await changeCompose(["up", "-d", "--no-build", "--pull", "never"]);
     await verifyNamespace();
     for (const name of ["controller", "router", "worker"]) await health(name);
-    await record("Aliases-on services healthy after explicit operator bootstrap");
+    await record("Aliases-on services healthy after explicit operator bootstrap", { readOnly });
 
     phase = "TLS verification";
     for (const [mode, url] of controlProbes) {
@@ -531,6 +633,26 @@ try {
         wait,
         record,
         inventory: readDeployments,
+        extra: capacity
+            ? async (context) => {
+                  phase = "capacity measurements";
+                  await capacityScenario({
+                      plan,
+                      context,
+                      archives: await makeArchives(),
+                      measure,
+                      backup: async () => {
+                          const started = performance.now();
+                          await composeRun("capback", "admin", ["backup", "/backups/capacity"]);
+                          await composeRun("capverify", "admin", [
+                              "verify-backup",
+                              "/backups/capacity",
+                          ]);
+                          return Math.round((performance.now() - started) / 100) / 10;
+                      },
+                  });
+              }
+            : undefined,
     });
 } catch {
     failed = true;

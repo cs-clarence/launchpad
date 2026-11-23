@@ -67,6 +67,12 @@ x-remote-settings: &remote-settings
 x-hardening: &hardening
   cap_drop: [ALL]
   security_opt: ["no-new-privileges:true"]
+  # Verified 2026-11-23 for the four Launchpad services (docs/production-compose.md, "Hardening"):
+  # state lives in volumes, and /tmp holds only the worker's health marker. The worker's build
+  # scratch is under /data, not /tmp. Dokku and PostgreSQL write to their own trees and are not
+  # read-only here.
+  read_only: true
+  tmpfs: ["/tmp:size=64m"]
 
 x-dokku-key: &dokku-key
   type: bind
@@ -183,7 +189,7 @@ services:
     # name and hostname identify it in logs.
     hostname: launchpad-worker
     restart: unless-stopped
-    mem_limit: 512m
+    mem_limit: 1g
     cpus: 1.0
     pids_limit: 256
     <<: *hardening
@@ -202,7 +208,7 @@ services:
     environment:
       <<: [*shared-settings, *remote-settings]
       DATABASE_URL: *database-url
-      LAUNCHPAD_BASE_IMAGE: ${LAUNCHPAD_BASE_IMAGE:-nginx:1.27-alpine}
+      LAUNCHPAD_BASE_IMAGE: ${LAUNCHPAD_BASE_IMAGE:-nginx:1.27-alpine@sha256:65645c7bb6a0661892a8b03b89d0743208a18dd2f3f17a54ef4b76fb8e2f2a10}
       LAUNCHPAD_WORKER_HEALTH_FILE: /tmp/launchpad-worker-health
     volumes:
       - launchpad-data:/data

@@ -19,6 +19,12 @@ export async function extractSite(
         file: archivePath,
         cwd: destination,
         strict: true,
+        // tar's own 1000:1 decompression-ratio guard is redundant here and made upload and build
+        // disagree: validateArchive above already bounds the expanded size (and entry count), so
+        // nothing can expand past the configured limit. Without this, a valid, highly compressible
+        // site (a few MiB of zeros compresses past 1000:1) was accepted at upload and then failed
+        // at build with an opaque error.
+        maxDecompressionRatio: Number.POSITIVE_INFINITY,
         preservePaths: false,
         noChmod: true,
         // Ownership comes from this process; modes are set by the filter and then

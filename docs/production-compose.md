@@ -167,6 +167,24 @@ leave mutations quiescent and restore the still-valid certificate/trust
 configuration; never bypass verification or revert to HTTP on the bridge.
 Public app and management ingress TLS are separate and remain unconfigured.
 
+## Stopping and restarting the worker
+
+Stop the worker only when no deployment, promotion or deletion is in flight. Check with the
+authenticated API (`GET /api/v1/status` and the deployment list) before `docker compose stop worker`.
+
+If it is stopped mid-run, the process ends that run as `authority-lost` immediately (the 25-minute
+`stop_grace_period` only bounds how long Docker waits before killing the container; the worker does
+not use it to finish the work). The Dokku or Docker step it dispatched may still be running on the
+host. The deployment stays in its step until its lease expires (about 170 s in the 2026-11-21
+rehearsal) and is then held as `reconciliation-needed`. Recovery is an operator action: wait for the
+host to settle, then run `deployment-reconcile` (see [deployments](deployments.md)); do not retry by
+hand. Restarting the worker does not resume a held operation by itself.
+
+Do not shorten the **restore** waits on the strength of this: after a restore the 25-minute minimum
+in [restore](restore.md) is a conservative bound on every dispatched call, not a statement that
+workers drain. Whether to implement a real drain on shutdown is an open product decision; until it
+is made, this stop-and-reconcile behavior is the supported one.
+
 ## Backup
 
 Matched database and archive backups use the admin service, which carries PostgreSQL 17
@@ -219,13 +237,22 @@ To change a pin, change the tag and its digest together (the Dockerfile `ARG`s; 
 `BUN_VERSION`, `DOCKER_CLI_VERSION` or `DOKKU_VERSION` makes the digest mismatch and the build fail
 closed), review the upstream diff, and re-run `check:compose`.
 
-The app base (`LAUNCHPAD_BASE_IMAGE`) defaults to the tag `nginx:1.27-alpine`.
-For repeatable builds, set it to a trusted image pinned by SHA-256 digest. Use
-`docker buildx imagetools inspect nginx:1.27-alpine` to obtain and verify the
-manifest digest before adding it to the reference. The worker accepts digest and
-tag-plus-digest references and passes the reference to Docker unchanged. The
-disposable Compose rehearsal used the tag, not a digest pin. The Debian/Ubuntu
-packages the admin image and Dokku's first start install are not pinned.
+The app base (`LAUNCHPAD_BASE_IMAGE`) defaults, in this file, to
+`nginx:1.27-alpine@sha256:65645c7bb6a0661892a8b03b89d0743208a18dd2f3f17a54ef4b76fb8e2f2a10`
+(the index digest read with `docker buildx imagetools inspect nginx:1.27-alpine` on 2026-11-23;
+`check:compose` fails if the default is not a tag plus digest). The worker passes the
+reference to Docker unchanged. To change it, read and verify the new digest the same way,
+set both the tag and digest, and rebuild; existing deployments keep the image they were
+built from. The worker's own code default stays the bare tag, which matters only when it
+runs outside this file. nginx 1.27 is an older mainline line: moving to a supported
+version is a separate, deliberate change to the tag and digest together.
+
+**OS packages are not pinned.** The admin image's PostgreSQL client tools and Dokku's first
+start install the distribution's current packages, so two builds can differ. This is an
+accepted, documented gap: record the resulting `pg_dump --version` and `dokku version`
+with each release, and prefer rebuilding the admin image when you restore so the client is
+at least as new as the server. Pinning them would need a mirrored package snapshot, which
+this repository does not operate.
 
 ## Resource limits
 
@@ -234,19 +261,62 @@ every 2 s during an idle period and two fixture deploys), deliberately several t
 seen. They are not capacity planning: Docker builds and Dokku's `docker` commands run in the
 **host engine**, outside these cgroups.
 
-| Service    | `mem_limit` | `cpus` | `pids_limit` | Idle / peak memory seen | Peak CPU seen |
-| ---------- | ----------- | ------ | ------------ | ----------------------- | ------------- |
-| postgres   | 512m        | 1.0    | 256          | 53 / 62 MiB             | 22 %          |
-| controller | 512m        | 1.0    | 256          | 49 / 56 MiB             | 12 %          |
-| worker     | 512m        | 1.0    | 256          | 23 / 39 MiB             | 26 %          |
-| dokku      | 1g          | 2.0    | 1024         | 22 / 74 MiB             | 171 %         |
-| router     | 128m        | 0.5    | 128          | 11 / 15 MiB             | 12 %          |
-| admin      | 512m        | 1.0    | 256          | not measured            | not measured  |
+| Service    | `mem_limit` | `cpus` | `pids_limit` | Idle / peak memory seen           | Peak CPU seen |
+| ---------- | ----------- | ------ | ------------ | --------------------------------- | ------------- |
+| postgres   | 512m        | 1.0    | 256          | 53 / 62 MiB                       | 22 %          |
+| controller | 512m        | 1.0    | 256          | 49 / 56 MiB                       | 12 %          |
+| worker     | 1g          | 1.0    | 256          | 23 / 433 MiB (two runs: 421, 433) | 97 %          |
+| dokku      | 1g          | 2.0    | 1024         | 22 / 74 MiB                       | 171 %         |
+| router     | 128m        | 0.5    | 128          | 11 / 15 MiB                       | 12 %          |
+| admin      | 512m        | 1.0    | 256          | not measured                      | not measured  |
 
 The stack ran with these limits through a second deploy and delete with no OOM kill and no
-restart. Not measured: large uploads and archive extraction, many apps, concurrent deployments,
-backup or restore of a large database, Dokku's first-start installation. Revisit the limits with
-those before relying on them.
+restart. The worker limit was raised from 512m to 1g after the measurement below. Nothing was
+killed: the worker reached 421 MiB and 433 MiB (two runs) while building the largest archive the
+default limits allow, which is about 85 % of the old limit, so the larger limit is a margin chosen
+on that evidence, not a fix for an observed failure.
+
+### Measured at the default limits (2026-11-23)
+
+One disposable run on one small host (`LAUNCHPAD_COMPOSE_CAPACITY=1 omni -i run
+test:compose:rehearsal`, with the read-only filesystems below), sampled with `docker stats` about
+every 2 s, so brief peaks can be missed. It shows how the shipped limits behave here; it is not a
+capacity guarantee.
+
+| Deploy of one archive                                     | Upload | Deploy to `succeeded` | Worker peak memory | Dokku peak CPU |
+| --------------------------------------------------------- | ------ | --------------------- | ------------------ | -------------- |
+| Small site                                                | 0 s    | 66 s                  | 35 MiB             | 154 %          |
+| 44 MiB, incompressible (limit 50 MiB upload)              | 0.4 s  | 66 s                  | 88 MiB             | 175 %          |
+| 190 MiB expanded, 0.2 MiB upload (limit 200 MiB expanded) | 0.8 s  | 68 s                  | **421 MiB**        | 179 %          |
+| 4,500 files (limit 5,000)                                 | 0.3 s  | 68 s                  | 103 MiB            | 175 %          |
+
+- A deploy takes about a minute whatever its size; the archive size mostly moves worker memory.
+- **Five concurrent deployments (the default app quota) took 308 s in total.** The worker handles
+  deployments one after another, so concurrency adds latency rather than throughput. That is
+  inferred from the total (about 5 x 62 s), not observed directly. Dokku's single-sample peaks
+  were 211 % CPU and 317 processes, so do not lower its `cpus` or `pids_limit` on this evidence.
+- `backup` and `verify-backup` of every fixture archive and row took 2.5 s (a few dozen MiB of
+  archives and a small database). Restore and a large database were not measured.
+- Still not measured: Dokku's first-start installation on this build, many apps beyond the quota,
+  limits raised above the defaults, host reboot, database loss. Docker builds run in the host
+  engine outside these cgroups.
+
+The measurement found and led to fixing one defect: a site that compresses beyond 1000:1 (for
+example a large run of zeros) was accepted at upload but failed at build with an opaque
+`step-failed`, because the extractor had its own ratio guard. The worker now relies on the
+expanded-size limit that was already enforced.
+
+## Hardening
+
+Assessed 2026-11-23; each item is adopted or deferred with its reason.
+
+| Item                                                               | Decision                                    | Reason and evidence                                                                                                                                                                                                                                                                                                                                         |
+| ------------------------------------------------------------------ | ------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Read-only root filesystem for controller, worker, router and admin | **Adopted** (with a 64 MiB tmpfs at `/tmp`) | The full alias baseline passed with it, and so did uploads and builds up to the default limits: all state lives in volumes and the worker's build scratch is under `/data`, not `/tmp`. `check:compose` enforces it.                                                                                                                                        |
+| Read-only root filesystem for PostgreSQL and Dokku                 | Deferred                                    | Dokku installs packages on first start and writes across `/etc` and `/var`; PostgreSQL would need its own tmpfs paths. Neither was tested, and `check:compose` fails if either is switched on unverified.                                                                                                                                                   |
+| Database password in a file instead of `DATABASE_URL`              | Deferred                                    | The controller, worker and admin read the URL only from the environment, so a file would be a code change in all three. Whoever can `docker inspect` the stack already holds the root-equivalent Docker socket the worker and Dokku mount, so a file secret protects little in this single-host model. Keep `docker-compose.env` mode 0600 and outside Git. |
+| SMTP                                                               | Not configured                              | Email is optional. Invitation enrollment needs it; with operator enrollment (the default here) it is not used, and account recovery uses `reset-password` on the host. Configure it, with a TLS-verifying server, only if invitations are wanted.                                                                                                           |
+| Docker socket and single-host threat model                         | Needs your decision                         | Not changed: see [What is NOT production-ready](#what-is-not-production-ready).                                                                                                                                                                                                                                                                             |
 
 ## What is NOT production-ready
 
