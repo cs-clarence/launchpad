@@ -3,12 +3,12 @@
   "sources": {
     "git": {
       "https://github.com/cs-clarence/swe-docs": {
-        "55c6b99914ac2ec3bf0e3e2f5559c18bcccb2dc6": {
+        "main": {
           "pin": "55c6b99914ac2ec3bf0e3e2f5559c18bcccb2dc6"
         }
       },
       "https://github.com/cs-clarence/swe-skills": {
-        "ec0429ca15c5b405367c29ad24095ffd4697837c": {
+        "main": {
           "pin": "ec0429ca15c5b405367c29ad24095ffd4697837c"
         }
       }
