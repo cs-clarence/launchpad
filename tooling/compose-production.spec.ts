@@ -139,8 +139,22 @@ describe("docker-compose.yaml", () => {
             "worker must mount a bounded tmpfs",
         );
         expect(
-            mutate((m) => (m.services.worker.tmpfs = [{ type: "tmpfs", target: "/tmp" }])),
+            mutate((m) => {
+                m.services.worker.tmpfs = [];
+                m.services.worker.volumes.push({ type: "tmpfs", target: "/tmp" });
+            }),
         ).toContain("worker must mount a bounded tmpfs");
+        // A sized long-form tmpfs under `volumes` is equivalent and must pass.
+        expect(
+            mutate((m) => {
+                m.services.worker.tmpfs = [];
+                m.services.worker.volumes.push({
+                    type: "tmpfs",
+                    target: "/tmp",
+                    tmpfs: { size: 67108864 },
+                });
+            }),
+        ).not.toContain("worker must mount a bounded tmpfs");
         expect(mutate((m) => (m.services.postgres.read_only = true))).toContain(
             "postgres was not verified",
         );

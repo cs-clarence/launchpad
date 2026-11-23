@@ -241,7 +241,13 @@ export function assertProduction(model: Json, env: Env): string[] {
     for (const name of ["controller", "worker", "router", "admin"]) {
         if (services[name]?.read_only !== true)
             fail(`${name} must have a read-only root filesystem.`);
-        const mounts = (services[name]?.tmpfs ?? []) as unknown[];
+        // Compose keeps the short form in `tmpfs` and normalizes the long form into `volumes`.
+        const mounts = [
+            ...((services[name]?.tmpfs ?? []) as unknown[]),
+            ...((services[name]?.volumes ?? []) as { type?: string }[]).filter(
+                (mount) => typeof mount === "object" && mount?.type === "tmpfs",
+            ),
+        ];
         // Short form "/tmp:size=Nm" or long form with a size; an unsized tmpfs is unbounded.
         const bounded = mounts.some((mount) =>
             typeof mount === "string"

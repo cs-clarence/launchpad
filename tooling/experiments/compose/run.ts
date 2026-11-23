@@ -96,10 +96,20 @@ const inventory = {
 };
 const evidence: object[] = [];
 const privateWrite = (name: string, value: string) => writeFile(file(name), value, { mode: 0o600 });
-async function persist() {
+// One writer at a time: concurrent callers (parallel deployments) would otherwise share the
+// temporary file and one rename would find it already consumed. A failure is reported to its own
+// caller without blocking later writes.
+let queue: Promise<unknown> = Promise.resolve();
+function serial<T>(work: () => Promise<T>): Promise<T> {
+    const next = queue.then(work, work);
+    queue = next.catch(() => undefined);
+    return next;
+}
+async function writeInventory() {
     await privateWrite("resources.json.next", JSON.stringify(inventory, null, 2));
     await rename(file("resources.json.next"), file("resources.json"));
 }
+const persist = () => serial(writeInventory);
 async function record(name: string, observations?: object) {
     evidence.push({ name, observations });
     await privateWrite("evidence.json", JSON.stringify(evidence, null, 2));
@@ -238,7 +248,9 @@ async function health(service: string) {
         service === "dokku" ? 660 : 420,
     );
 }
-async function readDeployments() {
+// Reads and records are serialized together, so an older snapshot can never overwrite a newer one.
+const readDeployments = () => serial(readDeploymentsNow);
+async function readDeploymentsNow() {
     const { out } = await docker.compose([
         "exec",
         "-T",
@@ -256,7 +268,7 @@ async function readDeployments() {
         "select id, app_name, desired_state from deployment",
     ]);
     inventory.deployments = readInventory(out, inventory.deployments);
-    await persist();
+    await writeInventory();
 }
 const changeCompose = (args: string[], input?: string) => {
     abort.signal.throwIfAborted();
@@ -343,13 +355,14 @@ async function measure<T>(label: string, run: () => Promise<T>) {
         }
     })();
     const started = performance.now();
+    let seconds = 0;
     try {
         const value = await run();
-        return {
-            value,
-            seconds: Math.round((performance.now() - started) / 100) / 10,
-            peaks: peaks(samples),
-        };
+        seconds = Math.round((performance.now() - started) / 100) / 10;
+        // Duration is the work's; peaks include the sample that was in flight when it ended.
+        running = false;
+        await loop;
+        return { value, seconds, peaks: peaks(samples) };
     } finally {
         running = false;
         await loop;
