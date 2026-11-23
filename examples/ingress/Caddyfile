@@ -1,0 +1,38 @@
+{
+	admin off
+	auto_https disable_redirects
+}
+
+# Disposable reference only. Terminate TLS on two distinct loopback listeners.
+https://:8443 {
+	bind 127.0.0.1
+	tls {$FIXTURE_TLS_CERT} {$FIXTURE_TLS_KEY}
+
+	@management host {$FIXTURE_MANAGEMENT_HOST}
+	handle @management {
+		reverse_proxy {$FIXTURE_CONTROLLER_UPSTREAM:127.0.0.1:32180}
+	}
+
+	handle {
+		respond 404
+	}
+}
+
+https://:9443 {
+	bind 127.0.0.2
+	tls {$FIXTURE_TLS_CERT} {$FIXTURE_TLS_KEY}
+
+	@previews host {$FIXTURE_PREVIEW_A} {$FIXTURE_PREVIEW_B}
+	handle @previews {
+		reverse_proxy {$FIXTURE_DOKKU_UPSTREAM:127.0.0.1:32181}
+	}
+
+	@alias host {$FIXTURE_ALIAS}
+	handle @alias {
+		reverse_proxy {$FIXTURE_ROUTER_UPSTREAM:127.0.0.1:32182}
+	}
+
+	handle {
+		respond 404
+	}
+}

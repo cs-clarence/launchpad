@@ -47,7 +47,9 @@ Check that no port is occupied before use; never stop whatever owns a port.
 ## Prepare
 
 1. Choose an exact management origin and an apps domain on a **different registrable
-   domain** ([access](access.md)). Domains, TLS and ingress are not decided here.
+   domain** ([access](access.md)) when preparing an actual installation.
+   The [disposable ingress example](ingress-example.md) verifies the contract
+   without a real domain, gateway, or DNS change.
 2. Create, as host directories you own: Dokku state (`DOKKU_DATA_DIR`) and the backup
    directory (`LAUNCHPAD_BACKUP_DIR`, owned by `10001:10001`, outside every cleanup
    target). Use absolute physical paths: Dokku's host-path settings are derived from
@@ -74,6 +76,11 @@ Check that no port is occupied before use; never stop whatever owns a port.
     ```sh
     docker compose --env-file docker-compose.env -f docker-compose.yaml --profile admin config --quiet
     ```
+
+    For a disposable rehearsal, also run `omni -i run check:compose:rehearsal`.
+    Check both Compose and Buildx versions before building. See the
+    [tested combination](plans/production-fresh-host-recovery.md#repeat-the-rehearsal);
+    older Compose versions can fail the mount checks.
 
 ## Build
 
@@ -337,8 +344,8 @@ for the remaining decisions and their verification criteria.
   The [rotation procedure](#router-control-certificates) was also rehearsed there
   (certificate-only, then CA via an old+new bundle), and so was recovery: backup,
   restore into a fresh database, managed router rotation, the full 25-minute gate,
-  republish, `recovery-clear` and a resumed promotion. Not covered: upgrade and
-  rollback, public ingress, and the full S1–S14 matrix on this topology.
+  republish, `recovery-clear` and a resumed promotion. Public ingress and the
+  full S1–S14 matrix are not covered on this topology.
 - **Dokku is not on the engine's default bridge.** Compose cannot attach a service to it (the engine
   rejects the aliases Compose sends), so app containers live on the `apps` network. Without the
   `initial-network` setting (kept in `DOKKU_DATA_DIR`) apps would land on the default bridge, where
@@ -355,12 +362,20 @@ for the remaining decisions and their verification criteria.
   Access to its socket is root-equivalent on that host; the stack gives no isolation
   from hostile uploaded sites beyond Dokku's own.
 - **Resource limits come from one small rehearsal** (above).
-- **Backup of Dokku state and the router state volume** is not covered by `backup`; a
-  credential-reset command remains slice 3. PostgreSQL client TLS options now have an
+- **Whole-host recovery passed on disposable QEMU/KVM guests.** The `backup` command
+  does not include Dokku or router state or the container images. The
+  [clean-host rehearsal](plans/production-fresh-host-recovery.md#result-2026-11-23)
+  recovered those separately, verified the app and alias routes, revoked restored
+  credentials, and resumed writes only after the recovery gate. A separate
+  [clean install and orderly reboot](plans/production-compose-install-reboot.md#result-2026-11-23)
+  passed under the normal restart policies. [Runtime upgrade and rollback](plans/production-compose-rehearsal.md#runtime-upgrade-and-rollback-result-2026-11-23)
+  passed across two revisions with no migration delta; schema rollback remains
+  untested on this topology.
+- **PostgreSQL client TLS options** have an
   [explicit translation/refusal contract](backup.md#database-connection-options), unit-tested
   and [verified with a disposable TLS-required PostgreSQL 17 server](plans/production-pg-client-options.md#disposable-postgresql-tls-drill-2026-11-23).
   The bundled Compose PostgreSQL service is still private-network-only, not configured for TLS.
-- **No SMTP, no read-only root filesystems, no secrets manager.** The database URL (with
+- **No SMTP or secrets manager by default.** The database URL (with
   its password) is a container environment variable visible to anyone who can inspect
   containers.
 - **Cleanup of the old demo/test resources has not been executed** and is separate.

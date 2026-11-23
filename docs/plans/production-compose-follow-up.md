@@ -392,6 +392,12 @@ Legacy cleanup is separately gated on an approved exact target list; it does not
 block a fresh install. Automatic expiry and retention extension are product
 follow-ups, not Compose defects.
 
+The [clean-host recovery rehearsal](production-fresh-host-recovery.md#result-2026-11-23)
+passed, including write recovery, on disposable guests. A separate
+[clean install and orderly reboot](production-compose-install-reboot.md#result-2026-11-23)
+also passed. The [runtime upgrade and rollback rehearsal](production-compose-rehearsal.md#runtime-upgrade-and-rollback-result-2026-11-23)
+passed across two distinct aliases-on revisions with no migration delta.
+
 ### Private router control: approved implementation
 
 Recommend private HTTPS over Compose DNS, rather than sharing the router's network
@@ -409,9 +415,10 @@ CA private key is never mounted. Loopback checks verify trusted TLS, refusal of
 an untrusted certificate or wrong server name, bind, promote and withdraw;
 Compose assertions keep the control port unpublished. Bind, promote, withdraw
 and reconciliation passed in one aliases-on disposable Compose run on 2026-11-22
-(see the P7 acceptance record); certificate and CA rotation also passed there; restore and recovery also passed (2026-11-23); upgrade and rollback remain unrehearsed.
-Until that passes, leave
-aliases off. Undo pre-cutover by reverting the transport configuration; once
+(see the P7 acceptance record); certificate and CA rotation also passed there.
+The later recovery and runtime rollback results are linked above. Leave aliases
+off on an actual installation until its own transport and ingress checks pass.
+Undo pre-cutover by reverting the transport configuration; once
 aliases are live, quiesce mutation dispatch and preserve router state and pins
 before reverting. Do not fall back to plaintext on the bridge.
 
@@ -426,7 +433,7 @@ break routing for existing names. Never fall back to Dokku on a router 404: an
 unbound or withdrawn alias is supposed to stay a 404.
 
 Before connecting a real wildcard, prove those routes with synthetic hostnames
-on a disposable ingress. Check a known deployment and alias, an unknown host,
+on a [disposable ingress](../ingress-example.md). Check a known deployment and alias, an unknown host,
 and a withdrawn alias. None may reach management, router control or Dokku SSH.
 Keep management on a different registrable domain and a separate private
 listener. Undo by removing only the new app ingress route or binding.
