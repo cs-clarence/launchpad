@@ -123,13 +123,17 @@ a repair. Use the operator checks in this runbook to complete recovery.
    is **not** a sign-in block: keep the gateway deny in force, or keep
    management ingress closed until a reliable block exists.
    If no complete and trustworthy key-revocation record is
-   available, revoke **all restored API keys** via the authenticated
-   `DELETE /api/v1/organizations/{orgId}/api-keys/{keyId}` endpoint (or
-   follow the account-recovery procedure where appropriate), notify their owners, and
-   reissue only the keys they still need after access is reopened. Review
-   restored sessions and account changes made since the backup too; invalidate
-   any sessions that should no longer be valid, including credentials for
-   users removed since the backup. If membership/role changes cannot be
+   available, run `bun .output/admin.mjs revoke-all-credentials
+   --i-understand-this-signs-everyone-out` **before starting the restored controller**.
+   It deletes every restored session and emailed token and revokes every API key and
+   open invitation in one audited transaction (it prints the counts). Notify key
+   owners and reissue only the keys they still need after access is reopened.
+   It changes no password: use `reset-password` for any account that must lose
+   access, because the restored password still signs in. Run it with the controller
+   stopped; credentials issued while it runs are not revoked. Account changes made
+   since the backup (a removed user, a changed password) are not reconstructed:
+   review them against the external record, including credentials for users
+   removed since the backup. If membership/role changes cannot be
    reconstructed, validate **every restored membership and role** with
    organization owners and remove any unverified access before reopening;
    otherwise keep ingress closed. Do not assume that stopped workers prevent

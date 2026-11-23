@@ -89,6 +89,11 @@ also limits each client address. `setup` creates the one instance operator, once
 local recovery path: it replaces the password, revokes all of that user's
 sessions and API keys, and writes an audit event with revoked-session/key counts.
 It is a host command, not an HTTP endpoint.
+`revoke-all-credentials --i-understand-this-signs-everyone-out` is the offline counterpart after
+a [restore](../../docs/restore.md): in one transaction it deletes every session and emailed
+token, revokes every API key and every open invitation, and writes an audit event with the counts.
+It changes no password and needs no authentication settings. Run it with the controller stopped:
+anything issued while it runs is not revoked.
 The controller never migrates on startup. There is no default password.
 Provision people and organizations offline:
 

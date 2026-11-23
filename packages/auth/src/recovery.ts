@@ -88,3 +88,56 @@ export async function resetPassword(
         };
     });
 }
+
+// Offline recovery after a restore. The restored database holds the sessions, API keys,
+// emailed tokens and invitations of the moment the backup was taken, not of the moment access
+// is reopened. This ends all of them in one transaction. It does not change any password: sign-in
+// still works with the restored password, so reset the password of any account that should be
+// locked out, and review memberships separately.
+export interface RevokedCredentials {
+    sessions: number;
+    apiKeys: number;
+    verificationTokens: number;
+    invitations: number;
+}
+
+export async function revokeAllCredentials(
+    deps: { db: Kysely<Database> },
+    input: { actor: string },
+): Promise<RevokedCredentials> {
+    return deps.db.transaction().execute(async (trx) => {
+        const now = new Date();
+        const sessions = await trx.deleteFrom("session").executeTakeFirst();
+        // Every row is an unused, short-lived token: reset-password and email verification.
+        const tokens = await trx.deleteFrom("verification").executeTakeFirst();
+        const keys = await trx
+            .updateTable("api_key")
+            .set({ revoked_at: now })
+            .where("revoked_at", "is", null)
+            .executeTakeFirst();
+        // Only invitations that could still be accepted; accepted history stays as it was.
+        const invitations = await trx
+            .updateTable("organization_invitation")
+            .set({ revoked_at: now })
+            .where("revoked_at", "is", null)
+            .where("accepted_at", "is", null)
+            .executeTakeFirst();
+        const counts = {
+            sessions: Number(sessions.numDeletedRows),
+            apiKeys: Number(keys.numUpdatedRows),
+            verificationTokens: Number(tokens.numDeletedRows),
+            invitations: Number(invitations.numUpdatedRows),
+        };
+        await trx
+            .insertInto("audit_event")
+            .values({
+                actor: input.actor,
+                action: "instance.credentials_revoked",
+                target_type: "instance",
+                target_id: "all",
+                detail: JSON.stringify(counts),
+            })
+            .execute();
+        return counts;
+    });
+}

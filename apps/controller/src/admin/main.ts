@@ -5,6 +5,7 @@ import {
     loadAuthConfig,
     provisionUser,
     resetPassword,
+    revokeAllCredentials,
     setupFirstOperator,
 } from "@launchpad-kit/auth";
 import { createDatabase, migrateToLatest, migrationStatus } from "@launchpad-kit/database";
@@ -700,6 +701,29 @@ program
         );
         console.log(
             `Password reset for ${result.email}; revoked ${result.revokedSessions} session(s) and ${result.revokedKeys} API key(s).`,
+        );
+    });
+
+program
+    .command("revoke-all-credentials")
+    .description(
+        "After a restore: end every session, API key, emailed token and open invitation (no password changes)",
+    )
+    .option(
+        "--i-understand-this-signs-everyone-out",
+        "confirm: stop the controller and keep ingress closed, because anything issued meanwhile is not revoked",
+    )
+    .action(async (options) => {
+        if (options.iUnderstandThisSignsEveryoneOut !== true) {
+            throw new Error(
+                "This signs every user out and revokes every API key and open invitation. Stop the controller and keep ingress closed, then pass --i-understand-this-signs-everyone-out.",
+            );
+        }
+        const result = await withDatabase((db) =>
+            revokeAllCredentials({ db }, { actor: "operator-cli" }),
+        );
+        console.log(
+            `Revoked ${result.sessions} session(s), ${result.apiKeys} API key(s), ${result.verificationTokens} emailed token(s) and ${result.invitations} open invitation(s). Passwords are unchanged: reset any account that must be locked out.`,
         );
     });
 
