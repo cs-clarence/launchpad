@@ -357,6 +357,10 @@ if ownership, dependencies or backup scope are unclear.
 
 ## Outstanding follow-ups after the bundled P7 PR
 
+The [repeatable rehearsal plan](production-compose-rehearsal.md) orders the
+remaining disposable verification: fixture preflight and aliases-on runner,
+then upgrade/rollback and TLS/storage recovery checks.
+
 For maintainers planning the next production milestones. The [disposable Compose
 record](evidence/p7-compose-20261121/README.md) is the baseline. These checks are
 exit criteria, not authorization to start production or delete existing state.

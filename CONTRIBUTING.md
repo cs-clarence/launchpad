@@ -123,6 +123,18 @@ HTTPS before promotion, after promotion and after withdrawal. The test neither
 configures the tunnel nor exposes the controller or router control port. It
 requires a run-specific forwarding marker even on the withdrawn alias's 404.
 
+`omni -i run check:compose:rehearsal` renders the disposable aliases-on
+Compose fixture with generated settings and validates its isolation. It
+requires the Compose CLI but does not start Docker resources.
+With approval to start disposable infrastructure, use
+`LAUNCHPAD_COMPOSE_REHEARSAL=1 omni -i run test:compose:rehearsal -p @launchpad-kit/tooling`.
+It uses the local Docker socket (root-equivalent), OpenSSL, `ssh-keygen` and
+`tar`, and runs only on a trusted host. It binds loopback ports, records an
+inventory under `/tmp/opencode/lp-compose-*`, and stops writers and retains
+the fixture if it cannot verify deletion and Dokku settlement. It never
+force-destroys Dokku apps. It is not in CI or the default tests. See the
+[rehearsal plan](docs/plans/production-compose-rehearsal.md) for limitations.
+
 For the separate end-to-end restore drill, also set
 `LAUNCHPAD_ACCEPTANCE_RESTORE_DRILL=1` (without ingress or fast lease mode).
 It uses the built admin image and a second disposable database, leaves the

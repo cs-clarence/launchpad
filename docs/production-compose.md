@@ -1,14 +1,13 @@
 # Production Compose stack
 
 For an operator preparing a single-host Launchpad installation with
-[`docker-compose.yaml`](../docker-compose.yaml). **This is prepared
-configuration. It has been started once, by hand, on disposable infrastructure
-(2026-11-21, [evidence](plans/evidence/p7-compose-20261121/README.md)) with
-deployments on and aliases off; it has never been started as production.** Its
-shape is checked by `omni -i run check:compose`. The rehearsal fixed four
-configuration defects and found a plaintext router-control blocker. Native private
-control TLS is now prepared and loopback-tested, but **aliases-on Compose has not
-been rehearsed** (see [What is NOT production-ready](#what-is-not-production-ready)).
+[`docker-compose.yaml`](../docker-compose.yaml). **This configuration has
+been rehearsed on disposable infrastructure, never started as production.**
+The [first run](plans/evidence/p7-compose-20261121/README.md) used deployments on
+and aliases off. [Later runs](plans/deployment-p7-acceptance.md#aliases-on-compose-rehearsal-2026-11-22)
+verified aliases, private router-control TLS, certificate rotation and recovery.
+Its shape is checked by `omni -i run check:compose`; see
+[What is NOT production-ready](#what-is-not-production-ready) for the remaining gates.
 Targeting `dokku` starts only that service, but Compose still requires the full
 environment to render the file. This is not an in-place migration from the old
 Dokku-only file: the project and default ports changed, and existing Dokku data
@@ -116,9 +115,9 @@ Each step is a deliberate operator action. `up` never starts `admin`.
 7. Leave `LAUNCHPAD_DEPLOYMENTS` off until private routing and a
    [backup/restore rehearsal](restore.md) have passed; then enable deployments in
    `docker-compose.env` and recreate the controller and worker **together** (they must
-   agree). **Keep `LAUNCHPAD_ALIASES=off` until a disposable aliases-on Compose
-   rehearsal passes:** the file now uses private `https://router:3081` with
-   verified, operator-managed CA trust, but the complete topology is not yet proven.
+   agree). Keep `LAUNCHPAD_ALIASES=off` until you verify private `https://router:3081`
+   with your own certificates and intended routing, and complete the remaining
+   cutover checks for your installation. The disposable rehearsal used a fixture CA.
 
 Never use `compose down -v` or `docker volume rm` against this project without an exact,
 reviewed target list: the volumes hold the database, the archives and the router state.
@@ -245,8 +244,8 @@ for the remaining decisions and their verification criteria.
   worker SSH to Dokku, one fixture deploy/probe/delete, backup, fresh-database restore with
   `check-restore`, and recreate-keeps-artifacts worked
   ([evidence](plans/evidence/p7-compose-20261121/README.md)). This is not a production claim.
-- **Alias routing in Compose was rehearsed once, on disposable infrastructure
-  (2026-11-22).** The plaintext-control blocker is fixed: native HTTPS, per-client CA
+- **Alias routing in Compose was rehearsed on disposable infrastructure.**
+  The plaintext-control blocker is fixed: native HTTPS, per-client CA
   trust and read-only mounts. One aliases-on instance of this file started healthy,
   verified the CA over Compose DNS (untrusted, wrong-name and plaintext requests
   refused, port 3081 unpublished), then bound, promoted, reconciled a held promotion,
@@ -276,7 +275,6 @@ for the remaining decisions and their verification criteria.
   credential-reset command remains slice 3. PostgreSQL client TLS options now have an
   [explicit translation/refusal contract](backup.md#database-connection-options), unit-tested
   without a live TLS database; Bun/libpq TLS compatibility still needs a drill.
-  A restore followed by starting a controller and `recovery-clear` was not run here.
 - **No SMTP, no read-only root filesystems, no secrets manager.** The database URL (with
   its password) is a container environment variable visible to anyone who can inspect
   containers.

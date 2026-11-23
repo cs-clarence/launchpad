@@ -96,6 +96,15 @@ Rules that keep the graph correct:
   memory, CPU and process limits. They prove the configuration's shape, not that the stack runs
   (a one-time disposable run is recorded in `docs/plans/evidence/p7-compose-20261121/`). See
   [production Compose](production-compose.md).
+- **Disposable Compose preflight.** `omni -i run check:compose:rehearsal`
+  renders production Compose with per-run names, fixture settings and image
+  overrides from `tooling/experiments/compose/fixture.ts`. The Docker CLI
+  renders only; no engine, ports or fixtures are started. Unit tests exercise
+  refusal of unsafe mounts, ports and shared resources. The separate
+  `test:compose:rehearsal` opt-in task shares this preflight and exercises
+  the live aliases-on baseline. Its lifecycle is in `run.ts`, with controller
+  requests and data-plane probes in `scenario.ts`. See the
+  [rehearsal plan](plans/production-compose-rehearsal.md).
 - **Disposable routing experiment.** The opt-in `test:routing:experiment` tooling task
   builds a worker image, deploys two fixtures through pinned SSH to its own Dokku,
   and exercises the experimental generation-checked Bun/SQLite router. It has no
@@ -331,6 +340,10 @@ a second router refused by the lock, a graceful stop, and `rotate --standalone` 
 `TEST_DATABASE_URL` (defaults to the disposable fixture), removes its named containers, volumes,
 images and database, never pushes, and never touches
 Dokku. CI runs it in the integration job. Its containers, anonymous volumes, images and database are
-removed by exact name (also on an interrupt); Docker's build cache is not. `docker-compose.yaml` defines the full stack (including Dokku). It was started once on disposable infrastructure by hand (no reusable
-task exists; alias routing could not be enabled) and has **never been started as production**
-([production Compose](production-compose.md); `docs/plans/production-compose-follow-up.md`).
+removed by exact name (also on an interrupt); Docker's build cache is not.
+`docker-compose.yaml` defines the full stack (including Dokku). The aliases-on,
+certificate rotation and recovery drills passed using disposable fixtures, not
+production. The fixture preflight and aliases-on baseline have reusable tasks;
+the separate rotation, upgrade and recovery modes are not integrated.
+See [production Compose](production-compose.md) and the
+[follow-up plan](plans/production-compose-follow-up.md).

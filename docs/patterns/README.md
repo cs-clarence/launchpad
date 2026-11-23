@@ -63,8 +63,9 @@ and bound by `apps/router/src/serve.ts`. Only control clients receive
 `LAUNCHPAD_ALIAS_CONTROL_CA_FILE` (worker and admin); their trust is scoped per
 request in `packages/alias-router/src/control-client.ts`, never set globally.
 The router health client also verifies its control certificate. Compose server
-certificate/key mounts belong only to the router; an aliases-on Compose rehearsal
-is still outstanding.
+certificate/key mounts belong only to the router. The aliases-on Compose
+rehearsal passed on disposable infrastructure; its isolation preflight lives in
+`tooling/experiments/compose/`.
 
 Opt-in disposable rehearsals live under `tooling/experiments/`: `routing/` (the router
 experiment and its production-router rehearsal) and `acceptance/` (the full-stack P7 rehearsal:
