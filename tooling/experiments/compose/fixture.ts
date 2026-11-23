@@ -203,14 +203,14 @@ export function fixtureProblems(model: any, plan: Plan): string[] {
             problems.push(`Fixture switches are not enabled: ${name}.`);
         const expectedPorts = bindings
             .filter(([s]) => s === name)
-            .map(([, key, target]) => `127.0.0.1:${plan.env[key]}:${target}`)
+            .map(([, key, target]) => `127.0.0.1:${plan.env[key]}:${target}/tcp`)
             .sort();
         const actualPorts = (service?.ports ?? [])
-            .map(portOf)
-            .map(
-                ({ ip, published, target }: ReturnType<typeof portOf>) =>
-                    `${ip}:${published}:${target}`,
-            )
+            .map((port: string | { protocol?: string }) => {
+                const { ip, published, target } = portOf(port);
+                const protocol = typeof port === "string" ? port.split("/")[1] : port.protocol;
+                return `${ip}:${published}:${target}/${protocol ?? "tcp"}`;
+            })
             .sort();
         if (JSON.stringify(actualPorts) !== JSON.stringify(expectedPorts))
             problems.push(`Unsafe fixture ports: ${name}.`);

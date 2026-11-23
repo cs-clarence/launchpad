@@ -1,5 +1,6 @@
 import { COMPOSE_FILE } from "../../compose-production";
 import { fixtureProblems, type planFixture } from "./fixture";
+import { FixtureProcessTimeout, runFixtureProcess } from "./process";
 
 export type Fixture = ReturnType<typeof planFixture>;
 
@@ -7,23 +8,26 @@ export function fixtureDocker(plan: Fixture, files?: { env: string; override: st
     const host = ["docker", "--host", "unix:///var/run/docker.sock"];
     const env = { PATH: Bun.env.PATH ?? "", HOME: Bun.env.HOME ?? "" };
     let uncertain = false;
-    async function run(args: string[], input?: string, compose = false, allowFailure = false) {
-        const p = Bun.spawn([...host, ...args], {
+    async function run(
+        args: string[],
+        input?: string,
+        compose = false,
+        allowFailure = false,
+        read?: { timeoutMs: number; signal?: AbortSignal },
+    ) {
+        if (uncertain) throw new Error("Docker fixture state is uncertain.");
+        const { out, err, code } = await runFixtureProcess([...host, ...args], {
             env: compose ? { ...env, ...plan.env } : env,
-            stdin: input === undefined ? "ignore" : new Blob([input]),
-            stdout: "pipe",
-            stderr: "pipe",
+            input,
+            timeoutMs: read?.timeoutMs ?? 900_000,
+            signal: read?.signal,
+        }).catch((error) => {
+            if (error instanceof FixtureProcessTimeout && !read) {
+                uncertain = true;
+                throw new Error("Docker client timed out; fixture state is uncertain.");
+            }
+            throw error;
         });
-        const timer = setTimeout(() => {
-            uncertain = true;
-            p.kill("SIGKILL");
-        }, 900_000);
-        const [out, err, code] = await Promise.all([
-            new Response(p.stdout).text(),
-            new Response(p.stderr).text(),
-            p.exited.finally(() => clearTimeout(timer)),
-        ]);
-        if (uncertain) throw new Error("Docker client timed out; fixture state is uncertain.");
         // Neither argv nor child output is safe to log (even config contains passwords).
         if (code !== 0 && !allowFailure) throw new Error(`Docker ${args[0]} exited ${code}.`);
         return { out: out.trim(), err: err.trim(), code };
@@ -49,6 +53,11 @@ export function fixtureDocker(plan: Fixture, files?: { env: string; override: st
     return {
         run: (args: string[], allowFailure = false, input?: string) =>
             run(args, input, false, allowFailure),
+        read: (
+            args: ["ps" | "inspect" | "top", ...string[]],
+            timeoutMs: number,
+            signal?: AbortSignal,
+        ) => run(args, undefined, false, args[0] === "top", { timeoutMs, signal }),
         compose,
         // Conservative: after any timed-out Docker client, its engine-side effects
         // are not known to have settled. Never use cleanup to guess.

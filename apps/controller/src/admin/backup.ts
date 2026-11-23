@@ -102,7 +102,18 @@ export function pgEnvironment(databaseUrl: string): Record<string, string> {
         throw new BackupError("DATABASE_URL contains invalid URL encoding.");
     }
     const seen = new Set<string>();
-    for (const [key, value] of url.searchParams) {
+    // PostgreSQL URIs use percent decoding, not form encoding: '+' is literal.
+    for (const option of url.search.slice(1).split("&")) {
+        if (!option) continue;
+        const equals = option.indexOf("=");
+        let key: string;
+        let value: string;
+        try {
+            key = decodeURIComponent(equals < 0 ? option : option.slice(0, equals));
+            value = equals < 0 ? "" : decodeURIComponent(option.slice(equals + 1));
+        } catch {
+            throw new BackupError("DATABASE_URL contains invalid URL encoding.");
+        }
         const variable = PG_QUERY_ENV.get(key);
         if (!variable || seen.has(key) || !value || value.includes("\0")) {
             // Neither names nor values are echoed: either may contain secret input.
@@ -111,7 +122,6 @@ export function pgEnvironment(databaseUrl: string): Record<string, string> {
             );
         }
         seen.add(key);
-        // URLSearchParams has already decoded this value.
         env[variable] = key === "host" ? value.replace(/^\[(.*)\]$/, "$1") : value;
     }
     if (Object.values(env).some((value) => value.includes("\0"))) {

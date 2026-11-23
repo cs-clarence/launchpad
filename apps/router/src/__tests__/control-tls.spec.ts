@@ -65,7 +65,7 @@ describe("verified router control TLS", () => {
         );
         writeFileSync(
             `${state.directory}/extensions`,
-            "subjectAltName=DNS:localhost\nextendedKeyUsage=serverAuth\n",
+            "subjectAltName=DNS:localhost,DNS:health-identity.invalid\nextendedKeyUsage=serverAuth\n",
         );
         execFileSync(
             "openssl",
@@ -124,11 +124,16 @@ describe("verified router control TLS", () => {
                 baseUrl: new URL(`http://127.0.0.1:${router.control.port}`),
             }).readEpoch(),
         ).rejects.toThrow("could not be confirmed");
-        expect(await checkHealth(router.control, fetch, 2000, tls)).toBe(true);
         expect(
             await checkHealth(router.control, fetch, 2000, {
                 ...tls,
-                serverName: "127.0.0.1",
+                serverName: "health-identity.invalid",
+            }),
+        ).toBe(true);
+        expect(
+            await checkHealth(router.control, fetch, 2000, {
+                ...tls,
+                serverName: "wrong-identity.invalid",
             }),
         ).toBe(false);
         const emptyCa = `${state.directory}/empty-ca.pem`;

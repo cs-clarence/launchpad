@@ -12,7 +12,8 @@ function model() {
     for (const [name, image] of Object.entries(plan.images)) base.services[name].image = image;
     for (const [key, name] of Object.entries(plan.networks))
         base.networks[key] = { ...base.networks[key], name };
-    for (const [key, name] of Object.entries(plan.volumes)) base.volumes[key] = { name };
+    for (const [key, name] of Object.entries(plan.volumes))
+        base.volumes[key] = { ...base.volumes[key], name };
     return base;
 }
 
@@ -54,6 +55,17 @@ describe("disposable Compose fixture preflight", () => {
             "Unsafe fixture ports: controller.",
             "Unsafe fixture ports: router.",
         ]);
+    });
+
+    it("requires TCP even with the correct host and port numbers", () => {
+        const fixture = model();
+        fixture.services.controller.ports[0] = {
+            host_ip: "127.0.0.1",
+            published: String(ports[0]),
+            target: 3000,
+            protocol: "udp",
+        };
+        expect(fixtureProblems(fixture, plan)).toEqual(["Unsafe fixture ports: controller."]);
     });
 
     it("rejects shared state and an unexpected writable host bind", () => {

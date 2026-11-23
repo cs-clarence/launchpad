@@ -13,7 +13,7 @@ describe("PostgreSQL client connection settings", () => {
     });
 
     it("passes explicit PostgreSQL 17 TLS settings to libpq", () => {
-        const options = new URLSearchParams({
+        const options = Object.entries({
             sslmode: "verify-full",
             sslrootcert: "/private/CA %20.pem",
             sslcert: "/private/client.pem",
@@ -29,7 +29,9 @@ describe("PostgreSQL client connection settings", () => {
             channel_binding: "require",
             gssencmode: "disable",
             connect_timeout: "10",
-        });
+        })
+            .map(([name, value]) => `${encodeURIComponent(name)}=${encodeURIComponent(value)}`)
+            .join("&");
         expect(pgEnvironment(`postgres://db/launch?${options}`)).toEqual({
             PGHOST: "db",
             PGDATABASE: "launch",
@@ -57,6 +59,13 @@ describe("PostgreSQL client connection settings", () => {
         );
     });
 
+    it("preserves plus signs and decodes percent escapes only once", () => {
+        expect(
+            pgEnvironment("postgres://db/launch?sslrootcert=/private/CA+2026%2B%2520.pem")
+                .PGSSLROOTCERT,
+        ).toBe("/private/CA+2026+%20.pem");
+    });
+
     it.each([
         "?sslpassword=private-secret",
         "?sslrootcert=private-secret&sslrootcert=other",
@@ -65,6 +74,8 @@ describe("PostgreSQL client connection settings", () => {
         "?host=",
         "?options=private-secret",
         "?sslrootcert=%00private-secret",
+        "?sslrootcert=%ZZprivate-secret",
+        "?sslmode=require&%73slmode=require",
         "?user=other",
         "?private-secret=value",
         "?__proto__=private-secret",

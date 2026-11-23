@@ -53,7 +53,7 @@ Set all four together to enable HTTPS on the **control listener only**:
 | `LAUNCHPAD_ROUTER_CONTROL_TLS_CERT_FILE`   | Absolute path to the PEM server certificate chain                                                    |
 | `LAUNCHPAD_ROUTER_CONTROL_TLS_KEY_FILE`    | Absolute path to its unencrypted PEM private key, regular file, owner-only, owned by the router user |
 | `LAUNCHPAD_ROUTER_CONTROL_TLS_CA_FILE`     | Absolute path to the public CA bundle used by the router's own health client                         |
-| `LAUNCHPAD_ROUTER_CONTROL_TLS_SERVER_NAME` | Lowercase DNS name for the health client, resolvable from the router, matching the certificate SAN   |
+| `LAUNCHPAD_ROUTER_CONTROL_TLS_SERVER_NAME` | Lowercase certificate DNS name for health checks; does not change the listener address dialed        |
 
 All are unset by default (plaintext); partial configuration is refused.
 Compose sets the DNS name to `router` and mounts files read-only. The server has

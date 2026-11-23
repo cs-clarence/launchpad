@@ -13,6 +13,7 @@ if (Bun.env.LAUNCHPAD_COMPOSE_REHEARSAL !== "1")
     throw new Error("Set LAUNCHPAD_COMPOSE_REHEARSAL=1 only on a disposable, trusted Docker host.");
 
 const root = "/tmp/opencode";
+await mkdir(root, { recursive: true, mode: 0o700 });
 if ((await realpath(root)) !== root) throw new Error("The fixture parent must not be a symlink.");
 const socket = await stat("/var/run/docker.sock");
 if (!socket.isSocket()) throw new Error("The local Docker socket is required.");
@@ -89,16 +90,21 @@ async function record(name: string, observations?: object) {
 }
 async function wait<T>(
     label: string,
-    read: () => Promise<T | false>,
+    read: (remainingMs: () => number) => Promise<T | false>,
     seconds = 330,
     cleanup = false,
 ): Promise<T> {
     const deadline = performance.now() + seconds * 1000;
+    const remainingMs = () => Math.max(1, Math.ceil(deadline - performance.now()));
     do {
         if (!cleanup) abort.signal.throwIfAborted();
-        const value = await read();
+        const value = await read(remainingMs);
         if (value) return value;
-        await delay(2000, undefined, cleanup ? undefined : { signal: abort.signal });
+        await delay(
+            Math.min(2000, remainingMs()),
+            undefined,
+            cleanup ? undefined : { signal: abort.signal },
+        );
     } while (performance.now() < deadline);
     throw new Error(`Timed out waiting for ${label}.`);
 }
@@ -174,8 +180,8 @@ async function verifyProjectGone() {
     ] as const)
         for (const name of names) await requireAbsent(kind, name);
 }
-async function exists(service: string) {
-    const { out } = await docker.run([
+async function exists(service: string, timeoutMs?: number) {
+    const args = [
         "ps",
         "-aq",
         "--filter",
@@ -184,22 +190,30 @@ async function exists(service: string) {
         `label=com.docker.compose.service=${service}`,
         "--filter",
         "label=com.docker.compose.oneoff=False",
-    ]);
+    ] satisfies ["ps", ...string[]];
+    const { out } =
+        timeoutMs === undefined
+            ? await docker.run(args)
+            : await docker.read(args, timeoutMs, abort.signal);
     if (out.includes("\n")) throw new Error("More than one matching fixture service.");
     return out;
 }
 async function health(service: string) {
     await wait(
         `${service} health`,
-        async () => {
-            const id = await exists(service);
+        async (remainingMs) => {
+            const id = await exists(service, remainingMs());
             if (!id) return false;
-            const { out } = await docker.run([
-                "inspect",
-                "-f",
-                "{{.State.Status}} {{if .State.Health}}{{.State.Health.Status}}{{end}}",
-                id,
-            ]);
+            const { out } = await docker.read(
+                [
+                    "inspect",
+                    "-f",
+                    "{{.State.Status}} {{if .State.Health}}{{.State.Health.Status}}{{end}}",
+                    id,
+                ],
+                remainingMs(),
+                abort.signal,
+            );
             if (/^(exited|dead|restarting)\b/.test(out))
                 throw new Error(`Fixture ${service} exited or restarted.`);
             return out === "running healthy";
@@ -550,8 +564,11 @@ try {
             const id = await exists("dokku");
             await wait(
                 "Dokku settlement",
-                async () =>
-                    !!id && dokkuIdle(await docker.run(["top", id, "-eo", "pid,comm,args"], true)),
+                async (remainingMs) =>
+                    !!id &&
+                    dokkuIdle(
+                        await docker.read(["top", id, "-eo", "pid,comm,args"], remainingMs()),
+                    ),
                 310,
                 true,
             );

@@ -47,7 +47,8 @@ the source first; a partial database dump is not a working backup. See
 For both `backup` and `restore`, `DATABASE_URL` must use `postgres://` or
 `postgresql://`. Host, port, user, password and database come from the URL;
 the optional `host` query parameter overrides the host (including a Unix socket
-directory). Query values are URL-decoded exactly once.
+directory). Query values are percent-decoded exactly once; `+` is literal
+and a space is `%20`.
 
 The PostgreSQL 17 client tools receive these query options through libpq
 environment variables, not command-line arguments:

@@ -139,8 +139,8 @@ goes only to worker, admin and the router's own health client, not controller,
 PostgreSQL, Dokku or app containers. The CA **private key stays offline/outside
 the stack**. Each control client trusts that bundle only for router-control
 requests, with hostname verification still enabled; there is no global TLS
-override or plaintext fallback. The router health client resolves `router`
-through Compose DNS and verifies the same certificate. Neither control port 3081
+override or plaintext fallback. The router health client dials the configured
+listener locally and verifies its certificate for `router`. Neither control port 3081
 nor CA credentials are published. Data port 3080 remains separate HTTP.
 
 Before expiration, issue a new matching certificate/key for the same SAN.
