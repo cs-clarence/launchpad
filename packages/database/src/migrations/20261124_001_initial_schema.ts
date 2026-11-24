@@ -1,26 +1,163 @@
 import { type Kysely, sql } from "kysely";
+import { authSchemaSql } from "../auth-schema";
 
-// Forward-only, frozen SQL: Kysely owns the transaction. Before running this, stop
-// all old processes, settle dispatched Dokku work, back up, and inventory/remove
-// old apps with the pre-018 binary. Dropped identities are intentionally not kept.
+// Forward-only v1 baseline. Keep this schema frozen; add a new migration for changes.
 export async function up(db: Kysely<any>): Promise<void> {
-    await sql`set local lock_timeout = '5s'`.execute(db);
-    await sql`drop table deployment_event, deletion_operation, deployment, preview, worker_heartbeat`.execute(
+    await sql.raw(authSchemaSql).execute(db);
+
+    await sql`alter table "user" add constraint user_role_check check ("role" in ('user', 'operator'))`.execute(
         db,
     );
-    await sql`delete from idempotency_key`.execute(db);
-    await sql`delete from instance_state where key = 'lifecycle.enabled_at'`.execute(db);
-    await sql`
-        with revoked as (
-            update api_key set revoked_at = now()
-            where revoked_at is null
-              and exists (select 1 from unnest(scopes) as scope where scope like 'preview:%')
-            returning id
-        )
-        insert into audit_event (actor, action, target_type, target_id, organization_id, detail)
-        select 'system', 'deployment.cutover', 'instance', 'self', null,
-            'revoked_keys=' || count(*)::text from revoked
-    `.execute(db);
+    // Second guard for the one-operator bootstrap: the setup command is
+    // also serialized by an advisory lock.
+    await sql`create unique index user_single_operator_idx on "user" (("role")) where "role" = 'operator'`.execute(
+        db,
+    );
+    await sql`alter table "member" add constraint member_user_organization_unique unique ("organizationId", "userId")`.execute(
+        db,
+    );
+
+    await sql`create table audit_event (
+            id uuid primary key default gen_random_uuid(),
+            occurred_at timestamptz not null default now(),
+            actor text not null,
+            action text not null,
+            target_type text not null,
+            target_id text not null
+        )`.execute(db);
+    await sql`create index audit_event_target_idx on audit_event (target_type, target_id, occurred_at)`.execute(
+        db,
+    );
+
+    // Fixed-window counters for sign-in throttling; keys are hashes, so no
+    // email address or IP is stored.
+    await sql`create table login_attempt (
+            key text primary key,
+            window_start timestamptz not null,
+            count integer not null
+        )`.execute(db);
+
+    await sql`alter table "member" add constraint member_role_check check ("role" in ('owner', 'admin', 'deployer', 'viewer'))`.execute(
+        db,
+    );
+    await sql`alter table "organization" add constraint organization_slug_check check ("slug" ~ '^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$')`.execute(
+        db,
+    );
+    // Children carry organization_id and reference (organization_id, id), so a
+    // row can never point into another organization.
+    await sql`create table project (
+            id uuid primary key default gen_random_uuid(),
+            organization_id text not null references "organization" ("id") on delete restrict,
+            slug text not null check (slug ~ '^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$'),
+            name text not null check (length(name) between 1 and 80),
+            created_by text not null references "user" ("id") on delete restrict,
+            created_at timestamptz not null default now(),
+            unique (organization_id, slug),
+            unique (organization_id, id)
+        )`.execute(db);
+
+    // No foreign key: audit history must outlive the organization it names.
+    await sql`alter table audit_event add column organization_id text, add column detail text`.execute(
+        db,
+    );
+
+    // Only a hash of the emailed token is stored. A pending invitation is one with
+    // neither accepted_at nor revoked_at set and an expires_at in the future.
+    await sql`create table organization_invitation (
+        id uuid primary key default gen_random_uuid(),
+        organization_id text not null references "organization" ("id") on delete cascade,
+        email text not null,
+        role text not null check (role in ('owner', 'admin', 'deployer', 'viewer')),
+        token_hash text not null unique,
+        invited_by text not null references "user" ("id") on delete restrict,
+        created_at timestamptz not null default now(),
+        expires_at timestamptz not null,
+        accepted_at timestamptz,
+        revoked_at timestamptz
+    )`.execute(db);
+    await sql`create index organization_invitation_org_idx on organization_invitation (organization_id)`.execute(
+        db,
+    );
+
+    // At most one live invitation per organization and address, even when two
+    // requests race; a newer invitation first revokes the older one.
+    await sql`create unique index organization_invitation_pending_idx
+        on organization_invitation (organization_id, email)
+        where accepted_at is null and revoked_at is null`.execute(db);
+
+    // Only a SHA-256 hash of the secret is stored (the secret is 256 random bits, so a
+    // fast hash is sufficient). `prefix` is the first characters of the secret, shown
+    // so a key can be recognised. `project_ids` null means every project in the
+    // organization; scopes are organization actions. A key is bound to the creator's
+    // membership row (member_id): removing the member nulls it, so the key stays dead
+    // even if the same user is added back later (that is a new membership). A key is
+    // never usable beyond the member's current role. `restrict` on created_by blocks
+    // deleting a user who has keys; revoke or let them age out first.
+    await sql`create table api_key (
+        id uuid primary key default gen_random_uuid(),
+        organization_id text not null references "organization" ("id") on delete cascade,
+        created_by text not null references "user" ("id") on delete restrict,
+        member_id text references "member" ("id") on delete set null,
+        name text not null,
+        prefix text not null,
+        secret_hash text not null unique,
+        scopes text[] not null,
+        project_ids uuid[],
+        created_at timestamptz not null default now(),
+        expires_at timestamptz not null,
+        revoked_at timestamptz,
+        last_used_at timestamptz,
+        check (cardinality(scopes) > 0),
+        check (project_ids is null or cardinality(project_ids) > 0)
+    )`.execute(db);
+    await sql`create index api_key_org_idx on api_key (organization_id)`.execute(db);
+    await sql`create index api_key_creator_idx on api_key (organization_id, created_by)`.execute(
+        db,
+    );
+    await sql`create index api_key_member_idx on api_key (member_id)`.execute(db);
+
+    // Content-addressed upload, deduplicated within an organization only: a digest
+    // seen in another organization is never an existence oracle. A row exists only
+    // once its upload was finalized, so partial uploads are never visible here.
+    await sql`create table artifact (
+        id uuid primary key default gen_random_uuid(),
+        organization_id text not null references "organization" ("id") on delete restrict,
+        digest text not null check (digest ~ '^[0-9a-f]{64}$'),
+        size_bytes bigint not null check (size_bytes >= 0),
+        expanded_bytes bigint not null check (expanded_bytes >= 0),
+        entry_count integer not null check (entry_count >= 1),
+        storage_key text not null,
+        created_by text not null references "user" ("id") on delete restrict,
+        created_at timestamptz not null default now(),
+        unique (organization_id, id),
+        unique (organization_id, digest)
+    )`.execute(db);
+
+    // A repeated request key returns the first result; the same key with a different
+    // payload is a conflict. Bound to organization, principal and endpoint.
+    await sql`create table idempotency_key (
+        organization_id text not null references "organization" ("id") on delete restrict,
+        principal text not null,
+        endpoint text not null,
+        key text not null check (length(key) between 1 and 128),
+        request_hash text not null,
+        resource_id uuid,
+        created_at timestamptz not null default now(),
+        expires_at timestamptz not null,
+        primary key (organization_id, principal, endpoint, key)
+    )`.execute(db);
+    await sql`create index idempotency_key_expiry_idx on idempotency_key (expires_at)`.execute(db);
+
+    await sql`alter table artifact add column collected_at timestamptz`.execute(db);
+    await sql`create index artifact_collectable_idx on artifact (created_at)
+        where collected_at is null`.execute(db);
+
+    await sql`create table instance_state (
+        key text primary key check (length(key) between 1 and 64),
+        value text not null check (length(value) <= 256),
+        set_at timestamptz not null default now()
+    )`.execute(db);
+
     await sql`
 
     CREATE FUNCTION public.deployment_hostname_valid(value text) RETURNS boolean
@@ -519,8 +656,24 @@ export async function up(db: Kysely<any>): Promise<void> {
         DEFERRABLE INITIALLY DEFERRED FOR EACH ROW
         EXECUTE FUNCTION public.deployment_validate_owner();
     `.execute(db);
-    // An older restored dump may already have been marked blocked by this binary.
-    // Initialize a fresh instance, never overwrite that recovery decision.
-    await sql`insert into instance_state (key, value) values ('deployment_recovery', 'ready')
-        on conflict (key) do nothing`.execute(db);
+
+    await sql`
+        CREATE TABLE public.artifact_project (
+            artifact_id uuid NOT NULL,
+            organization_id text NOT NULL,
+            project_id uuid NOT NULL,
+            created_at timestamptz NOT NULL DEFAULT now(),
+            PRIMARY KEY (artifact_id, project_id),
+            FOREIGN KEY (organization_id, artifact_id)
+                REFERENCES public.artifact(organization_id, id) ON DELETE RESTRICT,
+            FOREIGN KEY (organization_id, project_id)
+                REFERENCES public.project(organization_id, id) ON DELETE RESTRICT
+        )
+    `.execute(db);
+    await sql`CREATE INDEX artifact_project_project_idx
+        ON public.artifact_project(organization_id, project_id)`.execute(db);
+
+    await sql`insert into instance_state (key, value) values ('deployment_recovery', 'ready')`.execute(
+        db,
+    );
 }

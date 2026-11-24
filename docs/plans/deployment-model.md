@@ -1,6 +1,5 @@
 # Immutable deployment model implementation
 
-Status: **P2 planning; revised 2026-11-19 to replace rather than retire the previews.**
 For implementers and reviewers; this plan defines safe delivery boundaries, not
 operator instructions. No runtime changes are authorized by this document alone.
 
@@ -40,35 +39,6 @@ Excluded: production startup, publishing, DNS/certificate automation, connector
 changes and deletion of existing resources. Previously authorized experiments do
 not authorize broad cleanup.
 
-## Observed baseline and choices
-
-- `packages/database/src/migrations/` has 17 forward-only migrations.
-  `deployment` and `deletion_operation` currently reference mutable `preview`;
-  migration 018 drops all four preview-era tables.
-- `assertSchemaCurrent` rejects missing/unknown migrations at process startup, so an old
-  binary is refused once 018 is recorded. It is not a fence for a process already running.
-- `apps/worker/src/worker.ts` calls the current deployment and lifecycle runners; P2a removes
-  them and idles the worker. Explicit deletion becomes independently runnable in P3.
-- `apps/controller/src/admin/restore.ts` rejects unknown manifest migrations before copying
-  archives. It needs the recovery marker and gate for restores that hold the new model.
-- Slice 0 hostname/config/drift helpers exist but are not runtime wiring.
-  The design is authoritative for lock order, scope matrix and retention formula.
-
-**Chosen cutover (revised 2026-11-19): replace, do not retire.** Nothing is in
-production, so the user dropped the legacy runtime. Migration 018 drops the preview tables
-and their data **unconditionally**: no `legacy_*` history, no reserved legacy identities, no
-retirement guard, no old-process fencing, no `410` stubs and no backup floor. It does not
-touch Dokku; the operator removes any remaining apps by exact name. The earlier
-retirement design and its test-only SQL (P1, merged in #55) are superseded and deleted by
-P2. Remote alias state still needs separate fenced reconciliation after any restore.
-
-Delivery order is "retire first": `main` may be unable to deploy between P2 and P3. The new
-tables use names no old binary knows, so a surviving old process cannot operate on new
-rows, and the startup check refuses new starts once 018 is recorded. Neither stops a process
-that is already running or a Dokku operation it already dispatched: the operator stops all old
-processes and settles in-flight remote work before upgrading. See the [P2 plan](deployment-p2-cutover.md) and
-the [replacement schema map](../design/deployment-cutover-schema.md).
-
 ## Worked acceptance example
 
 Organization O owns project P and app W. Upload once and deploy A and B into
@@ -101,11 +71,9 @@ Planning and three independent reviews, and PR #55: a test-only specification of
 contracts, guards and registry rules on real PostgreSQL. The retirement parts of that work
 were superseded by the 2026-11-19 decision above; the verified contracts carry into P2.
 
-### P2: replace the previews with the model's schema
+### Schema
 
-Split into three PRs in the order **code first, schema second**: (a) remove the legacy
-runtime with the schema untouched, (b) migration 018 with its readers and the recovery gate,
-(c) the configuration break. Full plan, risks and checks: [P2 plan](deployment-p2-cutover.md).
+The [deployment schema](../design/deployment-cutover-schema.md) is part of the v1 baseline.
 
 ### P3 — deploy and delete one immutable candidate end to end
 
@@ -188,8 +156,7 @@ See the [P6 implementation plan](deployment-p6-clients.md) for the approved
 split between session requests and instance-operator verification.
 
 Finish API/OpenAPI, app/alias dashboard, SDK, CLI and MCP together against the
-settled contracts. Finish the app/alias UX over the removed `/previews` contract (P2a removes it) with explicit breaking
-release notes. Deploy never promotes implicitly. Require independent key scopes,
+settled contracts. Deploy never promotes implicitly. Require independent key scopes,
 project checks, session-only recent-auth reconciliation requests and explicit MCP promotion/
 alias-management startup opt-ins and confirmation. Update examples and install,
 upgrade, backup/restore, tooling and package-pattern docs with actual commands.
@@ -197,7 +164,7 @@ upgrade, backup/restore, tooling and package-pattern docs with actual commands.
 Checks: role/scope/project matrix, schema parity, built-server HTTP and CLI/MCP
 tests, negative confirmation tests, packed clients under Bun/Node and UI logic.
 Undo: disable mutations or roll back clients to the preceding compatible
-immutable-model version, not the retired preview API.
+version.
 
 ### P7 — independent acceptance and disposable rehearsal
 

@@ -31,17 +31,17 @@ tasks:
         - build
 
   test:deployment-schema:
-    description: Exercise migration 018 and its immutable-model constraints on isolated PostgreSQL databases
-    exec: sh -c 'export TEST_DATABASE_URL="${TEST_DATABASE_URL:-postgres://postgres:dev@127.0.0.1:55432/postgres}"; exec bun --bun vitest run --config vitest.config.integration.ts src/admin/__tests__/deployment-model.spec.ts src/admin/__tests__/deployment-cutover.spec.ts'
+    description: Exercise deployment schema constraints on isolated PostgreSQL databases
+    exec: sh -c 'export TEST_DATABASE_URL="${TEST_DATABASE_URL:-postgres://postgres:dev@127.0.0.1:55432/postgres}"; exec bun --bun vitest run --config vitest.config.integration.ts src/admin/__tests__/deployment-model.spec.ts'
     dependencies:
       - ^build
     cache:
       enabled: false
 
-  # Frozen previous-schema fixture: backup, built admin migrate, controller restart, restore.
+  # Built admin initialization, controller restart, and backup/restore.
   # Uses the same disposable PostgreSQL as test:integration; never contacts Dokku.
   test:upgrade:
-    description: Build the controller image and drill an upgrade and restore against disposable PostgreSQL
+    description: Build the controller image and drill initialization and restore against disposable PostgreSQL
     exec: sh -c 'root="$(git rev-parse --show-toplevel)"; tag="launchpad-upgrade-drill-$$:test"; trap "docker image rm \"$tag\" >/dev/null 2>&1 || true" EXIT; export TEST_DATABASE_URL="${TEST_DATABASE_URL:-postgres://postgres:dev@127.0.0.1:55432/postgres}"; docker build -q -f "$root/apps/controller/Dockerfile" -t "$tag" "$root" && LAUNCHPAD_UPGRADE_IMAGE="$tag" bun --bun vitest run --config vitest.config.integration.ts src/admin/__tests__/upgrade.spec.ts'
     dependencies:
       - build

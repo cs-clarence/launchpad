@@ -1,8 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { SQL } from "bun";
-import path from "node:path";
 import { createDatabase, migrateToLatest } from "./index";
-import { createMigrator } from "./migrate";
 
 // Integration tests need a disposable PostgreSQL server; they never run by
 // default. Each test file gets its own freshly created database.
@@ -34,12 +32,6 @@ export async function createTestDatabase() {
         db,
         url: url.toString(),
         migrate: () => migrateToLatest(db),
-        // Migration fixtures need the real pre-cutover schema without copying its DDL.
-        async migrateTo(name: string) {
-            const migrator = createMigrator(db, path.join(import.meta.dirname, "migrations"));
-            const { error } = await migrator.migrateTo(name);
-            if (error) throw error;
-        },
         async destroy() {
             try {
                 await db.destroy();

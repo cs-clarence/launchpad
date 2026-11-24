@@ -2,7 +2,6 @@ import { randomUUID } from "node:crypto";
 import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { migrateToLatest } from "@launchpad-kit/database";
 import { createTestDatabase } from "@launchpad-kit/database/testing";
 import {
     createOrganization,
@@ -207,7 +206,7 @@ describe("createBackup", () => {
         const dest = fresh();
         const manifest = await createBackup(options(dest));
         expect(manifest.artifacts.map((x) => x.sha256).sort()).toEqual([a.digest, b.digest].sort());
-        expect(manifest.migrations.length).toBeGreaterThan(10);
+        expect(manifest.migrations).toContain("20261124_001_initial_schema");
         expect(await verifyBackup(dest)).toEqual([]);
         const dump = await fs.readFile(path.join(dest, "database.dump"));
         expect(dump.subarray(0, 5).toString()).toBe("PGDMP");
@@ -267,7 +266,7 @@ describe("createBackup", () => {
             const dest = fresh();
             const manifest = await createBackup(options(dest));
             expect(manifest.migrations).not.toContain("20991231_900_pending_check");
-            expect(manifest.migrations.length).toBeGreaterThan(10);
+            expect(manifest.migrations).toContain("20261124_001_initial_schema");
             expect(await verifyBackup(dest)).toEqual([]);
         } finally {
             if (before === undefined) delete process.env.LAUNCHPAD_MIGRATIONS_DIR;
@@ -282,34 +281,6 @@ describe("createBackup", () => {
             await sql`delete from launchpad_migration where name = '20991231_999_newer'`.execute(
                 testDb.db,
             );
-        }
-    });
-
-    it("backs up a database at an older schema (before the artifact and heartbeat columns existed)", async () => {
-        // The first fourteen real migrations only: no collected_at, no lifecycle_enabled.
-        const source = path.resolve(import.meta.dirname, "../../../../../packages/database/src");
-        const root = path.join(work, "old-schema");
-        const folder = path.join(root, "migrations");
-        await fs.mkdir(folder, { recursive: true });
-        await fs.copyFile(path.join(source, "auth-schema.ts"), path.join(root, "auth-schema.ts"));
-        const files = (await fs.readdir(path.join(source, "migrations"))).sort();
-        for (const file of files.slice(0, 14)) {
-            await fs.copyFile(path.join(source, "migrations", file), path.join(folder, file));
-        }
-        const old = await createTestDatabase();
-        try {
-            await migrateToLatest(old.db, folder);
-            const dest = fresh();
-            const manifest = await createBackup({
-                ...options(dest),
-                db: old.db,
-                databaseUrl: old.url,
-            });
-            expect(manifest.migrations).toHaveLength(14);
-            expect(manifest.artifacts).toEqual([]);
-            expect(await verifyBackup(dest)).toEqual([]);
-        } finally {
-            await old.destroy();
         }
     });
 

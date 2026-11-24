@@ -18,10 +18,10 @@ connection ownership or the schema changes.
   new migration that sorts before an applied one. The folder must ship with the
   module, which a bundled or compiled distribution has to account for.
   Nothing runs them automatically; use `omni -i run admin -p @launchpad-kit/controller -a command=migrate`.
-- `20261114_001_auth_schema` is SQL generated once from Better Auth 1.7.23,
-  reviewed and frozen. Change the schema with a new migration, never by editing
-  or regenerating it. `20261114_002_instance_constraints` adds the role check,
-  the single-operator index and unique organization membership.
+- `20261124_001_initial_schema` initializes v1 on a fresh database. It includes
+  the frozen Better Auth SQL and Launchpad's constraints. Add a migration for
+  schema changes; never edit the shipped baseline. A database with an
+  incompatible migration history is refused.
 - Auth tables use Better Auth's camelCase columns; Launchpad tables use snake_case.
   `Database` describes only the columns Launchpad reads or writes directly.
 - `@launchpad-kit/database/testing` creates and drops a throwaway database for

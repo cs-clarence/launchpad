@@ -194,9 +194,6 @@ describe("deployment configuration", () => {
         expect(() =>
             parseDeploymentConfig({ ...env, LAUNCHPAD_APPS_DOMAIN: "sites.example.com" }),
         ).toThrow("different registrable domain");
-        expect(() => parseDeploymentConfig({ ...env, LAUNCHPAD_MAX_PREVIEWS: "5" })).toThrow(
-            "no longer used",
-        );
         expect(() =>
             parseDeploymentConfig({ ...env, LAUNCHPAD_MAX_DEPLOYMENTS_PER_APP: "200" }),
         ).toThrow("cannot exceed");

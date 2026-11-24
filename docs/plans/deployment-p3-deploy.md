@@ -9,9 +9,8 @@ windows) and later are out of scope here.
 
 ## Assessment
 
-- **Kind / risk:** Large / High. It introduces the first live writer of the model tables, the
-  first worker that touches Dokku since the previews were removed, new API scopes, and guarded
-  deletion of remote resources.
+- **Kind / risk:** Large / High. It introduces the deployment worker, API scopes,
+  and guarded deletion of remote resources.
 - **How much changes:** recovery administration, services, contracts and scopes, API and OpenAPI,
   worker claim/lease/runner, artifact GC callers, integration fixtures and operator docs.
   No dashboard, CLI, MCP or alias work (P4 and P6).
@@ -174,7 +173,7 @@ join the heartbeat, and must pass cancellation through to each subprocess.
   intent is recorded but before dispatch, reclaim treats the effect as uncertain even if
   nothing was sent. Preventing any dispatch after gate closure would require synchronizing
   closure and dispatch; that is out of P3.
-- **Reclaim by recorded step** (migration 018's `step_done`/`step_pending`):
+- **Reclaim by recorded step** (`step_done`/`step_pending`):
     - nothing remote was pending: resume from `step_done`;
     - a remote step was pending when the lease lapsed (create, build, load): the outcome is
       unknown, so the deployment becomes `reconciliation-needed` and is never retried or adopted

@@ -222,7 +222,7 @@ export async function authenticateApiKey(db: Db, secret: string): Promise<ApiKey
         .where("api_key.expires_at", ">", new Date())
         .executeTakeFirst();
     if (!row) return null;
-    // A scope this build does not know (a retired `preview:*` scope, say) is not narrowed away:
+    // A scope this build does not know is not narrowed away:
     // the whole key is refused, so an old automation key cannot keep working with what is left.
     if (row.scopes.some((scope) => !(API_KEY_SCOPES as readonly string[]).includes(scope))) {
         return null;

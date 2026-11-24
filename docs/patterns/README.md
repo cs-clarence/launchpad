@@ -85,28 +85,21 @@ contracts, issues through the cookie-authenticated HTTP API, and keeps reveals
 out of loader data. `src/lib/api-keys.ts` distinguishes issued/rejected/uncertain
 outcomes; never use the generic loader-invalidating mutation path for a reveal.
 The operator command and its backup/restore helpers are
-`apps/controller/src/admin/{main,backup,restore}.ts`; the frozen earlier-schema
-fixture and built-artifact upgrade drill live in
+`apps/controller/src/admin/{main,backup,restore}.ts`; the built database drill lives in
 `apps/controller/src/admin/__tests__/`; Operator procedures are
 [install](../install.md), [upgrade](../upgrade.md), [backup](../backup.md),
 [restore](../restore.md), [private routing](../access.md), and
 [onboarding](../onboarding.md).
 
-The model SQL has moved
-to the real migration `packages/database/src/migrations/20261119_018_deployment_model.ts`;
-`deployment-model.spec.ts` and `deployment-cutover.spec.ts` exercise it using
-`test:deployment-schema` on disposable PostgreSQL. P1 fixtures, old-process tests
-and inventory are removed. `Database` describes the new physical tables;
-artifact collection pins `deployment`, and `check-restore` reports
-immutable deployment identities. The recovery gate is
+The v1 baseline and deployment schema tests exercise permanent identities and immutable
+constraints on disposable PostgreSQL. The recovery gate is
 `packages/services/src/deployment-recovery.ts`: shared/exclusive advisory locks,
 fsynced external marker/writer record, verified evidence and an audited host check.
 Only model mutations use that gate; organization/auth/key administration stays available.
 
 Operator login, organizations, members and projects exist, but
 the controller is not yet hardened or packaged for exposure to the internet (see the production
-plan in `docs/plans/production-compose-follow-up.md` and the follow-ups in
-`docs/plans/milestone-5-lifecycle.md`): do not publicly expose it as a management system.
+plan in `docs/plans/production-compose-follow-up.md`): do not publicly expose it as a management system.
 
 ## Approved direction, not yet implemented
 
@@ -116,8 +109,7 @@ interfaces rather than HTTP framework objects. Implement those interfaces when
 the first real feature needs them, not as speculative generic abstractions.
 
 Release machinery (the rest of milestone 6), quotas set per organization (limits exist but are instance-wide), runtime logs and custom domains are
-not built; see `docs/plans/application.md` and the follow-ups in
-`docs/plans/milestone-5-lifecycle.md`.
+not built; see `docs/plans/application.md`.
 
 ## References
 

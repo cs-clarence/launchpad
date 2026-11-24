@@ -65,25 +65,11 @@ Rules that keep the graph correct:
   controller integration need disposable PostgreSQL (`omni -i run test:db:up`).
   The SDK's integration suite only uses ephemeral loopback HTTP fixtures; run it
   alone with `omni -i run test:integration -p @launchpad-kit/sdk`. No database is needed.
-- **Upgrade drill.** `omni -i run test:upgrade -p @launchpad-kit/controller` builds a
-  disposable controller image, runs its `migrate` command and exercises the built
-  admin's backup/restore and starts/restarts the image server against the frozen
-  `apps/controller/src/admin/__tests__/fixtures/schema-014.dump` (14 migrations,
-  synthetic user), on disposable PostgreSQL only. It backs up, migrates,
-  restarts, checks schema status and restores a fresh database. It is also in
-  `test:integration`; no Dokku is touched. The complete operator procedure and
-  restore procedure are in [restore](restore.md), with
-  [installation](install.md), [upgrade](upgrade.md) and [routing](access.md).
-- **Migration 018 model/reservations.**
-  `omni -i run test:deployment-schema -p @launchpad-kit/controller` exercises the real
-  discovered migration, populated 014/017 upgrades and rollback/refusal. It tests
-  organization/app-qualified FKs, permanent identity registries, deferred
-  reciprocal ownership, immutable intents and concurrent cross-kind hostname
-  reservation. It uses ordinary invoker validators, not a separate model SQL fixture.
-  It requires disposable PostgreSQL and is uncached. Legacy P1 candidate,
-  inventory and old-process tasks are removed. Services integration covers the
-  recovery gate; controller integration covers marker persistence, older-dump
-  restore over model rows and post-018 round trips. See [restore](restore.md).
+- **Built database drill.** `omni -i run test:upgrade -p @launchpad-kit/controller`
+  initializes a fresh database, restarts the controller and verifies backup and
+  restore on disposable PostgreSQL. No Dokku is touched.
+- **Deployment schema.** `omni -i run test:deployment-schema -p @launchpad-kit/controller`
+  exercises permanent registries, immutable intents and deferred constraints.
 - **Production Compose configuration.** `docker-compose.yaml` and its placeholder-only
   `docker-compose.env.example` are checked by `tooling/compose-production.ts`:
   `omni -i run check:compose` renders the file with
@@ -237,10 +223,7 @@ rehearses a release into `.release-dry-run/` (also a manual, read-only GitHub wo
 
 ## Configuration and containers
 
-**Implemented:** the controller and worker refuse to start while a removed preview
-setting is set (`LAUNCHPAD_PREVIEW_DOMAIN`, `LAUNCHPAD_PREVIEW_PROXY_URL`,
-`LAUNCHPAD_MAX_PREVIEWS`, `LAUNCHPAD_ALLOW_NO_EXPIRY`, `LAUNCHPAD_LIFECYCLE*`), and
-the controller also checks an optional `LAUNCHPAD_APPS_DOMAIN` against `LAUNCHPAD_BASE_URL`
+The controller checks an optional `LAUNCHPAD_APPS_DOMAIN` against `LAUNCHPAD_BASE_URL`
 (`assertCurrentSettings`, `packages/services/src/app-routing-config.ts`).
 
 **Implemented (P3c):** `LAUNCHPAD_DEPLOYMENTS=on|off` (default off) and, when on, the apps domain,
@@ -277,7 +260,7 @@ inventory readers under the exclusive maintenance lock; see the [restore runbook
 separately authorized alias mutations. `launchpad artifact upload`, `launchpad app deploy`
 and `launchpad alias promote` are separate commands. `launchpad-admin reconciliation-requests`
 shows audit history from recent admin/owner sessions; recording a request does not reconcile
-remote state. See [deployment commands](deployments.md) and the [client cutover](releasing.md#immutable-deployment-client-cutover).
+remote state. See [deployment commands](deployments.md).
 
 **Planned, not implemented:** automatic retention expiry or extension after creation.
 See [the design](design/deployment-modes.md) and

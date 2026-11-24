@@ -1,24 +1,10 @@
 import { randomUUID } from "node:crypto";
-import { promises as fs } from "node:fs";
-import path from "node:path";
 import type { Database } from "@launchpad-kit/database";
 import { createTestDatabase } from "@launchpad-kit/database/testing";
 import { type Kysely, sql } from "kysely";
-import { FileMigrationProvider } from "kysely/migration";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 type Db = Kysely<Database>;
-// Load the real discovered migration, without importing another package's source
-// into the controller's TypeScript root or keeping a second SQL fixture.
-const migrations = await new FileMigrationProvider({
-    fs,
-    path,
-    migrationFolder: path.resolve(
-        import.meta.dirname,
-        "../../../../../packages/database/src/migrations",
-    ),
-}).getMigrations();
-const cutover = migrations["20261119_018_deployment_model"]!.up;
 interface Tenant {
     org: string;
     project: string;
@@ -216,7 +202,7 @@ async function promotion(
     return id;
 }
 
-describe("migration 018 deployment model and reservations", () => {
+describe("deployment model and reservations", () => {
     it("keeps bigint generations as decimal strings without JavaScript precision loss", async () => {
         const route = await allocateAlias(await app());
         const before = await db()
@@ -246,14 +232,6 @@ describe("migration 018 deployment model and reservations", () => {
             select app_name, owner_id from dokku_name_reservation order by app_name
         `.execute(db());
         expect(names.rows).toEqual([]);
-        // 018 and everything before it ran; later migrations may follow.
-        expect(
-            (
-                await sql`select name from launchpad_migration where name <= '20261119_018_deployment_model'`.execute(
-                    db(),
-                )
-            ).rows,
-        ).toHaveLength(18);
         expect(
             (
                 await sql`select * from instance_state where key = 'deployment_recovery'`.execute(
@@ -750,32 +728,6 @@ describe("migration 018 deployment model and reservations", () => {
             sql`update deployment_deletion_operation set fence = 2
             where id = ${op}`.execute(db()),
         ).rejects.toThrow(/operation identity and fence/);
-    });
-
-    it("rolls back the destructive cutover if a later stage refuses", async () => {
-        const fresh = await createTestDatabase();
-        try {
-            await fresh.migrateTo("20261116_017_worker_heartbeat_lifecycle");
-            await expect(
-                fresh.db.transaction().execute(async (trx) => {
-                    await cutover(trx);
-                    throw new Error("recovery stage refused");
-                }),
-            ).rejects.toThrow("recovery stage refused");
-            const result = await sql<{
-                old: string | null;
-                model: string | null;
-                retired: string | null;
-            }>`
-                select to_regclass('public.preview')::text as old,
-                    to_regclass('public.app')::text as model,
-                    to_regclass('public.legacy_preview')::text as retired
-            `.execute(fresh.db);
-            expect(result.rows).toEqual([{ old: "preview", model: null, retired: null }]);
-            expect(await fresh.db.selectFrom("audit_event").selectAll().execute()).toEqual([]);
-        } finally {
-            await fresh.destroy();
-        }
     });
 
     it("installs BEFORE TRUNCATE statement guards on all eight model tables", async () => {

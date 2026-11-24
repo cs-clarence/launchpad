@@ -1,45 +1,6 @@
-# Replacement schema map (migration 018)
+# Deployment schema
 
-Status: **revised 2026-11-19: replace, do not retire.** For the author and reviewer of
-migration `20261119_018_deployment_model`. This is the contract for its SQL;
-it is not the SQL. See the [P2 plan](../plans/deployment-p2-cutover.md), the
-[parent plan](../plans/deployment-model.md) and the
-[resource and state-machine design](deployment-modes.md).
-
-The earlier draft of this document specified retiring the preview tables into
-read-only `legacy_*` history with reserved identities, a refusal guard, an object-name
-inventory and an old-process drill. The user chose to drop the legacy runtime and its
-data unconditionally (nothing is in production), so all of that is removed. The P1
-test-only SQL and drill on `main` specify the retired design and are deleted by P2.
-
-## What the migration does
-
-Inside the migrator's own transaction (Kysely takes the advisory lock and runs all
-pending migrations in one transaction; 018 opens no transaction of its own):
-
-1. `SET LOCAL lock_timeout`, so a straggling session fails the migration instead of
-   queueing an exclusive lock behind every reader.
-2. Drop `deployment_event`, `deletion_operation`, `deployment`, `preview` and
-   `worker_heartbeat` **and their data, unconditionally**, with one
-   `DROP TABLE a, b, c, d, e` statement and no `CASCADE`. The four preview tables
-   reference each other in a cycle (`preview.active_deployment_id` references `deployment`), so
-   they must go in one statement, and omitting `CASCADE` makes the migration fail if anything
-   unexpected depends on them. Nothing writes heartbeats after P2a; P3 designs its own. No refusal, no history, no reservation of
-   the dropped hostnames or Dokku names. It does not touch Dokku: apps those previews
-   owned stay on the host until the operator removes them by exact name.
-3. Delete all `idempotency_key` rows (temporary replay records; the table is kept and
-   emptied on purpose), delete the `instance_state` key `lifecycle.enabled_at`, and revoke
-   every API key with a scope that starts with `preview:`, including keys that also hold
-   other scopes (legacy automation keys are not grandfathered), recording counts only in
-   the audit event.
-4. Create the tables below, their guards, and initialize the recovery gate.
-
-A failure in any step rolls everything back. The new `deployment` table reuses the
-old table's name, not its rows or schema; `app_id` replaces `preview_id`. Names
-describe resources, while constraints enforce immutable behavior. Names are not an
-old-process fence. Startup checks refuse old binaries once 018 is recorded, but do
-not stop running processes or dispatched Dokku operations. Stop every old
-controller, worker and admin job and let remote work settle before migration.
+The v1 baseline creates this schema in an empty PostgreSQL database.
 
 ## Physical table map
 
@@ -124,20 +85,10 @@ plan, where it is also tested through backup and restore (`pg_dump --no-owner
 ## Restore and the recovery gate
 
 A restored database may disagree with the router and Dokku, so model mutations stay off until
-that is reconciled. The rule keys on **this binary knowing 018**, never on the manifest: an
-older dump restored over an installation that already ran the model would otherwise bring
-back an empty registry and stale generations while the router and Dokku keep the old state.
+the operator reconciles them. Restore writes an owner-only, durable marker
+before copying data and sets the restored database gate to `blocked`. Fresh
+initialization sets `instance_state.deployment_recovery` to `ready`.
 
-- **Marker.** Every restore by a binary that knows 018 writes
-  `<data dir>/maintenance/deployment-recovery-blocked`, owner-only, by atomic rename with the
-  file and its directory fsynced. It lives outside the dump, so a restored `ready` row cannot
-  clear it. It is written **after** every refusal and the archive pre-check, and **before** the
-  first archive copy, so a refused restore blocks nothing. A restore that fails part-way keeps
-  the marker on purpose: partial state is never offered to workers.
-- **Database gate.** `instance_state` key `deployment_recovery`, `blocked` or `ready`. Migration
-  018 initializes `ready` only when the key is absent; it preserves any pre-migration
-  `blocked` row written while restoring an older dump. After import, restore sets and verifies `blocked`
-  wherever `instance_state` exists; for dumps predating that table, the external marker blocks after migration.
 - **Importer crash guard (user decision, 2026-11-20).** The admin's session advisory lock
   cannot survive its death while a separate `pg_restore` continues. Before spawning it,
   persist/fsync `maintenance/deployment-import-in-progress` with an operation identity,
@@ -153,8 +104,7 @@ back an empty registry and stale generations while the router and Dokku keep the
 - **Scope.** The gate covers **model mutations only**: apps, deployments, aliases, promotions,
   deletions, artifact collection and the worker. Sign-in, sessions, organizations, projects,
   members and API-key administration stay available, or a restored controller could not be used.
-- **Checks.** A missing gate row is permitted only while 018 is not recorded in
-  `launchpad_migration`; with 018 recorded and no row it is refused. An unreadable marker
+- **Checks.** An initialized database must have a ready gate row to accept model mutations. An unreadable marker
   directory or database fails closed. The marker lives in the data directory the artifacts
   already require every process to share (one `LAUNCHPAD_DATA_DIR` volume); a missing mount is a
   startup error, never permission to assume readiness.
@@ -247,40 +197,7 @@ back an empty registry and stale generations while the router and Dokku keep the
       Explicit republish writes and verifies the restored target above both generation fences
       before it commits the repair and settles any superseded chain. It leaves an already
       matching chain alone. A damaged timestamp requires another restore; it cannot waive the wait.
-- **Older dumps.** There is no backup floor. An older dump restores, is migrated forward, and
-  018 drops its preview tables again; the marker is written like any restore.
 
-## API scopes
+## Verification
 
-`preview:*` scopes are removed from issuance and authentication and fail closed if a
-stored key somehow survives; they are never mapped to `app:*`. The new `app:read`,
-`app:deploy`, `app:promote`, `app:alias:manage` and `app:delete` scopes follow the
-[permission matrix](deployment-modes.md#permission-matrix-and-client-confirmation).
-
-## Verification (P2b)
-
-`SET LOCAL lock_timeout` covers only 018; a run that starts from 014 is not protected for 015 to 017.
-
-On disposable PostgreSQL, from the frozen schema-014 fixture and from an empty database:
-
-- 017 then 018 in one migrator run, and 018 alone; a refusal (for example a held
-  conflicting lock hitting `lock_timeout`) leaves the schema untouched.
-- Preview data of every state is dropped, and the new tables are empty.
-- Every reservation rule above, each by a failing case and a passing control, including
-  COMMIT-time failures, cross-organization and cross-app keys, immutable fields, TRUNCATE
-  and delete refusal, and cross-kind hostname races.
-- Key revocation (mixed, unknown-prefix, case variant, already revoked) and count-only
-  audit; idempotency rows removed; sessions untouched.
-- An old binary against the migrated schema is refused at startup (018 recorded).
-- Restore: a post-018 backup round trip writes the marker and sets the gate; a crash after
-  import before the gate write stays blocked after a fresh start; an older dump restores,
-  migrates, and writes the marker like any restore.
-- The upgrade drill and the built images run the new migration, and the drill asserts the
-  four preview tables and `worker_heartbeat` are gone afterwards.
-- An old dump restored over a database that already holds model rows writes the marker.
-- The interim P3a `recovery-clear` refused without `--i-have-reconciled-router-and-dokku` on an empty database
-  with no writer record, on one with the record, and on a populated one; with the flag it clears
-  in each case, audits only the attested fact and removes the marker last (P3a). The
-  `model-writer-seen` record is still written, fsynced before the first model mutation or remote
-  call, and a failure to create it aborts the writer with nothing changed; it is history now, not
-  a clearing rule.
+Run `omni -i run test:deployment-schema -p @launchpad-kit/controller` with disposable PostgreSQL.

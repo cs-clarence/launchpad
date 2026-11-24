@@ -3,7 +3,7 @@ import { createHash } from "node:crypto";
 import { createReadStream, createWriteStream, promises as fs } from "node:fs";
 import path from "node:path";
 import { pipeline } from "node:stream/promises";
-import { type Database, migrationStatus } from "@launchpad-kit/database";
+import { type Database, INITIAL_SCHEMA_MIGRATION, migrationStatus } from "@launchpad-kit/database";
 import { resolveArtifactPath } from "@launchpad-kit/services";
 import { type Kysely, sql } from "kysely";
 
@@ -39,22 +39,6 @@ export interface BackupOptions {
     pgDump?: string;
     // Optional bounded drill cancellation; production CLI normally lets a dump complete.
     signal?: AbortSignal;
-}
-
-// Connection settings travel in the environment, never in the argument list where any
-// local user could read the password.
-// The backup may run against a schema that is behind this build (the point is to back up before
-// migrating), so a column a later migration added is only used where it exists.
-export async function columnExists(db: Kysely<any>, table: string, column: string) {
-    // The relation the search path resolves (a personal schema may be empty while the tables live
-    // in `public`), not whatever schema is current.
-    const { rows } = await sql<{ present: boolean }>`
-        select exists (
-            select 1 from pg_attribute
-            where attrelid = to_regclass(${table}::text)
-              and attname = ${column} and attnum > 0 and not attisdropped
-        ) as present`.execute(db);
-    return rows[0]?.present === true;
 }
 
 // PostgreSQL 17 libpq environment equivalents. In particular, sslpassword has no
@@ -186,8 +170,7 @@ async function dumpDatabase(options: BackupOptions, snapshot: string, file: stri
 //
 // One consistent view of both halves: the live artifact rows are read inside the same exported
 // snapshot the dump uses, and the files are copied for exactly those rows. An upload made
-// meanwhile is only an extra file that is not copied. Nothing collects archives while the previews
-// are removed; the app model's collection will have to be stopped before a backup.
+// meanwhile is only an extra file that is not copied. Stop collection before a matched backup.
 export async function createBackup(options: BackupOptions): Promise<BackupManifest> {
     // Refuse lossy connection settings before reading the database or creating files.
     pgEnvironment(options.databaseUrl);
@@ -198,9 +181,11 @@ export async function createBackup(options: BackupOptions): Promise<BackupManife
     if (known.unknown.length > 0) {
         throw new BackupError(
             `The database has migrations this version does not know (${known.unknown.join(", ")}): ` +
-                "run the backup with the newer version.",
+                "run the backup with a compatible version.",
         );
     }
+    if (!known.applied.includes(INITIAL_SCHEMA_MIGRATION))
+        throw new BackupError("Initialize the database before taking a backup.");
 
     const dest = path.resolve(options.dest);
     await fs.mkdir(path.dirname(dest), { recursive: true });
@@ -227,18 +212,12 @@ export async function createBackup(options: BackupOptions): Promise<BackupManife
                 const applied = await sql<{
                     name: string;
                 }>`select name from launchpad_migration order by name`.execute(trx);
-                const uncollected = (await columnExists(trx, "artifact", "collected_at"))
-                    ? sql`where collected_at is null`
-                    : sql``;
-                const hasArtifacts = await columnExists(trx, "artifact", "storage_key");
-                const live = hasArtifacts
-                    ? (
-                          await sql<{ storage_key: string; digest: string }>`
-                              select storage_key, digest from artifact ${uncollected} order by storage_key`.execute(
-                              trx,
-                          )
-                      ).rows
-                    : [];
+                const live = await trx
+                    .selectFrom("artifact")
+                    .select(["storage_key", "digest"])
+                    .where("collected_at", "is", null)
+                    .orderBy("storage_key")
+                    .execute();
                 await dumpDatabase(options, snap[0]!.id, dumpFile);
                 return { rows: live, migrations: applied.rows.map((r) => r.name) };
             });

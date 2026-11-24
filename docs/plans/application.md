@@ -24,7 +24,7 @@ implemented. Design and boundaries are in [application design](../design/applica
   calendar duration. No agents launched for this plan.
 - **Chosen next step (when this was written):** milestone 0 was partly done; the deferred gates
   were to pass before the milestone that needs each. Milestones 0 to 5 are now built (see the
-  progress notes and `docs/plans/milestone-5-lifecycle.md`); milestone 6 is next.
+  progress notes); milestone 6 is next.
 - **Reassessment triggers:** hostile tenants/builds, multi-host orchestration,
   public signup, OAuth-provider expansion, hosted MCP, automatic Git-provider PR
   builds, or a different deployment engine.
@@ -69,8 +69,7 @@ Required complexities and failure cases:
    the same key conflicts.
 4. Restart the worker during deployment. Reconcile uncertain Dokku outcome
    without concurrent mutations or duplicate destructive actions.
-5. Failed replacement keeps the previous working preview. A TTL extension
-   racing expiry does not delete the extended preview.
+5. A failed deployment does not change a live alias.
 6. Deleting a preview does not touch a manual Dokku app, another organization's
    resources, or backend volumes/databases.
 7. Revoking a key or membership prevents new work and handles queued work by the
@@ -171,82 +170,9 @@ SDK error compatibility and clean credential-store behavior.
 browser access and audit history. Credential-format changes need migration or
 clear re-login, never silent credential loss.
 
-### 3. One static artifact reaches a working preview
+### 3–5. Deployment model and clients
 
-**Depends on:** milestones 0–2.
-
-**Deployment safety gate:** before enabling any Dokku-mutating deployment path,
-implement and verify per-preview serialization, stale-worker containment and
-uncertain-SSH reconciliation. Selecting their design in milestone 0 is not
-sufficient; these protections must work in milestone 3, not wait for milestone 5.
-
-- Streaming bounded archive upload from CLI/dashboard, manifest/digest validation,
-  org-scoped artifact storage, quotas and interrupted-upload cleanup.
-- Explicit preview creation, generated app/hostname mapping and idempotent
-  deployment submission committed with its durable job.
-- Worker uses fixed Nginx templates, optional SPA fallback and unique image tags.
-  Stream images through the narrow Dokku SSH adapter and verify proxy readiness.
-- Implement durable operation identity, per-preview serialization, lease/retry
-  ownership and worker restart reconciliation. Contain stale attempts; an
-  ambiguous SSH result blocks further app mutations until reconciled or safely
-  escalated to an operator. Do not blindly retry an external side effect.
-- Status and persisted progress visible in CLI/dashboard; finite timeouts and
-  failure records. Start with polling; add SSE only with reconnection tests.
-
-**Verify:** static fixture and SPA route success, non-SPA real 404, malicious/
-oversized archives rejected, organization isolation on artifacts/logs, retry/
-idempotency cases, resource limits and replacement failure preserving uptime.
-Before enabling deployments, exercise concurrent submissions for one preview,
-worker death/restart, expired leases with stale workers, SSH timeout after a
-successful remote mutation, and database loss during execution. Verify no
-overlapping app mutations and no blind retry of an uncertain deployment.
-Run live engine tests only against explicitly disposable apps.
-
-**Undo:** disable new deployment submission and drain/stop workers safely. Revert
-the affected preview using its retained prior image/artifact. Only delete
-resources created and recorded by these test/deploy operations.
-
-### 4. Local MCP provides the same safe deployment workflow
-
-**Depends on:** milestone 3 and stable client-core operations.
-
-- Stdio MCP executable and shared client-core calls, no CLI subprocess wrapping.
-- Explicit controller/org profiles and allowed roots; read-only tools by default.
-- Opt-in deploy tools with explicit mutation authorization, bounded
-  structured output, schema validation and stderr-only diagnostics.
-- Expose deletion tools only after milestone 5 supplies the verified deletion
-  service; otherwise keep them unavailable, not a direct Dokku shortcut.
-- CLI and MCP share packaging, safe errors, auth and idempotency behavior.
-
-**Verify:** a real MCP client can list, deploy the fixture and track completion.
-Test symlink/root escape, disallowed filesystem reads, missing/insufficient
-scopes, malicious logs and output size/protocol correctness. Tool annotations
-alone must not authorize anything.
-
-**Undo:** disable mutating MCP tools or revoke their key. Controller behavior and
-CLI remain usable. The MCP package has no host-level management credentials.
-
-### 5. Previews expire and recover predictably
-
-**Depends on:** milestone 3; can follow milestone 4 or be scheduled before it.
-
-- TTL selection/extension, durable scheduled expiry, manual deletion and
-  ownership-safe artifact/image cleanup.
-- Extend milestone 3's verified serialization, stale-worker containment and
-  reconciliation to expiry, deletion and cleanup. Add lifecycle cancellation
-  semantics and operator recovery for ambiguous lifecycle outcomes; do not
-  introduce basic deployment safety for the first time here.
-- Runtime logs, durable audit events, dependency readiness, worker heartbeat and
-  storage/retention/backlog indicators.
-
-**Verify:** concurrent deploy/delete/extend cases, expiry after downtime,
-orphan/foreign-app safety, stale workers, SSH timeout-after-success and
-database unavailability. Explicitly demonstrate no global Docker prune and
-no volume/database deletion.
-
-**Undo:** pause scheduling/cleanup, preserve artifacts and jobs for reconciliation.
-Deletion cannot be magically rolled back: use retained artifacts/backups and
-document which metadata/URLs can be restored.
+See [deployment and routing design](../design/deployment-modes.md).
 
 ### 6. A clean user can install, back up and upgrade v1
 
@@ -267,42 +193,8 @@ document which metadata/URLs can be restored.
   least-privilege CI identity, package-content checks and image provenance.
 - Docs for local/private management, Cloudflare/Tailscale preview routing,
   onboarding, API keys, MCP roots/permissions, restore and upgrade.
-- **Restore order and the lifecycle.** The worker's orphan sweep removes an archive file once it is
-  older than the retention and no live row refers to it, start-up recovery trusts the database, and
-  a deletion destroys the Dokku app of a row it was given. So a restore runbook must say:
-    1. switch the lifecycle **and deployments off** (worker and controller), then **stop every
-       worker and wait until each process has exited** (turning a setting off takes effect only when
-       the worker restarts). A worker's exit does not prove that a Dokku destroy it had under way
-       has finished: on a stop it only ends its local SSH client, and the command may still be
-       running on the host, including the plugin triggers Dokku runs after an app is gone. A missing
-       app is therefore **not** proof that a destroy has settled either. So **wait** after the last
-       worker stopped for longer than the longest Dokku command and the deletion lease (five minutes
-       by default; longer if the host's destroy triggers are slow) before touching anything;
-    2. restore the database and the data directory from the same moment;
-    3. check that every live artifact has its file (uploading the same archive again repairs a row
-       whose file is missing);
-    4. **detect, do not yet fix, what Dokku no longer matches**: for every live preview, check that
-       its app exists (`apps:exists` by the recorded name) and **list** each one whose app is gone
-       (destroyed after the backup, or by a settled in-flight deletion). An app Dokku has that no
-       restored row names is left alone, as Launchpad never destroys what it has no row for. `launchpad-admin
-       check-restore` does this read-only and also lists expired previews;
-    5. switch **deployments on and start the workers, with the lifecycle still off**: nothing
-       expires or is deleted yet;
-    6. for each listed preview an administrator keeps, redeploy it (a deployment's first step
-       recreates a missing app, so deploying its active artifact again restores it; redeploying
-       does not need the lifecycle). A restored preview whose expiry has already passed must be
-       **extended** now if it is to be kept, because the lifecycle is about to start and the
-       first-enable grace applies only once, to a database that has never had it on;
-    7. switch the lifecycle on (worker and controller), and then delete the listed previews the
-       administrator chose to end (a manual deletion is refused while the lifecycle is off).
-       Restoring an older database with the lifecycle on deletes the archives uploaded since (once they
-       are older than the retention); restoring an older data directory leaves live rows whose files
-       are missing, which makes a new deployment of that artifact fail at its build, and a rollback to
-       it end in `rollback-failed` and hold the deployment for an administrator. One database per Dokku
-       host and per data directory still holds. The restore drill must exercise each step, including
-       a destroy that was in flight when the workers were stopped being allowed to settle, and a
-       preview whose app was destroyed after the backup being found in step 4 and redeployed or
-       ended in step 7, with an expired restored preview extended in step 6 and not deleted.
+- Verify the [restore runbook](../restore.md) with a matched backup and independently
+  checked Dokku and router state.
 
 **Verify:** clean-machine install from packed tarballs and image artifacts,
 supported Node/Bun platforms, npm execution without workspace dependencies,
@@ -376,7 +268,6 @@ Milestone 2 slices (one PR each):
       loader, one-time reveal, explicit revoke confirmation, recent-session
       guidance and uncertain-issuance recovery without automatic retries.
 - [x] Final independent Opus review of milestone 2; dashboard merged in PR #10.
-      Milestone 3 plan: [milestone-3-static-preview.md](milestone-3-static-preview.md)
       (proposed, awaiting approval).
       No interactive browser click-through has been run; helper/unit and
       built-server integration tests cover logic, SSR visibility and cache headers.

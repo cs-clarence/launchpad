@@ -13,7 +13,7 @@ packaging and R4 integration are not). P3 ([plan](deployment-p3-deploy.md)) is c
   outcome can be uncertain, and destructive retention depend on it.
 - **How much changes:** services (alias and operation allocation, pins, corrective operations),
   a router control client, a promotion runner in the worker, API and OpenAPI, admin recovery
-  commands. No new table: migration 018 already holds `app_alias`, `promotion_operation`, the
+  commands. No new table: the schema defines `app_alias`, `promotion_operation`, the
   reservations and `last_unpinned_at`. Expect at most small forward migrations.
 - **Unknowns:** how the control protocol behaves under lost replies (the client is new); pin
   release correctness across the superseded chain; the recovery counter protocol against a live

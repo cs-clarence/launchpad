@@ -26,7 +26,9 @@ export async function raiseAliasCounters(db: Db, dataDir: string, view: RouterVi
             const migrated = await sql<{ present: boolean }>`
                 select to_regclass('public.app_alias') is not null as present`.execute(trx);
             if (!migrated.rows[0]!.present) {
-                throw new DeploymentRecoveryError("Run migration 018 before raising counters.");
+                throw new DeploymentRecoveryError(
+                    "Initialize the database before raising counters.",
+                );
             }
             const report = await compareRouterInventory(trx, inventory);
             let raised = 0;

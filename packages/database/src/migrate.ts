@@ -4,6 +4,8 @@ import type { Kysely } from "kysely";
 import { sql } from "kysely";
 import { FileMigrationProvider, Migrator } from "kysely/migration";
 
+export const INITIAL_SCHEMA_MIGRATION = "20261124_001_initial_schema";
+
 // Every migration is one file in a `migrations` folder, named `<ISO date>_<sequence>_<what>`
 // and exporting `up`. Adding a migration is adding a file; there is no list to
 // forget. The folder holds migrations only: a file that exports no migration (a
@@ -14,7 +16,7 @@ import { FileMigrationProvider, Migrator } from "kysely/migration";
 // Migrations are read from disk at run time. From source the folder sits next to this file;
 // a built controller ships its migrations, bundled, next to its bundle, so the
 // folder is searched for in this file's directory and the few above it.
-// LAUNCHPAD_MIGRATIONS_DIR names one explicitly. See docs/plans/milestone-6-release.md.
+// LAUNCHPAD_MIGRATIONS_DIR names one explicitly.
 function looksLikeMigrations(dir: string) {
     try {
         return readdirSync(dir).some((name) => /^\d{8}_\d{3}_/.test(name));
@@ -77,7 +79,7 @@ async function knownMigrations(migrator: Migrator, folder: string) {
 // `folder` exists for tests of the loading rules.
 export async function migrateToLatest(db: Kysely<any>, folder = defaultMigrationsFolder()) {
     // The same naming rules the status check applies, so the two cannot disagree.
-    listMigrationNames(folder);
+    assertKnownHistory(await migrationStatus(db, folder));
     const migrator = createMigrator(db, folder);
     await knownMigrations(migrator, folder);
     const { error, results } = await migrator.migrateToLatest();
@@ -114,7 +116,7 @@ export interface MigrationStatus {
     applied: string[];
     // Present in this build but not yet applied.
     pending: string[];
-    // Applied to the database but unknown to this build: it was migrated by a newer one.
+    // Applied to the database but unknown to this build.
     unknown: string[];
 }
 
@@ -144,14 +146,18 @@ export async function migrationStatus(
 
 // A process refuses to run against a schema it was not built for: a database that is behind
 // (run `launchpad-admin migrate`, after a backup) or one a newer build has already migrated.
-export async function assertSchemaCurrent(db: Kysely<any>, folder = defaultMigrationsFolder()) {
-    const status = await migrationStatus(db, folder);
+function assertKnownHistory(status: MigrationStatus) {
     if (status.unknown.length > 0) {
         throw new SchemaMismatchError(
             `The database has migrations this version does not know (${status.unknown.join(", ")}). ` +
-                "It was migrated by a newer Launchpad: run that version, or restore a backup.",
+                "Use a compatible Launchpad version or a fresh database.",
         );
     }
+}
+
+export async function assertSchemaCurrent(db: Kysely<any>, folder = defaultMigrationsFolder()) {
+    const status = await migrationStatus(db, folder);
+    assertKnownHistory(status);
     if (status.pending.length > 0) {
         throw new SchemaMismatchError(
             `The database schema is behind: ${status.pending.length} migration(s) pending ` +

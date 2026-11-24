@@ -62,7 +62,7 @@ unknown). The controller carries its migrations, bundled so they run without the
 `bun .output/admin.mjs migrate` works in the image). The worker has no migration bundle.
 `LAUNCHPAD_MIGRATIONS_DIR` names another folder.
 The existing `LAUNCHPAD_DATA_DIR` directory must be mounted/available before startup;
-the controller does not create a missing mount. See [migration 018's destructive cutover](../../docs/deployment-cutover.md).
+the controller does not create a missing mount.
 This is a directory check, not proof of volume identity: an unintended anonymous `/data`
 volume also passes. Verify that every writer/admin uses the intended shared storage.
 
@@ -151,16 +151,13 @@ removes what it wrote; one that is killed can leave a partial directory, which h
 `manifest.json` and never verifies) holding `database.dump` (custom format), exactly the stored
 archives the dump's live artifact rows refer to, and `manifest.json` with sizes and SHA-256
 checksums. A database whose migrations are still pending can be backed up (do that before
-`migrate`); one that a newer version already migrated is refused.
+`migrate`); an incompatible migration history is refused.
 
 - **One consistent view.** The live artifact rows, the list of applied migrations and the dump
   are read in the same exported snapshot, and the files are copied for exactly those rows; an upload
   made meanwhile is just not in this backup. If a live row's file is missing or altered, the backup
-  fails rather than record a restore that cannot work (a file that a collection moved aside before the preview runtime was removed is not put back
-  automatically now: restore it by hand from its `.gone` name).
-- **No stop flag.** Nothing collects archives now, so `backup` has no worker check and no
-  `--i-have-stopped-the-workers` option. Stop any older-version collectors and wait for them to exit
-  before backing up: their collection can race with the file copy. No stop is needed if only a worker with deployments off is running; stop an enabled worker first.
+  fails rather than record a restore that cannot work.
+- **Quiesce deployment writes** before taking a matched backup used for rollback.
 - **Keep the directory private** (it is created mode 0700). The dump holds password and API-key
   hashes **and live session tokens**: with the authentication secret they would let someone sign
   cookies, so never store the secret beside the backup. Environment files, the secret and
@@ -171,14 +168,13 @@ checksums. A database whose migrations are still pending can be backed up (do th
 ## Restore
 
 Restoring is a procedure, not one command. The current step-by-step
-[restore how-to](../../docs/restore.md) includes the safety and recovery checks
-(the rationale is in `docs/plans/application.md`, "Restore order"):
+[restore how-to](../../docs/restore.md) includes the safety and recovery checks:
 
 1. **Stop every worker, the controller and every admin job that can write** (the controller keeps its database connections and only checks the schema when it starts,
    so restart it after the restore), wait until each has exited, and then wait longer than the
    longest Dokku command and the deletion lease (five minutes by default). A worker's exit does not
    prove a Dokku destroy it started has finished, and a missing app is not proof either.
-   Follow [the restore prerequisites](../../docs/restore.md) for legacy worker settling checks.
+   Follow [the restore prerequisites](../../docs/restore.md) for worker settlement checks.
 2. `restore <dir> --i-have-stopped-the-workers` into an **empty** database, or
    `--replace <host:port/database>` to replace one that has data, typing the address exactly as the
    refusal message prints it (naming only the database would not tell a scratch copy from the live
@@ -203,7 +199,8 @@ Restoring is a procedure, not one command. The current step-by-step
     - Run it as the database role the controller and worker use, and that role must own the
       database: `--no-owner` makes the restoring role the owner of everything it creates, and the new
       `public` schema has only the default grants.
-    - A backup made by an older version restores fine: run `migrate` afterwards.
+    - A backup with the v1 baseline and only known migrations can be restored.
+      If the restore reports pending migrations, run `migrate` afterwards.
 3. `check-restore` (read-only): lists live archives whose file is missing and non-deleted immutable
    deployments beyond queued whose Dokku app is gone (it asks Dokku with `apps:exists` over
    `DOKKU_SSH_*` settings, or
@@ -253,7 +250,7 @@ organization/project read access. `member:read` includes all members' email
 addresses; the UI does not offer the reserved `project:delete` scope.
 Key lists retain historical scope names so keys issued before the cutover remain inspectable and
 revocable. This is metadata only: new keys cannot request retired scopes, and a bearer key with
-any retired or unknown scope is refused entirely.
+any unknown scope is refused entirely.
 
 Issuing requires a sign-in from the last 15 minutes. Freshness uses the server's
 flag and remaining duration, not a comparison with the browser's clock. The page provides checked
@@ -325,8 +322,4 @@ a fresh session can request operator review of held work; only instance operator
 evidence and reconcile it. The API key form offers separate app read, deploy, promote,
 alias-management and deletion scopes.
 
-The preview runtime (previews, deployments, deletion and expiry, the artifact upload endpoint, the
-dashboard preview pages and the `preview:*` key scopes) was removed. Migration 018 drops the old
-tables/data unconditionally and revokes their keys. A stored key that still holds a `preview:*` scope is refused at
-authentication. Current uploads are project-scoped, under `app:deploy`; see
-[deployments](../../docs/deployments.md).
+Uploads are project-scoped under `app:deploy`; see [deployments](../../docs/deployments.md).

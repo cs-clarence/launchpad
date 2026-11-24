@@ -38,12 +38,9 @@ the lock. Storage keys are exactly `artifacts/<32 hex>/<64 hex>.tar.gz` (a hash 
 the organization, then the archive digest); `resolveArtifactPath` refuses anything
 else. Test archives (including hostile ones) are built by `@launchpad-kit/services/testing`.
 
-## Status and what was removed
+## Status and recovery
 
-The preview, deployment, deletion, expiry and lifecycle services were removed (see
-[the P2 plan](../../docs/plans/deployment-p2-cutover.md)). `status.ts` is the operator-only status
-(database readiness and stored artifacts). `artifact-gc.ts` and `deadline.ts` are kept for the app
-model; nothing calls the collection now.
+`status.ts` reports database readiness and stored artifacts to the instance operator.
 
 `deployment-recovery.ts` owns the model-mutation gate. `withModelMutation` holds a shared
 recovery lock, checks the filesystem/database gate and fsyncs `model-writer-seen` before
