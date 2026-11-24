@@ -1,4 +1,3 @@
-import { randomUUID } from "node:crypto";
 import path from "node:path";
 import { createDatabase } from "@launchpad-kit/database";
 import { createDokkuClient } from "@launchpad-kit/dokku";
@@ -17,6 +16,7 @@ import { createPromotionPorts } from "./promotion-ports";
 import { createDeployPorts } from "./ports";
 import { DEFAULT_BASE_IMAGE, checkBaseImage } from "./template";
 import { parseProxyUrl } from "./verify";
+import { workerIdFromEnv } from "./worker-id";
 
 const log = (line: Record<string, unknown>) => console.log(JSON.stringify(line));
 
@@ -34,6 +34,7 @@ async function main() {
         process.on(name, () => shutdown.abort());
     }
     if (config.enabled) {
+        const owner = workerIdFromEnv(process.env);
         const databaseUrl = required("DATABASE_URL");
         const dataDir = path.resolve(required("LAUNCHPAD_DATA_DIR"));
         const baseImage = checkBaseImage(process.env.LAUNCHPAD_BASE_IMAGE || DEFAULT_BASE_IMAGE);
@@ -74,11 +75,11 @@ async function main() {
             connection: { statement_timeout: "5s", idle_in_transaction_session_timeout: "10s" },
         });
         try {
-            log({ event: "deployment-worker-started" });
+            log({ event: "deployment-worker-started", worker: owner });
             await workDeployments({
                 db,
                 dataDir,
-                owner: randomUUID(),
+                owner,
                 ports,
                 deletionPorts,
                 promotionPorts,
