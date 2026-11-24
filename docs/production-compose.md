@@ -330,7 +330,7 @@ Assessed 2026-11-23; each item is adopted or deferred with its reason.
 See the [tracked follow-ups](plans/production-compose-follow-up.md#outstanding-follow-ups-after-the-bundled-p7-pr)
 for the remaining decisions and their verification criteria.
 
-- **Proven once, on a disposable instance, with aliases off.** The stack started in order and all
+- **First rehearsal, on a disposable instance, with aliases off (2026-11-21).** The stack started in order and all
   five services became healthy; `cap_drop: ALL`, read-only credential mounts, the `apps` network,
   worker SSH to Dokku, one fixture deploy/probe/delete, backup, fresh-database restore with
   `check-restore`, and recreate-keeps-artifacts worked
@@ -358,10 +358,13 @@ for the remaining decisions and their verification criteria.
   terminate app or management HTTPS; every host
   binding is loopback. The management origin must be HTTPS and the apps domain a
   separate registrable domain before deployments can be enabled for real users.
+  The [disposable ingress example](ingress-example.md) verifies the routing and isolation
+  contract with synthetic hostnames; it is not a production configuration.
 - **One host, one engine.** The worker and Dokku share the host's Docker engine.
   Access to its socket is root-equivalent on that host; the stack gives no isolation
   from hostile uploaded sites beyond Dokku's own.
-- **Resource limits come from one small rehearsal** (above).
+- **Resource limits come from the [2026-11-23 measurements](#measured-at-the-default-limits-2026-11-23).**
+  Database loss, worker liveness and load beyond the default 10-app quota are not rehearsed.
 - **Whole-host recovery passed on disposable QEMU/KVM guests.** The `backup` command
   does not include Dokku or router state or the container images. The
   [clean-host rehearsal](plans/production-fresh-host-recovery.md#result-2026-11-23)
