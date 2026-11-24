@@ -382,4 +382,10 @@ for the remaining decisions and their verification criteria.
   its password) is a container environment variable visible to anyone who can inspect
   containers.
 - **Cleanup of the old demo/test resources has not been executed** and is separate.
-- The worker has no setting for a stable worker id: its owner is a new UUID per process.
+- **Worker identity.** `LAUNCHPAD_WORKER_ID` (1 to 64 characters: letters, digits, `.`, `_` and `-`, where the first
+  character must be a letter or digit) names
+  the worker in `lease_owner` and in its `deployment-worker-started` log line; unset or empty keeps a new
+  random identity per process. It identifies only. Claims are fenced by an attempt and a fence counter that
+  every claim advances, not by the name, and work is reclaimed only after its lease expires, so a stable
+  name neither speeds up recovery nor lets a stale process write. Give each worker its own name:
+  two workers sharing one stay safe but become indistinguishable in the database and logs.

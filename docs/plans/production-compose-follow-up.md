@@ -67,7 +67,7 @@ was executed. Since the snapshot below:
 - **Reusable tasks.** `test:compose:rehearsal` is the checked-in baseline. The fresh-host, reboot, upgrade
   and ingress drills used throwaway guest-only adaptations that are not checked in.
 - **Schema.** The pre-release migrations were replaced by one v1 baseline ([plan](v1-schema-baseline.md)).
-- **Still open:** the stable worker id, cleanup of old resources (needs an approved exact list), database
+- **Still open:** cleanup of old resources (needs an approved exact list), database
   loss and worker liveness rehearsals, and the decisions listed in the outstanding follow-ups below.
 
 **Historical snapshot (2026-11-21, after the first disposable rehearsal).** Evidence:

@@ -49,6 +49,8 @@ to deploy to an immutable preview URL and separately choose whether to promote.
    Keep the database and admin command private. Use
    [the controller settings reference](../apps/controller/README.md#configuration)
    for remaining values. The worker does not read database or Dokku settings while deployments are off.
+   An enabled worker may be given a name with `LAUNCHPAD_WORKER_ID`; it identifies the worker in logs
+   and the database and is optional (see [production Compose](production-compose.md)).
 4. Run `bun .output/admin.mjs migrate --status` in the controller image with
    `DATABASE_URL` set. On a fresh database, a nonzero exit with pending migrations
    is expected. Run `bun .output/admin.mjs migrate` explicitly, then run

@@ -210,6 +210,8 @@ services:
       DATABASE_URL: *database-url
       LAUNCHPAD_BASE_IMAGE: ${LAUNCHPAD_BASE_IMAGE:-nginx:1.27-alpine@sha256:65645c7bb6a0661892a8b03b89d0743208a18dd2f3f17a54ef4b76fb8e2f2a10}
       LAUNCHPAD_WORKER_HEALTH_FILE: /tmp/launchpad-worker-health
+      # Empty means a new random identity per process; see docs/production-compose.md.
+      LAUNCHPAD_WORKER_ID: ${LAUNCHPAD_WORKER_ID:-}
     volumes:
       - launchpad-data:/data
       - type: bind
