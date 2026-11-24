@@ -27,6 +27,7 @@ packages/database/src/.tmp-migrations-*/
 /worktree.omni.*
 /.agents/skills/swe-assess
 /.agents/skills/swe-author
+/.agents/skills/swe-change-description
 /.agents/skills/swe-debug
 /.agents/skills/swe-docs-write
 /.agents/skills/swe-execute
@@ -42,7 +43,7 @@ packages/database/src/.tmp-migrations-*/
 /docs/guidelines/core
 /docs/guidelines/planning
 /docs/guidelines/reviewing
-# @@omni-managed:end 32344d29
+# @@omni-managed:end 303029a7
 
 # Local production Compose settings (docker-compose.env.example has placeholders only).
 docker-compose.env
