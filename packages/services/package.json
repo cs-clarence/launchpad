@@ -16,17 +16,6 @@
                 "default": "./src/index.ts"
             }
         },
-        "./removed-settings": {
-            "types": "./src/removed-settings.ts",
-            "import": {
-                "development": "./src/removed-settings.ts",
-                "default": "./src/removed-settings.ts"
-            },
-            "require": {
-                "development": "./src/removed-settings.ts",
-                "default": "./src/removed-settings.ts"
-            }
-        },
         "./testing": {
             "types": "./src/testing/tar-fixtures.ts",
             "import": {

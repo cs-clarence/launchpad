@@ -126,7 +126,7 @@ program
                 `applied: ${status.applied.length}\npending: ${status.pending.length}` +
                     status.pending.map((name) => `\n  ${name}`).join("") +
                     (status.unknown.length > 0
-                        ? `\nunknown to this version (migrated by a newer one): ${status.unknown.join(", ")}`
+                        ? `\nunknown to this version: ${status.unknown.join(", ")}`
                         : ""),
             );
             process.exitCode = status.pending.length > 0 || status.unknown.length > 0 ? 1 : 0;
@@ -216,7 +216,7 @@ program
         );
         if (result.pendingMigrations.length > 0) {
             console.log(
-                `This version has ${result.pendingMigrations.length} migration(s) the backup lacks. Before migrate, follow docs/restore.md step 3: use the pre-P2b binary to inventory/clean up pre-018 data after a verified backup.`,
+                `This version has ${result.pendingMigrations.length} pending migration(s). Follow the restore runbook before migrating.`,
             );
         }
         console.log(

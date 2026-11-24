@@ -57,18 +57,6 @@ describe("contracts", () => {
         expect(ORGANIZATION_ROLES).toEqual(["owner", "admin", "deployer", "viewer"]);
     });
 
-    it("no longer offers any preview scope", () => {
-        // Previews were replaced by apps; the new app scopes arrive with the model.
-        expect(API_KEY_SCOPES.filter((scope) => scope.startsWith("preview:"))).toEqual([]);
-        expect(
-            createApiKeySchema.safeParse({
-                name: "ci",
-                scopes: ["preview:deploy"],
-                expiresInDays: 30,
-            }).success,
-        ).toBe(false);
-    });
-
     it("validates the inputs a client builds", () => {
         expect(slugSchema.safeParse("my-site").success).toBe(true);
         expect(slugSchema.safeParse("My Site").success).toBe(false);
@@ -128,12 +116,12 @@ describe("contracts", () => {
         for (const status of ["active", "expired", "revoked", "inactive"]) {
             expect(apiKeyStatusSchema.safeParse(status).success).toBe(true);
             expect(apiKeySummarySchema.safeParse({ ...summary, status }).success).toBe(true);
-            // Metadata must remain readable after scopes are retired, including after revocation.
+            // Metadata remains readable even if a stored scope is unknown to this build.
             expect(
                 apiKeySummarySchema.safeParse({
                     ...summary,
                     status,
-                    scopes: ["project:read", "preview:deploy"],
+                    scopes: ["project:read", "unknown:scope"],
                 }).success,
             ).toBe(true);
         }

@@ -2,7 +2,7 @@ import { randomBytes, randomUUID } from "node:crypto";
 import { constants, promises as fs } from "node:fs";
 import path from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
-import type { Database } from "@launchpad-kit/database";
+import { type Database, INITIAL_SCHEMA_MIGRATION } from "@launchpad-kit/database";
 import {
     lockDeploymentRecovery,
     withDeploymentRecoveryMaintenance,
@@ -19,7 +19,6 @@ import {
     type RouterView,
 } from "./router-inventory";
 
-export const DEPLOYMENT_MIGRATION = "20261119_018_deployment_model";
 export const MODEL_TABLES = [
     "app",
     "deployment",
@@ -421,24 +420,12 @@ export async function assertModelMutationsReady(db: Db, dataDir: string) {
         throw new DeploymentRecoveryError(
             "Deployment recovery is blocked; reconcile before recovery-clear.",
         );
-    const present = await sql<{ migrations: boolean; state: boolean }>`
-        select to_regclass('public.launchpad_migration') is not null as migrations,
-               to_regclass('public.instance_state') is not null as state`.execute(db);
-    const knows = present.rows[0]!.migrations
-        ? (
-              await sql`select 1 from public.launchpad_migration where name = ${DEPLOYMENT_MIGRATION}`.execute(
-                  db,
-              )
-          ).rows.length > 0
-        : false;
-    const gate = present.rows[0]!.state
-        ? await db
-              .selectFrom("instance_state")
-              .select("value")
-              .where("key", "=", "deployment_recovery")
-              .executeTakeFirst()
-        : undefined;
-    if ((gate && gate.value !== "ready") || (knows && !gate)) {
+    const gate = await db
+        .selectFrom("instance_state")
+        .select("value")
+        .where("key", "=", "deployment_recovery")
+        .executeTakeFirst();
+    if (gate?.value !== "ready") {
         throw new DeploymentRecoveryError(
             "The deployment database recovery gate is blocked or missing.",
         );
@@ -482,9 +469,6 @@ export async function withModelMutation<T>(db: Db, dataDir: string, run: (trx: D
 }
 
 export async function blockRestoredModel(db: Db) {
-    const hasState = await sql<{ present: boolean }>`
-        select to_regclass('public.instance_state') is not null as present`.execute(db);
-    if (!hasState.rows[0]!.present) return; // An old dump: the durable marker still blocks after migrate.
     await db
         .insertInto("instance_state")
         .values({ key: "deployment_recovery", value: "blocked" })
@@ -570,12 +554,12 @@ export async function clearDeploymentRecovery(
                 trx,
             );
             const applied = table.rows[0]!.present
-                ? await sql`select 1 from public.launchpad_migration where name = ${DEPLOYMENT_MIGRATION}`.execute(
+                ? await sql`select 1 from public.launchpad_migration where name = ${INITIAL_SCHEMA_MIGRATION}`.execute(
                       trx,
                   )
                 : { rows: [] };
             if (applied.rows.length !== 1)
-                throw new DeploymentRecoveryError("Run migration 018 before recovery-clear.");
+                throw new DeploymentRecoveryError("Initialize the database before recovery-clear.");
             if (inventory === null) {
                 throw new DeploymentRecoveryError(
                     `The router could not be read (${unreadable}), so its counters cannot be compared. Check that the router is running, and the router settings, epoch and token files, then retry.`,

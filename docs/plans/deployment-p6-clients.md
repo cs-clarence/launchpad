@@ -20,7 +20,7 @@ with automatic retention expiry.
    surfaces. Deploy and promotion remain separate; route changes use reserved
    generation and explicit idempotency keys. Verify negative confirmations and
    project boundaries before wiring mutations. Undo with matched pre-cutover
-   clients; do not restore the retired preview API.
+   clients.
 3. Update installation, upgrade, backup/restore and tooling examples. Run the full
    Omni gate and verify built/packed clients in CI. Do not start local services
    or publish artifacts.

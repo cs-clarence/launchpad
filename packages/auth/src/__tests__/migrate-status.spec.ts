@@ -70,7 +70,7 @@ describe("migration status and the schema guard", () => {
         const status = await migrationStatus(testDb.db, older);
         expect(status.unknown).toEqual(["20300101_099_future"]);
         await expect(assertSchemaCurrent(testDb.db, older)).rejects.toThrow(SchemaMismatchError);
-        await expect(assertSchemaCurrent(testDb.db, older)).rejects.toThrow(/newer Launchpad/);
+        await expect(assertSchemaCurrent(testDb.db, older)).rejects.toThrow(/does not know/);
     });
 
     it("reports unknown and pending migrations together", async () => {

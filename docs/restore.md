@@ -20,12 +20,8 @@ a repair. Use the operator checks in this runbook to complete recovery.
 1. Close **all management access** at the private ingress (including API-key
    access); keep it closed through restore and credential reconciliation.
    Stop all workers, the controller and every admin job that can write to the
-   target database, and wait for their processes to exit. Give any legacy worker
-   its full 25-minute stop grace period. Wait for every Dokku operation it
-   dispatched to settle; after the last legacy worker exits, wait longer than
-   the longest possible remote Dokku command and the five-minute deletion lease
-   (longer for slow destroy triggers). An enabled deployment worker needs its stop
-   grace period (at least 30 seconds) and then a wait longer than one dispatch (290
+   target database, and wait for their processes to exit. Wait for remote Dokku
+   operations to settle. An enabled deployment worker needs its stop grace period (at least 30 seconds) and then a wait longer than one dispatch (290
    seconds) and the five-minute lease. An interrupted deployment step or app
    destroy comes back as `reconciliation-needed`; an interrupted image removal
    resumes on the next claim. Verify on the Dokku host that no
@@ -56,16 +52,11 @@ a repair. Use the operator checks in this runbook to complete recovery.
     and archive pre-checks, before copying any archive. A failed or killed restore
     keeps that marker. A restored `ready` database row cannot bypass it.
 
-3. If `restore` reports pending migrations, check whether 018 is pending **before
-   running `migrate`**. If it is, keep ingress closed
-   and first use the **pre-P2b binary** against the restored database for
-   `inventory-previews --all`. Verify a matched backup and preserve Dokku state
-   before any exact-name cleanup; follow the [cutover runbook](deployment-cutover.md)
-   while the old table identities still exist. Never defer this inventory until
-   after migrating. Then migrate from the **intended** version and run `migrate --status` (`pending: 0`, exit
-   0). Run `bun .output/admin.mjs check-restore` with the `DOKKU_SSH_*` settings while workers are stopped. It records
-   its lists of **missing archives, missing
-   immutable deployment apps and passed deployment preview deadlines**. Queued
+3. If `restore` reports pending migrations, run `migrate` from the intended
+   version, then `migrate --status` (`pending: 0`, exit 0). Run
+   `bun .output/admin.mjs check-restore` with the pinned `DOKKU_SSH_*` settings
+   while workers are stopped. It lists **missing archives, missing deployment apps
+   and passed deployment preview deadlines**. Queued
    jobs have not touched Dokku and are not probed. `--no-dokku` is only a partial check.
    Missing archives require repair before a deployment; an unreachable Dokku
    is an error, not a missing app. The check changes nothing.
@@ -160,12 +151,9 @@ a repair. Use the operator checks in this runbook to complete recovery.
     ingress. Keep every worker stopped until recovery is cleared in step 6 (a worker
     with deployments off is harmless), then start enabled workers.
 
-5. Migration 018 unconditionally drops preview-era data, including from an old
-   restored backup; inventory/cleanup must use the pre-P2b binary first
-   ([cutover runbook](deployment-cutover.md)). Never manually delete a Dokku app
-   just because it was absent in step 3. A restored database can also leave
-   unreferenced apps; Launchpad deliberately leaves those alone. The
-   immutable model remains mutation-blocked until recovery is explicitly cleared.
+5. Never manually delete a Dokku app just because it was absent in step 3.
+   A restored database can leave unreferenced apps; Launchpad leaves those alone. The
+   model remains mutation-blocked until recovery is explicitly cleared.
 6. Reconcile **before** clearing. With aliases in use, start the router again (rotation needs it
    stopped), keep every worker stopped, and run
    `bun .output/admin.mjs recovery-raise-counters`. It needs the router settings
@@ -290,9 +278,8 @@ Dokku: `omni -i run test:db:up`, then
 `omni -i run test:upgrade -p @launchpad-kit/controller`, then
 `omni -i run test:db:down`. Run the image drill on Linux (Docker host networking
 does not reach the test database on Docker Desktop). This builds a temporary controller image and runs
-the frozen previous-schema dump through backup, image migration, controller
-start/restart from that image, an authenticated operator status read, and
-restoration into another disposable database, plus a post-018 backup round trip.
+a fresh database through initialization, controller start/restart, authenticated
+operator status, and backup/restore into another disposable database.
 It creates only temporary test databases/directories and cleans them up.
 
 The opt-in remote rehearsal (`test:restore:live`) was removed with the preview runtime.

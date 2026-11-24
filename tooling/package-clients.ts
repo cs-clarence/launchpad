@@ -4,7 +4,7 @@
 //
 // The workspace packages stay private, with `exports` that point at source for development.
 // What is packed is a separate, generated manifest that points at built files, so the source
-// tree never has to be shaped for the registry. See docs/plans/milestone-6-release.md, slice 4.
+// tree never has to be shaped for the registry. See docs/releasing.md.
 import {
     chmodSync,
     cpSync,

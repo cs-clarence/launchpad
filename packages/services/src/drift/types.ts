@@ -61,7 +61,7 @@ export interface DriftOperation {
 
 export interface DriftReservation {
     hostname: string;
-    ownerKind: "deployment" | "alias" | "legacy_preview";
+    ownerKind: "deployment" | "alias";
     ownerId: string;
 }
 

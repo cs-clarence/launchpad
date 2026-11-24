@@ -80,7 +80,6 @@ started and **no cleanup of old resources was executed**.
 - **Not done:** slice 4 (domains, ingress, TLS, installation rehearsal with aliases, upgrade/restart), slice 5
   (cleanup), a reusable opt-in task for this rehearsal (it was run by hand), the stable worker id.
 
-Queued. Application milestones 0 to 6 are built (milestone 6 closed 2026-11-18, `docs/plans/milestone-6-release.md`).
 The user requested one draft production-preparation PR on 2026-11-19, with this
 plan committed first and the package-scope rename next. Its initial implementation
 is the `@launchpad-kit` workspace rename, not a production stack. npm scope
@@ -97,12 +96,10 @@ Requirements this work must meet that the application milestones surfaced:
 - Selected product-model direction: one immutable deployment pipeline, with
   unique preview URLs and a stable production alias moved by promotion.
   See `docs/design/deployment-modes.md` for the revised database, routing and API
-  proposal. This supersedes separate preview/persistent app paths.
+  proposal.
   Aliases are many per app and independently promotable; custom-domain/DNS/TLS
   automation is out of scope, with hostname admission kept separate from routing
-  so future external domains can reuse the alias model. Existing
-  previews may be retired rather than converted; teardown still requires exact
-  identified targets. Routing cutover and reconciliation must be proven before
+  so future external domains can reuse the alias model. Routing cutover and reconciliation must be proven before
   this feature is considered ready.
 
     Readiness review (Opus 5.5): the whole feature is not ready to implement.
@@ -120,7 +117,7 @@ Requirements this work must meet that the application milestones surfaced:
   (rehearsed 2026-11-21, about 170 s; see [production Compose](../production-compose.md#stopping-and-restarting-the-worker)).
   The 25-minute `stop_grace_period` only bounds how long Docker waits before killing the container.
   Whether to drain instead is an open product decision.
-- Both processes need `LAUNCHPAD_LIFECYCLE` and `LAUNCHPAD_DEPLOYMENTS` to agree; ship a worker
+- Both processes need `LAUNCHPAD_DEPLOYMENTS` to agree; ship a worker
   environment example (`apps/worker/.env.local.example` exists) and document the agreement.
 - The worker validates uploaded archives with the same limits as the controller
   (`LAUNCHPAD_MAX_EXPANDED_BYTES`, `LAUNCHPAD_MAX_ARCHIVE_ENTRIES`, `LAUNCHPAD_MAX_ARCHIVE_DEPTH`):
@@ -133,10 +130,7 @@ Requirements this work must meet that the application milestones surfaced:
 Items the milestone 6 review deferred to this work:
 
 - **Worker healthcheck (done).** The worker image now has a `HEALTHCHECK` that reads a file the
-  worker touches whenever its heartbeat is recorded (and while idle with deployments off); it is
-  liveness only and `test:images` asserts it reports healthy. Original note: the worker has no HTTP
-  surface. Decide what "healthy" means (a recent `worker_heartbeat` row is the natural signal, which
-  needs a small database probe or a heartbeat file) and add it with a check in `test:images`.
+  worker updates while active or idle. It measures liveness only.
 - **PostgreSQL client for backups (done).** The one-off operator image (`--target admin` of the
   controller Dockerfile) carries PostgreSQL 17 client tools and is checked by `test:images`.
   Original note: the controller image carries no `pg_dump`/`pg_restore`. Provide a
@@ -227,9 +221,6 @@ These are proposals for approval, not assumptions already authorized.
    (`LAUNCHPAD_APPS_DOMAIN`) and worker's internal proxy/probe address
    (`LAUNCHPAD_APPS_PROXY_URL`) separate. Alias control and probes use
    separate `LAUNCHPAD_ALIAS_CONTROL_URL` and `LAUNCHPAD_ALIAS_PROBE_URL`.
-   These are the current names, implemented by the immutable-model change; the
-   removed `LAUNCHPAD_PREVIEW_DOMAIN` and `LAUNCHPAD_PREVIEW_PROXY_URL` make the
-   controller and worker refuse to start.
    Public browser/client URLs must not
    accidentally use Docker service DNS names; the internal probe need not use the
    public preview route. Loopback bindings remain safe defaults, with an explicit

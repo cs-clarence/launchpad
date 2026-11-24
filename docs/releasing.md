@@ -92,46 +92,20 @@ accepted as arguments; that does not change.
 
 **Database and operator commands.** Migrations are forward-only and run only by
 `bun .output/admin.mjs migrate`; rollback means restoring the pre-upgrade backup. A release
-must upgrade from the previous release's schema (the frozen fixture in
-`apps/controller/src/admin/__tests__/fixtures/` is extended with each release's dump).
+must upgrade from the previous supported release’s schema. The first v1 release uses a fresh database.
 Breaking: a migration that cannot run on the previous release's data, a changed backup
 manifest format without reading the old one, a renamed or removed admin command or option, a
 changed configuration variable name or meaning, or a change to the fixed uid, data
 directory layout or required mounts of the images. State each in the upgrade notes.
 
-## Immutable deployment client cutover
-
-**Breaking for preview clients.** The `/previews` endpoints, old preview dashboard pages,
-legacy SDK methods and CLI `deploy`/`previews`/`deployments` commands are gone. The old MCP
-`deploy`, `delete_preview` and preview file-selection flags are not supported. Replace them
-with the [immutable deployment workflows](deployments.md) and remove old MCP mutation flags
-before enabling the new tools explicitly. There are no compatibility redirects or stubs.
-
-Migration 018 drops preview data unconditionally and revokes keys containing any
-`preview:*` scope. Do not reuse or auto-upgrade those keys. Issue project-limited keys with
-only the required `app:*` scopes, and update clients together with the controller. Deploy
-does not promote; changing stable traffic takes a separate, explicitly authorized action.
-To roll back only the clients, use a compatible immutable-model version or disable mutations;
-do not point a retired preview client at the new controller. For an upgrade across 018,
-follow the [pre-P2b cutover runbook](deployment-cutover.md).
-
 ## Release checklist
-
-The P2b release must announce migration 018's unconditional deletion of preview-era
-tables/data and revocation of `preview:*` keys. Link the [pre-P2b cutover runbook](deployment-cutover.md):
-backup, inventory and exact-name Dokku cleanup use the old binary before migrating.
-Also announce removal of `inventory-previews` and the changed `check-restore` report
-(immutable deployment IDs/deadlines, not preview IDs/slugs), the required data directory,
-and restore's durable model-recovery block. See the current
-[verified clear procedure](restore.md) for the required host check and evidence.
 
 A release is a person's decision. Work through this in order and stop at the first failure.
 
 1. `main` is green: `CI Passed`, and the full local gate
    `omni -i run check test build check:compose test:integration --force all`
    plus `omni -i run test:upgrade -p @launchpad-kit/controller` on Linux.
-2. The previous release's database schema is in the upgrade fixture and `test:upgrade`
-   passes from it; `docs/upgrade.md` and `docs/restore.md` match the commands.
+2. The initialization/restore drill passes; rehearse upgrade from any previous supported schema; `docs/upgrade.md` and `docs/restore.md` match the commands.
 3. Every breaking change since the last release is listed against the rules above, and the
    version increment fits them. Security-relevant changes have a release note.
 4. Licence, npm scope and product name are decided and recorded; the packed READMEs and

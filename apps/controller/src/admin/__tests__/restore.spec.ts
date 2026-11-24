@@ -3,7 +3,7 @@ import { spawnSync } from "node:child_process";
 import { mkdirSync, promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { migrateToLatest } from "@launchpad-kit/database";
+import { assertSchemaCurrent } from "@launchpad-kit/database";
 import { createTestDatabase } from "@launchpad-kit/database/testing";
 import {
     createOrganization,
@@ -678,39 +678,6 @@ fi
         expect(result.filesRestored).toBe(3);
     });
 
-    it("restores a backup older than the artifact table", async () => {
-        const sourceFolder = path.resolve(
-            import.meta.dirname,
-            "../../../../../packages/database/src",
-        );
-        const root = path.join(work, "very-old-schema");
-        const folder = path.join(root, "migrations");
-        await fs.mkdir(folder, { recursive: true });
-        await fs.copyFile(
-            path.join(sourceFolder, "auth-schema.ts"),
-            path.join(root, "auth-schema.ts"),
-        );
-        const files = (await fs.readdir(path.join(sourceFolder, "migrations"))).sort();
-        for (const file of files.slice(0, 9)) {
-            await fs.copyFile(path.join(sourceFolder, "migrations", file), path.join(folder, file));
-        }
-        const old = await createTestDatabase();
-        targets.push(old);
-        await migrateToLatest(old.db, folder);
-        const dest = path.join(work, "very-old-backup");
-        await createBackup({
-            db: old.db,
-            databaseUrl: old.url,
-            dataDir: path.join(work, "very-old-data"),
-            dest,
-            version: "0.0.0-test",
-            pgDump: dump,
-        });
-        const target = await emptyTarget();
-        const result = await restoreBackup(restoreOptions(target, { backupDir: dest }));
-        expect(result.pendingMigrations).toHaveLength(files.length - 9);
-    });
-
     it("refuses a backup that does not verify, before changing anything", async () => {
         const broken = path.join(work, "broken");
         await fs.cp(backupDir, broken, { recursive: true });
@@ -735,6 +702,27 @@ fi
             /does not know.*from_the_future/,
         );
         expect(await tableCount(target.db)).toBe(0);
+    });
+
+    it("refuses an incompatible database journal without changing it", async () => {
+        const target = await emptyTarget();
+        await sql`create table launchpad_migration (name text primary key, timestamp text not null)`.execute(
+            target.db,
+        );
+        await sql`insert into launchpad_migration values ('20000101_001_other_schema', '2000-01-01')`.execute(
+            target.db,
+        );
+        await expect(assertSchemaCurrent(target.db)).rejects.toThrow(/does not know/);
+        await expect(target.migrate()).rejects.toThrow(/does not know/);
+        const options = restoreOptions(target, { replaceDatabase: replaceTarget(target.url) });
+        await expect(restoreBackup(options)).rejects.toThrow(/incompatible migrations/);
+        expect(await tableCount(target.db)).toBe(1);
+        expect((await sql`select name from launchpad_migration`.execute(target.db)).rows).toEqual([
+            { name: "20000101_001_other_schema" },
+        ]);
+        await expect(fs.stat(path.join(options.dataDir, "maintenance"))).rejects.toMatchObject({
+            code: "ENOENT",
+        });
     });
 
     it("never overwrites a different file already in the data directory, and touches nothing first", async () => {
@@ -771,35 +759,7 @@ fi
         expect(await tableCount(target.db)).toBe(0);
     });
 
-    it("marks recovery when an older dump erases existing model rows, regardless of its manifest", async () => {
-        // A backup at 014 can erase 018 resources without erasing their remote side effects.
-        const sourceFolder = path.resolve(
-            import.meta.dirname,
-            "../../../../../packages/database/src",
-        );
-        const root = path.join(work, "old-schema");
-        const folder = path.join(root, "migrations");
-        await fs.mkdir(folder, { recursive: true });
-        await fs.copyFile(
-            path.join(sourceFolder, "auth-schema.ts"),
-            path.join(root, "auth-schema.ts"),
-        );
-        const files = (await fs.readdir(path.join(sourceFolder, "migrations"))).sort();
-        for (const file of files.slice(0, 14)) {
-            await fs.copyFile(path.join(sourceFolder, "migrations", file), path.join(folder, file));
-        }
-        const old = await createTestDatabase();
-        targets.push(old);
-        await migrateToLatest(old.db, folder);
-        const dest = path.join(work, "old-backup");
-        await createBackup({
-            db: old.db,
-            databaseUrl: old.url,
-            dataDir: path.join(work, "old-data"),
-            dest,
-            version: "0.0.0-test",
-            pgDump: dump,
-        });
+    it("marks recovery when restoring a backup replaces existing model rows", async () => {
         const target = await emptyTarget();
         await target.migrate();
         const actor = randomUUID();
@@ -843,12 +803,11 @@ fi
             })
             .execute();
         const options = restoreOptions(target, {
-            backupDir: dest,
             replaceDatabase: replaceTarget(target.url),
         });
         await recordModelWriterSeen(options.dataDir);
         const result = await restoreBackup(options);
-        expect(result.pendingMigrations).toHaveLength(files.length - 14);
+        expect(result.pendingMigrations).toEqual([]);
         expect(
             (
                 await fs.stat(path.join(options.dataDir, "maintenance/deployment-recovery-blocked"))
@@ -863,35 +822,6 @@ fi
         await expect(clearDeploymentRecovery(target.db, options.dataDir, false)).rejects.toThrow(
             /i-have-checked-the-dokku-host/,
         );
-        await clearDeploymentRecovery(target.db, options.dataDir, true);
-        await assertModelMutationsReady(target.db, options.dataDir);
-    });
-
-    it("migrates a restored 017 dump without overwriting its blocked gate", async () => {
-        const old = await emptyTarget();
-        await old.migrateTo("20261116_017_worker_heartbeat_lifecycle");
-        const dest = path.join(work, "schema-017-backup");
-        await createBackup({
-            db: old.db,
-            databaseUrl: old.url,
-            dataDir: sourceData,
-            dest,
-            version: "0.0.0-test",
-            pgDump: dump,
-        });
-        const target = await emptyTarget();
-        const options = restoreOptions(target, { backupDir: dest });
-        await restoreBackup(options);
-        await target.migrate();
-        expect(
-            (
-                await target.db
-                    .selectFrom("instance_state")
-                    .select("value")
-                    .where("key", "=", "deployment_recovery")
-                    .executeTakeFirstOrThrow()
-            ).value,
-        ).toBe("blocked");
         await clearDeploymentRecovery(target.db, options.dataDir, true);
         await assertModelMutationsReady(target.db, options.dataDir);
     });

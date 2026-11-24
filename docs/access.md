@@ -10,10 +10,7 @@ contract without choosing an installation's DNS, proxy or access gateway.
 1. Choose a private management origin, e.g.
    `https://control.example.internal`, and an apps domain on a **different
    registrable domain** from management, e.g. `sites.example.net`. Set
-   `LAUNCHPAD_BASE_URL` to the exact management origin. The controller and worker
-   refuse to start if the removed preview settings (`LAUNCHPAD_PREVIEW_DOMAIN`,
-   `LAUNCHPAD_PREVIEW_PROXY_URL`, `LAUNCHPAD_MAX_PREVIEWS`,
-   `LAUNCHPAD_ALLOW_NO_EXPIRY`, any `LAUNCHPAD_LIFECYCLE*`) are still set; remove them.
+   `LAUNCHPAD_BASE_URL` to the exact management origin.
    `LAUNCHPAD_APPS_DOMAIN` is optional for now, but when set it is checked at startup
    (valid lowercase domain; `LAUNCHPAD_BASE_URL` must then be an `https` origin with no path
    and on a different registrable domain).

@@ -199,26 +199,26 @@ describe("issuing keys", () => {
 });
 
 describe("authenticating keys", () => {
-    it("keeps current and retired-scope keys listable before and after revocation", async () => {
+    it("lists keys with unknown stored scopes before and after revocation", async () => {
         const current = await issue("ann");
-        const legacy = await issue("ann");
+        const unknown = await issue("ann");
         await testDb.db
             .updateTable("api_key")
-            .set({ scopes: ["project:read", "preview:read"] })
-            .where("id", "=", legacy.id)
+            .set({ scopes: ["project:read", "unknown:scope"] })
+            .where("id", "=", unknown.id)
             .execute();
         for (const revoked of [false, true]) {
-            if (revoked) await revokeApiKey(testDb.db, people.ann!, org, legacy.id);
+            if (revoked) await revokeApiKey(testDb.db, people.ann!, org, unknown.id);
             // This is the JSON shape used by both HTTP and the organization-page loader.
             const rows = apiKeySummarySchema
                 .array()
                 .parse(JSON.parse(JSON.stringify(await listApiKeys(testDb.db, people.ann!, org))));
             expect(rows.find((row) => row.id === current.id)?.scopes).toEqual(["project:read"]);
-            expect(rows.find((row) => row.id === legacy.id)).toMatchObject({
-                scopes: ["project:read", "preview:read"],
+            expect(rows.find((row) => row.id === unknown.id)).toMatchObject({
+                scopes: ["project:read", "unknown:scope"],
                 status: revoked ? "revoked" : "active",
             });
-            expect(await authenticateApiKey(testDb.db, legacy.secret)).toBeNull();
+            expect(await authenticateApiKey(testDb.db, unknown.secret)).toBeNull();
             expect(await authenticateApiKey(testDb.db, current.secret)).not.toBeNull();
         }
     });
@@ -244,13 +244,12 @@ describe("authenticating keys", () => {
         expect(row.last_used_at).not.toBeNull();
     });
 
-    it("refuses a stored key holding a retired preview scope, instead of narrowing it", async () => {
+    it("refuses a stored key holding an unknown scope instead of narrowing it", async () => {
         const key = await issue("ann");
         expect(await authenticateApiKey(testDb.db, key.secret)).not.toBeNull();
-        // What a key issued before the previews were replaced looks like in the table.
         await testDb.db
             .updateTable("api_key")
-            .set({ scopes: ["project:read", "preview:deploy"] })
+            .set({ scopes: ["project:read", "unknown:scope"] })
             .where("id", "=", key.id)
             .execute();
         expect(await authenticateApiKey(testDb.db, key.secret)).toBeNull();

@@ -188,7 +188,7 @@ describe("deployment model recovery gate", () => {
             await writer;
         }
     });
-    it("allows a fresh 018 instance and refuses a missing or invalid gate row", async () => {
+    it("allows a fresh database and refuses a missing or invalid gate row", async () => {
         await assertModelMutationsReady(source.db, dataDir);
         await source.db
             .deleteFrom("instance_state")
@@ -200,18 +200,6 @@ describe("deployment model recovery gate", () => {
             .values({ key: "deployment_recovery", value: "unknown" })
             .execute();
         await expect(assertModelMutationsReady(source.db, dataDir)).rejects.toThrow(/gate/);
-    });
-
-    it("allows a missing gate only before 018 is recorded", async () => {
-        const old = await createTestDatabase();
-        try {
-            await old.migrateTo("20261116_017_worker_heartbeat_lifecycle");
-            await assertModelMutationsReady(old.db, dataDir);
-            await markDeploymentRecoveryBlocked(dataDir);
-            await expect(assertModelMutationsReady(old.db, dataDir)).rejects.toThrow(/blocked/);
-        } finally {
-            await old.destroy();
-        }
     });
 
     it("keeps an external marker authoritative over a restored ready row", async () => {
@@ -341,12 +329,11 @@ describe("deployment model recovery gate", () => {
         ).toBe("blocked");
     });
 
-    it("refuses on a database without migration 018 with a clear error", async () => {
+    it("refuses on an uninitialized database with a clear error", async () => {
         const old = await createTestDatabase();
         try {
-            await old.migrateTo("20261116_017_worker_heartbeat_lifecycle");
             await expect(clearDeploymentRecovery(old.db, dataDir, true)).rejects.toThrow(
-                /Run migration 018/,
+                /Initialize the database/,
             );
         } finally {
             await old.destroy();

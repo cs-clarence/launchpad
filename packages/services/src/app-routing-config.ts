@@ -2,14 +2,10 @@ import { parseDuration } from "@launchpad-kit/contracts";
 import { getDomain } from "tldts";
 import { parseHostnameTemplate, type HostnameTemplate } from "./hostname-template";
 import { APPS_DOMAIN_PATTERN } from "./ids";
-import { assertNoRemovedSettings } from "./removed-settings";
 
 // Settings of the immutable-deployment and alias model (docs/design/deployment-modes.md,
 // "Canonical configuration"). Pure: it reads only the object it is given, touches no file and no
-// service, and is not wired into the controller or the worker yet (they run only
-// `assertCurrentSettings`). Unset `LAUNCHPAD_APPS_DOMAIN`
-// means the feature is off; once it is set every required setting must be valid, and the
-// preview-era names are refused with an actionable message rather than silently honoured.
+// service. An unset `LAUNCHPAD_APPS_DOMAIN` disables app routing.
 
 const DAY = 86_400;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
@@ -122,12 +118,8 @@ function integer(env: Env, name: string, fallback: number, max: number): number 
     return value;
 }
 
-// What a process that does not yet run the app model checks at startup: the removed names and,
-// when an apps domain is already set, that it is valid and separate from the management origin.
-// It deliberately does not require the router and alias settings, which nothing uses until the
-// deployment worker arrives.
+// Validate the apps domain, if configured, without requiring enabled routing.
 export function assertCurrentSettings(env: Env): void {
-    assertNoRemovedSettings(env);
     const appsDomain = env.LAUNCHPAD_APPS_DOMAIN;
     if (appsDomain === undefined || appsDomain === "") return;
     if (!APPS_DOMAIN_PATTERN.test(appsDomain)) {
@@ -248,7 +240,6 @@ export function parseAliasConfig(env: Env): AliasSettings {
 }
 
 export function parseAppRoutingConfig(env: Env): AppRoutingSettings {
-    assertNoRemovedSettings(env);
     if (env.LAUNCHPAD_APPS_DOMAIN === undefined || env.LAUNCHPAD_APPS_DOMAIN === "") {
         return { enabled: false };
     }

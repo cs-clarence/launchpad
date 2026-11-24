@@ -241,7 +241,7 @@ async function main() {
         const controller = await inspectImage(images.controller, [
             "app/.output/server/index.mjs",
             "app/.output/admin.mjs",
-            "app/.output/migrations/20261114_001_auth_schema.mjs",
+            "app/.output/migrations/20261124_001_initial_schema.mjs",
         ]);
         if (!controller.Healthcheck) fail("the controller image has no healthcheck");
         const workerConfig = JSON.parse((await docker(["image", "inspect", images.worker])).out)[0]

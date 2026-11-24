@@ -27,7 +27,7 @@ not two build pipelines.
   review of promotion concurrency, remote outcomes and garbage collection.
 - **Undo:** before cutover, abandon the candidate; after cutover, promote the
   previous retained deployment. Schema rollback remains matched backup restore,
-  not down migrations. Existing previews are dropped, not converted or kept.
+  not down migrations.
 - **Not authorized here:** broad deletion, registry publishing, production startup
   or modification of existing ingress/connectors.
 
@@ -64,13 +64,7 @@ modify resources outside it. Do not describe this as protection against that ope
 Physical table names: the new deployment, event and deletion tables are
 `deployment`, `app_deployment_event` and `deployment_deletion_operation`.
 The resource names `deployment`, `deployment_event` and `deletion_operation` below
-are logical shorthand. The old preview-era tables and rows are dropped before
-creating the replacement schema; the new `deployment` table reuses the name, not
-the old table or its data. Immutable behavior is enforced by constraints, not
-names. Startup schema checks refuse old binaries, but cannot fence a running old
-process or dispatched remote operation. The operator stops every old process
-and lets in-flight remote work settle first. See the
-[implementation plan](../plans/deployment-model.md) for ordered gates.
+are logical shorthand. Constraints enforce immutability and permanent identities.
 
 Add new forward-only migrations; never rewrite frozen migrations.
 
@@ -256,12 +250,8 @@ not a blind second cutover.
 
 ## Drift detection
 
-Launchpad today detects only some drift: `check-restore` lists live previews whose
-Dokku app is missing, the operator status warns when the controller and worker
-disagree on settings, and uncertain remote outcomes are parked as
-`reconciliation-needed`. There is no scheduled comparison of the database with
-Dokku, and no detection of orphans or manual changes. Add a **read-only drift
-report**; it never repairs, deletes, withdraws, re-routes or gates anything.
+The **read-only drift report** compares the database with Dokku, archived
+files and the router. It never repairs, deletes, withdraws, re-routes or gates anything.
 
 ### Sources, compared by recorded identity
 
@@ -427,13 +417,6 @@ LAUNCHPAD_ALIAS_HOSTNAME_TEMPLATE=view-{slug}-{id}
 | `LAUNCHPAD_MAX_DEPLOYMENTS`                               | 100 per organization, including allocation reservations.                                                                                                                              |
 | `LAUNCHPAD_MAX_ALIASES_PER_APP` / `LAUNCHPAD_MAX_ALIASES` | 5 per app / 50 per organization; withdrawing/uncertain aliases count until terminal.                                                                                                  |
 
-This is a coordinated pre-release configuration break: reject old
-`LAUNCHPAD_PREVIEW_DOMAIN`, `LAUNCHPAD_PREVIEW_PROXY_URL`,
-`LAUNCHPAD_MAX_PREVIEWS` and `LAUNCHPAD_ALLOW_NO_EXPIRY` with an actionable error,
-not silent precedence or permission changes. Update examples, Compose tasks and
-`docs/tooling.md` in the same implementation slice. The feature remains disabled
-until required URLs and router trust are configured. No external service is
-started to run configuration/hostname unit tests.
 Fail closed when enabled router settings or token/epoch files are absent,
 unreadable or invalid. Credential material is never included in diagnostics.
 
@@ -469,10 +452,6 @@ Stale generations return 409 without routing side effects. Unknown remote
 outcomes are exposed, not disguised as success. Only an authorized admin/owner
 with a recent session can request review. A request is audit-only: the
 instance operator verifies external evidence before settling the operation.
-
-Old `/previews` contracts are intentionally replaced before initial publication,
-with all clients and OpenAPI updated together. This is a documented breaking API,
-not a hidden compatibility change.
 
 ## Retention, authorization and UX
 
@@ -535,13 +514,7 @@ operator status never grants organization membership.
 | Shut down app (withdraw all aliases, then delete) | All of `app:delete`, `app:alias:manage`, `app:promote` | admin        |
 | Request review of uncertain routing/deletion      | No keys; session and recent authentication             | admin        |
 
-Migration revokes every API key containing any legacy `preview:*` scope, with
-audit counts, and invalidates its sessions only if a separate account-recovery
-operation is requested; API-key revocation alone does not imply session revocation.
-Unrelated keys remain unchanged. Never map old preview grants to new grants.
-Reject old scope values in new issuance and fail closed on legacy stored keys.
-Expect existing deployment automation keys to need reissuance: current keys
-carrying any preview permission are all revoked, not grandfathered.
+Unknown API key scopes are rejected at issuance and authentication.
 
 MCP exposes promotion only with explicit `--allow-promote`, configured allowed
 projects, a key with `app:promote`, and literal `confirm: true` in the request.
@@ -552,54 +525,16 @@ tool input, **not proof that a human approved the action**. Alias management has
 its own `--allow-alias-manage` startup opt-in; deploy permission does not imply
 either opt-in.
 
-### Replacing the previews, and the backup/restore boundary
+### Restore
 
-Nothing is in production, so the previews are **replaced, not retired**. The migration
-drops the preview-era `preview`, `deployment`, `deployment_event` and
-`deletion_operation` tables and their data unconditionally. There is no `legacy_*`
-history, no read-only copy, no retirement guard and no reservation of the dropped
-names. It does not touch Dokku: any app a dropped preview owned stays on the host
-until the operator removes it by exact name. Before upgrading, list them with the
-previous binary's `inventory-previews` (or `dokku apps:list`), because afterwards the
-database no longer records them. The migration also deletes the temporary
-`idempotency_key` rows and revokes every API key holding a `preview:*` scope.
-
-No running code keeps a compatibility path. The preview API, UI pages, SDK methods,
-CLI commands, MCP tools and their contracts are **removed**, not answered with a stub;
-the app-based replacements arrive with the model. An old binary against the new
-schema is stopped by its startup check, because the migration is recorded.
-
-**Backups.** There is no backup floor. An older dump restores and is then migrated
-forward like any other, and migration 018 drops its preview tables again, so a restore
-cannot reintroduce a mutable target. Keep `BACKUP_FORMAT = 1`. After a restore of a
-database that holds the new model, the recovery gate below applies.
-
-Aliases need separate remote reconciliation after every restore: ingress stays
-closed, promotions/deletions off. First fence every pre-restore writer: establish a
-new router epoch and rotate control credentials, because a write issued after the
-backup may still be delayed and the restored database cannot know it. Then compare
-saved intentions with the router's durable state, keeping acknowledged generations
-and tombstones and never replaying an older route over a newer one. The restored
-`reserved_generation` can be lower than what the router already acknowledged,
-because the backup cannot record later writes. Promotions and deletions stay
-disabled until each alias's `reserved_generation` is at least the highest
-generation the router acknowledged for it, including writes recorded in the router
-after the backup. Reconciliation raises it to that value or higher; otherwise each
-promotion would reserve a stale number and the router would reject it with a 409. A fresh router
-needs an explicit offline bootstrap into a new epoch with old credentials fenced out.
-The concrete bootstrap/recovery procedure must pass the routing experiment.
+Follow the [restore runbook](../restore.md) before reopening writes.
 
 ## Delivery and acceptance
 
 1. Establish the routing mechanism with an independently
    reviewed disposable spike. No destructive migration until cutover/reconciliation
    and stale-writer behavior are demonstrated.
-2. Stop the workers, the controller and every admin job, and wait for any dispatched
-   Dokku operation to settle. Then take a backup and **run the previous binary's
-   `inventory-previews`** (required, not optional), and remove any Dokku apps the old
-   previews owned that you do not want left behind. Only then run migration 018, which
-   drops the preview tables and their data unconditionally; it never converts an active
-   mutable app, and afterwards the database can no longer say which apps they owned.
+2. Initialize the v1 schema on empty disposable PostgreSQL.
 3. Implement schema/types/contracts, immutable worker path, promotion operation,
    retention guards and admin backup/restore checks.
 4. Update API/OpenAPI, dashboard, SDK, CLI, MCP, examples and docs together.
@@ -629,40 +564,3 @@ The concrete bootstrap/recovery procedure must pass the routing experiment.
       compares router epochs/generations and does not replay stale routing.
     - Old preview keys cannot promote/manage aliases; MCP without its promotion
       opt-in/confirmation cannot mutate aliases.
-
-### Implementation status
-
-Slice 0 so far (pure TypeScript, unit tests only, not wired into any runtime):
-`packages/services/src/hostname-template.ts` (template parsing, rendering and
-bounded collision allocation), `app-routing-config.ts` (the canonical settings,
-refusing the preview-era names) and `drift/` (the comparison, race filter and exit
-code). The configuration parser refuses a preview-era setting even while the new
-domain is unset (the migration case), so it must not be wired in before the runtime
-stops reading those names. `stableDrift` compares the fixed remote reads against the
-database before and after, and `compareDrift` applies the stuck-operation rule: a
-dispatched operation with a missing or expired lease is stuck. Not yet done in
-Slice 0: nothing. `launchpad-admin inventory-previews` lists what the database recorded
-before the upgrade and is removed with the preview tables, and the parser now requires
-the apps domain to be a different registrable domain from `LAUNCHPAD_BASE_URL`
-(enforced once the parser is wired in; nothing calls it at runtime yet). Slice 1
-(the router-only experiment) is complete: it was approved, run on disposable infrastructure, and its
-evidence was accepted after independent review (`docs/plans/routing-experiment-evidence.md`). The
-production router that replaces the prototype is built and unwired (`docs/plans/production-alias-router.md`).
-Still pending: the real stale-worker-claim test (a gate of the worker integration), the repeat of the
-scenarios against the production router image, and Slices 2 to 4.
-
-### Implementation slices and gates
-
-| Slice                                                                                         | Check                                                                                                                                                                        | Undo / stop condition                                                                                                                                                                                                                                                                                                                                                              |
-| --------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 0. Docs, pure template/config functions, pre-upgrade preview inventory, pure drift comparison | Unit tests, including each drift finding against fixtures; no remote calls or active API/schema changes                                                                      | Remove additive helpers; preserve existing runtime.                                                                                                                                                                                                                                                                                                                                |
-| 1. Disposable alias-router experiment                                                         | Router-only generation/idempotency, restart/crash, fixed-404, Host/SNI and epoch tests; throwaway driver simulates dispatch/response loss without the new application schema | Exact-name removal of newly created test resources; if an invariant fails, stop. Explicit disposable-infrastructure approval required.                                                                                                                                                                                                                                             |
-| 2. Replacement of the previews and coordinated backend/model change                           | Schema upgrade from the frozen earlier-schema backup, restore recovery gate, worker/auth tests, DB CAS, GC/reservation races, retention and corrective-chain pin tests       | Restore the pre-change matched backup with the previous binary into an isolated target. No mixed-version workers. The preview data is dropped by design, so before upgrading take a backup and list the old Dokku apps with the previous binary. New immutable apps and router state are absent from an old backup; after any restore the recovery gate stays on until reconciled. |
-| 3. API/UI/SDK/CLI/MCP integration                                                             | New contracts, permission matrix and generated-hostname workflows across all clients                                                                                         | Keep draft/unreleased; do not publish a half-compatible client/server set.                                                                                                                                                                                                                                                                                                         |
-| 4. Combined disposable rehearsal and operator docs                                            | Build once, preview, multi-alias promotion/rollback, failures, restore and exact cleanup                                                                                     | Withdraw only test routes; retain uncertain targets until reconciled. Production remains untouched.                                                                                                                                                                                                                                                                                |
-
-Use the production-preparation draft PR. It may temporarily be marked ready for
-CI/CodeRabbit review, then returned to draft once that round is green. Do not
-merge until the combined contracts, routing and verification are complete.
-No production startup,
-publishing or broad cleanup is implied by selecting this design direction.

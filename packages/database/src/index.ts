@@ -3,6 +3,7 @@ import { BunSqlDialect, type BunSqlOptions } from "./bun-sql-dialect";
 
 export {
     assertSchemaCurrent,
+    INITIAL_SCHEMA_MIGRATION,
     migrateToLatest,
     migrationStatus,
     SchemaMismatchError,

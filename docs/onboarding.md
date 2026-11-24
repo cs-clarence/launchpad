@@ -22,7 +22,7 @@ invitations or other keys.
    fresh sign-in (last 15 minutes). Choose explicit scopes, an expiry (at most
    365 days), and optional project restrictions. For a read-only agent use
    `organization:read`, `project:read` and `app:read` as needed; omit
-   write scopes. (`preview:*` scopes no longer exist.) Save the revealed value once in a
+   write scopes. Save the revealed value once in a
    secret store. If issuance had an uncertain result, inspect key metadata
    before retrying; names are not unique. Revoke an unused key by name
    **and prefix**. See [API-key behavior](../apps/controller/README.md#api-keys).

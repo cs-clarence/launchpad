@@ -4,7 +4,12 @@ import { Transform } from "node:stream";
 import { createReadStream, createWriteStream, promises as fs } from "node:fs";
 import path from "node:path";
 import { pipeline } from "node:stream/promises";
-import { createDatabase, type Database, migrationStatus } from "@launchpad-kit/database";
+import {
+    createDatabase,
+    type Database,
+    INITIAL_SCHEMA_MIGRATION,
+    migrationStatus,
+} from "@launchpad-kit/database";
 import {
     resolveArtifactPath,
     markDeploymentRecoveryBlocked,
@@ -18,7 +23,7 @@ import {
     finishDeploymentImport,
 } from "@launchpad-kit/services";
 import { type Kysely, sql } from "kysely";
-import { type BackupManifest, columnExists, pgEnvironment, verifyBackup } from "./backup";
+import { type BackupManifest, pgEnvironment, verifyBackup } from "./backup";
 
 export class RestoreError extends Error {
     override name = "RestoreError";
@@ -301,17 +306,25 @@ export async function restoreBackup(options: RestoreOptions): Promise<RestoreRes
                     );
                 }
 
-                // This build must know every migration the backup holds; one it does not know came from a
-                // newer version, and restoring it here would leave a schema no code here understands.
+                // Refuse incompatible histories before copying files or replacing the schema.
                 const status = await migrationStatus(db);
+                if (status.unknown.length > 0) {
+                    throw new RestoreError(
+                        "The target database has incompatible migrations. Restore into a fresh database.",
+                    );
+                }
                 const known = new Set([...status.applied, ...status.pending]);
                 const unknown = manifest.migrations.filter((name) => !known.has(name));
                 if (unknown.length > 0) {
                     throw new RestoreError(
                         `The backup holds migrations this version does not know (${unknown.join(", ")}): ` +
-                            "restore it with the version that made it, or a newer one.",
+                            "restore it with a compatible version.",
                     );
                 }
+                if (!manifest.migrations.includes(INITIAL_SCHEMA_MIGRATION))
+                    throw new RestoreError(
+                        "The backup does not contain the required schema baseline.",
+                    );
 
                 // Check every archive before anything is written: a file with the same name and other
                 // content is not ours to overwrite.
@@ -330,11 +343,8 @@ export async function restoreBackup(options: RestoreOptions): Promise<RestoreRes
                         );
                     }
                 }
-                // Keyed on this binary's migration set, never the dump's: even an old dump
-                // can erase model rows while leaving remote resources behind.
+                // Replacing the database may leave the router and Dokku ahead of its state.
                 options.signal?.throwIfAborted();
-                // This binary knows 018 even when a migration-folder override or the
-                // backup contains only older migrations.
                 await markDeploymentRecoveryBlocked(options.dataDir, options.routerAnchor);
                 for (const artifact of toCopy) {
                     options.signal?.throwIfAborted();
@@ -489,16 +499,14 @@ async function verifyRestored(db: Kysely<any>, manifest: BackupManifest) {
             "The restored database does not hold the migrations the backup recorded.",
         );
     }
-    // A backup older than the artifact table (before migration 010) has none to compare.
-    const uncollected = (await columnExists(db, "artifact", "collected_at"))
-        ? sql`where collected_at is null`
-        : sql``;
-    const keys = (await columnExists(db, "artifact", "storage_key"))
-        ? (
-              await sql<{ storage_key: string }>`
-                  select storage_key from artifact ${uncollected} order by storage_key`.execute(db)
-          ).rows.map((r) => r.storage_key)
-        : [];
+    const keys = (
+        await db
+            .selectFrom("artifact")
+            .select("storage_key")
+            .where("collected_at", "is", null)
+            .orderBy("storage_key")
+            .execute()
+    ).map((r) => r.storage_key);
     if (
         JSON.stringify(keys) !== JSON.stringify(manifest.artifacts.map((a) => a.storageKey).sort())
     ) {
