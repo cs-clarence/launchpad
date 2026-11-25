@@ -1,11 +1,23 @@
 import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { createContext } from "@launchpad-kit/client-core";
+import { createContext, SessionStore } from "@launchpad-kit/client-core";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { EXIT } from "./errors";
 import type { Io } from "./io";
 import { run } from "./program";
+import {
+    type Api,
+    COOKIE_NAME,
+    CONTROLLER as SESSION_CONTROLLER,
+    json as sessionJson,
+    newServer,
+    OPERATOR,
+    OWNER,
+    PASSWORD,
+    session,
+    USERS,
+} from "./session-harness";
 
 const KEY = "lp_" + "a".repeat(43);
 const KEY2 = "lp_" + "b".repeat(43);
@@ -437,5 +449,132 @@ describe("failures", () => {
         expect(help.code).toBe(EXIT.ok);
         expect(help.out).toContain("login");
         expect((await cli(["--version"])).code).toBe(EXIT.ok);
+    });
+});
+
+describe("session worked examples (fake controller)", () => {
+    const SECRET = `lp_${"s".repeat(43)}`;
+    const issueArgs = [
+        "api",
+        "--session",
+        "--email",
+        OWNER,
+        "-X",
+        "POST",
+        "organizations/org-1/api-keys",
+        "-f",
+        "name=ci",
+        "-f",
+        "scopes[]=project:read",
+        "-F",
+        "expiresInDays=30",
+        "--confirm",
+    ];
+
+    it("the operator creates an organization; another account gets 403", async () => {
+        const respond = (api: Api) =>
+            api.email === OPERATOR
+                ? sessionJson({ id: "org-new", slug: "demo", name: "Demo" }, { status: 201 })
+                : sessionJson(
+                      { code: "forbidden", status: 403, title: "Forbidden" },
+                      { status: 403 },
+                  );
+        const create = (email: string, password?: string) =>
+            session(
+                [
+                    "api",
+                    "--session",
+                    "--email",
+                    email,
+                    "-X",
+                    "POST",
+                    "organizations",
+                    "-f",
+                    "name=Demo",
+                    "-f",
+                    "slug=demo",
+                    "-f",
+                    "ownerEmail=ann@example.com",
+                    "--confirm",
+                ],
+                dir,
+                { respond, answer: password },
+            );
+        const operator = await create(OPERATOR, USERS[OPERATOR]);
+        expect(operator.code).toBe(EXIT.ok);
+        const call = operator.requests.find((r) => r.path === "/api/v1/organizations")!;
+        expect(call.method).toBe("POST");
+        expect(JSON.parse(call.body)).toEqual({
+            name: "Demo",
+            slug: "demo",
+            ownerEmail: "ann@example.com",
+        });
+        expect(call.headers.cookie).toMatch(/^__Secure-better-auth\.session_token=/);
+        expect(call.headers.origin).toBe(SESSION_CONTROLLER);
+        expect(Object.keys(call.headers)).not.toContain("authorization");
+        expect(operator.out.join("\n")).toContain('"slug": "demo"');
+        expect(operator.signedOut).toEqual([OPERATOR]);
+
+        const owner = await create(OWNER, PASSWORD);
+        expect(owner.code).toBe(EXIT.unauthorized);
+        expect(owner.signedOut).toEqual([OWNER]);
+    });
+
+    it("an owner issues a key; a non-member gets 404; a stale kept session gets 403", async () => {
+        const respond = (api: Api) => {
+            if (api.email === "bob@example.com") {
+                return sessionJson(
+                    { code: "not-found", status: 404, title: "Not Found" },
+                    { status: 404 },
+                );
+            }
+            if (api.cookie.startsWith(`${COOKIE_NAME}=stale`)) {
+                return sessionJson(
+                    { code: "forbidden", status: 403, title: "Sign in again to issue a key." },
+                    { status: 403 },
+                );
+            }
+            return sessionJson(
+                { id: "key-1", secret: SECRET, scopes: ["project:read"] },
+                { status: 201 },
+            );
+        };
+        const owner = await session(issueArgs, dir, { respond });
+        expect(owner.code).toBe(EXIT.ok);
+        const call = owner.requests.find((r) => r.path.endsWith("/api-keys"))!;
+        expect(JSON.parse(call.body)).toEqual({
+            name: "ci",
+            scopes: ["project:read"],
+            expiresInDays: 30,
+        });
+        expect(call.headers.cookie).toBeDefined();
+        expect(call.headers.origin).toBe(SESSION_CONTROLLER);
+        expect(Object.keys(call.headers)).not.toContain("authorization");
+        expect(owner.out.join("\n")).toContain("lp_[redacted]");
+        expect(owner.text()).not.toContain(SECRET);
+
+        const member = [...issueArgs];
+        member[3] = "bob@example.com";
+        const outsider = await session(member, dir, { respond, answer: USERS["bob@example.com"] });
+        expect(outsider.code).toBe(EXIT.notFound);
+
+        const server = newServer();
+        const pair = `${COOKIE_NAME}=stale.sig`;
+        server.sessions.set(pair, OWNER);
+        await new SessionStore(dir).put({
+            controller: SESSION_CONTROLLER,
+            email: OWNER,
+            cookie: pair,
+            savedAt: new Date(Date.now() - 20 * 60_000).toISOString(),
+        });
+        const stale = await session(
+            issueArgs.filter((_, i) => i !== 2 && i !== 3),
+            dir,
+            { respond, server },
+        );
+        expect(stale.code).toBe(EXIT.unauthorized);
+        expect(stale.err.join("\n")).toContain("Sign in again");
+        expect(stale.err.join("\n")).toContain("older than 15 minutes");
+        expect(stale.prompts).toEqual([]);
     });
 });
