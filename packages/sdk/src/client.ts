@@ -41,6 +41,27 @@ export interface RequestOptions {
     signal?: AbortSignal;
 }
 
+export interface PageOptions {
+    // 1 to 100. Sending it is what turns paging on; without it a list is returned whole.
+    limit: number;
+    // `next.cursor` from the previous page. Opaque: never parse or build one.
+    cursor?: string;
+    signal?: AbortSignal;
+}
+
+// The SDK's page shape; the services package has its own, internal `Page` with a different `next`.
+export interface Page<T> {
+    items: T[];
+    // Present only when more items exist.
+    next?: { cursor: string };
+}
+
+export interface EventsPage<T> {
+    items: T[];
+    // The `after` of the next page, present only when more events exist.
+    nextAfter?: string;
+}
+
 export interface ClientOptions {
     // The controller's origin, e.g. https://control.example.com. Plain http is accepted
     // only for loopback addresses, so a key never crosses a network in clear text.
@@ -123,7 +144,7 @@ export function createClient(options: ClientOptions) {
     const timeoutMs = options.timeoutMs ?? 30_000;
     const IDEMPOTENCY_KEY = /^[\x21-\x7e]{1,128}$/;
 
-    async function request<T>(
+    async function send<T>(
         method: string,
         path: string,
         schema: z.ZodType<T>,
@@ -133,7 +154,7 @@ export function createClient(options: ClientOptions) {
             signal?: AbortSignal;
             archive?: Blob;
         } = {},
-    ): Promise<T> {
+    ): Promise<{ data: T; headers: Headers }> {
         if (extra.idempotencyKey !== undefined && !IDEMPOTENCY_KEY.test(extra.idempotencyKey)) {
             throw new LaunchpadConfigError(
                 "An idempotency key is 1 to 128 printable ASCII characters without spaces.",
@@ -214,7 +235,65 @@ export function createClient(options: ClientOptions) {
                 "The controller's answer is not what this version of the SDK expects.",
             );
         }
-        return parsed.data;
+        return { data: parsed.data, headers: response.headers };
+    }
+
+    async function request<T>(
+        method: string,
+        path: string,
+        schema: z.ZodType<T>,
+        body?: unknown,
+        extra: {
+            idempotencyKey?: string;
+            signal?: AbortSignal;
+            archive?: Blob;
+        } = {},
+    ): Promise<T> {
+        return (await send(method, path, schema, body, extra)).data;
+    }
+
+    // The query of a `rel="next"` link, or null. The controller sends only relative links; a
+    // link is followed here only if it is relative or on the controller's own origin, lies
+    // under `/api/v1`, and names the list that was requested. Anything else is ignored, so a
+    // key is never sent to another host or another route.
+    function nextLink(headers: Headers, path: string): URLSearchParams | null {
+        const header = headers.get("link");
+        if (!header) return null;
+        const requested = new URL(`${base}/api/v1${path}`);
+        for (const match of header.matchAll(/<([^>]*)>\s*((?:;\s*[^;,]+)*)/g)) {
+            if (!/;\s*rel="?next"?\s*(;|$)/i.test(match[2]!)) continue;
+            let target: URL;
+            try {
+                target = new URL(match[1]!, requested);
+            } catch {
+                continue;
+            }
+            if (target.origin !== requested.origin) continue;
+            if (target.pathname !== `/api/v1${path}`) continue;
+            return target.searchParams;
+        }
+        return null;
+    }
+
+    const CURSOR = /^[A-Za-z0-9_-]{1,1024}$/;
+    function checkLimit(limit: number, max: number) {
+        if (!Number.isInteger(limit) || limit < 1 || limit > max) {
+            throw new LaunchpadConfigError(`limit must be an integer from 1 to ${max}.`);
+        }
+    }
+
+    async function requestPage<T>(
+        path: string,
+        schema: z.ZodType<T[]>,
+        page: PageOptions,
+    ): Promise<Page<T>> {
+        checkLimit(page.limit, 100);
+        const withQuery = `${path}${query({ limit: page.limit, cursor: page.cursor })}`;
+        const { data, headers } = await send("GET", withQuery, schema, undefined, {
+            signal: page.signal,
+        });
+        const cursor = nextLink(headers, path)?.get("cursor");
+        return cursor && CURSOR.test(cursor) ? { items: data, next: { cursor } } : { items: data };
     }
 
     const seg = (id: string) => {
@@ -238,6 +317,8 @@ export function createClient(options: ClientOptions) {
         key: { get: () => request("GET", "/key", loose(keyInfoSchema)) },
         organizations: {
             list: () => request("GET", "/organizations", z.array(loose(organizationSummarySchema))),
+            listPage: (page: PageOptions) =>
+                requestPage("/organizations", z.array(loose(organizationSummarySchema)), page),
             get: (organizationId: string) =>
                 request(
                     "GET",
@@ -252,6 +333,8 @@ export function createClient(options: ClientOptions) {
                     `/organizations/${seg(organizationId)}/members`,
                     z.array(loose(memberSchema)),
                 ),
+            listPage: (o: string, page: PageOptions) =>
+                requestPage(`${org(o)}/members`, z.array(loose(memberSchema)), page),
         },
         projects: {
             list: (organizationId: string) =>
@@ -260,6 +343,8 @@ export function createClient(options: ClientOptions) {
                     `/organizations/${seg(organizationId)}/projects`,
                     z.array(loose(projectSchema)),
                 ),
+            listPage: (o: string, page: PageOptions) =>
+                requestPage(`${org(o)}/projects`, z.array(loose(projectSchema)), page),
             create: (organizationId: string, input: CreateProjectInput) =>
                 request(
                     "POST",
@@ -288,6 +373,8 @@ export function createClient(options: ClientOptions) {
         },
         apps: {
             list: (o: string) => request("GET", `${org(o)}/apps`, z.array(loose(appSchema))),
+            listPage: (o: string, page: PageOptions) =>
+                requestPage(`${org(o)}/apps`, z.array(loose(appSchema)), page),
             get: (o: string, id: string) => request("GET", app(o, id), loose(appSchema)),
             create: (o: string, projectId: string, input: z.input<typeof createAppSchema>) =>
                 request(
@@ -302,6 +389,8 @@ export function createClient(options: ClientOptions) {
         deployments: {
             list: (o: string, appId: string) =>
                 request("GET", `${app(o, appId)}/deployments`, z.array(loose(deploymentSchema))),
+            listPage: (o: string, appId: string, page: PageOptions) =>
+                requestPage(`${app(o, appId)}/deployments`, z.array(loose(deploymentSchema)), page),
             create: (
                 o: string,
                 appId: string,
@@ -319,12 +408,36 @@ export function createClient(options: ClientOptions) {
                     `${deployment(o, id)}/events${query(cursor ?? {})}`,
                     z.array(loose(deploymentEventSchema)),
                 ),
+            // One page of events by `after`/`limit` (limit 1 to 500), with `nextAfter` taken from the
+            // `Link` header, which is sent only when `limit` is given and more events exist.
+            eventsPage: async (
+                o: string,
+                id: string,
+                options: { after?: string; limit: number; signal?: AbortSignal },
+            ): Promise<EventsPage<z.infer<typeof deploymentEventSchema>>> => {
+                checkLimit(options.limit, 500);
+                const path = `${deployment(o, id)}/events`;
+                const { data, headers } = await send(
+                    "GET",
+                    `${path}${query({ after: options.after, limit: options.limit })}`,
+                    z.array(loose(deploymentEventSchema)),
+                    undefined,
+                    { signal: options.signal },
+                );
+                // 10 digits is the controller's own bound on `after`.
+                const after = nextLink(headers, path)?.get("after");
+                return after && /^\d{1,10}$/.test(after)
+                    ? { items: data, nextAfter: after }
+                    : { items: data };
+            },
             delete: (o: string, id: string) =>
                 request("DELETE", deployment(o, id), loose(deploymentDeletionSchema)),
         },
         aliases: {
             list: (o: string, appId: string) =>
                 request("GET", `${app(o, appId)}/aliases`, z.array(loose(aliasSchema))),
+            listPage: (o: string, appId: string, page: PageOptions) =>
+                requestPage(`${app(o, appId)}/aliases`, z.array(loose(aliasSchema)), page),
             get: (o: string, id: string) => request("GET", alias(o, id), loose(aliasSchema)),
             create: (o: string, appId: string, input: z.input<typeof createAliasSchema>) =>
                 request("POST", `${app(o, appId)}/aliases`, loose(aliasSchema), input),
@@ -352,6 +465,12 @@ export function createClient(options: ClientOptions) {
                     "GET",
                     `${alias(o, id)}/operations`,
                     z.array(loose(promotionOperationSchema)),
+                ),
+            operationsPage: (o: string, id: string, page: PageOptions) =>
+                requestPage(
+                    `${alias(o, id)}/operations`,
+                    z.array(loose(promotionOperationSchema)),
+                    page,
                 ),
         },
     };

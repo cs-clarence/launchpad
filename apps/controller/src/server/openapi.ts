@@ -57,9 +57,60 @@ const ERRORS = {
     408: "The upload did not finish in time.",
     409: "The change conflicts with existing data.",
     413: "The upload is larger than the allowed size.",
-    422: "The request body is invalid.",
+    422: "The request body, `limit` or `cursor` is invalid.",
     503: "Deployments or aliases are turned off, or not available on this instance.",
 } as const;
+
+const LINK_HEADER = {
+    description:
+        'Present when `limit` was sent and more items exist: a relative reference with `rel="next"` to request the next page. Follow it as given; do not build or parse cursors. Absent on the last page and on unpaginated calls.',
+    schema: { type: "string" },
+};
+
+// Elysia replaces a route's documented parameters with the ones it derives from the route's
+// schemas, so the query parameters are declared here and attached to a route as its `query`.
+// Both accept anything: the services parse and reject bad values with the API's own 422.
+export const pageQuery = z.object({
+    limit: z
+        .unknown()
+        .meta({
+            type: "integer",
+            minimum: 1,
+            maximum: 100,
+            description:
+                "Opt in to paging: at most this many items (1 to 100). Without it the whole list is returned, as an unpaginated call always did.",
+        })
+        .optional(),
+    cursor: z
+        .unknown()
+        .meta({
+            type: "string",
+            description:
+                "Opaque position from a previous `Link` header. Needs `limit`. Valid only for the same list and organization; otherwise 422.",
+        })
+        .optional(),
+});
+
+// Events page by `after` and `limit`; it needs the same replacement of derived parameters.
+export const eventsQuery = z.object({
+    after: z
+        .unknown()
+        .meta({
+            type: "string",
+            description: "Only events after this sequence number (a decimal integer).",
+        })
+        .optional(),
+    limit: z
+        .unknown()
+        .meta({
+            type: "integer",
+            minimum: 1,
+            maximum: 500,
+            description:
+                "At most this many events (1 to 500, default 100). A `Link` header is sent only when this is given and more events exist.",
+        })
+        .optional(),
+});
 
 interface Operation {
     tags: string[];
@@ -70,6 +121,10 @@ interface Operation {
     keyOnly?: boolean;
     path?: string[];
     query?: { name: string; description: string }[];
+    // Opt-in `limit`/`cursor` paging with a `Link: rel="next"` response header.
+    paginated?: boolean;
+    // A `Link: rel="next"` header without `limit`/`cursor` paging (the events route pages by `after`).
+    link?: boolean;
     idempotent?: boolean;
     // A required key with no expiry: the retry guard of a state-changing alias request.
     idempotencyRequired?: boolean;
@@ -86,10 +141,13 @@ export function operation(op: Operation): DocumentDecoration {
     const responses: Record<string, unknown> = {
         [String(op.ok.status ?? 200)]: {
             description: op.ok.description,
+            ...(op.paginated || op.link ? { headers: { Link: LINK_HEADER } } : {}),
             ...(op.ok.schema ? { content: content(op.ok.schema) } : {}),
         },
     };
-    for (const status of op.errors ?? []) {
+    const errors: Operation["errors"] =
+        op.paginated && !op.errors?.includes(422) ? [...(op.errors ?? []), 422] : op.errors;
+    for (const status of errors ?? []) {
         responses[String(status)] = {
             description: status === 502 ? "The email could not be delivered." : ERRORS[status],
             content: content(errorSchema),
@@ -246,6 +304,7 @@ export const docs = {
         keys: true,
         tags: ["Organizations"],
         summary: "List the caller's organizations",
+        paginated: true,
         ok: {
             description: "Organizations the caller belongs to.",
             schema: z.array(organizationSummarySchema),
@@ -277,6 +336,7 @@ export const docs = {
         tags: ["Organizations"],
         summary: "List members",
         path: ["orgId"],
+        paginated: true,
         ok: { description: "Members.", schema: z.array(memberSchema) },
         errors: [401, 403, 404],
     }),
@@ -302,6 +362,7 @@ export const docs = {
         tags: ["Projects"],
         summary: "List projects",
         path: ["orgId"],
+        paginated: true,
         ok: { description: "Projects.", schema: z.array(projectSchema) },
         errors: [401, 403, 404],
     }),
@@ -350,6 +411,7 @@ export const docs = {
         description:
             "Never includes secrets. Status is active, expired, revoked or inactive (creator's original membership removed). Revoked takes precedence over expired, then inactive. Active keys remain limited by their creator's current role.",
         path: ["orgId"],
+        paginated: true,
         ok: {
             description: "Keys, including revoked and expired.",
             schema: z.array(apiKeySummarySchema),
@@ -367,6 +429,7 @@ export const docs = {
         tags: ["Invitations"],
         summary: "List pending invitations",
         path: ["orgId"],
+        paginated: true,
         ok: { description: "Pending invitations.", schema: z.array(invitationSchema) },
         errors: [401, 403, 404],
     }),
@@ -436,6 +499,7 @@ export const docs = {
         description:
             "A key needs `app:read`; a project-limited key sees only its own projects' apps.",
         path: ["orgId"],
+        paginated: true,
         ok: { description: "Apps, oldest first.", schema: z.array(appSchema) },
         errors: [401, 403, 404],
     }),
@@ -466,6 +530,7 @@ export const docs = {
         description:
             "A key needs `app:read`. Oldest first, including withdrawn aliases. Generations are decimal strings.",
         path: ["orgId", "appId"],
+        paginated: true,
         ok: { description: "Aliases.", schema: z.array(aliasSchema) },
         errors: [401, 403, 404],
     }),
@@ -509,6 +574,7 @@ export const docs = {
         description:
             "A key needs `app:read`. Newest generation first: each promotion, withdrawal and correction, with its status. Generations are decimal strings.",
         path: ["orgId", "aliasId"],
+        paginated: true,
         ok: { description: "Operations.", schema: z.array(promotionOperationSchema) },
         errors: [401, 403, 404],
     }),
@@ -557,6 +623,7 @@ export const docs = {
         summary: "List an app's deployments",
         description: "A key needs `app:read`. Newest first.",
         path: ["orgId", "appId"],
+        paginated: true,
         ok: { description: "Deployments.", schema: z.array(deploymentSchema) },
         errors: [401, 403, 404],
     }),
@@ -584,12 +651,9 @@ export const docs = {
         tags: ["Deployments"],
         summary: "List a deployment's events",
         description:
-            "A key needs `app:read`. Progress in order. Sequence numbers are decimal strings. Page with `after` (the last `seq` you saw) and `limit` (1 to 500, default 100).",
+            'A key needs `app:read`. Progress in order. Sequence numbers are decimal strings. Page with `after` (the last `seq` you saw) and `limit` (1 to 500, default 100). When `limit` is given and more events exist, a relative `Link` header with `rel="next"` names the next `after`.',
         path: ["orgId", "deploymentId"],
-        query: [
-            { name: "after", description: "Only events after this sequence number." },
-            { name: "limit", description: "At most this many events (1 to 500)." },
-        ],
+        link: true,
         ok: { description: "Events.", schema: z.array(deploymentEventSchema) },
         errors: [401, 403, 404, 422],
     }),

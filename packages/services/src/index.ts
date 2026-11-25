@@ -17,6 +17,7 @@ export * from "./status";
 export * from "./hostname-template";
 export * from "./app-routing-config";
 export * from "./apps";
+export { MAX_PAGE_LIMIT, parsePageQuery, type Page, type PageRequest } from "./pagination";
 export * from "./aliases";
 export * from "./promotions";
 export { requestAppShutdown, type ShutdownBlocker } from "./app-shutdown";

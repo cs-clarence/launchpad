@@ -11,6 +11,7 @@ import {
     type Principal,
 } from "./authorization";
 import { isUniqueViolation, ServiceError } from "./errors";
+import { orderedRows, pageRows, type PageRequest, type PageSpec } from "./pagination";
 
 type Db = Kysely<Database>;
 
@@ -80,14 +81,48 @@ export async function requireMembership(
     return member.role;
 }
 
-export async function listMyOrganizations(db: Db, principal: Principal) {
-    return db
+const organizationsSpec: PageSpec = {
+    route: "organizations",
+    organizationId: "",
+    keys: [
+        { ref: "organization.name", type: "text" },
+        { ref: "organization.id", type: "text" },
+    ],
+};
+
+// `onlyOrganizationId` is an API key's own organization: the filter is part of the query, so a
+// page is full instead of shrinking after the cut.
+function myOrganizationsQuery(db: Db, principal: Principal, onlyOrganizationId?: string) {
+    let query = db
         .selectFrom("member")
         .innerJoin("organization", "organization.id", "member.organizationId")
         .select(["organization.id", "organization.name", "organization.slug", "member.role"])
-        .where("member.userId", "=", principal.userId)
-        .orderBy("organization.name")
-        .execute();
+        .where("member.userId", "=", principal.userId);
+    if (onlyOrganizationId !== undefined) {
+        query = query.where("organization.id", "=", onlyOrganizationId);
+    }
+    return query;
+}
+
+export async function listMyOrganizations(
+    db: Db,
+    principal: Principal,
+    onlyOrganizationId?: string,
+) {
+    return orderedRows(myOrganizationsQuery(db, principal, onlyOrganizationId), organizationsSpec);
+}
+
+export async function listMyOrganizationsPage(
+    db: Db,
+    principal: Principal,
+    page: PageRequest,
+    onlyOrganizationId?: string,
+) {
+    return pageRows(
+        myOrganizationsQuery(db, principal, onlyOrganizationId),
+        organizationsSpec,
+        page,
+    );
 }
 
 export async function getOrganization(db: Db, principal: Principal, organizationId: string) {
@@ -194,15 +229,35 @@ export async function createOrganization(db: Db, principal: Principal, input: un
     }
 }
 
-export async function listMembers(db: Db, principal: Principal, organizationId: string) {
-    await requireMembership(db, principal, organizationId, "member:read");
-    return db
+const membersSpec = (organizationId: string): PageSpec => ({
+    route: "members",
+    organizationId,
+    keys: [
+        { ref: "user.email", type: "text" },
+        { ref: "user.id", type: "text" },
+    ],
+});
+
+const membersQuery = (db: Db, organizationId: string) =>
+    db
         .selectFrom("member")
         .innerJoin("user", "user.id", "member.userId")
         .select(["user.id as userId", "user.email", "user.name", "member.role"])
-        .where("member.organizationId", "=", organizationId)
-        .orderBy("user.email")
-        .execute();
+        .where("member.organizationId", "=", organizationId);
+
+export async function listMembers(db: Db, principal: Principal, organizationId: string) {
+    await requireMembership(db, principal, organizationId, "member:read");
+    return orderedRows(membersQuery(db, organizationId), membersSpec(organizationId));
+}
+
+export async function listMembersPage(
+    db: Db,
+    principal: Principal,
+    organizationId: string,
+    page: PageRequest,
+) {
+    await requireMembership(db, principal, organizationId, "member:read");
+    return pageRows(membersQuery(db, organizationId), membersSpec(organizationId), page);
 }
 
 export const addMemberSchema = z.object({

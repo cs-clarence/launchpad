@@ -148,3 +148,57 @@ describe("client address resolution", () => {
         ).toBeNull();
     });
 });
+
+describe("OpenAPI document", () => {
+    const documented = createApi({ auth, db, origin: config.origin, invitations, docs: true });
+    const PAGINATED = [
+        "/api/v1/organizations/{orgId}/apps",
+        "/api/v1/organizations/{orgId}/projects",
+        "/api/v1/organizations/{orgId}/invitations",
+        "/api/v1/organizations/{orgId}/apps/{appId}/aliases",
+        "/api/v1/organizations",
+        "/api/v1/organizations/{orgId}/members",
+        "/api/v1/organizations/{orgId}/api-keys",
+        "/api/v1/organizations/{orgId}/apps/{appId}/deployments",
+        "/api/v1/organizations/{orgId}/aliases/{aliasId}/operations",
+    ];
+
+    it("lists limit, cursor, the Link header and 422 on each paginated route", async () => {
+        const response = await documented.fetch(
+            new Request("http://localhost:3000/api/openapi/json"),
+        );
+        expect(response.status).toBe(200);
+        const doc = (await response.json()) as {
+            paths: Record<string, { get?: Record<string, any> }>;
+        };
+        for (const route of PAGINATED) {
+            const operation = doc.paths[route]!.get!;
+            const parameters = operation.parameters as { name: string; schema: any }[];
+            const limit = parameters.find((p) => p.name === "limit")!;
+            expect(limit.schema).toMatchObject({ type: "integer", minimum: 1, maximum: 100 });
+            expect(parameters.map((p) => p.name)).toContain("cursor");
+            expect(operation.responses["200"].headers.Link).toBeDefined();
+            expect(operation.responses["422"]).toBeDefined();
+        }
+    });
+
+    it("leaves query validation to the services", async () => {
+        const query = "limit=1&limit=2&cursor=%00&cursor=x";
+        const response = await documented.fetch(
+            new Request(`http://localhost:3000/api/v1/organizations/o/apps?${query}`),
+        );
+        expect(response.status).toBe(401);
+    });
+
+    it("documents the events route's after, limit and Link", async () => {
+        const response = await documented.fetch(
+            new Request("http://localhost:3000/api/openapi/json"),
+        );
+        const doc = (await response.json()) as { paths: Record<string, { get?: any }> };
+        const operation =
+            doc.paths["/api/v1/organizations/{orgId}/deployments/{deploymentId}/events"]!.get;
+        const names = operation.parameters.map((p: { name: string }) => p.name);
+        expect(names).toEqual(expect.arrayContaining(["after", "limit"]));
+        expect(operation.responses["200"].headers.Link).toBeDefined();
+    });
+});

@@ -5,6 +5,7 @@ import { sql, type Kysely } from "kysely";
 import { z } from "zod";
 import { API_KEY_SCOPES, can, type ApiKeyScope, type Principal } from "./authorization";
 import { ServiceError } from "./errors";
+import { orderedRows, pageRows, type PageRequest, type PageSpec } from "./pagination";
 import { parseInput, recordAudit, requireMembership } from "./organizations";
 
 type Db = Kysely<Database>;
@@ -120,34 +121,54 @@ export async function createApiKey(
     return { id, secret, name: data.name, scopes, projectIds, expiresAt };
 }
 
-export async function listApiKeys(db: Db, principal: Principal, organizationId: string) {
-    await requireMembership(db, principal, organizationId, "apikey:manage");
-    return db
+const apiKeysSpec = (organizationId: string): PageSpec => ({
+    route: "api-keys",
+    organizationId,
+    keys: [
+        { ref: "api_key.created_at", type: "timestamptz", desc: true },
+        { ref: "api_key.id", type: "uuid" },
+    ],
+});
+
+const apiKeysQuery = (db: Db, organizationId: string) =>
+    db
         .selectFrom("api_key")
         .select([
-            "id",
-            "name",
-            "prefix",
-            "scopes",
-            "project_ids as projectIds",
-            "created_by as createdBy",
-            "created_at as createdAt",
-            "expires_at as expiresAt",
-            "revoked_at as revokedAt",
-            "last_used_at as lastUsedAt",
+            "api_key.id",
+            "api_key.name",
+            "api_key.prefix",
+            "api_key.scopes",
+            "api_key.project_ids as projectIds",
+            "api_key.created_by as createdBy",
+            "api_key.created_at as createdAt",
+            "api_key.expires_at as expiresAt",
+            "api_key.revoked_at as revokedAt",
+            "api_key.last_used_at as lastUsedAt",
             // Use the database clock for both the list and the active-key cap. The
             // original membership, not today's membership for this user, decides
             // whether a key is inactive after removal and re-enrollment.
             sql<ApiKeyStatus>`case
-                when revoked_at is not null then 'revoked'
-                when expires_at <= now() then 'expired'
-                when member_id is null then 'inactive'
+                when api_key.revoked_at is not null then 'revoked'
+                when api_key.expires_at <= now() then 'expired'
+                when api_key.member_id is null then 'inactive'
                 else 'active'
             end`.as("status"),
         ])
-        .where("organization_id", "=", organizationId)
-        .orderBy("created_at", "desc")
-        .execute();
+        .where("api_key.organization_id", "=", organizationId);
+
+export async function listApiKeys(db: Db, principal: Principal, organizationId: string) {
+    await requireMembership(db, principal, organizationId, "apikey:manage");
+    return orderedRows(apiKeysQuery(db, organizationId), apiKeysSpec(organizationId));
+}
+
+export async function listApiKeysPage(
+    db: Db,
+    principal: Principal,
+    organizationId: string,
+    page: PageRequest,
+) {
+    await requireMembership(db, principal, organizationId, "apikey:manage");
+    return pageRows(apiKeysQuery(db, organizationId), apiKeysSpec(organizationId), page);
 }
 
 // Idempotent: revoking a revoked key succeeds and keeps the first revocation time.
