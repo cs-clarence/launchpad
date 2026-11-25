@@ -84,7 +84,13 @@ describe("dependencies of a bundle", () => {
             return { name, version: "0.0.0", dependencies };
         });
         expect(Object.keys(found).toSorted()).toEqual(
-            ["@commander-js/extra-typings", "commander", "tar", "zod"].toSorted(),
+            [
+                "@commander-js/extra-typings",
+                "@elastic/micro-jq",
+                "commander",
+                "tar",
+                "zod",
+            ].toSorted(),
         );
         expect(Object.values(found).every((v) => !v.includes(":"))).toBe(true);
     });

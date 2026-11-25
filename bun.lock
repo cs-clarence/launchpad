@@ -23,6 +23,7 @@
       },
       "dependencies": {
         "@commander-js/extra-typings": "catalog:",
+        "@elastic/micro-jq": "catalog:",
         "@launchpad-kit/client-core": "workspace:^",
         "@launchpad-kit/sdk": "workspace:^",
         "commander": "catalog:",
@@ -304,6 +305,7 @@
   },
   "catalog": {
     "@commander-js/extra-typings": "15.1.0",
+    "@elastic/micro-jq": "2.0.2",
     "@elysia/openapi": "2.0.0-rc.1",
     "@modelcontextprotocol/sdk": "1.32.2",
     "@scalar/api-reference": "1.78.1",
@@ -428,6 +430,8 @@
     "@codemirror/view": ["@codemirror/view@6.43.15", "", { "dependencies": { "@codemirror/state": "^6.7.0", "crelt": "^1.0.6", "style-mod": "^4.1.0", "w3c-keyname": "^2.2.4" } }, "sha512-HHsfpqFeHyXLs983pSRe38Xajs0vFWZQ2BuX0m7Ki8w3jZ5iD8cuR3lBz2/5/X53Dhf32SBHKh6rtSTB6tKeGw=="],
 
     "@commander-js/extra-typings": ["@commander-js/extra-typings@15.1.0", "", { "peerDependencies": { "commander": "~15.1.0" } }, "sha512-FsI7l5tFON52RyyDKyCkvwFl+peHZuP5TZ7AhxbDFGo/5T6KQd4+KE48aJ8jrDSSAQDvZ8hYKX47fmwZ5bGFNw=="],
+
+    "@elastic/micro-jq": ["@elastic/micro-jq@2.0.2", "", { "bin": { "micro-jq": "dist/cjs/cli.js" } }, "sha512-w91RaO3VFa+hF7RS1OfduPgfNeP21G2fHqyfIm+Qdz7zY96VfHLZtWZrlu4s9Yc++qJx56DmR47bdA4EFgNPyA=="],
 
     "@elysia/openapi": ["@elysia/openapi@2.0.0-rc.1", "", { "peerDependencies": { "elysia": ">= 2.0.0-rc.0" } }, "sha512-XzNbSVkgxrsTxK3tq+IUXV84FvmM7dO2uDJ9xS55JJQalKbXOM4TgNAg3Um/pBML5UApIXKh8IZmWXK5WdHitQ=="],
 

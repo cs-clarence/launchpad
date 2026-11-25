@@ -18,6 +18,7 @@ launchpad deployment get <id> | events <id> [--after <sequence>] | delete <id> -
 launchpad alias list <app-id> | create <app-id> <slug> | operations <id>
 launchpad alias promote <alias-id> <deployment-id> --expected-generation <generation> --idempotency-key <key> --confirm
 launchpad alias withdraw <alias-id> --expected-generation <generation> --idempotency-key <key> --confirm
+launchpad api <endpoint> [-X <method>] [-f|-F <key=value>]... [--input <file>] [-H <name:value>]... [-i] [--silent] [-q <jq-expression>] [--verbose] [--paginate [--slurp]] [--idempotency-key <key>] [--confirm]
 ```
 
 Global options: `--json` (machine-readable output; errors become `{"error":{"code","message"}}` on stderr)
@@ -39,6 +40,87 @@ and `--profile <name>`.
   4 not found, 5 controller unreachable, timed out or unexpected answer, 6 credential file or profile unusable,
   7 and 8 are reserved. Queuing a deployment or routing operation exits successfully; check status separately.
 
+## `launchpad api`
+
+`launchpad api <endpoint>` calls any `/api/v1` endpoint with the current profile (or
+`LAUNCHPAD_CONTROLLER` and `LAUNCHPAD_API_KEY`) and prints the response. It is modeled on
+`gh api`; the endpoints and their fields follow the controller's OpenAPI document (see the
+[controller README](../controller/README.md#api-reference)) and may change. An API key
+reaches only the endpoints a key may use; the session-only routes (organization, member,
+invitation and key creation) answer 401 or 403.
+
+```sh
+launchpad api key
+launchpad api organizations/{org}/projects -f name=Demo -f slug=demo --confirm
+launchpad api -X POST organizations/{org}/projects --input body.json --confirm
+launchpad api "organizations/{org}/deployments/${DEPLOYMENT_ID}/events" -X GET -F after=12 -F limit=500
+launchpad api organizations/{org}/apps -X GET -F limit=50 --paginate
+```
+
+- **Method and fields.** `-X` defaults to `GET`, or `POST` when `-f`/`-F` or `--input` is given.
+  `-f key=value` is a string, `-F` converts `true`, `false`, `null` and integers and reads
+  `@file` or `@-` (stdin). `a[b]=c` nests, `a[]=x` builds an array, a bare `a[]` is an empty
+  array. Fields are the JSON body; with `GET`/`HEAD`, or with `--input`, they become the query
+  string. `--input <file>|-` sends the file's bytes unchanged (1 MiB at most). Without a
+  `-H content-type:...` it must be JSON text; with one (for example `application/gzip`) any bytes
+  are sent as they are. A `-F k=@file` value must be UTF-8 text. Standard input can be read once.
+- **Placeholders.** `{org}` (the selected organization, as other commands choose it) and
+  `{project}` (the nearest `launchpad.json`) are filled in the endpoint and in field values.
+  The endpoint value is encoded as one path segment. A placeholder with no value is a usage error.
+  One read of `launchpad.json` and one resolution of the profile serve both placeholders and the
+  request. `{project}` never makes a change allowed by itself: a non-`GET` still needs `--confirm`.
+- **Output.** The body is printed (JSON is pretty-printed), `-i` first prints the status line
+  and headers, `--silent` prints no body, `--verbose` prints the request (before it is sent, so it also shows for a failed request) and the response headers
+  to stderr. The key and `Set-Cookie` are never shown, nor the value of a header `-H` would refuse. Terminal escape sequences and control
+  characters are stripped.
+- **Paging.** `--paginate` (`GET` only) follows `Link: rel="next"` for a list and prints the
+  merged array; `--slurp` prints an array of the pages instead. A link is followed only if it
+  is on the controller's origin and names the same `/api/v1` path (with or without the path
+  prefix of the profile's controller URL), so the key is never sent
+  elsewhere; at most 1000 pages, 100000 items and 16 MiB are collected, within an overall deadline of 5 minutes (exit 5). Pass `-F limit=<n>` to page
+  (without it a list is returned whole). Events keep `after` and `limit`. `--paginate` cannot be
+  combined with `-i`.
+- **Numbers.** Output is re-indented from the response text, so numbers and strings print
+  exactly as the controller sent them (for example `9007199254740993`, `1.0`), and `--paginate`
+  merges pages as text. A filter keeps them only when the system `jq` is 1.7 or newer; the
+  built-in engine and older `jq` read numbers as doubles and round integers above 2^53.
+- **Filtering.** `-q, --jq <expression>` filters a JSON response; strings print raw and
+  other values as indented JSON. It uses the system `jq` when one is on `PATH`
+  (run without a shell and without your environment, expression as an argument, 10 s and
+  8 MiB limits; the filter is also run once on `null` to check it, so any filter that cannot finish on
+  `null` within the timeout, such as `input`, `repeat` or `[range(1e9)]`, is refused before the
+  request, and jq's own memory use is not limited), otherwise a built-in subset (`@elastic/micro-jq`), so advanced filters
+  (`map`, `select` with complex logic, `@csv` and others) may work only with the system `jq`.
+  The built-in engine returns one value, so it prints a stream such as `.[].slug` one
+  result per line only when the expression has an iterator (`[]` after a path) and does not
+  start with `[`; a stream in an expression that also builds values (`{a: .[].x}`) may differ. With
+  `--paginate` the filter sees the merged array (or the array of pages with `--slurp`).
+  An invalid or empty expression is refused before the request and before any placeholder lookup (exit 2); `--verbose` names the engine. If the filter fails after the request was sent (a runtime error
+  on the response), the request is not undone: the message says so and the exit code is 1.
+- **Files.** `--input` and `-F k=@file` read regular files only (a FIFO is refused without
+  opening it) and refuse paths inside the credential store and, on Linux, under `/proc` and
+  `/sys` (which can expose the process environment). A hard link to the store's files
+  is not detected, and a symlink swapped between the path check and the open is not guarded
+  against (it would need write access to your own directories).
+- **Idempotency.** `--idempotency-key <key>` sends the `Idempotency-Key` header, checked as in
+  `alias promote`.
+
+Differences from `gh api`:
+
+- The endpoint is a path under `/api/v1` only. Full URLs, `//host`, `..`, `#`, `\` and control
+  characters are refused (exit 2, nothing sent), so the key cannot go to another host. There is no
+  `--hostname`, `--cache`, `--preview`, `--template` or GraphQL.
+- Anything but `GET` or `HEAD` needs `--confirm`, as the other changing commands do, including the
+  implicit `POST` when fields are given.
+- `-H` refuses credential, framing, method-override and forwarding headers: `authorization`, `proxy-authorization`, `cookie`, `host`, `content-length`, `origin`, `transfer-encoding`, `connection`, `upgrade`, `idempotency-key`, `x-http-method-override`, `x-method-override`, `x-http-method`, `x-forwarded-host`, `x-forwarded-for`, `x-forwarded-proto`, `forwarded`, `proxy-connection`, `te`, `trailer`, `keep-alive`, `expect`
+  (use `--idempotency-key`). The list is the SDK's `FORBIDDEN_RAW_HEADERS`.
+- Escape sequences are always stripped (`gh` has `--allow-escape-sequences`).
+- `--paginate` always merges the pages of a list into one array (or one array of pages with
+  `--slurp`) and needs an endpoint that returns a list; `gh` prints each page separately.
+- Errors follow this CLI: exit codes 2/3/4/5, `--json` error shape, and the controller's error
+  body is not printed (only its code and title). `-i` and `--verbose` therefore show response
+  headers of successful answers only.
+
 ## Workspace file
 
 App, deployment, alias and artifact commands read the nearest `launchpad.json` for profile and
@@ -58,7 +140,7 @@ is no longer accepted.
   to finish and retry. After a crashed writer, remove `credentials.json.lock`
   only after confirming no client is writing. Locks are never stolen by age.
 
-`src/program.ts` holds the commands behind an `Io` interface (`src/io.ts`), so tests drive `run(argv, io)` with a
+`src/program.ts` and `src/api-command.ts` hold the commands behind an `Io` interface (`src/io.ts`), so tests drive `run(argv, io)` with a
 fake terminal, a temporary config directory and a fake controller. `src/index.ts` is the Bun entry point.
 
 Build and check commands are in [CONTRIBUTING.md](../../CONTRIBUTING.md).

@@ -47,6 +47,7 @@
         "zod": "4.6.7",
         "commander": "15.1.0",
         "@commander-js/extra-typings": "15.1.0",
+        "@elastic/micro-jq": "2.0.2",
         "elysia": "2.0.0-rc.3",
         "@tanstack/react-start": "1.169.5",
         "@tanstack/react-router": "1.170.46",
