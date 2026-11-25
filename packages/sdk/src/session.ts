@@ -51,6 +51,7 @@ export function createSessionClient(options: SessionClientOptions) {
     let cookie: string | null =
         options.cookie === undefined ? null : checkCookie(base, options.cookie);
     let password: string | null = null;
+    let signingIn = false;
 
     const secrets = () => {
         const list: string[] = [];
@@ -84,26 +85,34 @@ export function createSessionClient(options: SessionClientOptions) {
 
         async signIn(email: string, secret: string, extra: { signal?: AbortSignal } = {}) {
             if (cookie) throw new LaunchpadConfigError("This client already has a session.");
+            if (signingIn) throw new LaunchpadConfigError("A sign-in is already in progress.");
             if (!email || !secret) {
                 throw new LaunchpadConfigError("An email and a password are required.");
             }
+            signingIn = true;
             password = secret;
-            try {
-                const { response } = await signInTransport.exchange(
-                    "POST",
-                    "/sign-in/email",
-                    { email, password: secret },
-                    { signal: extra.signal },
-                );
-                const name = cookieName(base);
+            const name = cookieName(base);
+            // Taken as soon as the headers arrive: if the body then stalls or fails, the session
+            // already exists on the controller and the caller must still be able to sign it out.
+            const capture = (response: Response) => {
+                if (response.status !== 200) return;
                 for (const line of response.headers.getSetCookie()) {
                     const pair = line.split(";")[0]!.trim();
                     const at = pair.indexOf("=");
                     if (at === -1 || pair.slice(0, at) !== name) continue;
                     if (!COOKIE_VALUE.test(pair.slice(at + 1))) continue;
                     cookie = pair;
-                    return { cookie: pair };
+                    return;
                 }
+            };
+            try {
+                const { response } = await signInTransport.exchange(
+                    "POST",
+                    "/sign-in/email",
+                    { email, password: secret },
+                    { signal: extra.signal, onHeaders: capture },
+                );
+                if (cookie) return { cookie };
                 throw new LaunchpadApiError({
                     status: response.status,
                     code: "no-session",
@@ -121,6 +130,7 @@ export function createSessionClient(options: SessionClientOptions) {
                 throw error;
             } finally {
                 password = null;
+                signingIn = false;
             }
         },
 

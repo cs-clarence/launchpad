@@ -161,7 +161,11 @@ launchpad api --session --email op@example.com -X POST organizations -f name=Dem
   `--email` may be omitted, the same email (any letter case) is accepted, a different one exits 2.
   A saved session sends the warning "older than 15 minutes" before a key-issuing call, but the
   controller's 403 stays the authority. A 401 deletes the entry. `launchpad logout --session` revokes
-  the session and deletes the entry even if sign-out failed; with no entry it says so and exits 0.
+  the session and deletes the entry even if sign-out failed (exit 0, with a warning); with no entry it
+  says so and exits 0. The result separates the two: `--json` gives `signedOut` (true only when the
+  controller signed the session out or said it was already over) and `localEntryRemoved`. If the
+  controller did not confirm, the message says it may still accept the old cookie until it expires, at
+  most 7 days after its last use.
 - **Where it is saved, and the risk.** `session.json` beside `credentials.json` (mode 600, directory
   700, no links, one entry per controller URL with the account email, the cookie and `savedAt`). It is
   an **account-wide bearer credential**, valid until 7 days after its last use (the server expiry
@@ -193,7 +197,14 @@ launchpad api --session --email op@example.com -X POST organizations -f name=Dem
   or returns no `secret`, and the screen shows `lp_[redacted]`. If the write fails after the key was
   created, the error says the key exists and must be revoked in the dashboard or with `api`. It cannot be
   combined with `--paginate`. SIGINT, SIGTERM and SIGHUP remove an empty secret file before exiting, with
-  or without `--session`; a file that already holds the key is kept.
+  or without `--session` (also for a kept session and while stdin is still being read); a file that
+  already holds the key is kept. The copy of the response given to `--jq` and to the screen has the key
+  replaced, so a filter cannot print part of it; only the file gets the original. **Limit:** the file is
+  removed by path after a device and inode check, and Node cannot make that atomic: someone who can
+  already write to the owner-only directory could swap the path between the check and the removal (a
+  swapped symlink is removed itself, never followed).
+- A sign-in that was accepted (200 with a session cookie) but whose body never finished arriving still
+  has its session signed out at the end.
 - The cookie and password are removed from errors, `--verbose` output and response headers and bodies,
   and from the output filter (`safeOutput`) for the current run.
 - A runner with a password file can still sign in with `--session`; that is the user's choice.

@@ -32,7 +32,8 @@ export interface Io {
 export interface SecretFile {
     // Writes the secret and closes the file; afterwards `remove` does nothing.
     write(text: string): Promise<void>;
-    // Deletes the file unless a secret was written to it.
+    // Deletes the file unless a secret was written to it (and unless the path no longer names the
+    // file that was created, which is checked by device and inode).
     remove(): Promise<void>;
 }
 
@@ -170,6 +171,9 @@ export async function createSecretFile(file: string): Promise<SecretFile> {
             if (written) return;
             if (!closed) await handle.close().catch(() => {});
             closed = true;
+            // Best effort, not atomic: Node removes by path, so someone who can write to the
+            // (already checked, owner-only) directory could swap the path between this check and
+            // the removal. A replaced symlink is removed itself, never followed.
             const now = await fs.lstat(file).catch(() => null);
             if (now && now.dev === made.dev && now.ino === made.ino) {
                 await fs.rm(file, { force: true });

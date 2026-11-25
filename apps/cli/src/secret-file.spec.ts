@@ -308,4 +308,74 @@ describe("--secret-file with a session and signals", () => {
         expect(await fs.readFile(target, "utf8")).toBe(`${SECRET}\n`);
         expect(w.signedOut).toEqual([OWNER]);
     });
+
+    it("does not let --jq see a piece of the new key", async () => {
+        // A jq that strips the key prefix would turn a redacted `lp_...` into a plain remainder.
+        const jq = path.join(dir, "fake-jq");
+        await fs.writeFile(
+            jq,
+            '#!/bin/sh\nif [ "$1" = "-n" ]; then exit 0; fi\nsed \'s/lp_//g; s/plain-//g\'\n',
+            { mode: 0o700 },
+        );
+        const plain = "plain-secret-value-1234567890";
+        for (const secret of [SECRET, plain]) {
+            await fs.rm(target, { force: true });
+            const w = await run(
+                { jq, respond: () => json({ id: "k1", secret }, { status: 201 }) },
+                "--jq",
+                ".secret",
+            );
+            expect(w.code).toBe(EXIT.ok);
+            expect(await fs.readFile(target, "utf8")).toBe(`${secret}\n`);
+            expect(w.text()).toContain("[redacted]");
+            for (const piece of [secret, secret.slice(3), secret.slice(5, 25)]) {
+                expect(w.text()).not.toContain(piece);
+            }
+        }
+    });
+});
+
+describe("interrupted before the first read", () => {
+    const interruptOnCreate = (world: World) => world.emit("SIGINT");
+
+    it("starts no read once interrupted, and removes the file", async () => {
+        const reads: string[] = [];
+        const w = await session(issue("-F", "k=@-"), dir, {
+            secretFile: (file, world) => {
+                interruptOnCreate(world);
+                return file;
+            },
+            readData: async (source) => {
+                reads.push(source);
+                return new Uint8Array();
+            },
+        });
+        expect(w.code).toBe(130);
+        expect(reads).toEqual([]);
+        expect(w.requests).toEqual([]);
+        expect(await exists()).toBe(false);
+    });
+
+    it("observes a read that fails after the interruption, with no unhandled rejection", async () => {
+        const unhandled: unknown[] = [];
+        const listener = (reason: unknown) => void unhandled.push(reason);
+        process.on("unhandledRejection", listener);
+        try {
+            const w = await session(issue("-F", "k=@-"), dir, {
+                readData: (_source, world) => {
+                    world.emit("SIGTERM");
+                    return new Promise<Uint8Array>((_resolve, reject) =>
+                        setTimeout(() => reject(new Error("stdin failed")), 5),
+                    );
+                },
+            });
+            await new Promise((resolve) => setTimeout(resolve, 30));
+            expect(w.code).toBe(143);
+            expect(w.requests).toEqual([]);
+            expect(await exists()).toBe(false);
+            expect(unhandled).toEqual([]);
+        } finally {
+            process.off("unhandledRejection", listener);
+        }
+    });
 });

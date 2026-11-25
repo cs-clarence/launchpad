@@ -13,6 +13,7 @@ import {
     type Options,
     type World,
     trackProcessListeners,
+    COOKIE_NAME,
 } from "./session-harness";
 
 const KEY = "lp_" + "a".repeat(43);
@@ -527,5 +528,27 @@ describe("api --session: errors and secrets", () => {
 
         const wrong = await run(["key", "--verbose"], { answer: "another password 99" });
         expect(wrong.text()).not.toContain("another password 99");
+    });
+
+    it("signs out a session whose sign-in answer never finished arriving", async () => {
+        const pair = `${COOKIE_NAME}=stuck.sig`;
+        const w = await run(["key"], {
+            signIn: (_n, world) => {
+                world.sessions.set(pair, OWNER);
+                return new Response(
+                    new ReadableStream({
+                        start: (controller) => controller.error(new Error("connection reset")),
+                    }),
+                    { status: 200, headers: new Headers([["set-cookie", `${pair}; Path=/`]]) },
+                );
+            },
+        });
+        expect(w.code).toBe(EXIT.transport);
+        expect(paths(w)).toEqual(["/api/auth/sign-in/email", "/api/auth/sign-out"]);
+        expect(w.requests[1]!.headers.cookie).toBe(pair);
+        expect(w.signedOut).toEqual([OWNER]);
+        expect(w.sessions.size).toBe(0);
+        expect(w.text()).not.toContain("stuck.sig");
+        noHandlers(w);
     });
 });

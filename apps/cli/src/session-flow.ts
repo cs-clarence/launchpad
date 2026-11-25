@@ -119,7 +119,19 @@ export class SessionFlow {
         if (this.options.verbose) {
             io.err("> POST /api/auth/sign-in/email (the email and password are not shown)");
         }
-        const { cookie } = await client.signIn(email, password, { signal: this.guard.signal });
+        let cookie: string;
+        try {
+            ({ cookie } = await client.signIn(email, password, { signal: this.guard.signal }));
+        } catch (error) {
+            // A session may exist even though the sign-in failed (its body never arrived); `close`
+            // signs it out, and its value must not reach the terminal.
+            const issued = client.cookie();
+            if (issued) {
+                this.options.remember(issued);
+                this.options.remember(issued.slice(issued.indexOf("=") + 1));
+            }
+            throw error;
+        }
         this.options.remember(cookie);
         this.options.remember(cookie.slice(cookie.indexOf("=") + 1));
         if (this.options.keep) await this.keep(cookie);

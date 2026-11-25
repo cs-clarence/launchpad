@@ -25,7 +25,10 @@ const json = (body: unknown, init: ResponseInit = {}) =>
 
 type Responder = (url: string, init: RequestInit) => Response | Promise<Response>;
 
-function setup(respond: Responder, options: { baseUrl?: string; cookie?: string } = {}) {
+function setup(
+    respond: Responder,
+    options: { baseUrl?: string; cookie?: string; timeoutMs?: number } = {},
+) {
     const calls: { url: string; init: RequestInit; headers: Record<string, string> }[] = [];
     const fetchImpl = (async (url: string, init: RequestInit) => {
         calls.push({ url, init, headers: init.headers as Record<string, string> });
@@ -35,6 +38,7 @@ function setup(respond: Responder, options: { baseUrl?: string; cookie?: string 
         baseUrl: options.baseUrl ?? "https://control.example.com",
         cookie: options.cookie,
         fetch: fetchImpl,
+        timeoutMs: options.timeoutMs,
     });
     return { calls, client };
 }
@@ -178,7 +182,7 @@ describe("signIn", () => {
         expect(authOrigin.title).toContain("LAUNCHPAD_BASE_URL");
     });
 
-    it("maps timeouts, redirects and unreachable controllers without leaking the password", async () => {
+    it("maps redirects and unreachable controllers without leaking the password", async () => {
         for (const [failure, reason] of [
             [new TypeError("fetch failed: unexpected redirect"), "redirect"],
             [new TypeError(`connect ECONNREFUSED ${PASSWORD}`), "unreachable"],
@@ -190,6 +194,87 @@ describe("signIn", () => {
             expect(error).toBeInstanceOf(LaunchpadTransportError);
             expect((error as LaunchpadTransportError).reason).toBe(reason);
             expect((error as Error).message).not.toContain(PASSWORD);
+        }
+    });
+
+    it("times out a controller that never answers, aborting the request's signal", async () => {
+        let seen: AbortSignal | undefined;
+        const { client } = setup(
+            (_url, init) =>
+                new Promise<Response>((_resolve, reject) => {
+                    seen = init.signal as AbortSignal;
+                    seen.addEventListener("abort", () =>
+                        reject(Object.assign(new Error("aborted"), { name: "TimeoutError" })),
+                    );
+                }),
+            { timeoutMs: 20 },
+        );
+        const error = await client.signIn("a@b.c", PASSWORD).catch((e: unknown) => e);
+        expect(seen?.aborted).toBe(true);
+        expect(error).toBeInstanceOf(LaunchpadTransportError);
+        expect((error as LaunchpadTransportError).reason).toBe("timeout");
+        expect((error as Error).message).not.toContain(PASSWORD);
+        expect(client.cookie()).toBeNull();
+    });
+
+    it("refuses a second sign-in while one is in flight, and stays retryable after a failure", async () => {
+        let release!: (response: Response) => void;
+        let first = true;
+        const { calls, client } = setup(() => {
+            if (!first) return signedIn();
+            first = false;
+            return new Promise<Response>((resolve) => {
+                release = resolve;
+            });
+        });
+        const one = client.signIn("a@b.c", PASSWORD);
+        await expect(client.signIn("other@b.c", PASSWORD)).rejects.toThrow(/already in progress/);
+        expect(calls).toHaveLength(1);
+        release(json({ message: "no" }, { status: 500 }));
+        await expect(one).rejects.toBeInstanceOf(LaunchpadApiError);
+        expect(client.cookie()).toBeNull();
+        await expect(client.signIn("a@b.c", PASSWORD)).resolves.toHaveProperty("cookie");
+        expect(calls).toHaveLength(2);
+    });
+
+    it("keeps the session cookie when the sign-in body fails after the headers, so it can be signed out", async () => {
+        const name = "__Secure-better-auth.session_token";
+        for (const mode of ["error", "stall"] as const) {
+            const { calls, client } = setup(
+                (url, init) => {
+                    if (url.endsWith("/sign-out")) return json({ success: true });
+                    const body = new ReadableStream({
+                        start(controller) {
+                            if (mode === "error") controller.error(new Error(`boom ${PASSWORD}`));
+                            else {
+                                (init.signal as AbortSignal).addEventListener("abort", () =>
+                                    controller.error(
+                                        Object.assign(new Error("x"), { name: "TimeoutError" }),
+                                    ),
+                                );
+                            }
+                        },
+                    });
+                    return new Response(body, {
+                        status: 200,
+                        headers: new Headers([
+                            ["set-cookie", `${name}=${VALUE}; Path=/; HttpOnly; Secure`],
+                        ]),
+                    });
+                },
+                { timeoutMs: 30 },
+            );
+            const error = await client.signIn("a@b.c", PASSWORD).catch((e: unknown) => e);
+            expect(error).toBeInstanceOf(LaunchpadTransportError);
+            expect(JSON.stringify(error) + (error as Error).message).not.toContain(VALUE);
+            expect((error as Error).message).not.toContain(PASSWORD);
+            expect(client.cookie()).toBe(`${name}=${VALUE}`);
+            await client.signOut();
+            expect(calls.map((c) => new URL(c.url).pathname)).toEqual([
+                "/api/auth/sign-in/email",
+                "/api/auth/sign-out",
+            ]);
+            expect(calls[1]!.headers.cookie).toBe(`${name}=${VALUE}`);
         }
     });
 

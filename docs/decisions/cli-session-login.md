@@ -293,6 +293,14 @@ Built on branch `feat/cli-session-login`, one commit per step 1 to 7 and the doc
   current profile. A profile's organization is used only if its controller is the one in use.
 - A single signal guard covers the whole run whenever `--secret-file` is given (with or without a session, kept
   or not), and the file is removed only if it is still the file that was created.
+- `logout --session` reports `signedOut` (true only if the controller confirmed, or answered 401 for an
+  already-ended session) separately from `localEntryRemoved`; the exit code stays 0 and a failed sign-out
+  still deletes the entry, with a warning that the controller may accept the cookie until it expires.
+- The SDK takes the session cookie from a 200 sign-in as soon as the headers arrive, so a body that fails
+  or stalls still leaves a cookie to sign out; a second concurrent `signIn` on one client is refused.
+- With `--secret-file`, `--jq` and the screen get a copy of the response with the key replaced. Deliberate
+  limit: removal of an unused secret file is by path after a device/inode check; a process that can write to
+  the owner-only directory could still swap the path between check and removal (not closable in Node).
 - Not run: nothing against a real controller; the packaged-client check (`test:packages`) and
   integration tests need Docker or the network.
 

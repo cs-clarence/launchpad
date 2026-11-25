@@ -237,21 +237,59 @@ describe("logout --session", () => {
         expect(w.text()).not.toContain(cookie);
     });
 
-    it("deletes the entry even if the sign-out fails, with a warning", async () => {
+    it("deletes the entry even if the sign-out fails, but does not claim a revocation", async () => {
+        const failures: Array<[string, Options["signOut"]]> = [
+            ["500", () => json({}, { status: 500 })],
+            [
+                "network",
+                () => {
+                    throw new TypeError("fetch failed");
+                },
+            ],
+        ];
+        for (const [name, signOut] of failures) {
+            await seed(OWNER);
+            const human = await go(["logout", "--session"], { signOut });
+            expect(human.code, name).toBe(EXIT.ok);
+            expect(human.err.join("\n")).toContain("Warning: could not sign out");
+            expect(human.out.join("\n")).toMatch(/did not confirm the sign-out.*may still accept/);
+            expect(human.out.join("\n")).not.toContain("Signed ann");
+            expect((await stored()).sessions).toEqual({});
+
+            await seed(OWNER);
+            const machine = await go(["logout", "--session", "--json"], { signOut });
+            expect(JSON.parse(machine.out.join("\n"))).toEqual({
+                controller: CONTROLLER,
+                email: OWNER,
+                signedOut: false,
+                localEntryRemoved: true,
+            });
+            expect((await stored()).sessions).toEqual({});
+        }
+    });
+
+    it("counts a 401 as already ended, and reports confirmed revocation", async () => {
         await seed(OWNER);
-        const w = await go(["logout", "--session"], { signOut: () => json({}, { status: 500 }) });
-        expect(w.code).toBe(EXIT.ok);
-        expect(w.err.join("\n")).toContain("Warning: could not sign out");
-        expect((await stored()).sessions).toEqual({});
-        const unreachable = await seed(OWNER);
-        const down = await go(["logout", "--session"], {
-            signOut: () => {
-                throw new TypeError("fetch failed");
-            },
+        const ended = await go(["logout", "--session", "--json"], {
+            signOut: () => json({}, { status: 401 }),
         });
-        expect(down.code).toBe(EXIT.ok);
-        expect((await stored()).sessions).toEqual({});
-        void unreachable;
+        expect(JSON.parse(ended.out.join("\n"))).toMatchObject({
+            signedOut: true,
+            localEntryRemoved: true,
+        });
+        expect(ended.err).toEqual([]);
+        await seed(OWNER);
+        const ok = await go(["logout", "--session", "--json"]);
+        expect(JSON.parse(ok.out.join("\n"))).toMatchObject({
+            signedOut: true,
+            localEntryRemoved: true,
+        });
+        const none = await go(["logout", "--session", "--json"]);
+        expect(JSON.parse(none.out.join("\n"))).toEqual({
+            controller: CONTROLLER,
+            signedOut: false,
+            localEntryRemoved: false,
+        });
     });
 
     it("says so and exits 0 with no entry, ignoring --email", async () => {

@@ -64,13 +64,19 @@ export async function sessionLogout(
     if (!saved) {
         io.out(
             options.json
-                ? JSON.stringify({ controller: target.controller, signedOut: false }, null, 2)
+                ? JSON.stringify(
+                      { controller: target.controller, signedOut: false, localEntryRemoved: false },
+                      null,
+                      2,
+                  )
                 : `No saved session for ${target.controller}.`,
         );
         return;
     }
     remember(saved.cookie);
     remember(saved.cookie.slice(saved.cookie.indexOf("=") + 1));
+    // Confirmed only if the controller signed it out, or says it was already over.
+    let revoked = true;
     try {
         await createSessionClient({
             baseUrl: target.controller,
@@ -80,6 +86,7 @@ export async function sessionLogout(
     } catch (error) {
         // A 401 means the server already ended it, which is what was asked for.
         if (!(error instanceof LaunchpadApiError && error.status === 401)) {
+            revoked = false;
             io.err(
                 `Warning: could not sign out of ${target.controller} (${describe(error).message}). The session ends on its own, at most 7 days after its last use.`,
             );
@@ -89,10 +96,17 @@ export async function sessionLogout(
     io.out(
         options.json
             ? JSON.stringify(
-                  { controller: target.controller, email: saved.email, signedOut: true },
+                  {
+                      controller: target.controller,
+                      email: saved.email,
+                      signedOut: revoked,
+                      localEntryRemoved: true,
+                  },
                   null,
                   2,
               )
-            : `Signed ${saved.email} out of ${target.controller} and removed the saved session.`,
+            : revoked
+              ? `Signed ${saved.email} out of ${target.controller} and removed the saved session.`
+              : `Removed the saved session for ${saved.email} at ${target.controller}, but the controller did not confirm the sign-out: it may still accept the old cookie until it expires (at most 7 days after its last use).`,
     );
 }

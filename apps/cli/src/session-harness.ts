@@ -92,12 +92,14 @@ export interface Options {
     // Called just after the hidden prompt starts, to type, press Ctrl-C or send a signal.
     onPrompt?: (world: World) => void;
     server?: Server;
+    // A fake `jq` executable for --jq.
+    jq?: string;
     // Replaces readData (stdin and files for `-F k=@-`), e.g. to block until a signal.
     readData?: (source: string, world: World) => Promise<Uint8Array>;
     // Call with this API key instead of a session (the /api/v1 fake then needs Authorization).
     key?: string;
     // Wraps the secret file, to fail a write.
-    secretFile?: (file: SecretFile) => SecretFile;
+    secretFile?: (file: SecretFile, world: World) => SecretFile;
 }
 
 export async function makeDir() {
@@ -305,8 +307,9 @@ export async function session(args: string[], dir: string, options: Options = {}
         },
         createSecretFile: async (file) => {
             const created = await createSecretFile(file);
-            return options.secretFile ? options.secretFile(created) : created;
+            return options.secretFile ? options.secretFile(created, world) : created;
         },
+        findExecutable: () => options.jq ?? null,
         readStdin: async () => "",
         readFile: async () => ({ text: "", mode: 0o600 }),
         readData: (source) =>

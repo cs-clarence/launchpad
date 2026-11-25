@@ -147,6 +147,9 @@ export interface Extra {
     // Already-serialized body for `raw`, with its own content type.
     rawBody?: { data: string | Uint8Array; contentType: string };
     headers?: Record<string, string>;
+    // Called with the answer as soon as its headers arrive, before the body is read, so a
+    // caller can keep what the headers carry even if reading the body then fails.
+    onHeaders?: (response: Response) => void;
 }
 
 export interface TransportConfig {
@@ -218,6 +221,7 @@ export function createTransport(config: TransportConfig) {
                 cache: "no-store",
                 signal: AbortSignal.any(signals),
             });
+            extra.onHeaders?.(response);
             // The timeout also covers the body: a stalled stream must not hang the caller.
             text = await readBounded(response);
         } catch (error) {

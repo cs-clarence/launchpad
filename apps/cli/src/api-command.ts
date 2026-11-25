@@ -30,13 +30,17 @@ const MAX_TOTAL_ITEMS = 100_000;
 const MAX_TOTAL_BYTES = 16 * 1024 * 1024;
 const PAGINATE_DEADLINE_MS = 5 * 60 * 1000;
 // Stops waiting for slow input (such as stdin) when a signal arrives, so the command can unwind.
-function untilInterrupted<T>(work: Promise<T>, signal?: AbortSignal): Promise<T> {
-    if (!signal) return work;
+function untilInterrupted<T>(start: () => Promise<T>, signal?: AbortSignal): Promise<T> {
+    if (!signal) return start();
+    // Nothing is started once interrupted; anything started is always observed, so a later
+    // failure of the read cannot become an unhandled rejection.
+    if (signal.aborted) return Promise.reject(new Error("Interrupted."));
     return new Promise<T>((resolve, reject) => {
         const stop = () => reject(new Error("Interrupted."));
-        if (signal.aborted) return stop();
         signal.addEventListener("abort", stop, { once: true });
-        work.then(resolve, reject).finally(() => signal.removeEventListener("abort", stop));
+        start()
+            .then(resolve, reject)
+            .finally(() => signal.removeEventListener("abort", stop));
     });
 }
 const FRESH_MS = 15 * 60 * 1000;
@@ -422,7 +426,7 @@ export function addApiCommand(
                     stdinUsed.value = true;
                 }
                 try {
-                    return await untilInterrupted(io.readData(source), interrupt);
+                    return await untilInterrupted(() => io.readData(source), interrupt);
                 } catch (error) {
                     const reason = error instanceof Error ? error.message : "unreadable";
                     throw bad(
@@ -535,6 +539,9 @@ export function addApiCommand(
 
             if (!options.paginate) {
                 const response = await call(query);
+                // What --jq and the screen get: the new key is replaced here, so a filter cannot
+                // select part of it. Only the file receives the original value.
+                let shown = response.body;
                 if (secretFile) {
                     let secret: unknown;
                     try {
@@ -549,6 +556,10 @@ export function addApiCommand(
                     }
                     // A key-shaped secret is already shown as lp_[redacted].
                     if (!secret.startsWith("lp_")) remember(secret);
+                    const mark = secret.startsWith("lp_") ? "lp_[redacted]" : "[redacted]";
+                    for (const form of new Set([secret, JSON.stringify(secret).slice(1, -1)])) {
+                        shown = shown.split(form).join(mark);
+                    }
                     try {
                         await secretFile.write(`${secret}\n`);
                     } catch {
@@ -566,8 +577,7 @@ export function addApiCommand(
                         ),
                     );
                 }
-                if (!options.silent && response.body.length > 0)
-                    io.out(await filter(response.body));
+                if (!options.silent && shown.length > 0) io.out(await filter(shown));
                 return;
             }
 
