@@ -1,0 +1,168 @@
+# Run Launchpad on your machine
+
+For a developer who wants a working local controller to try the dashboard, the CLI and the
+API. You finish with a migrated database, an operator and an owner account, an organization,
+a project, an API key and a saved `launchpad` profile. Nothing here deploys sites: apps and
+deployments stay off (see [deployments](deployments.md) for that).
+
+You need [Bun](https://bun.sh) 1.4.4, [Omni](https://github.com/omni-oss/omni), a checkout of
+this repository, and a PostgreSQL 17 server you can reach. Run every command from the
+repository root unless a step says otherwise.
+
+## Set it up
+
+1. Install the dependencies and the agent context:
+
+    ```sh
+    bun install --frozen-lockfile
+    omni remote-sources install && omni projection sync
+    ```
+
+2. Start a PostgreSQL 17. Any server works; this runs a throwaway one in Docker, listening
+   only on your machine. Choose your own password:
+
+    ```sh
+    docker run -d --name launchpad-dev-db -e POSTGRES_USER=launchpad \
+      -e POSTGRES_PASSWORD=choose-a-password -e POSTGRES_DB=launchpad \
+      -p 127.0.0.1:5432:5432 postgres:17-alpine
+    ```
+
+3. Copy the controller's example settings and edit them:
+
+    ```sh
+    cp apps/controller/.env.local.example apps/controller/.env.local
+    openssl rand -base64 48
+    mkdir -p apps/controller/.data/controller
+    ```
+
+    In `apps/controller/.env.local` set:
+    - `DATABASE_URL` to your server, for the container above
+      `postgresql://launchpad:choose-a-password@127.0.0.1:5432/launchpad`.
+    - `LAUNCHPAD_AUTH_SECRET` to the `openssl` output (at least 32 characters).
+    - `LAUNCHPAD_BASE_URL` to `http://127.0.0.1:5173`.
+
+    Leave the rest as it is; `LAUNCHPAD_DEPLOYMENTS` stays off. The directory in
+    `LAUNCHPAD_DATA_DIR` (default `.data/controller`, relative to `apps/controller`) must exist
+    before the controller answers requests, which is what the `mkdir` is for.
+
+    `LAUNCHPAD_BASE_URL` is the one setting that is easy to get wrong. The controller trusts
+    only its origin, and refuses a session request that carries a different `Origin`. An
+    `http` origin on loopback is accepted: the controller marks its cookies `Secure` only for
+    `https`, and requires `https` only when `LAUNCHPAD_APPS_DOMAIN` is set or
+    `LAUNCHPAD_DEPLOYMENTS` is `on`, neither of which this guide uses. The origin must equal
+    the address you actually open: the dev server listens on Vite's default port, 5173 (`PORT`
+    and `HOST` in the example file are read only by the built server, and `omni -i run dev`
+    passes no port). If 5173 is taken Vite picks another port and the origin no longer matches;
+    free the port and restart.
+
+4. Start the controller and leave it running in one terminal:
+
+    ```sh
+    omni -i run dev -p @launchpad-kit/controller
+    ```
+
+5. In another terminal, seed it:
+
+    ```sh
+    omni -i run local:seed
+    ```
+
+    This applies the database migrations, creates the operator and the owner, then the
+    organization `local` and the project `demo`, issues a 90-day API key and saves it as the
+    `launchpad` profile `local`. It prints what it did and where files went, never a password
+    or key. Pick other names with options, for example:
+
+    ```sh
+    omni -i run local:seed -a "options=--org acme --project site --profile acme"
+    ```
+
+    `omni -i run local:seed -a options=--help` lists every option.
+
+6. Check it. Build the CLI once, then call the controller with the saved key:
+
+    ```sh
+    omni -i run build -p @launchpad-kit/cli
+    alias launchpad="bun $PWD/apps/cli/dist/index.js"
+    launchpad whoami
+    launchpad api organizations/{org}/projects
+    ```
+
+    `whoami` names the key's organization and `api` lists its projects, including `demo`. If
+    you already had another profile, the new one is saved but not selected: run
+    `launchpad profile use local`.
+
+## What the seed leaves behind
+
+| What                       | Where                                                                   |
+| -------------------------- | ----------------------------------------------------------------------- |
+| Operator and owner account | `operator@launchpad.local` and `owner@launchpad.local`                  |
+| Their passwords            | `<config>/local-operator.password` and `local-owner.password`, mode 600 |
+| The API key                | The `launchpad` profile, in `<config>/credentials.json`, mode 600       |
+
+`<config>` is `--out` if given, else `$LAUNCHPAD_CONFIG_DIR`, else `$XDG_CONFIG_HOME/launchpad`,
+else `~/.config/launchpad`. `LAUNCHPAD_CONFIG_DIR` and `XDG_CONFIG_HOME` must be absolute (the CLI does not expand them; the script refuses otherwise). It is resolved to an absolute path and must be a directory you own,
+not a link and not writable by others (it is created mode 700); a path with spaces or quotes is
+refused. The key lasts 90 days and has only the scopes `organization:read`, `project:read`,
+`project:create` and `app:read`, which is what this guide uses; revoke it on the organization
+page of the dashboard.
+
+Sign in to the dashboard at the controller's address as the owner, with the password from its
+file. The operator creates organizations and has no access inside them. `--out <dir>` moves
+all of these; set `LAUNCHPAD_CONFIG_DIR` to the same directory so the CLI finds the profile.
+
+## Use it day to day
+
+Start PostgreSQL and `omni -i run dev -p @launchpad-kit/controller` again. Nothing needs
+seeding twice: the seed is safe to re-run and changes nothing that already exists. It issues
+a second key only with `--new-key`, and it replaces a profile that does not work for this
+controller only with `--force`. To start over, drop the database (for the container above,
+`docker rm -f launchpad-dev-db`) and seed again; the script never deletes anything, and it
+reuses the password files it wrote earlier. A profile left over from the old database then
+holds a dead key, so seed again with `--force`.
+
+## If it fails
+
+Each failure prints one message and exits nonzero.
+
+| Message starts with                            | What to do                                                                                       |
+| ---------------------------------------------- | ------------------------------------------------------------------------------------------------ |
+| `Cannot reach the controller`                  | Start the controller (step 4), or fix `--controller`.                                            |
+| `... was refused (403)`                        | `LAUNCHPAD_BASE_URL` and the origin the script sends differ; make them equal or pass `--origin`. |
+| `... is not ready (503)`                       | The database is unreachable or unmigrated, or the `LAUNCHPAD_DATA_DIR` directory is missing.     |
+| `migrate failed`, `DATABASE_URL is not set`    | Check `DATABASE_URL` and that PostgreSQL is running.                                             |
+| `The controller rejected the operator sign-in` | The operator password file holds the wrong password; put the right one in it.                    |
+| `... is not on this machine`                   | The script refuses a controller that is not loopback unless you pass `--allow-remote`.           |
+| `... is readable by other users`               | Run `chmod 600` on the file it names.                                                            |
+| `already exists, but no password file`         | An account exists whose password the script does not have; write it to the file named.           |
+
+Passwords never travel in an argument or the environment: the admin commands read them from
+the mode-600 files. The script uses `http` only for loopback and needs `https` for anything
+else.
+
+## Let other people reach it
+
+This is for a short trial, not hosting. The controller has not had a review for exposure to
+the public internet; read [keep management private](access.md) first, put a tunnel or a VPN
+such as Tailscale in front of it, and do not publish it directly.
+
+1. Run the built server, not the dev server: `omni -i run build -p @launchpad-kit/controller`,
+   then from `apps/controller` load your settings and run `bun .output/server/index.mjs`.
+   Keep `HOST=127.0.0.1` so only the tunnel reaches it, with the `PORT` you choose.
+2. Set `LAUNCHPAD_BASE_URL` to the public `https` origin the tunnel serves, exactly (no path).
+   Restart the controller.
+3. Set `LAUNCHPAD_PUBLIC_SIGNUP=false` (the default) and `LAUNCHPAD_API_DOCS=false`, so no one
+   can register and the API reference is not public.
+4. Set `LAUNCHPAD_TRUSTED_PROXY=true` only if exactly one proxy sits in front and appends the
+   client address to `X-Forwarded-For`; otherwise leave it `false`.
+5. Seed through the loopback address while sending the public origin. The profile it saves
+   points at the loopback address, which is right on this machine:
+
+    ```sh
+    omni -i run local:seed -a "options=--controller http://127.0.0.1:3000 --origin https://control.example.com --profile tunnel"
+    ```
+
+    Other people use the public address: the owner issues them a key in the dashboard and they
+    run `launchpad login --controller https://control.example.com --key-file <file>`.
+
+Both [access](access.md) and the [controller README](../apps/controller/README.md) describe each
+setting.

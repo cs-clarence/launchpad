@@ -67,6 +67,12 @@ certificate/key mounts belong only to the router. The aliases-on Compose
 rehearsal passed on disposable infrastructure; its isolation preflight lives in
 `tooling/experiments/compose/`.
 
+The local development seed is `tooling/local-seed.ts` (`omni -i run local:seed`): pure argument,
+address and idempotency functions, an HTTP bootstrap over an injected `fetch` and an injected command
+runner, so `tooling/local-seed.spec.ts` needs no server or database. It stores the key through
+`login` in `@launchpad-kit/client-core`. The guide is `docs/local-quickstart.md`, guarded by
+`tooling/local-quickstart.spec.ts`.
+
 Opt-in disposable rehearsals live under `tooling/experiments/`: `routing/` (the router
 experiment and its production-router rehearsal) and `acceptance/` (the full-stack P7 rehearsal:
 `run.ts` creates and cleans up resources, `world.ts` is the HTTP/SQL/docker access layer,

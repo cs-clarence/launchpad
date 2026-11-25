@@ -13,6 +13,13 @@ repository's CI. A production-shaped Compose stack exists but has never run as p
 [Controller](#controller) below, [the controller README](apps/controller/README.md) and
 [the worker README](apps/worker/README.md).
 
+## Run it locally
+
+To try the controller, dashboard and CLI on your own machine, follow
+[run Launchpad on your machine](docs/local-quickstart.md): a development server, any PostgreSQL 17,
+and one seed command (`omni -i run local:seed`) that creates the accounts, an organization, a project
+and a saved CLI profile.
+
 ## Configuration
 
 `docker-compose.yaml` defines the whole stack (PostgreSQL, controller, worker, Dokku and

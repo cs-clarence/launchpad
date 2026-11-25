@@ -16,6 +16,15 @@ tasks:
     description: Opt-in full-stack P7 rehearsal on disposable PostgreSQL and Dokku (Docker; needs LAUNCHPAD_ACCEPTANCE_REHEARSAL=1)
     exec: sh -c 'cd "$(git rev-parse --show-toplevel)" && bun tooling/experiments/acceptance/run.ts'
 
+  # Talks to a controller and PostgreSQL that you started yourself and runs the controller's
+  # admin task; it starts nothing. Pass flags as -a "options=--org acme" (see docs/local-quickstart.md).
+  local:seed:
+    description: Seed a local controller with an operator, owner, organization, project and CLI profile (needs a running controller)
+    exec: sh -c 'cd "$(git rev-parse --show-toplevel)" && bun tooling/local-seed.ts {{ args.options }}'
+    args:
+      options: ""
+    interactive: true
+
   check:format:
     description: Format check of the whole repository, including docs and root files
     exec: sh -c 'cd "$(git rev-parse --show-toplevel)" && bun x oxfmt --check'
