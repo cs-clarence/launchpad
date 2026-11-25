@@ -83,3 +83,16 @@ describe.skipIf(process.platform === "win32")("api data input", () => {
         await expect(io.readData("/sys/kernel/ostype")).rejects.toThrow("/sys");
     });
 });
+
+describe("real signal hooks", () => {
+    it("adds and removes exactly their own listeners", () => {
+        const names = ["SIGINT", "SIGTERM", "SIGHUP"] as const;
+        const before = names.map((n) => process.listenerCount(n));
+        const hooks = realIo().signals!;
+        const listener = () => {};
+        for (const n of names) hooks.on(n, listener);
+        expect(names.map((n) => process.listenerCount(n))).toEqual(before.map((c) => c + 1));
+        for (const n of names) hooks.off(n, listener);
+        expect(names.map((n) => process.listenerCount(n))).toEqual(before);
+    });
+});

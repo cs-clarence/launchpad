@@ -1,4 +1,5 @@
 import { ClientCoreError } from "@launchpad-kit/client-core";
+import { EXIT, ExitWith } from "./errors";
 import type { Io } from "./io";
 
 // The controller's own limits (`packages/auth`): 12 to 128 characters.
@@ -27,7 +28,11 @@ export async function readPassword(
                 signal: options.signal,
             });
         } catch (error) {
-            if (error instanceof Error && /^(Cancelled\.|Input is too long)/.test(error.message)) {
+            // Ctrl-C at the prompt ends the command like SIGINT does (128 + 2).
+            if (error instanceof Error && error.message === "Cancelled.") {
+                throw new ExitWith(EXIT.interrupted);
+            }
+            if (error instanceof Error && /^Input is too long/.test(error.message)) {
                 throw bad(error.message);
             }
             throw error;

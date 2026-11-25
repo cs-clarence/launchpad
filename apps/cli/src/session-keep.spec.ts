@@ -17,9 +17,11 @@ import {
     type Options,
     type Server,
     type World,
+    trackProcessListeners,
 } from "./session-harness";
 
 const KEY = "lp_" + "a".repeat(43);
+trackProcessListeners();
 let dir = "";
 let server: Server;
 beforeEach(async () => {

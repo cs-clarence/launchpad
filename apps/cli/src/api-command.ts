@@ -21,7 +21,8 @@ import {
 import type { Io, SecretFile } from "./io";
 import { applyJq, checkJq, chooseJq, findOnPath } from "./jq";
 import { arrayItems, prettyJson } from "./json-text";
-import { SessionFlow, withSession } from "./session-flow";
+import { ExitWith } from "./errors";
+import { SessionFlow, SignalGuard, withSession } from "./session-flow";
 import { checkEmail, refuseWithKey, resolveSessionTarget } from "./session-target";
 
 const MAX_PAGES = 1000;
@@ -156,13 +157,24 @@ export function addApiCommand(
                     );
                 }
             }
+            // Without a session nothing else listens for signals; a signal must not leave the
+            // empty secret file behind, which would make the next run fail with "already exists".
+            const guard = secretFile && !options.session ? new SignalGuard(io) : undefined;
+            guard?.install();
             try {
                 await withSession(io, (holder) =>
-                    execute(endpoint, options, command, holder, secretFile),
+                    execute(endpoint, options, command, holder, secretFile, guard?.signal),
                 );
+                if (guard?.interruptedWith != null) throw new ExitWith(guard.interruptedWith);
             } catch (error) {
                 await secretFile?.remove().catch(() => {});
+                if (guard?.interruptedWith != null) {
+                    if (!(error instanceof ExitWith)) io.err("Interrupted.");
+                    throw new ExitWith(guard.interruptedWith);
+                }
                 throw error;
+            } finally {
+                guard?.uninstall();
             }
         });
 
@@ -189,6 +201,7 @@ export function addApiCommand(
         command: Command<any, any, any>,
         holder: { flow?: SessionFlow },
         secretFile?: SecretFile,
+        interrupt?: AbortSignal,
     ) {
         {
             const { profile } = command.optsWithGlobals() as { profile?: string };
@@ -503,13 +516,12 @@ export function addApiCommand(
                     body,
                     headers: extraHeaders,
                     idempotencyKey: options.idempotencyKey,
-                    signal,
+                    signal: signal ?? interrupt,
                 });
             };
 
             if (!options.paginate) {
                 const response = await call(query);
-                showResponse(response);
                 if (secretFile) {
                     let secret: unknown;
                     try {
@@ -533,6 +545,7 @@ export function addApiCommand(
                         );
                     }
                 }
+                showResponse(response);
                 if (options.include) {
                     io.out(
                         [`HTTP ${response.status}`, ...headerLines(response.headers), ""].join(

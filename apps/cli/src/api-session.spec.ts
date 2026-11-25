@@ -12,9 +12,11 @@ import {
     session,
     type Options,
     type World,
+    trackProcessListeners,
 } from "./session-harness";
 
 const KEY = "lp_" + "a".repeat(43);
+trackProcessListeners();
 let dir = "";
 beforeEach(async () => {
     dir = await makeDir();
@@ -237,7 +239,7 @@ describe("api --session: the hidden prompt and signals", () => {
             prompt: "terminal",
             onPrompt: (world) => world.typed("\u0003"),
         });
-        expect(ctrlC.code).toBe(EXIT.usage);
+        expect(ctrlC.code).toBe(EXIT.interrupted);
         expect(ctrlC.rawMode).toEqual([true, false]);
         expect(ctrlC.requests).toEqual([]);
         noHandlers(ctrlC);

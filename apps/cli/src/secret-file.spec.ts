@@ -2,9 +2,20 @@ import { promises as fs, statSync } from "node:fs";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { EXIT } from "./errors";
-import { type Api, json, makeDir, OWNER, PASSWORD, session, type Options } from "./session-harness";
+import {
+    type Api,
+    json,
+    makeDir,
+    OWNER,
+    PASSWORD,
+    session,
+    type Options,
+    type World,
+    trackProcessListeners,
+} from "./session-harness";
 
 const SECRET = `lp_${"k".repeat(43)}`;
+trackProcessListeners();
 let dir = "";
 let target = "";
 beforeEach(async () => {
@@ -152,4 +163,90 @@ describe("--secret-file", () => {
         expect(await fs.readFile(target, "utf8")).toBe(`${SECRET}\n`);
         clean(w);
     });
+
+    it("never prints a secret that is not key-shaped, and still saves it", async () => {
+        const plain = "plain-secret-value-1234567890";
+        const w = await run(
+            { respond: () => json({ id: "k1", secret: plain }, { status: 201 }) },
+            "--verbose",
+            "-i",
+        );
+        expect(w.code).toBe(EXIT.ok);
+        expect(w.text()).not.toContain(plain);
+        expect(w.text()).toContain("[redacted]");
+        expect(await fs.readFile(target, "utf8")).toBe(`${plain}\n`);
+    });
 });
+
+describe("--secret-file with a key and signals", () => {
+    const KEY = `lp_${"a".repeat(43)}`;
+    const keyArgs = [
+        "api",
+        "-X",
+        "POST",
+        "organizations/org-1/api-keys",
+        "-f",
+        "name=ci",
+        "--confirm",
+        "--secret-file",
+    ];
+    const withKey = (options: Options = {}) =>
+        session([...keyArgs, target], dir, { key: KEY, respond: () => created(), ...options });
+
+    it("works with a key and no session", async () => {
+        const w = await withKey();
+        expect(w.code).toBe(EXIT.ok);
+        expect(w.requests.map((r) => r.path)).toEqual(["/api/v1/organizations/org-1/api-keys"]);
+        expect(await fs.readFile(target, "utf8")).toBe(`${SECRET}\n`);
+    });
+
+    it("removes the empty file on a signal, so a retry works, and removes its handlers", async () => {
+        const installed: number[] = [];
+        for (const [signal, code] of [
+            ["SIGINT", 130],
+            ["SIGTERM", 143],
+            ["SIGHUP", 129],
+        ] as const) {
+            const w = await withKey({
+                respond: (_api, world) => {
+                    installed.push(world.listeners.get(signal)?.size ?? 0);
+                    world.emit(signal);
+                    return new Promise<Response>(() => {});
+                },
+            });
+            expect(w.code).toBe(code);
+            expect(await exists()).toBe(false);
+            for (const set of w.listeners.values()) expect(set.size).toBe(0);
+        }
+        expect(installed).toEqual([1, 1, 1]);
+        expect((await withKey()).code).toBe(EXIT.ok);
+    });
+
+    it("keeps a file that already holds the secret", async () => {
+        const w = await withKey({
+            secretFile: (file) => ({
+                write: async (text) => {
+                    await file.write(text);
+                    w0.emit("SIGTERM");
+                },
+                remove: () => file.remove(),
+            }),
+            onRequest: (_r, world) => void (w0 = world),
+        });
+        expect(w.code).toBe(143);
+        expect(await fs.readFile(target, "utf8")).toBe(`${SECRET}\n`);
+    });
+
+    it("leaves immediately on a second signal", async () => {
+        const w = await withKey({
+            respond: (_api, world) => {
+                world.emit("SIGINT");
+                world.emit("SIGINT");
+                return new Promise<Response>(() => {});
+            },
+        });
+        expect(w.exits).toEqual([130]);
+        expect(await exists()).toBe(false);
+    });
+});
+let w0: World;

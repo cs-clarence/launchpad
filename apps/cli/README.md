@@ -41,7 +41,8 @@ and `--profile <name>`.
   the key's organization.
 - **Exit codes:** 0 success, 1 other failure, 2 usage, 3 not logged in or the key is rejected (401/403),
   4 not found, 5 controller unreachable, timed out or unexpected answer, 6 credential file or profile unusable,
-  7 and 8 are reserved. Queuing a deployment or routing operation exits successfully; check status separately.
+  7 and 8 are reserved. 130 is Ctrl-C at a password prompt, as for SIGINT; a signal during `--session` or
+  `--secret-file` exits 128 plus its number (SIGHUP 129, SIGINT 130, SIGTERM 143). Queuing a deployment or routing operation exits successfully; check status separately.
 
 ## `launchpad api`
 
@@ -145,7 +146,9 @@ launchpad api --session --email op@example.com -X POST organizations -f name=Dem
   sign-out prints a warning and does not change the exit code; a hard kill (SIGKILL, power loss) or an
   unreachable controller leaves a server session that expires on its own at most 7 days after its last
   use. On SIGINT, SIGTERM and SIGHUP the command aborts the request, signs out and exits with 128 plus
-  the signal number; a second signal exits at once. At the prompt the terminal is restored first.
+  the signal number. After the first signal the sign-out is bounded by the 30 s transport timeout, and a
+  second signal exits at once without signing out. At the prompt the terminal is restored first, and
+  Ctrl-C there exits 130 with nothing sent.
 - **Password input.** Never an argument or an environment variable. The prompt needs a terminal
   (otherwise exit 2). `--password-file` must be a regular file owned by you with no group or other
   permission bits (`chmod 600`), not a link or FIFO, at most 4096 bytes; one trailing newline is removed
@@ -188,7 +191,8 @@ launchpad api --session --email op@example.com -X POST organizations -f name=Dem
   mode 600 **before** the request (an existing file means nothing is sent), removed if the request fails
   or returns no `secret`, and the screen shows `lp_[redacted]`. If the write fails after the key was
   created, the error says the key exists and must be revoked in the dashboard or with `api`. It cannot be
-  combined with `--paginate`.
+  combined with `--paginate`. SIGINT, SIGTERM and SIGHUP remove an empty secret file before exiting, with
+  or without `--session`; a file that already holds the key is kept.
 - The cookie and password are removed from errors, `--verbose` output and response headers and bodies,
   and from the output filter (`safeOutput`) for the current run.
 - A runner with a password file can still sign in with `--session`; that is the user's choice.

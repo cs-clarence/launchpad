@@ -1,10 +1,19 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
     createSessionClient,
     LaunchpadApiError,
     LaunchpadConfigError,
     LaunchpadTransportError,
 } from "./index";
+
+const SIGNALS = ["SIGINT", "SIGTERM", "SIGHUP"] as const;
+let signalListeners: number[] = [];
+beforeEach(() => {
+    signalListeners = SIGNALS.map((n) => process.listenerCount(n));
+});
+afterEach(() => {
+    expect(SIGNALS.map((n) => process.listenerCount(n))).toEqual(signalListeners);
+});
 
 const PASSWORD = "correct horse battery";
 const VALUE = "tok123.sig%2Babc";

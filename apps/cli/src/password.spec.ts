@@ -6,8 +6,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { EXIT, describe as describeError } from "./errors";
 import { type Io, readPasswordFile, readSecretFrom } from "./io";
 import { readPassword } from "./password";
+import { trackProcessListeners } from "./session-harness";
 
 const PASSWORD = "correct horse battery";
+trackProcessListeners();
 let dir = "";
 beforeEach(async () => {
     dir = await fs.mkdtemp(path.join(os.tmpdir(), "lp-password-"));
@@ -132,7 +134,12 @@ describe("the prompt", () => {
     it("reports a cancelled or oversized prompt as a usage error, not the password", async () => {
         const { io, secret } = fakeIo();
         secret.mockRejectedValueOnce(new Error("Cancelled."));
-        expect(await failure(ask(io))).toBe("Cancelled.");
+        const cancelled = await ask(io).then(
+            () => undefined,
+            (e: unknown) => e,
+        );
+        expect(describeError(cancelled)).toBeDefined();
+        expect(cancelled).toMatchObject({ exitCode: EXIT.interrupted });
         secret.mockRejectedValueOnce(new Error("Input is too long to be a password."));
         expect(await failure(ask(io))).toMatch(/password/);
     });

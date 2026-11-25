@@ -13,6 +13,15 @@ import {
     createContext,
 } from "./index";
 
+const SIGNALS = ["SIGINT", "SIGTERM", "SIGHUP"] as const;
+let signalListeners: number[] = [];
+beforeEach(() => {
+    signalListeners = SIGNALS.map((n) => process.listenerCount(n));
+});
+afterEach(() => {
+    expect(SIGNALS.map((n) => process.listenerCount(n))).toEqual(signalListeners);
+});
+
 const run = promisify(execFile);
 const KEY = "lp_" + "a".repeat(43);
 const COOKIE = "better-auth.session_token=abc.def";

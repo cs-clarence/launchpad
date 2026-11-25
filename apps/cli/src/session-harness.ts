@@ -4,6 +4,7 @@ import path from "node:path";
 import { createContext } from "@launchpad-kit/client-core";
 import type { Io, SecretFile, SignalHooks } from "./io";
 import { createSecretFile, readSecretFrom } from "./io";
+import { afterEach, beforeEach, expect } from "vitest";
 import { run } from "./program";
 
 // A fake controller and terminal for the `--session` tests. Every fetch is recorded, so a test
@@ -91,6 +92,8 @@ export interface Options {
     // Called just after the hidden prompt starts, to type, press Ctrl-C or send a signal.
     onPrompt?: (world: World) => void;
     server?: Server;
+    // Call with this API key instead of a session (the /api/v1 fake then needs Authorization).
+    key?: string;
     // Wraps the secret file, to fail a write.
     secretFile?: (file: SecretFile) => SecretFile;
 }
@@ -189,6 +192,20 @@ export async function session(args: string[], dir: string, options: Options = {}
                 return json({ success: true });
             }
             if (parsed.pathname.startsWith("/api/v1/")) {
+                if (options.key && headers.authorization === `Bearer ${options.key}`) {
+                    return (options.respond ?? (() => json({ ok: true })))(
+                        {
+                            method: recorded.method,
+                            path: parsed.pathname.slice("/api/v1".length),
+                            search: parsed.search,
+                            body: recorded.body,
+                            email: "key",
+                            cookie: "",
+                            headers,
+                        },
+                        world,
+                    );
+                }
                 if (headers.authorization) {
                     return json(
                         { code: "unauthenticated", title: "Unauthorized" },
@@ -255,7 +272,12 @@ export async function session(args: string[], dir: string, options: Options = {}
     };
     const io: Io = {
         context: createContext(
-            { LAUNCHPAD_CONFIG_DIR: dir, LAUNCHPAD_CONTROLLER: CONTROLLER, ...options.env },
+            {
+                LAUNCHPAD_CONFIG_DIR: dir,
+                LAUNCHPAD_CONTROLLER: CONTROLLER,
+                ...(options.key ? { LAUNCHPAD_API_KEY: options.key, LAUNCHPAD_ORG: "org-1" } : {}),
+                ...options.env,
+            },
             { fetch: fetchImpl },
         ),
         workingDir: options.workingDir ?? dir,
@@ -290,4 +312,16 @@ export async function session(args: string[], dir: string, options: Options = {}
     };
     world.code = await run(args, io);
     return world;
+}
+
+// A spec that uses this fails if a test leaves a SIGINT, SIGTERM or SIGHUP listener on the real process.
+export function trackProcessListeners() {
+    const names = ["SIGINT", "SIGTERM", "SIGHUP"] as const;
+    let before: number[] = [];
+    beforeEach(() => {
+        before = names.map((n) => process.listenerCount(n));
+    });
+    afterEach(() => {
+        expect(names.map((n) => process.listenerCount(n))).toEqual(before);
+    });
 }
