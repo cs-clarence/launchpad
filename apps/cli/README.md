@@ -171,9 +171,10 @@ launchpad api --session --email op@example.com -X POST organizations -f name=Dem
 - **Never with a key.** `--session` is refused (exit 2, before any prompt or request) for `api`,
   `login` and `logout` whenever `LAUNCHPAD_API_KEY` is set. `--session` sends only `Cookie` and
   `Origin`, never `Authorization`, and `api` without `--session` never reads `session.json`. The
-  controller comes from `--controller`, else the selected `--profile` (only its controller and
-  organization are used; its key is neither read nor sent), else `LAUNCHPAD_CONTROLLER` (a key is not
-  needed). `{org}` needs `launchpad org use`, `launchpad.json` or `LAUNCHPAD_ORG`; there is no fallback
+  controller comes from, in this order: `--controller`; the explicitly chosen profile (`--profile`,
+  else the `profile` of the nearest `launchpad.json`; only its controller and organization are used, its key
+  is neither read nor sent, and its organization only when its controller is the one in use);
+  `LAUNCHPAD_CONTROLLER` (a key is not needed); `LAUNCHPAD_PROFILE`; the current profile. `{org}` needs `launchpad org use`, `launchpad.json` or `LAUNCHPAD_ORG`; there is no fallback
   to a key's organization. The controller must be https, or http to `localhost`, `127.0.0.1` or `[::1]`;
   redirects are refused. The URL is printed before the password prompt.
 - **Lockout, plainly.** Each default-flow call is a new sign-in, and every sign-in attempt counts toward

@@ -92,6 +92,8 @@ export interface Options {
     // Called just after the hidden prompt starts, to type, press Ctrl-C or send a signal.
     onPrompt?: (world: World) => void;
     server?: Server;
+    // Replaces readData (stdin and files for `-F k=@-`), e.g. to block until a signal.
+    readData?: (source: string, world: World) => Promise<Uint8Array>;
     // Call with this API key instead of a session (the /api/v1 fake then needs Authorization).
     key?: string;
     // Wraps the secret file, to fail a write.
@@ -307,7 +309,8 @@ export async function session(args: string[], dir: string, options: Options = {}
         },
         readStdin: async () => "",
         readFile: async () => ({ text: "", mode: 0o600 }),
-        readData: async () => new Uint8Array(),
+        readData: (source) =>
+            options.readData ? options.readData(source, world) : Promise.resolve(new Uint8Array()),
         signals: options.noSignals ? undefined : hooks,
     };
     world.code = await run(args, io);

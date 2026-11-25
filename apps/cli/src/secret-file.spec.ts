@@ -1,5 +1,6 @@
 import { promises as fs, statSync } from "node:fs";
 import path from "node:path";
+import { SessionStore } from "@launchpad-kit/client-core";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { EXIT } from "./errors";
 import {
@@ -12,6 +13,9 @@ import {
     type Options,
     type World,
     trackProcessListeners,
+    COOKIE_NAME,
+    CONTROLLER,
+    newServer,
 } from "./session-harness";
 
 const SECRET = `lp_${"k".repeat(43)}`;
@@ -250,3 +254,58 @@ describe("--secret-file with a key and signals", () => {
     });
 });
 let w0: World;
+
+describe("--secret-file with a session and signals", () => {
+    it("removes the empty file when a signal arrives during a kept session's request", async () => {
+        const server = newServer();
+        const pair = `${COOKIE_NAME}=kept.sig`;
+        server.sessions.set(pair, OWNER);
+        await new SessionStore(dir).put({ controller: CONTROLLER, email: OWNER, cookie: pair });
+        const args = issue().filter((_, i) => i !== 2 && i !== 3);
+        let installed = 0;
+        const w = await session(args, dir, {
+            server,
+            respond: (_api, world) => {
+                installed = world.listeners.get("SIGTERM")?.size ?? 0;
+                world.emit("SIGTERM");
+                return new Promise<Response>(() => {});
+            },
+        });
+        expect(installed).toBe(1);
+        expect(w.code).toBe(143);
+        expect(await exists()).toBe(false);
+        expect(w.signedOut).toEqual([]);
+        expect(server.sessions.has(pair)).toBe(true);
+        for (const set of w.listeners.values()) expect(set.size).toBe(0);
+    });
+
+    it("removes the empty file when a signal arrives while stdin is still being read", async () => {
+        const w = await session(issue("-F", "k=@-"), dir, {
+            readData: (_source, world) => {
+                world.emit("SIGINT");
+                return new Promise<Uint8Array>(() => {});
+            },
+        });
+        expect(w.code).toBe(130);
+        expect(w.requests).toEqual([]);
+        expect(await exists()).toBe(false);
+        for (const set of w.listeners.values()) expect(set.size).toBe(0);
+    });
+
+    it("keeps a file that already holds the secret when a signal follows", async () => {
+        let world!: World;
+        const w = await run({
+            onRequest: (_r, current) => void (world = current),
+            secretFile: (file) => ({
+                write: async (text) => {
+                    await file.write(text);
+                    world.emit("SIGHUP");
+                },
+                remove: () => file.remove(),
+            }),
+        });
+        expect(w.code).toBe(129);
+        expect(await fs.readFile(target, "utf8")).toBe(`${SECRET}\n`);
+        expect(w.signedOut).toEqual([OWNER]);
+    });
+});

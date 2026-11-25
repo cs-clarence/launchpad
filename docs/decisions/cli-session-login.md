@@ -288,6 +288,11 @@ Built on branch `feat/cli-session-login`, one commit per step 1 to 7 and the doc
 - `--keep` saves the entry right after the sign-in (before the call), then signs out the replaced
   session; if the save fails, the new session is signed out.
 - The CLI test harness for `--session` is `apps/cli/src/session-harness.ts` (fake controller and terminal).
+- Clarifications of item 8, as built: the controller is `--controller`, else the explicit profile (`--profile`,
+  else `launchpad.json`'s `profile`), else `LAUNCHPAD_CONTROLLER`, else `LAUNCHPAD_PROFILE`, else the
+  current profile. A profile's organization is used only if its controller is the one in use.
+- A single signal guard covers the whole run whenever `--secret-file` is given (with or without a session, kept
+  or not), and the file is removed only if it is still the file that was created.
 - Not run: nothing against a real controller; the packaged-client check (`test:packages`) and
   integration tests need Docker or the network.
 

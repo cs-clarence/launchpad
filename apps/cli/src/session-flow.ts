@@ -48,6 +48,8 @@ export interface SessionFlowOptions {
     verbose?: boolean;
     // Keep the session in session.json instead of signing out (`--keep`, `login --session`).
     keep?: boolean;
+    // A guard the caller already installed for the whole run; the flow uses it and leaves it installed.
+    guard?: SignalGuard;
     // Called with every secret the flow learns, so the output filter can hide it.
     remember(secret: string): void;
 }
@@ -57,13 +59,15 @@ export interface SessionFlowOptions {
 // A second signal leaves at once. Handlers exist only between the first sign-in step and `close`.
 export class SessionFlow {
     private readonly guard: SignalGuard;
+    private readonly ownsGuard: boolean;
     private client: LaunchpadSessionClient | null = null;
     private signingIn: Promise<LaunchpadSessionClient> | null = null;
     // A session that is not ours to sign out: kept earlier, or kept just now.
     private kept = false;
 
     constructor(private readonly options: SessionFlowOptions) {
-        this.guard = new SignalGuard(options.io);
+        this.guard = options.guard ?? new SignalGuard(options.io);
+        this.ownsGuard = options.guard === undefined;
     }
 
     // The exit code of the signal that interrupted the command, if any.
@@ -165,7 +169,7 @@ export class SessionFlow {
                 }
             }
         } finally {
-            this.guard.uninstall();
+            if (this.ownsGuard) this.guard.uninstall();
         }
     }
 }

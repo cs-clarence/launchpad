@@ -29,6 +29,16 @@ const MAX_PAGES = 1000;
 const MAX_TOTAL_ITEMS = 100_000;
 const MAX_TOTAL_BYTES = 16 * 1024 * 1024;
 const PAGINATE_DEADLINE_MS = 5 * 60 * 1000;
+// Stops waiting for slow input (such as stdin) when a signal arrives, so the command can unwind.
+function untilInterrupted<T>(work: Promise<T>, signal?: AbortSignal): Promise<T> {
+    if (!signal) return work;
+    return new Promise<T>((resolve, reject) => {
+        const stop = () => reject(new Error("Interrupted."));
+        if (signal.aborted) return stop();
+        signal.addEventListener("abort", stop, { once: true });
+        work.then(resolve, reject).finally(() => signal.removeEventListener("abort", stop));
+    });
+}
 const FRESH_MS = 15 * 60 * 1000;
 // Issuing a key is the call the controller allows only for a session signed in recently.
 const needsFreshSession = (method: string, path: string) =>
@@ -144,26 +154,27 @@ export function addApiCommand(
             if (options.secretFile !== undefined && options.paginate) {
                 throw bad("--secret-file cannot be combined with --paginate.");
             }
-            // Created before anything is sent: an existing file or a failed create means no request.
-            let secretFile: SecretFile | undefined;
-            if (options.secretFile !== undefined) {
-                try {
-                    secretFile = await io.createSecretFile(options.secretFile);
-                } catch (error) {
-                    throw bad(
-                        error instanceof Error
-                            ? error.message
-                            : "The secret file cannot be created.",
-                    );
-                }
-            }
-            // Without a session nothing else listens for signals; a signal must not leave the
-            // empty secret file behind, which would make the next run fail with "already exists".
-            const guard = secretFile && !options.session ? new SignalGuard(io) : undefined;
+            // One guard for the whole run, installed before the file exists, so a signal at any
+            // point (even while stdin is read) removes an empty secret file instead of leaving
+            // it to make the next run fail with "already exists".
+            const guard = options.secretFile !== undefined ? new SignalGuard(io) : undefined;
             guard?.install();
+            let secretFile: SecretFile | undefined;
             try {
+                // Created before anything is sent: an existing file or a failed create means no request.
+                if (options.secretFile !== undefined) {
+                    try {
+                        secretFile = await io.createSecretFile(options.secretFile);
+                    } catch (error) {
+                        throw bad(
+                            error instanceof Error
+                                ? error.message
+                                : "The secret file cannot be created.",
+                        );
+                    }
+                }
                 await withSession(io, (holder) =>
-                    execute(endpoint, options, command, holder, secretFile, guard?.signal),
+                    execute(endpoint, options, command, holder, secretFile, guard),
                 );
                 if (guard?.interruptedWith != null) throw new ExitWith(guard.interruptedWith);
             } catch (error) {
@@ -201,8 +212,9 @@ export function addApiCommand(
         command: Command<any, any, any>,
         holder: { flow?: SessionFlow },
         secretFile?: SecretFile,
-        interrupt?: AbortSignal,
+        guard?: SignalGuard,
     ) {
+        const interrupt = guard?.signal;
         {
             const { profile } = command.optsWithGlobals() as { profile?: string };
             if (!options.session) {
@@ -310,6 +322,7 @@ export function addApiCommand(
                     passwordFile: options.passwordFile,
                     verbose: options.verbose,
                     keep: options.keep,
+                    guard,
                     remember,
                 });
                 holder.flow = flow;
@@ -409,7 +422,7 @@ export function addApiCommand(
                     stdinUsed.value = true;
                 }
                 try {
-                    return await io.readData(source);
+                    return await untilInterrupted(io.readData(source), interrupt);
                 } catch (error) {
                     const reason = error instanceof Error ? error.message : "unreadable";
                     throw bad(

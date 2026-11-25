@@ -153,6 +153,8 @@ export async function createSecretFile(file: string): Promise<SecretFile> {
     }
     let written = false;
     let closed = false;
+    // Identifies the file we made, so a different file later put at the path is never deleted.
+    const made = await handle.stat();
     return {
         async write(text) {
             try {
@@ -168,7 +170,10 @@ export async function createSecretFile(file: string): Promise<SecretFile> {
             if (written) return;
             if (!closed) await handle.close().catch(() => {});
             closed = true;
-            await fs.rm(file, { force: true });
+            const now = await fs.lstat(file).catch(() => null);
+            if (now && now.dev === made.dev && now.ino === made.ino) {
+                await fs.rm(file, { force: true });
+            }
         },
     };
 }

@@ -3,7 +3,7 @@ import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { realIo } from "./io";
+import { createSecretFile, realIo } from "./io";
 
 let dir: string;
 beforeEach(async () => {
@@ -94,5 +94,21 @@ describe("real signal hooks", () => {
         expect(names.map((n) => process.listenerCount(n))).toEqual(before.map((c) => c + 1));
         for (const n of names) hooks.off(n, listener);
         expect(names.map((n) => process.listenerCount(n))).toEqual(before);
+    });
+});
+
+describe("secret file removal", () => {
+    it("removes the file it made, but never a different file put at the path", async () => {
+        const mine = path.join(dir, "mine");
+        const file = await createSecretFile(mine);
+        await file.remove();
+        await expect(fs.stat(mine)).rejects.toMatchObject({ code: "ENOENT" });
+
+        const swapped = path.join(dir, "swapped");
+        const second = await createSecretFile(swapped);
+        await fs.rm(swapped);
+        await fs.writeFile(swapped, "someone else's data");
+        await second.remove();
+        expect(await fs.readFile(swapped, "utf8")).toBe("someone else's data");
     });
 });
