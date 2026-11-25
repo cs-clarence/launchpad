@@ -8,19 +8,21 @@ import {
     requireConfirmation,
     resolve,
     type FieldInput,
-    type Resolved,
 } from "@launchpad-kit/client-core";
 import {
     FORBIDDEN_RAW_HEADERS,
     LaunchpadTransportError,
-    type LaunchpadClient,
     normalizeBaseUrl,
     RAW_METHODS,
+    type RawOptions,
     type RawResponse,
 } from "@launchpad-kit/sdk";
+import { ExitWith } from "./errors";
 import type { Io } from "./io";
 import { applyJq, checkJq, chooseJq, findOnPath } from "./jq";
 import { arrayItems, prettyJson } from "./json-text";
+import { SessionFlow } from "./session-flow";
+import { checkEmail, refuseWithKey, resolveSessionTarget } from "./session-target";
 
 const MAX_PAGES = 1000;
 const MAX_TOTAL_ITEMS = 100_000;
@@ -47,7 +49,25 @@ const pretty = (text: string) => {
     }
 };
 
-export function addApiCommand(program: Command<any, any, any>, io: Io) {
+// What a request is sent with: a key, or the user's own session. Everything else in the command
+// is the same for both.
+interface Backend {
+    controller: string;
+    // The organization chosen outside the credential (profile, LAUNCHPAD_ORG), if any.
+    organizationId: string | null;
+    organizations(): Promise<Array<{ id: string; slug: string }>>;
+    // The credential's own organization, for a key; a session has none.
+    ownOrganization(): Promise<string>;
+    raw(method: string, path: string, options: RawOptions): Promise<RawResponse>;
+    // Request lines shown by --verbose in place of the credential itself.
+    credentialLines: string[];
+}
+
+export function addApiCommand(
+    program: Command<any, any, any>,
+    io: Io,
+    remember: (secret: string) => void = () => {},
+) {
     const fields: FieldInput[] = [];
     const headers: string[] = [];
     program
@@ -90,8 +110,78 @@ export function addApiCommand(program: Command<any, any, any>, io: Io) {
             "send this Idempotency-Key header (1 to 128 printable ASCII)",
         )
         .option("--confirm", "confirm a request that is not GET or HEAD")
+        .option(
+            "--session",
+            "use your own account (an email and password sign-in) instead of a key, for the " +
+                "organization, member and key endpoints a key cannot reach. The session lives only " +
+                "for this command and is signed out at the end (best effort). Each call is a new " +
+                "sign-in, and sign-ins are throttled per account and address: more than 5 a minute " +
+                "are refused and also block that account's dashboard sign-in. Use occasionally.",
+        )
+        .option("--email <address>", "with --session, the account's email address")
+        .option(
+            "--password-file <path>",
+            "with --session, read the password from this private file instead of the prompt",
+        )
+        .option(
+            "--controller <url>",
+            "with --session, the controller (else the selected profile's, else LAUNCHPAD_CONTROLLER)",
+        )
         .action(async (endpoint, options, command) => {
+            const holder: { flow?: SessionFlow } = {};
+            try {
+                await execute(endpoint, options, command, holder);
+            } catch (error) {
+                await holder.flow?.close();
+                if (holder.flow?.interruptedWith != null) {
+                    io.err("Interrupted.");
+                    throw new ExitWith(holder.flow.interruptedWith);
+                }
+                throw error;
+            }
+            await holder.flow?.close();
+            if (holder.flow?.interruptedWith != null)
+                throw new ExitWith(holder.flow.interruptedWith);
+        });
+
+    async function execute(
+        endpoint: string,
+        options: {
+            method?: string;
+            input?: string;
+            include?: true;
+            silent?: true;
+            verbose?: true;
+            paginate?: true;
+            slurp?: true;
+            jq?: string;
+            idempotencyKey?: string;
+            confirm?: true;
+            session?: true;
+            email?: string;
+            passwordFile?: string;
+            controller?: string;
+        },
+        command: Command<any, any, any>,
+        holder: { flow?: SessionFlow },
+    ) {
+        {
             const { profile } = command.optsWithGlobals() as { profile?: string };
+            if (!options.session) {
+                for (const [flag, value] of [
+                    ["--email", options.email],
+                    ["--password-file", options.passwordFile],
+                    ["--controller", options.controller],
+                ] as const) {
+                    if (value !== undefined) throw bad(`${flag} needs --session.`);
+                }
+            } else {
+                refuseWithKey(io.context, "--session");
+                if (options.email === undefined) {
+                    throw bad("--session needs --email <address> to sign in.");
+                }
+            }
+            const email = options.session ? checkEmail(options.email!) : null;
             const method = (
                 options.method ?? (fields.length > 0 || options.input ? "POST" : "GET")
             ).toUpperCase();
@@ -140,21 +230,80 @@ export function addApiCommand(program: Command<any, any, any>, io: Io) {
             // One read of launchpad.json and one resolution of the saved profile serve both
             // placeholders and the request, so a concurrent edit or login cannot mix them.
             const workspace = await readWorkspace(workingDir);
-            let identity: Promise<{ resolved: Resolved; client: LaunchpadClient }> | undefined;
+            let identity: Promise<Backend> | undefined;
             const identify = () =>
-                (identity ??= (async () => {
-                    const resolved = await resolve(
-                        io.context,
-                        profile ?? workspace.config?.profile,
-                    );
-                    return { resolved, client: clientFor(io.context, resolved) };
-                })());
+                (identity ??= options.session
+                    ? sessionBackend()
+                    : (async (): Promise<Backend> => {
+                          const resolved = await resolve(
+                              io.context,
+                              profile ?? workspace.config?.profile,
+                          );
+                          const client = clientFor(io.context, resolved);
+                          return {
+                              controller: resolved.controller,
+                              organizationId: resolved.organizationId,
+                              organizations: () => client.organizations.list(),
+                              ownOrganization: async () => (await client.key.get()).organizationId,
+                              raw: (method, path, rawOptions) =>
+                                  client.raw(method, path, rawOptions),
+                              credentialLines: ["> authorization: [redacted]"],
+                          };
+                      })());
+            const sessionBackend = async (): Promise<Backend> => {
+                const target = await resolveSessionTarget(io.context, {
+                    controller: options.controller,
+                    profile: profile ?? workspace.config?.profile,
+                });
+                const flow = new SessionFlow({
+                    io,
+                    controller: target.controller,
+                    email: email!,
+                    passwordFile: options.passwordFile,
+                    verbose: options.verbose,
+                    remember,
+                });
+                holder.flow = flow;
+                const raw = async (method: string, path: string, rawOptions: RawOptions) => {
+                    const client = await flow.signIn();
+                    return client.raw(method, path, {
+                        ...rawOptions,
+                        signal: rawOptions.signal
+                            ? AbortSignal.any([flow.signal, rawOptions.signal])
+                            : flow.signal,
+                    });
+                };
+                return {
+                    controller: target.controller,
+                    organizationId: target.organizationId,
+                    organizations: async () => {
+                        const response = await raw("GET", "/organizations", {});
+                        const list: unknown = JSON.parse(response.body);
+                        if (!Array.isArray(list))
+                            throw bad("The organization list was not a list.");
+                        return list.filter(
+                            (o): o is { id: string; slug: string } =>
+                                typeof o?.id === "string" && typeof o?.slug === "string",
+                        );
+                    },
+                    ownOrganization: async () => {
+                        throw bad(
+                            "{org} has no value: with --session select an organization with `launchpad org use`, launchpad.json or LAUNCHPAD_ORG.",
+                        );
+                    },
+                    raw,
+                    credentialLines: [
+                        "> cookie: [redacted]",
+                        `> origin: ${new URL(target.controller).origin}`,
+                    ],
+                };
+            };
             const values = new Map<string, string>();
             if (used.has("org")) {
-                const { resolved, client } = await identify();
+                const backend = await identify();
                 const named = workspace.config?.organization;
                 if (named) {
-                    const match = (await client.organizations.list()).find(
+                    const match = (await backend.organizations()).find(
                         (o) => o.id === named || o.slug === named,
                     );
                     if (!match) {
@@ -165,10 +314,7 @@ export function addApiCommand(program: Command<any, any, any>, io: Io) {
                     }
                     values.set("org", match.id);
                 } else {
-                    values.set(
-                        "org",
-                        resolved.organizationId ?? (await client.key.get()).organizationId,
-                    );
+                    values.set("org", backend.organizationId ?? (await backend.ownOrganization()));
                 }
             }
             if (used.has("project")) {
@@ -269,14 +415,14 @@ export function addApiCommand(program: Command<any, any, any>, io: Io) {
                     throw new Error(`The request succeeded; the --jq filter failed: ${reason}`);
                 }
             };
-            const { resolved, client } = await identify();
+            const backend = await identify();
             // The request is shown before it is sent, so --verbose helps when it fails.
             const showRequest = (shownPath: string) => {
                 if (!options.verbose) return;
-                const url = new URL(`${normalizeBaseUrl(resolved.controller)}/api/v1${shownPath}`);
+                const url = new URL(`${normalizeBaseUrl(backend.controller)}/api/v1${shownPath}`);
                 io.err(`> ${method} ${url.pathname}${url.search}`);
                 io.err(`> host: ${url.host}`);
-                io.err("> authorization: [redacted]");
+                for (const line of backend.credentialLines) io.err(line);
                 for (const [name, value] of Object.entries(extraHeaders)) {
                     const lower = name.toLowerCase();
                     // A header the SDK refuses may carry a credential; never echo it.
@@ -295,7 +441,7 @@ export function addApiCommand(program: Command<any, any, any>, io: Io) {
                 `${path}${pageQuery.length ? `?${new URLSearchParams(pageQuery)}` : ""}`;
             const call = (pageQuery: Array<[string, string]>, signal?: AbortSignal) => {
                 showRequest(request(pageQuery));
-                return client.raw(method, path, {
+                return backend.raw(method, path, {
                     query: pageQuery,
                     body,
                     headers: extraHeaders,
@@ -375,5 +521,6 @@ export function addApiCommand(program: Command<any, any, any>, io: Io) {
                     : `[${pages.flat().join(",")}]`;
                 io.out(await filter(merged));
             }
-        });
+        }
+    }
 }

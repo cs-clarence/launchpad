@@ -49,7 +49,16 @@ export function describe(error: unknown): Failure {
                 : error.status === 404
                   ? EXIT.notFound
                   : EXIT.failure;
-        return { exitCode, code: error.code, message: redact(error.title), status: error.status };
+        const wait =
+            error.status === 429 && error.retryAfterSeconds
+                ? ` Try again in ${error.retryAfterSeconds} seconds.`
+                : "";
+        return {
+            exitCode,
+            code: error.code,
+            message: redact(`${error.title}${wait}`),
+            status: error.status,
+        };
     }
     if (error instanceof LaunchpadTransportError) {
         return { exitCode: EXIT.transport, code: error.reason, message: redact(error.message) };

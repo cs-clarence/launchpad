@@ -792,3 +792,16 @@ describe("api: CodeRabbit follow-ups", () => {
         }
     });
 });
+
+describe("api: key calls and session.json", () => {
+    it("never opens session.json", async () => {
+        await fs.mkdir(path.join(dir, "session.json"));
+        const opened = vi.spyOn(fs, "open");
+        const { code } = await api(["api", "key"]);
+        expect(code).toBe(EXIT.ok);
+        expect(opened.mock.calls.some(([target]) => String(target).includes("session.json"))).toBe(
+            false,
+        );
+        opened.mockRestore();
+    });
+});

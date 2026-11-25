@@ -1,11 +1,14 @@
 import { stripVTControlCharacters } from "node:util";
-import { redact } from "./redact";
+import { redact, redactSecrets } from "./redact";
 
 // Redact before and after escape removal: escapes can split key prefixes.
 // Conservatively absorb any key-body suffix adjacent to a redacted placeholder.
-export function safeOutput(text: string): string {
-    return redact(
-        stripVTControlCharacters(redact(text))
+// `secrets` are the values to hide for this run, such as a session cookie or a password.
+export function safeOutput(text: string, secrets: Iterable<string> = []): string {
+    const held = [...secrets];
+    const hide = (value: string) => redact(redactSecrets(value, held));
+    return hide(
+        stripVTControlCharacters(hide(text))
             // Controls and invisible format characters (bidi overrides, zero-width and tag
             // characters, which can carry hidden text) go; newline and tab stay for layout.
             // The two joiners are real text (emoji sequences, Persian spelling) but can also

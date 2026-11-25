@@ -66,7 +66,7 @@ async function readKey(io: Io, options: { keyFile?: string; keyStdin?: boolean }
     return key;
 }
 
-export function buildProgram(rawIo: Io) {
+export function buildProgram(rawIo: Io, secrets: Set<string> = new Set()) {
     // Everything that reaches the terminal passes the redactor: names and other fields
     // come from the server and may contain key-shaped text. Redacting inside a JSON
     // document keeps it valid JSON.
@@ -83,8 +83,11 @@ export function buildProgram(rawIo: Io) {
         get stdinIsTTY() {
             return rawIo.stdinIsTTY;
         },
-        out: (t) => rawIo.out(safeOutput(t)),
-        err: (t) => rawIo.err(safeOutput(t)),
+        get signals() {
+            return rawIo.signals;
+        },
+        out: (t) => rawIo.out(safeOutput(t, secrets)),
+        err: (t) => rawIo.err(safeOutput(t, secrets)),
         readStdin: () => rawIo.readStdin(),
         readSecret: (prompt, options) => rawIo.readSecret(prompt, options),
         readPasswordFile: (path) => rawIo.readPasswordFile(path),
@@ -229,14 +232,15 @@ export function buildProgram(rawIo: Io) {
             );
         });
 
-    addApiCommand(program, io);
+    addApiCommand(program, io, (secret) => void secrets.add(secret));
     addAppCommands(program, io.context, io.workingDir ?? process.cwd(), io.out);
     return program;
 }
 
 // Returns the exit code; the caller exits. Failures go to stderr, as JSON with --json.
 export async function run(argv: string[], io: Io): Promise<number> {
-    const program = buildProgram(io);
+    const secrets = new Set<string>();
+    const program = buildProgram(io, secrets);
     try {
         await program.parseAsync(argv, { from: "user" });
         return EXIT.ok;
@@ -257,6 +261,7 @@ export async function run(argv: string[], io: Io): Promise<number> {
                           },
                       })
                     : `Error: ${failure.message}`,
+                secrets,
             ),
         );
         return failure.exitCode;

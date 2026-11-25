@@ -22,11 +22,21 @@ export interface Io {
     readData(source: string): Promise<Uint8Array>;
     // Where `jq` is, if anywhere; tests replace it. Defaults to a search of PATH.
     findExecutable?(name: string): string | null;
+    // Where `--session` listens for SIGINT, SIGTERM and SIGHUP; without it no handler is installed.
+    signals?: SignalHooks;
 }
 
 export interface SecretOptions {
     kind?: "key" | "password";
     signal?: AbortSignal;
+}
+
+// Process-level hooks for a signed-in session, so tests can send signals without any real ones.
+export interface SignalHooks {
+    on(signal: NodeJS.Signals, listener: () => void): void;
+    off(signal: NodeJS.Signals, listener: () => void): void;
+    // Leaves at once, without cleanup; a second signal uses it.
+    exit(code: number): void;
 }
 
 // What the hidden prompt reads from and writes to; replaced in tests.
@@ -207,6 +217,11 @@ export function realIo(env: Record<string, string | undefined> = process.env): I
     return {
         context,
         readData: (source) => readData(source, context.store.directory),
+        signals: {
+            on: (signal, listener) => void process.on(signal, listener),
+            off: (signal, listener) => void process.off(signal, listener),
+            exit: (code) => process.exit(code),
+        },
         workingDir: process.cwd(),
         out: (text) => void process.stdout.write(text + "\n"),
         err: (text) => void process.stderr.write(text + "\n"),
