@@ -39,7 +39,7 @@ repository root unless a step says otherwise.
     - `DATABASE_URL` to your server, for the container above
       `postgresql://launchpad:choose-a-password@127.0.0.1:5432/launchpad`.
     - `LAUNCHPAD_AUTH_SECRET` to the `openssl` output (at least 32 characters).
-    - `LAUNCHPAD_BASE_URL` to `http://127.0.0.1:5173`.
+    - `LAUNCHPAD_BASE_URL` to `http://127.0.0.1:3000`.
 
     Leave the rest as it is; `LAUNCHPAD_DEPLOYMENTS` stays off. The directory in
     `LAUNCHPAD_DATA_DIR` (default `.data/controller`, relative to `apps/controller`) must exist
@@ -50,10 +50,11 @@ repository root unless a step says otherwise.
     `http` origin on loopback is accepted: the controller marks its cookies `Secure` only for
     `https`, and requires `https` only when `LAUNCHPAD_APPS_DOMAIN` is set or
     `LAUNCHPAD_DEPLOYMENTS` is `on`, neither of which this guide uses. The origin must equal
-    the address you actually open: the dev server listens on Vite's default port, 5173 (`PORT`
-    and `HOST` in the example file are read only by the built server, and `omni -i run dev`
-    passes no port). If 5173 is taken Vite picks another port and the origin no longer matches;
-    free the port and restart.
+    the address you actually open. `omni -i run dev` loads `apps/controller/.env.local` and the dev
+    server honors its `PORT`, so with the example file it listens on `127.0.0.1:3000` (Vite's own
+    default, 5173, applies only if `PORT` is unset). If you change `PORT`, change
+    `LAUNCHPAD_BASE_URL` and the seed's `--controller` to match. If the port is taken the dev
+    server may pick another one and the origin no longer matches; free the port and restart.
 
 4. Start the controller and leave it running in one terminal:
 
@@ -77,6 +78,10 @@ repository root unless a step says otherwise.
     ```
 
     `omni -i run local:seed -a options=--help` lists every option.
+
+    The seed signs in as the operator and the owner several times. The controller throttles
+    sign-in to 5 attempts a minute per account, so if a sign-in right afterwards answers "Too many
+    requests", wait the minute it names and try again.
 
 6. Check it. Build the CLI once, then call the controller with the saved key:
 
