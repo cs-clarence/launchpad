@@ -1,9 +1,12 @@
 import { createClient, type LaunchpadClient, normalizeBaseUrl } from "@launchpad-kit/sdk";
 import { ClientCoreError } from "./errors";
+import { SessionStore } from "./session-store";
 import { configDirectory, CredentialStore } from "./store";
 
 export interface Context {
     store: CredentialStore;
+    // Kept CLI sessions; only the CLI's `--session` commands touch it.
+    sessions: SessionStore;
     env: Record<string, string | undefined>;
     fetch?: typeof fetch;
 }
@@ -12,7 +15,13 @@ export function createContext(
     env: Record<string, string | undefined> = process.env,
     options: { fetch?: typeof fetch } = {},
 ): Context {
-    return { store: new CredentialStore(configDirectory(env)), env, ...options };
+    const directory = configDirectory(env);
+    return {
+        store: new CredentialStore(directory),
+        sessions: new SessionStore(directory),
+        env,
+        ...options,
+    };
 }
 
 export interface Resolved {
