@@ -1,3 +1,4 @@
+import { spawnSync } from "node:child_process";
 import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -37,5 +38,46 @@ describe("real key-file input", () => {
 
     it.skipIf(process.platform !== "linux")("recognizes non-regular input", async () => {
         expect(await realIo().readFile("/dev/null")).toMatchObject({ text: "", regular: false });
+    });
+});
+
+const hasMkfifo =
+    process.platform !== "win32" &&
+    spawnSync("mkfifo", ["--version"]).error === undefined &&
+    (() => {
+        const probe = path.join(os.tmpdir(), `lp-mkfifo-${process.pid}`);
+        const made = spawnSync("mkfifo", [probe]).status === 0;
+        spawnSync("rm", ["-f", probe]);
+        return made;
+    })();
+
+describe.skipIf(process.platform === "win32")("api data input", () => {
+    it.skipIf(!hasMkfifo)("refuses a FIFO without blocking, and reads a regular file", async () => {
+        const fifo = path.join(dir, "pipe");
+        expect(spawnSync("mkfifo", [fifo]).status).toBe(0);
+        await expect(
+            realIo({ LAUNCHPAD_CONFIG_DIR: path.join(dir, "cfg") }).readData(fifo),
+        ).rejects.toThrow("not a regular file");
+        const file = path.join(dir, "body.json");
+        await fs.writeFile(file, "{}");
+        expect(await realIo({ LAUNCHPAD_CONFIG_DIR: path.join(dir, "cfg") }).readData(file)).toBe(
+            "{}",
+        );
+    });
+
+    it("refuses a file inside the credential store", async () => {
+        const store = path.join(dir, "cfg");
+        await fs.mkdir(store);
+        await fs.writeFile(path.join(store, "credentials.json"), "{}");
+        await expect(
+            realIo({ LAUNCHPAD_CONFIG_DIR: store }).readData(path.join(store, "credentials.json")),
+        ).rejects.toThrow("credential store");
+    });
+
+    it.skipIf(process.platform !== "linux")("refuses /proc and /sys paths", async () => {
+        const io = realIo({ LAUNCHPAD_CONFIG_DIR: path.join(dir, "cfg") });
+        await expect(io.readData("/proc/self/environ")).rejects.toThrow("/proc");
+        await expect(io.readData("/proc/self/../self/environ")).rejects.toThrow("/proc");
+        await expect(io.readData("/sys/kernel/ostype")).rejects.toThrow("/sys");
     });
 });

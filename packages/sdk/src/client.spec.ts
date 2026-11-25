@@ -4,6 +4,7 @@ import {
     LaunchpadApiError,
     LaunchpadConfigError,
     LaunchpadTransportError,
+    FORBIDDEN_RAW_HEADERS,
     normalizeBaseUrl,
 } from "./index";
 
@@ -445,5 +446,167 @@ describe("paged lists", () => {
         await expect(client.deployments.eventsPage(ORG, ID, { limit: 501 })).rejects.toBeInstanceOf(
             LaunchpadConfigError,
         );
+    });
+});
+
+describe("raw", () => {
+    const base = "https://control.example.com/api/v1";
+
+    it("refuses hostile paths before anything is sent", async () => {
+        const { client, calls } = recording(() => json({}));
+        for (const path of [
+            "https://evil.example/x",
+            "http://evil.example/x",
+            "//evil.example/x",
+            "/\\evil.example/x",
+            "evil.example:80/x",
+            "a/../b",
+            "a/./b",
+            "..",
+            "a/%2e%2e/b",
+            "a/%2E/b",
+            "a%2fb",
+            "a%5cb",
+            "a%00b",
+            "a%zz",
+            "x#y",
+            "x?y=1",
+            "a\nb",
+            "a\rb",
+            "a b",
+            "a\tb",
+            "é",
+            "",
+            "/",
+            "a//b",
+            "x".repeat(3000),
+        ]) {
+            await expect(client.raw("GET", path), JSON.stringify(path)).rejects.toBeInstanceOf(
+                LaunchpadConfigError,
+            );
+        }
+        expect(calls).toEqual([]);
+    });
+
+    it("refuses bad methods, headers and bodies before anything is sent", async () => {
+        const { client, calls } = recording(() => json({}));
+        const cases: Array<[string, Parameters<typeof client.raw>[2]]> = [
+            ["TRACE", {}],
+            ["GET /", {}],
+            ["GET", { headers: { Authorization: "Bearer x" } }],
+            ["GET", { headers: { cookie: "a=b" } }],
+            ["GET", { headers: { Host: "evil" } }],
+            ["GET", { headers: { "content-length": "1" } }],
+            ["GET", { headers: { origin: "https://evil" } }],
+            ["GET", { headers: { "idempotency-key": "k" } }],
+            ["GET", { headers: { "x-a": "b\r\nauthorization: x" } }],
+            ["GET", { headers: { "x a": "b" } }],
+            ["GET", { body: "{}" }],
+            ["POST", { body: "x".repeat(1024 * 1024 + 1) }],
+            ["POST", { idempotencyKey: "has space" }],
+        ];
+        for (const [method, options] of cases) {
+            await expect(client.raw(method, "key", options), method).rejects.toBeInstanceOf(
+                LaunchpadConfigError,
+            );
+        }
+        expect(calls).toEqual([]);
+    });
+
+    it("sends the key, query, body and headers, and returns status, headers and text", async () => {
+        const { client, calls } = recording(
+            () => new Response("plain text", { status: 200, headers: { "x-id": "7" } }),
+        );
+        const result = await client.raw("post", "organizations/o/projects", {
+            query: [
+                ["a", "1"],
+                ["a", "2 3"],
+            ],
+            body: '{"n":1}',
+            headers: { "X-Trace": "t" },
+            idempotencyKey: "k-1",
+        });
+        expect(result.status).toBe(200);
+        expect(result.body).toBe("plain text");
+        expect(result.headers.get("x-id")).toBe("7");
+        expect(result.next).toBeNull();
+        expect(calls[0]!.url).toBe(`${base}/organizations/o/projects?a=1&a=2+3`);
+        expect(calls[0]!.init.method).toBe("POST");
+        expect(calls[0]!.init.body).toBe('{"n":1}');
+        expect(calls[0]!.init.redirect).toBe("error");
+        expect(calls[0]!.init.headers).toEqual({
+            accept: "application/json",
+            authorization: `Bearer ${KEY}`,
+            "content-type": "application/json",
+            "idempotency-key": "k-1",
+            "x-trace": "t",
+        });
+    });
+
+    it("returns an empty body for 204 and maps errors without exposing the body", async () => {
+        const empty = recording(() => new Response(null, { status: 204 }));
+        expect((await empty.client.raw("DELETE", "x")).body).toBe("");
+        const failing = recording(() =>
+            json({ code: "forbidden", title: "No", detail: KEY }, { status: 403 }),
+        );
+        const error = await failing.client.raw("GET", "x").catch((e) => e);
+        expect(error).toBeInstanceOf(LaunchpadApiError);
+        expect(error.status).toBe(403);
+        expect(JSON.stringify(error) + error.message).not.toContain(KEY);
+        const big = recording(() => new Response("x".repeat(1024 * 1024 + 1)));
+        await expect(big.client.raw("GET", "x")).rejects.toBeInstanceOf(LaunchpadTransportError);
+    });
+
+    it("exposes only a validated next link of a GET", async () => {
+        const path = `/api/v1/organizations/${ORG}/apps`;
+        const link = (target: string) => ({ link: `<${target}>; rel="next"` });
+        const good = recording(() => json([], { headers: link(`${path}?limit=2&cursor=c1`) }));
+        expect((await good.client.raw("GET", `organizations/${ORG}/apps`)).next).toEqual([
+            ["limit", "2"],
+            ["cursor", "c1"],
+        ]);
+        for (const target of [
+            `https://evil.example.net${path}?cursor=c1`,
+            `//evil.example.net${path}?cursor=c1`,
+            `/api/v1/other?cursor=c1`,
+        ]) {
+            const { client } = recording(() => json([], { headers: link(target) }));
+            expect((await client.raw("GET", `organizations/${ORG}/apps`)).next, target).toBeNull();
+        }
+    });
+
+    it("refuses every credential, framing, method-override and forwarding header", async () => {
+        const { client, calls } = recording(() => json({}));
+        for (const name of [
+            "authorization",
+            "proxy-authorization",
+            "cookie",
+            "host",
+            "content-length",
+            "origin",
+            "transfer-encoding",
+            "connection",
+            "upgrade",
+            "idempotency-key",
+            "x-http-method-override",
+            "x-method-override",
+            "x-http-method",
+            "x-forwarded-host",
+            "x-forwarded-for",
+            "x-forwarded-proto",
+            "forwarded",
+            "proxy-connection",
+            "te",
+            "trailer",
+            "keep-alive",
+            "expect",
+        ]) {
+            expect(FORBIDDEN_RAW_HEADERS.has(name), name).toBe(true);
+            await expect(
+                client.raw("GET", "key", { headers: { [name.toUpperCase()]: "v" } }),
+                name,
+            ).rejects.toBeInstanceOf(LaunchpadConfigError);
+        }
+        expect(calls).toEqual([]);
     });
 });

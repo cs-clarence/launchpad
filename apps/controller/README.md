@@ -69,6 +69,11 @@ are declared to the OpenAPI plugin as a route `query` schema (`pageQuery`, `even
 parameters it derives from the route; those schemas accept any value, and the services
 return the API's own `422`.
 
+The CLI's `launchpad api` command (see the [CLI README](../cli/README.md#launchpad-api)) reaches
+the key-allowed `/api/v1` routes only, including opt-in paging through `rel="next"` links. The
+session-only routes (organization, member, invitation and key creation or revocation) are
+dashboard or HTTP only.
+
 To document a new route, add an entry to `docs` in `src/server/openapi.ts` and pass it as
 the route's `detail`. In Elysia 2 RC the hook goes **before** the handler:
 `.get(path, { detail: docs.x }, handler)`; the legacy handler-first order throws.

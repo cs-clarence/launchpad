@@ -28,22 +28,22 @@ profile already names the controller), GraphQL, controller changes.
 
 ## Flags (copied from `gh api` unless noted)
 
-| Flag                    | Behavior                                                                                                                           |
-| ----------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
-| `<endpoint>`            | Path under `/api/v1`, with or without a leading `/`.                                                                               |
-| `-X, --method`          | Default `GET`; `POST` if any field was added (as `gh`). With `--method GET`, fields become the query string.                       |
-| `-f, --raw-field k=v`   | String parameter.                                                                                                                  |
-| `-F, --field k=v`       | Typed: `true`, `false`, `null` and integers become JSON types; `@path` reads the value from a file, `@-` from stdin.               |
-| nested keys             | `a[b]=c` nests; repeated `a[]=x` builds an array; bare `a[]` is an empty array.                                                    |
-| `--input file\|-`       | Raw body (1 MiB cap). Fields then go to the query string, as in `gh`.                                                              |
-| `-H, --header k:v`      | Extra headers, except `authorization`, `cookie`, `host`, `content-length` and `origin`, which are refused.                         |
-| `-i, --include`         | Print the status line and response headers first.                                                                                  |
-| `--silent`              | No body output.                                                                                                                    |
-| `--verbose`             | Print the request and response, with the key and `set-cookie` redacted.                                                            |
-| `-q, --jq <expr>`       | Filter the JSON response. Uses the system `jq` when found on `PATH`, otherwise `@elastic/micro-jq`.                                |
-| `--paginate`, `--slurp` | Possible now (see Endpoint findings) but not in part 1; a later step. Follows only same-origin `rel="next"` links under `/api/v1`. |
-| placeholders            | `{org}` and `{project}`; see Placeholders. A placeholder with no value is a usage error.                                           |
-| `--idempotency-key`     | Launchpad-specific; passed through with the SDK's format check.                                                                    |
+| Flag                    | Behavior                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `<endpoint>`            | Path under `/api/v1`, with or without a leading `/`.                                                                                                                                                                                                                                                                                                                                                                                             |
+| `-X, --method`          | Default `GET`; `POST` if any field was added (as `gh`). With `--method GET`, fields become the query string.                                                                                                                                                                                                                                                                                                                                     |
+| `-f, --raw-field k=v`   | String parameter.                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| `-F, --field k=v`       | Typed: `true`, `false`, `null` and integers become JSON types; `@path` reads the value from a file, `@-` from stdin.                                                                                                                                                                                                                                                                                                                             |
+| nested keys             | `a[b]=c` nests; repeated `a[]=x` builds an array; bare `a[]` is an empty array.                                                                                                                                                                                                                                                                                                                                                                  |
+| `--input file\|-`       | Raw body (1 MiB cap). Fields then go to the query string, as in `gh`.                                                                                                                                                                                                                                                                                                                                                                            |
+| `-H, --header k:v`      | Extra headers, except these, which are refused (the SDK's `FORBIDDEN_RAW_HEADERS`): `authorization`, `proxy-authorization`, `cookie`, `host`, `content-length`, `origin`, `transfer-encoding`, `connection`, `upgrade`, `idempotency-key`, `x-http-method-override`, `x-method-override`, `x-http-method`, `x-forwarded-host`, `x-forwarded-for`, `x-forwarded-proto`, `forwarded`, `proxy-connection`, `te`, `trailer`, `keep-alive`, `expect`. |
+| `-i, --include`         | Print the status line and response headers first.                                                                                                                                                                                                                                                                                                                                                                                                |
+| `--silent`              | No body output.                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| `--verbose`             | Print the request and response, with the key and `set-cookie` redacted.                                                                                                                                                                                                                                                                                                                                                                          |
+| `-q, --jq <expr>`       | Filter the JSON response. Uses the system `jq` when found on `PATH`, otherwise `@elastic/micro-jq`.                                                                                                                                                                                                                                                                                                                                              |
+| `--paginate`, `--slurp` | `GET` only. Follows `rel="next"` of a list only if same-origin and the exact `/api/v1` path requested (the SDK's `nextLink`, via `raw().next`); merges the arrays, or `--slurp` wraps the pages. Events keep `after`/`limit`.                                                                                                                                                                                                                    |
+| placeholders            | `{org}` and `{project}`; see Placeholders. A placeholder with no value is a usage error.                                                                                                                                                                                                                                                                                                                                                         |
+| `--idempotency-key`     | Launchpad-specific; passed through with the SDK's format check.                                                                                                                                                                                                                                                                                                                                                                                  |
 
 ## Endpoint findings
 
@@ -59,11 +59,11 @@ Checked `apps/controller/src/server/openapi.ts` (the `/api/v1` operations) and t
   and concatenates the arrays; `--slurp` wraps the pages in one array. They must follow a
   link only if, once resolved against the request URL, it is on the profile's origin, lies
   under `/api/v1` and names the same path, and must never send the key anywhere else.
-  `--paginate` is not part of step 1; it needs the raw method to return response headers,
-  which the SDK's `raw` does not yet (stated in the pagination plan, left to this plan).
-  Until then, page by hand with `-F limit=50 --method GET` and `-i`.
-- The controller serves its own OpenAPI document at `/api/v1/openapi`, which is the
-  reference for `launchpad api` users.
+  `raw` returns response headers and a validated `next` query (the SDK's `nextLink`), so
+  `--paginate`/`--slurp` are part of step 3.
+- The controller serves its own OpenAPI document at `/api/openapi/json` (reference at
+  `/api/openapi`), outside `/api/v1`, so `launchpad api` cannot fetch it; it is the reference
+  for `launchpad api` users.
 - The write endpoints that need a session (organization, member, invitation and key
   creation or revocation) are listed too; an API key gets 401/403 from them, so `api`
   reaches them only after part 2.
@@ -154,7 +154,7 @@ accepting full URLs like `gh` does for Enterprise (the key could be sent elsewhe
    Independent of 1. Verify: table tests from the worked example. Undo: revert.
 3. **CLI `api` command wiring flags, placeholders, `-i`, `--silent`, `--verbose`, escape
    stripping.** Depends on 1 and 2. Verify: the worked example as `program.spec.ts` tests,
-   including key redaction. Undo: revert.
+   including key redaction, `--paginate` and `--slurp`. Undo: revert.
 4. **Docs** in `apps/cli/README.md` (command line, differences from `gh`) and a note in
    `apps/controller/README.md` that the CLI reaches key-allowed endpoints only. Verify:
    `omni -i run check`. Undo: revert.
@@ -190,9 +190,57 @@ first:
 
 ## Open questions
 
-- None blocking. Confirm the micro-jq dependency fits the repo's dependency rules before
-  step 5.
+- None. The micro-jq dependency fits the repo's dependency rules (checked in step 5).
 
 ## Status
 
-Planned; nothing built.
+Built on branch `feat/cli-api-command` (not committed). All five steps are done; checks
+below are green per step and for the whole tree.
+
+1. SDK `raw` (`packages/sdk/src/client.ts`): done. Path and header validation, hostile-path
+   and header table tests, nothing sent on refusal. `send` was split so `raw` and the typed
+   calls share one `exchange` (key header, timeout, bounded read, redirect refusal, error
+   mapping). Extra over the plan: `raw` returns `next`, the query of a validated `rel="next"`
+   (reusing `nextLink`), for `--paginate`. Refused beyond the plan: `%2f`, `%5c`, `%00`,
+   encoded dot segments, `proxy-authorization`, `transfer-encoding`, `connection`,
+   `upgrade` and `idempotency-key` as a header.
+2. Field parser (`packages/client-core/src/fields.ts`): done, with `fieldsToQuery` for
+   `GET`/`--input`. Limits: 200 fields, depth 8; `[]` only at the end of a name; `__proto__`,
+   `constructor`, `prototype` refused; an integer outside the safe range stays a string.
+3. CLI command (`apps/cli/src/api-command.ts`): done, including `--paginate`/`--slurp`
+   (in scope now that pagination has merged). Deviations: `{org}` falls back to the key's own
+   organization (as every other command does) rather than being an error when none is
+   selected; it resolves only when a placeholder uses it, so a plain call makes no extra
+   request. `--paginate` cannot be combined with `-i`; it stops after 1000 pages or 100000
+   items, or if a link repeats. `Io` gained `readData` (1 MiB, refuses the credential store)
+   and an optional `findExecutable`. Error responses print only code and title, so `-i` and
+   `--verbose` show response headers of successful answers only.
+4. Docs: done (`apps/cli/README.md`, `apps/controller/README.md`). The OpenAPI document is at
+   `/api/openapi/json`, not `/api/v1/openapi` as first written; corrected above.
+5. `--jq` (`apps/cli/src/jq.ts`): done. The dependency rules (`docs/guidelines/authoring/dependencies.md`,
+   `docs/tooling.md`: versions from the root catalog, `check:deps`) allow it. `@elastic/micro-jq`
+   2.0.2: Apache-2.0, no dependencies, npm provenance attestation, ~450 KB unpacked. Added with
+   `bun add --exact --catalog` in `apps/cli` (the tool wrote the lockfile; the catalog entry was
+   re-placed by hand in `package.json` to avoid Bun re-sorting the whole catalog, and `bun install`
+   confirmed the lockfile unchanged). It is used only in `apps/cli/src/jq.ts`. Engine differences:
+   the built-in engine returns one value, so a stream is detected by a heuristic (expression
+   iterates `[]` and does not start with `[`); it supports a subset (no `map`). The expression is
+   checked before the request (system jq: `jq -n`, exit 3 is a compile error). The packaged-CLI
+   check (`test:packages`, needs the network) was not run.
+
+### Review follow-up
+
+Independent review (PASS) findings, all addressed: placeholder values are substituted after
+`@`/typing is decided (so a value cannot read a file or become a number) and into split query
+pairs (so `&`/`=` cannot add parameters); `-X` is validated before any I/O; `readData` stats
+before opening and opens non-blocking (a hard link into the credential store is not detected,
+documented); jq's program is passed without `--` (a leading `-` gets a space, for jq 1.6), and
+the built-in stream heuristic now needs an iterator after a path (`.x // []` is a value);
+`--paginate` seeds the loop guard with the first query and stops at 16 MiB; the refused-header
+list and allowed methods are shared SDK constants (`FORBIDDEN_RAW_HEADERS`, `RAW_METHODS`).
+
+Second review follow-up: the refused-header list gained method-override and forwarding headers;
+`--paginate` counts bytes, has a 5 minute overall deadline (exit 5), and `--verbose` prints the
+request before sending; a `--jq` failure after the request exits 1 with a message saying the
+request succeeded; `@file` values are not scanned for placeholders; `/proc` and `/sys` files
+are refused on Linux.

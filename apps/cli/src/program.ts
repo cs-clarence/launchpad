@@ -9,6 +9,7 @@ import {
     useProfile,
     whoami,
 } from "@launchpad-kit/client-core";
+import { addApiCommand } from "./api-command";
 import { addAppCommands } from "./app-commands";
 import { describe, EXIT, ExitWith } from "./errors";
 import type { Io } from "./io";
@@ -87,6 +88,8 @@ export function buildProgram(rawIo: Io) {
         readStdin: () => rawIo.readStdin(),
         readSecret: (prompt) => rawIo.readSecret(prompt),
         readFile: (path) => rawIo.readFile(path),
+        readData: (source) => rawIo.readData(source),
+        findExecutable: rawIo.findExecutable?.bind(rawIo),
     };
     const program = new Command()
         .name("launchpad")
@@ -225,6 +228,7 @@ export function buildProgram(rawIo: Io) {
             );
         });
 
+    addApiCommand(program, io);
     addAppCommands(program, io.context, io.workingDir ?? process.cwd(), io.out);
     return program;
 }

@@ -15,3 +15,4 @@ export * from "./workspace";
 export * from "./app-client";
 export { resolveProject } from "./project";
 export { safeOutput } from "./output";
+export * from "./fields";
