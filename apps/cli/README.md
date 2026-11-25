@@ -24,6 +24,7 @@ launchpad login --session --email <address> [--password-file <path>] [--controll
 launchpad logout --session [--controller <url>]
 launchpad org create --name <name> --slug <slug> --owner-email <address> --confirm
 launchpad member list | add --user-email <address> --role <role> --confirm | remove <user-id> --confirm
+launchpad invite create --to <address> --role <role> --confirm | list | revoke <invitation-id> --confirm
 launchpad key list | issue --name <name> --scope <scope>... --expires-in-days <n> --secret-file <path> --confirm | revoke <key-id> --confirm
 ```
 
@@ -266,6 +267,26 @@ launchpad member remove USER_ID --org ORG_ID --confirm
 - **`member remove`** (`DELETE /organizations/:org/members/:userId`) takes the user ID `member list` prints.
   Owners and admins may remove anyone; a member may remove themselves (leaving is not special-cased). Removing
   the last owner is 409 (exit 1).
+
+### Invitations
+
+```sh
+launchpad invite create --org ORG_ID --to carol@example.com --role viewer --confirm
+launchpad invite list --org ORG_ID
+launchpad invite revoke INVITATION_ID --org ORG_ID --confirm
+```
+
+- **`invite create`** (`POST /organizations/:org/invitations`; owner or admin) emails the invitation. The
+  controller needs invitation enrollment and SMTP: without them it answers 404 "Invitations are not enabled."
+  (exit 4); if the mail cannot be sent it answers 502 (exit 1) and has already revoked the invitation. A newer
+  invitation to the same address replaces the older one. The output is `Invited <email> as <role> (<id>). The
+  invitation was emailed.` The token is only in the email: it is never printed, and `--json` shows only `id`,
+  `email` and `role`. The target is `--to` because `--email` is always the account that signs in.
+- **`invite list`** (`GET /organizations/:org/invitations`; owner or admin) prints the pending invitations as
+  `ID EMAIL ROLE CREATED EXPIRES`.
+- **`invite revoke`** (`DELETE /organizations/:org/invitations/:id`; owner or admin) takes the ID `invite list`
+  prints.
+- Not included: `invite preview` and `invite accept` (the public token flow).
 
 ### Key management
 

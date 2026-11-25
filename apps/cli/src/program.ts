@@ -11,6 +11,7 @@ import {
 } from "@launchpad-kit/client-core";
 import { addApiCommand } from "./api-command";
 import { addAppCommands } from "./app-commands";
+import { addInviteCommands } from "./invite-commands";
 import { addKeyCommands } from "./key-commands";
 import { addOrgCommands } from "./org-commands";
 import { describe, EXIT, ExitWith } from "./errors";
@@ -293,6 +294,7 @@ export function buildProgram(rawIo: Io, secrets: Set<string> = new Set()) {
 
     addApiCommand(program, io, remember);
     addOrgCommands(program, org, { io, remember }, wants);
+    addInviteCommands(program, { io, remember }, wants);
     addKeyCommands(program, { io, remember }, wants);
     addAppCommands(program, io.context, io.workingDir ?? process.cwd(), io.out);
     return program;
