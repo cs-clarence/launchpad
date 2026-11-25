@@ -17,6 +17,7 @@ export const EXIT = {
     local: 6, // the credential file, or a profile, is unusable
     deployment: 7, // the deployment failed, was cancelled, or needs an administrator
     waiting: 8, // still running when --timeout ran out; it was not cancelled
+    interrupted: 130, // Ctrl-C at a prompt, as for SIGINT (SIGTERM and SIGHUP exit 143 and 129)
 } as const;
 
 // A command that has already printed its result and only needs a particular exit code.
@@ -49,7 +50,16 @@ export function describe(error: unknown): Failure {
                 : error.status === 404
                   ? EXIT.notFound
                   : EXIT.failure;
-        return { exitCode, code: error.code, message: redact(error.title), status: error.status };
+        const wait =
+            error.status === 429 && error.retryAfterSeconds
+                ? ` Try again in ${error.retryAfterSeconds} seconds.`
+                : "";
+        return {
+            exitCode,
+            code: error.code,
+            message: redact(`${error.title}${wait}`),
+            status: error.status,
+        };
     }
     if (error instanceof LaunchpadTransportError) {
         return { exitCode: EXIT.transport, code: error.reason, message: redact(error.message) };

@@ -8,24 +8,50 @@ import {
     requireConfirmation,
     resolve,
     type FieldInput,
-    type Resolved,
 } from "@launchpad-kit/client-core";
 import {
     FORBIDDEN_RAW_HEADERS,
+    LaunchpadApiError,
     LaunchpadTransportError,
-    type LaunchpadClient,
     normalizeBaseUrl,
     RAW_METHODS,
+    type RawOptions,
     type RawResponse,
 } from "@launchpad-kit/sdk";
-import type { Io } from "./io";
+import type { Io, SecretFile } from "./io";
 import { applyJq, checkJq, chooseJq, findOnPath } from "./jq";
 import { arrayItems, prettyJson } from "./json-text";
+import { ExitWith } from "./errors";
+import { SessionFlow, SignalGuard, withSession } from "./session-flow";
+import { checkEmail, refuseWithKey, resolveSessionTarget } from "./session-target";
 
 const MAX_PAGES = 1000;
 const MAX_TOTAL_ITEMS = 100_000;
 const MAX_TOTAL_BYTES = 16 * 1024 * 1024;
 const PAGINATE_DEADLINE_MS = 5 * 60 * 1000;
+// Stops waiting for slow input (such as stdin) when a signal arrives, so the command can unwind.
+function untilInterrupted<T>(start: () => Promise<T>, signal?: AbortSignal): Promise<T> {
+    if (!signal) return start();
+    // Nothing is started once interrupted; anything started is always observed, so a later
+    // failure of the read cannot become an unhandled rejection.
+    if (signal.aborted) return Promise.reject(new Error("Interrupted."));
+    return new Promise<T>((resolve, reject) => {
+        const stop = () => reject(new Error("Interrupted."));
+        signal.addEventListener("abort", stop, { once: true });
+        let work: Promise<T>;
+        try {
+            work = start();
+        } catch (error) {
+            // A reader that throws instead of returning a promise is a failed read.
+            work = Promise.reject(error);
+        }
+        work.then(resolve, reject).finally(() => signal.removeEventListener("abort", stop));
+    });
+}
+const FRESH_MS = 15 * 60 * 1000;
+// Issuing a key is the call the controller allows only for a session signed in recently.
+const needsFreshSession = (method: string, path: string) =>
+    method === "POST" && /^\/organizations\/[^/]+\/api-keys\/?$/.test(path);
 const PLACEHOLDER = /\{(org|project)\}/g;
 
 const bad = (message: string) => new ClientCoreError("bad-input", message);
@@ -47,7 +73,25 @@ const pretty = (text: string) => {
     }
 };
 
-export function addApiCommand(program: Command<any, any, any>, io: Io) {
+// What a request is sent with: a key, or the user's own session. Everything else in the command
+// is the same for both.
+interface Backend {
+    controller: string;
+    // The organization chosen outside the credential (profile, LAUNCHPAD_ORG), if any.
+    organizationId: string | null;
+    organizations(): Promise<Array<{ id: string; slug: string }>>;
+    // The credential's own organization, for a key; a session has none.
+    ownOrganization(): Promise<string>;
+    raw(method: string, path: string, options: RawOptions): Promise<RawResponse>;
+    // Request lines shown by --verbose in place of the credential itself.
+    credentialLines: string[];
+}
+
+export function addApiCommand(
+    program: Command<any, any, any>,
+    io: Io,
+    remember: (secret: string) => void = () => {},
+) {
     const fields: FieldInput[] = [];
     const headers: string[] = [];
     program
@@ -90,8 +134,111 @@ export function addApiCommand(program: Command<any, any, any>, io: Io) {
             "send this Idempotency-Key header (1 to 128 printable ASCII)",
         )
         .option("--confirm", "confirm a request that is not GET or HEAD")
+        .option(
+            "--session",
+            "use your own account (an email and password sign-in) instead of a key, for the " +
+                "organization, member and key endpoints a key cannot reach. The session lives only " +
+                "for this command and is signed out at the end (best effort). Each call is a new " +
+                "sign-in, and sign-ins are throttled per account and address: more than 5 a minute " +
+                "are refused and also block that account's dashboard sign-in. Use occasionally.",
+        )
+        .option("--email <address>", "with --session, the account's email address")
+        .option(
+            "--password-file <path>",
+            "with --session, read the password from this private file instead of the prompt",
+        )
+        .option(
+            "--controller <url>",
+            "with --session, the controller (else the selected profile's, else LAUNCHPAD_CONTROLLER)",
+        )
+        .option(
+            "--secret-file <path>",
+            "create this new file (mode 0600) before the request and write the response's `secret` (a new API key) to it; the screen shows it redacted",
+        )
+        .option(
+            "--keep",
+            "with --session, save the session (session.json, owner-only) instead of signing out; later calls reuse it until `launchpad logout --session`",
+        )
         .action(async (endpoint, options, command) => {
+            if (options.secretFile !== undefined && options.paginate) {
+                throw bad("--secret-file cannot be combined with --paginate.");
+            }
+            // One guard for the whole run, installed before the file exists, so a signal at any
+            // point (even while stdin is read) removes an empty secret file instead of leaving
+            // it to make the next run fail with "already exists".
+            const guard = options.secretFile !== undefined ? new SignalGuard(io) : undefined;
+            guard?.install();
+            let secretFile: SecretFile | undefined;
+            try {
+                // Created before anything is sent: an existing file or a failed create means no request.
+                if (options.secretFile !== undefined) {
+                    try {
+                        secretFile = await io.createSecretFile(options.secretFile);
+                    } catch (error) {
+                        throw bad(
+                            error instanceof Error
+                                ? error.message
+                                : "The secret file cannot be created.",
+                        );
+                    }
+                }
+                await withSession(io, (holder) =>
+                    execute(endpoint, options, command, holder, secretFile, guard),
+                );
+                if (guard?.interruptedWith != null) throw new ExitWith(guard.interruptedWith);
+            } catch (error) {
+                await secretFile?.remove().catch(() => {});
+                if (guard?.interruptedWith != null) {
+                    if (!(error instanceof ExitWith)) io.err("Interrupted.");
+                    throw new ExitWith(guard.interruptedWith);
+                }
+                throw error;
+            } finally {
+                guard?.uninstall();
+            }
+        });
+
+    async function execute(
+        endpoint: string,
+        options: {
+            method?: string;
+            input?: string;
+            include?: true;
+            silent?: true;
+            verbose?: true;
+            paginate?: true;
+            slurp?: true;
+            jq?: string;
+            idempotencyKey?: string;
+            confirm?: true;
+            session?: true;
+            email?: string;
+            passwordFile?: string;
+            controller?: string;
+            keep?: true;
+            secretFile?: string;
+        },
+        command: Command<any, any, any>,
+        holder: { flow?: SessionFlow },
+        secretFile?: SecretFile,
+        guard?: SignalGuard,
+    ) {
+        const interrupt = guard?.signal;
+        {
             const { profile } = command.optsWithGlobals() as { profile?: string };
+            if (!options.session) {
+                for (const [flag, value] of [
+                    ["--email", options.email],
+                    ["--password-file", options.passwordFile],
+                    ["--controller", options.controller],
+                    ["--keep", options.keep],
+                ] as const) {
+                    if (value !== undefined) throw bad(`${flag} needs --session.`);
+                }
+            } else {
+                refuseWithKey(io.context, "--session");
+            }
+            const email = options.email === undefined ? null : checkEmail(options.email);
             const method = (
                 options.method ?? (fields.length > 0 || options.input ? "POST" : "GET")
             ).toUpperCase();
@@ -140,21 +287,115 @@ export function addApiCommand(program: Command<any, any, any>, io: Io) {
             // One read of launchpad.json and one resolution of the saved profile serve both
             // placeholders and the request, so a concurrent edit or login cannot mix them.
             const workspace = await readWorkspace(workingDir);
-            let identity: Promise<{ resolved: Resolved; client: LaunchpadClient }> | undefined;
+            let identity: Promise<Backend> | undefined;
             const identify = () =>
-                (identity ??= (async () => {
-                    const resolved = await resolve(
-                        io.context,
-                        profile ?? workspace.config?.profile,
+                (identity ??= options.session
+                    ? sessionBackend()
+                    : (async (): Promise<Backend> => {
+                          const resolved = await resolve(
+                              io.context,
+                              profile ?? workspace.config?.profile,
+                          );
+                          const client = clientFor(io.context, resolved);
+                          return {
+                              controller: resolved.controller,
+                              organizationId: resolved.organizationId,
+                              organizations: () => client.organizations.list(),
+                              ownOrganization: async () => (await client.key.get()).organizationId,
+                              raw: (method, path, rawOptions) =>
+                                  client.raw(method, path, rawOptions),
+                              credentialLines: ["> authorization: [redacted]"],
+                          };
+                      })());
+            const sessionBackend = async (): Promise<Backend> => {
+                const target = await resolveSessionTarget(io.context, {
+                    controller: options.controller,
+                    profile: profile ?? workspace.config?.profile,
+                });
+                // `--keep` always signs in again; otherwise a saved session for this controller is used.
+                const saved = options.keep
+                    ? null
+                    : await io.context.sessions.get(target.controller);
+                if (saved && email !== null && email !== saved.email) {
+                    throw bad(
+                        "--email differs from the saved session's account. Use `launchpad login --session` to switch, or `launchpad logout --session` first.",
                     );
-                    return { resolved, client: clientFor(io.context, resolved) };
-                })());
+                }
+                if (!saved && email === null) {
+                    throw bad("--session needs --email <address> to sign in.");
+                }
+                const flow = new SessionFlow({
+                    io,
+                    controller: target.controller,
+                    email: saved?.email ?? email!,
+                    passwordFile: options.passwordFile,
+                    verbose: options.verbose,
+                    keep: options.keep,
+                    guard,
+                    remember,
+                });
+                holder.flow = flow;
+                if (saved) flow.attach(saved.cookie);
+                const raw = async (method: string, path: string, rawOptions: RawOptions) => {
+                    const client = await flow.signIn();
+                    if (
+                        saved &&
+                        needsFreshSession(method, path) &&
+                        Date.now() - Date.parse(saved.savedAt) > FRESH_MS
+                    ) {
+                        io.err(
+                            "Warning: this saved session is older than 15 minutes, and issuing a key needs a sign-in from the last 15 minutes. Run `launchpad login --session` again if the controller refuses.",
+                        );
+                    }
+                    try {
+                        return await client.raw(method, path, {
+                            ...rawOptions,
+                            signal: rawOptions.signal
+                                ? AbortSignal.any([flow.signal, rawOptions.signal])
+                                : flow.signal,
+                        });
+                    } catch (error) {
+                        if (saved && error instanceof LaunchpadApiError && error.status === 401) {
+                            await io.context.sessions.remove(target.controller, saved.cookie);
+                            throw new ClientCoreError(
+                                "not-logged-in",
+                                "The saved session is no longer valid and was removed. Sign in again with `launchpad login --session`.",
+                            );
+                        }
+                        throw error;
+                    }
+                };
+                return {
+                    controller: target.controller,
+                    organizationId: target.organizationId,
+                    organizations: async () => {
+                        const response = await raw("GET", "/organizations", {});
+                        const list: unknown = JSON.parse(response.body);
+                        if (!Array.isArray(list))
+                            throw bad("The organization list was not a list.");
+                        return list.filter(
+                            (o): o is { id: string; slug: string } =>
+                                typeof o?.id === "string" && typeof o?.slug === "string",
+                        );
+                    },
+                    ownOrganization: async () => {
+                        throw bad(
+                            "{org} has no value: with --session select an organization with `launchpad org use`, launchpad.json or LAUNCHPAD_ORG.",
+                        );
+                    },
+                    raw,
+                    credentialLines: [
+                        "> cookie: [redacted]",
+                        `> origin: ${new URL(target.controller).origin}`,
+                    ],
+                };
+            };
             const values = new Map<string, string>();
             if (used.has("org")) {
-                const { resolved, client } = await identify();
+                const backend = await identify();
                 const named = workspace.config?.organization;
                 if (named) {
-                    const match = (await client.organizations.list()).find(
+                    const match = (await backend.organizations()).find(
                         (o) => o.id === named || o.slug === named,
                     );
                     if (!match) {
@@ -165,10 +406,7 @@ export function addApiCommand(program: Command<any, any, any>, io: Io) {
                     }
                     values.set("org", match.id);
                 } else {
-                    values.set(
-                        "org",
-                        resolved.organizationId ?? (await client.key.get()).organizationId,
-                    );
+                    values.set("org", backend.organizationId ?? (await backend.ownOrganization()));
                 }
             }
             if (used.has("project")) {
@@ -193,7 +431,7 @@ export function addApiCommand(program: Command<any, any, any>, io: Io) {
                     stdinUsed.value = true;
                 }
                 try {
-                    return await io.readData(source);
+                    return await untilInterrupted(() => io.readData(source), interrupt);
                 } catch (error) {
                     const reason = error instanceof Error ? error.message : "unreadable";
                     throw bad(
@@ -269,14 +507,14 @@ export function addApiCommand(program: Command<any, any, any>, io: Io) {
                     throw new Error(`The request succeeded; the --jq filter failed: ${reason}`);
                 }
             };
-            const { resolved, client } = await identify();
+            const backend = await identify();
             // The request is shown before it is sent, so --verbose helps when it fails.
             const showRequest = (shownPath: string) => {
                 if (!options.verbose) return;
-                const url = new URL(`${normalizeBaseUrl(resolved.controller)}/api/v1${shownPath}`);
+                const url = new URL(`${normalizeBaseUrl(backend.controller)}/api/v1${shownPath}`);
                 io.err(`> ${method} ${url.pathname}${url.search}`);
                 io.err(`> host: ${url.host}`);
-                io.err("> authorization: [redacted]");
+                for (const line of backend.credentialLines) io.err(line);
                 for (const [name, value] of Object.entries(extraHeaders)) {
                     const lower = name.toLowerCase();
                     // A header the SDK refuses may carry a credential; never echo it.
@@ -295,17 +533,59 @@ export function addApiCommand(program: Command<any, any, any>, io: Io) {
                 `${path}${pageQuery.length ? `?${new URLSearchParams(pageQuery)}` : ""}`;
             const call = (pageQuery: Array<[string, string]>, signal?: AbortSignal) => {
                 showRequest(request(pageQuery));
-                return client.raw(method, path, {
+                return backend.raw(method, path, {
                     query: pageQuery,
                     body,
                     headers: extraHeaders,
                     idempotencyKey: options.idempotencyKey,
-                    signal,
+                    signal: signal ?? interrupt,
                 });
             };
 
             if (!options.paginate) {
                 const response = await call(query);
+                // What --jq and the screen get: the new key is replaced here, so a filter cannot
+                // select part of it. Only the file receives the original value.
+                let shown = response.body;
+                if (secretFile) {
+                    let secret: unknown;
+                    let parsedBody: unknown;
+                    try {
+                        parsedBody = JSON.parse(response.body);
+                        secret = (parsedBody as { secret?: unknown } | null)?.secret;
+                    } catch {
+                        secret = undefined;
+                    }
+                    if (typeof secret !== "string" || secret.length === 0) {
+                        throw new Error(
+                            "The response had no secret to save, so the --secret-file was removed.",
+                        );
+                    }
+                    // A key-shaped secret is already shown as lp_[redacted].
+                    if (!secret.startsWith("lp_")) remember(secret);
+                    const mark = secret.startsWith("lp_") ? "lp_[redacted]" : "[redacted]";
+                    // Built from the parsed value, not by matching text, so however the controller
+                    // escaped the key (`\/`, `\uXXXX`) every copy of it is replaced.
+                    const hide = (value: unknown): unknown =>
+                        typeof value === "string"
+                            ? value.split(secret as string).join(mark)
+                            : Array.isArray(value)
+                              ? value.map(hide)
+                              : value && typeof value === "object"
+                                ? Object.fromEntries(
+                                      Object.entries(value).map(([k, v]) => [k, hide(v)]),
+                                  )
+                                : value;
+                    shown = JSON.stringify({ ...(hide(parsedBody) as object), secret: mark });
+                    try {
+                        await secretFile.write(`${secret}\n`);
+                    } catch {
+                        throw new ClientCoreError(
+                            "store-unavailable",
+                            `The key was created but could not be written to ${options.secretFile}. It exists: revoke it in the dashboard or with \`launchpad api\`.`,
+                        );
+                    }
+                }
                 showResponse(response);
                 if (options.include) {
                     io.out(
@@ -314,8 +594,7 @@ export function addApiCommand(program: Command<any, any, any>, io: Io) {
                         ),
                     );
                 }
-                if (!options.silent && response.body.length > 0)
-                    io.out(await filter(response.body));
+                if (!options.silent && shown.length > 0) io.out(await filter(shown));
                 return;
             }
 
@@ -375,5 +654,6 @@ export function addApiCommand(program: Command<any, any, any>, io: Io) {
                     : `[${pages.flat().join(",")}]`;
                 io.out(await filter(merged));
             }
-        });
+        }
+    }
 }

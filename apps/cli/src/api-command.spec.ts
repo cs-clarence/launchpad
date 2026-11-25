@@ -71,6 +71,10 @@ async function api(
         err: (t) => void err.push(t),
         interactive: false,
         readSecret: async () => "",
+        readPasswordFile: async () => "",
+        createSecretFile: async () => {
+            throw new Error("unused");
+        },
         readStdin: async () => "",
         readFile: async () => ({ text: "", mode: 0o600 }),
         findExecutable: () => options.jq ?? null,
@@ -789,5 +793,18 @@ describe("api: CodeRabbit follow-ups", () => {
                 expect(line.replace(/"[^"]*"|'[^']*'/g, ""), line).not.toMatch(/[<>]/);
             }
         }
+    });
+});
+
+describe("api: key calls and session.json", () => {
+    it("never opens session.json", async () => {
+        await fs.mkdir(path.join(dir, "session.json"));
+        const opened = vi.spyOn(fs, "open");
+        const { code } = await api(["api", "key"]);
+        expect(code).toBe(EXIT.ok);
+        expect(opened.mock.calls.some(([target]) => String(target).includes("session.json"))).toBe(
+            false,
+        );
+        opened.mockRestore();
     });
 });

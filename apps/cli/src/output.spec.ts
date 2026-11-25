@@ -42,4 +42,17 @@ describe("terminal output", () => {
         expect(printed).not.toContain(key);
         expect(printed).not.toContain("\u001b");
     });
+
+    it("hides the secrets of this run in the forms a server may echo them", () => {
+        const cookie = "better-auth.session_token=tok.sig%2Bvalue";
+        const password = 'pa"ss word 1234';
+        const printed = safeOutput(
+            [cookie, "tok.sig+value", JSON.stringify(password), "tok.sig%2Bvalue"].join(" "),
+            [cookie, "tok.sig%2Bvalue", password],
+        );
+        for (const secret of ["tok.sig", 'pa\\"ss', "session_token"]) {
+            expect(printed).not.toContain(secret);
+        }
+        expect(safeOutput("a short word", ["short"])).toBe("a short word");
+    });
 });

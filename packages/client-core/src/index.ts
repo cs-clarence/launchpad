@@ -2,6 +2,8 @@ export * from "./errors";
 export * from "./operations";
 export * from "./redact";
 export { configDirectory, CredentialStore } from "./store";
+export { normalizeEmail, SessionStore } from "./session-store";
+export type { SessionEntry } from "./session-store";
 export type { Config, Profile } from "./store";
 export {
     checkLocation,

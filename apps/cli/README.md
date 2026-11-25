@@ -19,6 +19,9 @@ launchpad alias list <app-id> | create <app-id> <slug> | operations <id>
 launchpad alias promote <alias-id> <deployment-id> --expected-generation <generation> --idempotency-key <key> --confirm
 launchpad alias withdraw <alias-id> --expected-generation <generation> --idempotency-key <key> --confirm
 launchpad api <endpoint> [-X <method>] [-f|-F <key=value>]... [--input <file>] [-H <name:value>]... [-i] [--silent] [-q <jq-expression>] [--verbose] [--paginate [--slurp]] [--idempotency-key <key>] [--confirm]
+launchpad api --session [--email <address>] [--password-file <path>] [--controller <url>] [--keep] [--secret-file <path>] <endpoint> ...
+launchpad login --session --email <address> [--password-file <path>] [--controller <url>]
+launchpad logout --session [--controller <url>]
 ```
 
 Global options: `--json` (machine-readable output; errors become `{"error":{"code","message"}}` on stderr)
@@ -38,7 +41,8 @@ and `--profile <name>`.
   the key's organization.
 - **Exit codes:** 0 success, 1 other failure, 2 usage, 3 not logged in or the key is rejected (401/403),
   4 not found, 5 controller unreachable, timed out or unexpected answer, 6 credential file or profile unusable,
-  7 and 8 are reserved. Queuing a deployment or routing operation exits successfully; check status separately.
+  7 and 8 are reserved. 130 is Ctrl-C at a password prompt, as for SIGINT; a signal during `--session` or
+  `--secret-file` exits 128 plus its number (SIGHUP 129, SIGINT 130, SIGTERM 143). Queuing a deployment or routing operation exits successfully; check status separately.
 
 ## `launchpad api`
 
@@ -47,7 +51,7 @@ and `--profile <name>`.
 `gh api`; the endpoints and their fields follow the controller's OpenAPI document (see the
 [controller README](../controller/README.md#api-reference)) and may change. An API key
 reaches only the endpoints a key may use; the session-only routes (organization, member,
-invitation and key creation) answer 401 or 403.
+invitation and key creation) answer 401 or 403. Use `--session` (below) for those.
 
 ```sh
 launchpad api key
@@ -121,6 +125,91 @@ Differences from `gh api`:
   body is not printed (only its code and title). `-i` and `--verbose` therefore show response
   headers of successful answers only.
 
+## Session access (`--session`)
+
+An API key cannot create organizations or manage members, invitations and keys. Those routes take
+only the session cookie of a person's own account, and issuing a key also needs a sign-in from the
+last 15 minutes. `launchpad api --session` signs in with an email and password and calls them. It is
+for the instance operator (who creates organizations) and for organization owners and admins (who
+issue keys and manage members). The controller's own role checks still decide what the account may do;
+the operator has no access inside an organization without membership.
+
+```sh
+launchpad api --session --email ann@example.com -X POST organizations/ORG_ID/api-keys -f name=ci -f scopes[]=project:read -F expiresInDays=30 --confirm --secret-file ci.key
+launchpad api --session --email op@example.com -X POST organizations -f name=Demo -f slug=demo -f ownerEmail=ann@example.com --confirm
+```
+
+- **Default flow: an in-memory session.** With no saved session for the controller, the command asks
+  for the password (hidden prompt, or `--password-file`), signs in, makes its call (all pages of
+  `--paginate` share the session), and signs out. Nothing is written to disk and the session is always
+  new, so key issuance works. `--email` is required in this flow. **Sign-out is best effort:** a failed
+  sign-out prints a warning and does not change the exit code; a hard kill (SIGKILL, power loss) or an
+  unreachable controller leaves a server session that expires on its own at most 7 days after its last
+  use. On SIGINT, SIGTERM and SIGHUP the command aborts the request, signs out and exits with 128 plus
+  the signal number. After the first signal the sign-out is bounded by the 30 s transport timeout, and a
+  second signal exits at once without signing out. At the prompt the terminal is restored first, and
+  Ctrl-C there exits 130 with nothing sent.
+- **Password input.** Never an argument or an environment variable. The prompt needs a terminal
+  (otherwise exit 2). `--password-file` must be a regular file owned by you with no group or other
+  permission bits (`chmod 600`), not a link or FIFO, at most 4096 bytes; one trailing newline is removed
+  and the password must be 12 to 128 characters.
+- **`--keep` and `login --session`.** `api --session --keep` signs in, calls, and **saves the session**
+  instead of signing out; `launchpad login --session --email ...` does the same without a call and
+  prints the controller and email. Both always ask for credentials, even when a session is saved: they
+  sign the old server session out (a failure is a warning), then replace the entry, so a different
+  `--email` switches accounts. Later plain `api --session` calls use the saved session with no prompt;
+  `--email` may be omitted, the same email (any letter case) is accepted, a different one exits 2.
+  A saved session sends the warning "older than 15 minutes" before a key-issuing call, but the
+  controller's 403 stays the authority. A 401 deletes the entry. `launchpad logout --session` revokes
+  the session and deletes the entry even if sign-out failed (exit 0, with a warning); with no entry it
+  says so and exits 0. The result separates the two: `--json` gives `signedOut` (true only when the
+  controller signed the session out or said it was already over) and `localEntryRemoved`. If the
+  controller did not confirm, the message says it may still accept the old cookie until it expires, at
+  most 7 days after its last use.
+- **Where it is saved, and the risk.** `session.json` beside `credentials.json` (mode 600, directory
+  700, no links, one entry per controller URL with the account email, the cookie and `savedAt`). It is
+  an **account-wide bearer credential**, valid until 7 days after its last use (the server expiry
+  slides): whoever can read the file can do everything that user can. The password is never stored.
+  `--keep` is opt-in; revoke with `logout --session`. If you remove this feature, delete `session.json`.
+  The key-only commands, the MCP server and older CLIs never read it.
+- **Never with a key.** `--session` is refused (exit 2, before any prompt or request) for `api`,
+  `login` and `logout` whenever `LAUNCHPAD_API_KEY` is set. `--session` sends only `Cookie` and
+  `Origin`, never `Authorization`, and `api` without `--session` never reads `session.json`. The
+  controller comes from, in this order: `--controller`; the explicitly chosen profile (`--profile`,
+  else the `profile` of the nearest `launchpad.json`; only its controller and organization are used, its key
+  is neither read nor sent, and its organization only when its controller is the one in use);
+  `LAUNCHPAD_CONTROLLER` (a key is not needed); `LAUNCHPAD_PROFILE`; the current profile. `{org}` needs `launchpad org use`, `launchpad.json` or `LAUNCHPAD_ORG`; there is no fallback
+  to a key's organization. The controller must be https, or http to `localhost`, `127.0.0.1` or `[::1]`;
+  redirects are refused. The URL is printed before the password prompt.
+- **Lockout, plainly.** Each default-flow call is a new sign-in, and every sign-in attempt counts toward
+  5 per 60 s per (client address, email) and 20 per 10 minutes per email; Better Auth also limits
+  `/sign-in/email` to 5 per 60 s. More than 5 `api --session` calls a minute are throttled and **also
+  block that account's dashboard sign-in** for the window. A 429 shows the wait from `retry-after` or
+  `X-Retry-After` and the command does not wait or retry. Use `--session` occasionally; for batches use
+  `--keep` (one sign-in) and then `logout --session`. A 400 `client-address-unavailable` is a plain
+  error: the controller could not tell the client address.
+- **`forbidden-origin`.** The controller accepts a changing request with a cookie only from the exact
+  origin in its `LAUNCHPAD_BASE_URL`; an http/https or proxy-host mismatch looks like a 403
+  `forbidden-origin`, and the error says so.
+- **Showing an issued key.** `api` hides `lp_...` text, so a created key would not be visible.
+  `--secret-file <path>` writes the response's `secret` to a new file: it is created exclusively with
+  mode 600 **before** the request (an existing file means nothing is sent), removed if the request fails
+  or returns no `secret`, and the screen shows `lp_[redacted]`. If the write fails after the key was
+  created, the error says the key exists and must be revoked in the dashboard or with `api`. It cannot be
+  combined with `--paginate`. SIGINT, SIGTERM and SIGHUP remove an empty secret file before exiting, with
+  or without `--session` (also for a kept session and while stdin is still being read); a file that
+  already holds the key is kept. The copy of the response given to `--jq` and to the screen has the key
+  replaced (built from the parsed JSON, so any escaping of the key is covered; the copy is re-serialized, so
+  number formatting may differ), so a filter cannot print part of it; only the file gets the original. **Limit:** the file is
+  removed by path after a device and inode check, and Node cannot make that atomic: someone who can
+  already write to the owner-only directory could swap the path between the check and the removal (a
+  swapped symlink is removed itself, never followed).
+- A sign-in that was accepted (200 with a session cookie) but whose body never finished arriving still
+  has its session signed out at the end.
+- The cookie and password are removed from errors, `--verbose` output and response headers and bodies,
+  and from the output filter (`safeOutput`) for the current run.
+- A runner with a password file can still sign in with `--session`; that is the user's choice.
+
 ## Workspace file
 
 App, deployment, alias and artifact commands read the nearest `launchpad.json` for profile and
@@ -140,7 +229,7 @@ is no longer accepted.
   to finish and retry. After a crashed writer, remove `credentials.json.lock`
   only after confirming no client is writing. Locks are never stolen by age.
 
-`src/program.ts` and `src/api-command.ts` hold the commands behind an `Io` interface (`src/io.ts`), so tests drive `run(argv, io)` with a
+`src/program.ts`, `src/api-command.ts` and the session files (`src/session-*.ts`, `src/password.ts`) hold the commands behind an `Io` interface (`src/io.ts`), so tests drive `run(argv, io)` with a
 fake terminal, a temporary config directory and a fake controller. `src/index.ts` is the Bun entry point.
 
 Build and check commands are in [CONTRIBUTING.md](../../CONTRIBUTING.md).

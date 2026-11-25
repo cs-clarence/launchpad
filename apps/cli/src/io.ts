@@ -10,13 +10,57 @@ export interface Io {
     err(text: string): void;
     interactive: boolean;
     stdinIsTTY?: boolean;
-    readSecret(prompt: string): Promise<string>;
+    // A hidden line from the terminal. Aborting `signal` restores the terminal and rejects.
+    readSecret(prompt: string, options?: SecretOptions): Promise<string>;
+    // The password for `--password-file`: a regular file of ours that only we can read, read
+    // without following a link or blocking. One trailing newline is removed. Messages never
+    // contain the file's contents.
+    readPasswordFile(path: string): Promise<string>;
     readStdin(): Promise<string>;
     readFile(path: string): Promise<{ text: string; mode: number; regular?: boolean }>;
     // Request data for `api`: a file, or standard input for "-". At most 1 MiB, as bytes.
     readData(source: string): Promise<Uint8Array>;
     // Where `jq` is, if anywhere; tests replace it. Defaults to a search of PATH.
     findExecutable?(name: string): string | null;
+    // Creates `path` exclusively with mode 0600 (it must not exist); nothing is written yet.
+    createSecretFile(path: string): Promise<SecretFile>;
+    // Where `--session` listens for SIGINT, SIGTERM and SIGHUP; without it no handler is installed.
+    signals?: SignalHooks;
+}
+
+// A file created for a secret the controller shows once, such as a new API key.
+export interface SecretFile {
+    // Writes the secret and closes the file; afterwards `remove` does nothing.
+    write(text: string): Promise<void>;
+    // Deletes the file unless a secret was written to it (and unless the path no longer names the
+    // file that was created, which is checked by device and inode).
+    remove(): Promise<void>;
+}
+
+export interface SecretOptions {
+    kind?: "key" | "password";
+    signal?: AbortSignal;
+}
+
+// Process-level hooks for a signed-in session, so tests can send signals without any real ones.
+export interface SignalHooks {
+    on(signal: NodeJS.Signals, listener: () => void): void;
+    off(signal: NodeJS.Signals, listener: () => void): void;
+    // Leaves at once, without cleanup; a second signal uses it.
+    exit(code: number): void;
+}
+
+// What the hidden prompt reads from and writes to; replaced in tests.
+export interface PromptStreams {
+    stdin: {
+        setRawMode(mode: boolean): unknown;
+        resume(): unknown;
+        pause(): unknown;
+        setEncoding(encoding: BufferEncoding): unknown;
+        on(event: "data", listener: (chunk: string) => void): unknown;
+        off(event: "data", listener: (chunk: string) => void): unknown;
+    };
+    stderr: { write(text: string): unknown };
 }
 
 const MAX_SECRET_BYTES = 4096;
@@ -50,21 +94,31 @@ async function readStdin(): Promise<string> {
 }
 
 // Reads a line from the terminal without echoing it.
-function readSecret(prompt: string): Promise<string> {
-    const stdin = process.stdin;
-    process.stderr.write(prompt);
+export function readSecretFrom(
+    { stdin, stderr }: PromptStreams,
+    prompt: string,
+    options: SecretOptions = {},
+): Promise<string> {
+    const tooLong = `Input is too long to be a ${options.kind ?? "key"}.`;
+    if (options.signal?.aborted) return Promise.reject(new Error("Cancelled."));
+    stderr.write(prompt);
     stdin.setRawMode(true);
     stdin.resume();
     stdin.setEncoding("utf8");
     return new Promise((resolve, reject) => {
         let buffer = "";
+        let done = false;
         const finish = (settle: () => void) => {
+            if (done) return;
+            done = true;
+            options.signal?.removeEventListener("abort", onAbort);
             stdin.off("data", onData);
             stdin.setRawMode(false);
             stdin.pause();
-            process.stderr.write("\n");
+            stderr.write("\n");
             settle();
         };
+        const onAbort = () => finish(() => reject(new Error("Cancelled.")));
         const onData = (chunk: string) => {
             for (const ch of chunk) {
                 if (ch === "\r" || ch === "\n") return finish(() => resolve(buffer));
@@ -72,12 +126,113 @@ function readSecret(prompt: string): Promise<string> {
                 if (ch === "\u007f" || ch === "\b") buffer = buffer.slice(0, -1);
                 else buffer += ch;
                 if (Buffer.byteLength(buffer, "utf8") > MAX_SECRET_BYTES) {
-                    return finish(() => reject(new Error("Input is too long to be a key.")));
+                    return finish(() => reject(new Error(tooLong)));
                 }
             }
         };
+        options.signal?.addEventListener("abort", onAbort, { once: true });
         stdin.on("data", onData);
     });
+}
+
+const readSecret = (prompt: string, options?: SecretOptions) =>
+    readSecretFrom({ stdin: process.stdin as never, stderr: process.stderr }, prompt, options);
+
+export async function createSecretFile(file: string): Promise<SecretFile> {
+    let handle;
+    try {
+        handle = await fs.open(file, "wx", 0o600);
+    } catch (error) {
+        const code = (error as NodeJS.ErrnoException).code;
+        throw new Error(
+            code === "EEXIST"
+                ? "The secret file already exists; choose a path that does not exist."
+                : code === "ENOENT"
+                  ? "The secret file's directory does not exist."
+                  : "The secret file cannot be created.",
+        );
+    }
+    let written = false;
+    let closed = false;
+    // Identifies the file we made, so a different file later put at the path is never deleted.
+    const made = await handle.stat();
+    return {
+        async write(text) {
+            try {
+                await handle.writeFile(text);
+                await handle.sync();
+            } finally {
+                closed = true;
+                await handle.close();
+            }
+            written = true;
+        },
+        async remove() {
+            if (written) return;
+            if (!closed) await handle.close().catch(() => {});
+            closed = true;
+            // Best effort, not atomic: Node removes by path, so someone who can write to the
+            // (already checked, owner-only) directory could swap the path between this check and
+            // the removal. A replaced symlink is removed itself, never followed.
+            const now = await fs.lstat(file).catch(() => null);
+            if (now && now.dev === made.dev && now.ino === made.ino) {
+                await fs.rm(file, { force: true });
+            }
+        },
+    };
+}
+
+const refusal = (why: string) => new Error(`The password file ${why}.`);
+
+// The file must be ours and closed to others, like the credential store; a link or a FIFO is
+// refused without waiting for a writer.
+export async function readPasswordFile(file: string): Promise<string> {
+    let handle;
+    try {
+        handle = await fs.open(
+            file,
+            constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0) | (constants.O_NONBLOCK ?? 0),
+        );
+    } catch (error) {
+        const code = (error as NodeJS.ErrnoException).code;
+        if (code === "ELOOP") throw refusal("is a symbolic link; it is not read");
+        if (code === "ENOENT") throw refusal("was not found");
+        if (code === "EACCES") throw refusal("is not readable by you");
+        throw refusal("cannot be opened");
+    }
+    try {
+        const stat = await handle.stat();
+        if (!stat.isFile()) throw refusal("is not a regular file");
+        if (process.platform !== "win32") {
+            const owner = process.getuid?.();
+            if (owner !== undefined && stat.uid !== owner)
+                throw refusal("is owned by another user");
+            if ((stat.mode & 0o077) !== 0) {
+                throw refusal("is readable by others; restrict it with chmod 600");
+            }
+        }
+        if (stat.size > MAX_SECRET_BYTES) throw refusal("is too long to be a password");
+        let text: string;
+        try {
+            const bytes = await readBytes(
+                handle.createReadStream({ autoClose: false, highWaterMark: MAX_SECRET_BYTES + 1 }),
+                MAX_SECRET_BYTES,
+                "The password file is too long to be a password.",
+            );
+            text = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+        } catch (error) {
+            if (error instanceof Error && /too long/.test(error.message)) throw error;
+            if (error instanceof TypeError) throw refusal("is not valid UTF-8 text");
+            throw refusal("cannot be read");
+        }
+        return text.endsWith("\r\n")
+            ? text.slice(0, -2)
+            : text.endsWith("\n")
+              ? text.slice(0, -1)
+              : text;
+    } finally {
+        await handle.close();
+    }
 }
 
 async function readData(source: string, store: string): Promise<Uint8Array> {
@@ -117,12 +272,19 @@ export function realIo(env: Record<string, string | undefined> = process.env): I
     return {
         context,
         readData: (source) => readData(source, context.store.directory),
+        signals: {
+            on: (signal, listener) => void process.on(signal, listener),
+            off: (signal, listener) => void process.off(signal, listener),
+            exit: (code) => process.exit(code),
+        },
         workingDir: process.cwd(),
         out: (text) => void process.stdout.write(text + "\n"),
         err: (text) => void process.stderr.write(text + "\n"),
         interactive: Boolean(process.stdin.isTTY && process.stderr.isTTY),
         stdinIsTTY: Boolean(process.stdin.isTTY),
         readSecret,
+        readPasswordFile,
+        createSecretFile,
         readStdin,
         readFile: async (path) => {
             const handle = await fs.open(path, "r");
