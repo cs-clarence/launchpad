@@ -317,4 +317,26 @@ required `--secret-file`, exclusions) and recorded in the addendum; interfaces a
 
 ## Status
 
-Revised after independent review; not started.
+Built on branch `feat/cli-org-commands`, one commit per step; all six steps are done and the checks
+below are green. Not run: the independent review the plan names, `test:packages` (network) and anything
+against a real controller.
+
+1. Runner extracted (`apps/cli/src/session-run.ts`): `api` uses it; the existing session specs pass
+   unchanged. Deviations: the runner is two layers, `openSession` (used lazily by `api`, which must not
+   resolve the target before its own input checks) and `runWithSession` (= `withSession` + `openSession`,
+   used by the new commands); `needsFresh` is a boolean or a `(method, path)` predicate (`api` passes its
+   path regex); the callback also receives `organization`, chosen from `--org`, `launchpad.json`, then the
+   profile/`LAUNCHPAD_ORG` before any sign-in; the `Acting as` line is printed by the runner on the first
+   call. The secret-file creation and removal moved to `withSecretFile`.
+2. SDK typed session methods (`packages/sdk/src/session.ts`) with hand-typed inputs and tests. The SDK
+   now also re-exports `ORGANIZATION_ROLES`, `API_KEY_SCOPES`, `MAX_KEY_LIFETIME_DAYS` and their types so
+   the CLI can check `--role`, `--scope` and `--expires-in-days` without a new dependency on
+   `@launchpad-kit/contracts` (which would change the lockfile).
+3. `key` commands, shared `--org`/`Acting as`/`--confirm` plumbing (`session-actions.ts`), README section.
+   When the secret was received but the answer cannot be parsed, a warning says the key exists and the
+   command exits 5 (the underlying error) rather than 0.
+4. `org create` and `member` commands, README section.
+5. `invite` commands, README section; `--json` of `invite create` and `invite list` shows only the
+   documented fields, so a token can never reach the screen.
+6. `--help` test for all ten commands, decision record addendum, controller README, quickstart pointer and
+   the status line in `cli-api-command.md`.

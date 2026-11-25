@@ -316,8 +316,8 @@ delete the file (document this in the revert note). No controller data or contra
 - Controller changes, a device flow, a new token type or key scope (C and E).
 - Operator access inside organizations; storing the password; silent renewal; session or password
   in `LAUNCHPAD_*` environment variables.
-- Dedicated subcommands per organization action (`api --session` is the only entry), session
-  listing, MCP use of sessions.
+- Dedicated subcommands per organization action (`api --session` is the only entry; see the
+  [addendum](#addendum-2026-11-26)), session listing, MCP use of sessions.
 
 ## Consequences
 
@@ -328,6 +328,16 @@ delete the file (document this in the revert note). No controller data or contra
 - Lockout is shared with the dashboard, and each default-flow call is a new sign-in: more than
   5 `api --session` calls a minute throttle the account's dashboard sign-in too. Occasional use
   only; batches use `--keep`.
+
+## Addendum, 2026-11-26
+
+The user accepted dedicated subcommands for session-only actions, which this record listed as out of
+scope for the first slice. In: `org create`, `member list|add|remove`, `invite create|list|revoke`,
+`key list|issue|revoke`. Out: `invite preview|accept`, `project create` and any controller change. They
+reuse items 1 to 15, extending item 14 for `key issue`: the secret is captured from the response before
+it is parsed, and an ambiguous failure after the request was sent (transport failure, 408, 429, 5xx, no
+secret) removes the file and says the key may exist and to run `key list`. They are specified in
+[the plan](../plans/cli-org-commands.md). Session listing and MCP use of sessions stay out of scope.
 
 ## What would reopen this
 

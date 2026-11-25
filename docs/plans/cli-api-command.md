@@ -181,7 +181,9 @@ undoes it. No data or deployment effects.
 
 Decided in [the decision record](../decisions/cli-session-login.md) and built per that record on
 branch `feat/cli-session-login`: `api --session`, `--keep`, `login --session`, `logout --session` and
-`--secret-file`. See its status section for the steps and any deviation.
+`--secret-file`. See its status section for the steps and any deviation. Dedicated commands for
+the session-only actions (`org create`, `member`, `invite`, `key`) followed, per
+[their plan](cli-org-commands.md).
 
 ## Open questions
 

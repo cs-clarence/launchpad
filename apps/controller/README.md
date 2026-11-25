@@ -72,7 +72,8 @@ return the API's own `422`.
 The CLI's `launchpad api` command (see the [CLI README](../cli/README.md#launchpad-api)) reaches
 the key-allowed `/api/v1` routes with a key, including opt-in paging through `rel="next"` links. The
 session-only routes (organization, member, invitation and key creation or revocation) are reached
-with `launchpad api --session`, which signs in with the user's own email and password (the operator
+with `launchpad api --session` or the dedicated commands built on it (`org create`, `member`,
+`invite`, `key`; see [the CLI README](../cli/README.md#organization-commands-session-only)), which sign in with the user's own email and password (the operator
 for organizations, owners and admins for keys and members) and sends only the session cookie and the
 exact `Origin`; see [session access](../cli/README.md#session-access---session) and the
 [decision record](../../docs/decisions/cli-session-login.md). The controller is unchanged: its roles,

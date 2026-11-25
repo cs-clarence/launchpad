@@ -109,7 +109,9 @@ else `~/.config/launchpad`. `LAUNCHPAD_CONFIG_DIR` and `XDG_CONFIG_HOME` must be
 not a link and not writable by others (it is created mode 700); a path with spaces or quotes is
 refused. The key lasts 90 days and has only the scopes `organization:read`, `project:read`,
 `project:create` and `app:read`, which is what this guide uses; revoke it on the organization
-page of the dashboard.
+page of the dashboard or with `launchpad key revoke` (the CLI also has `org create`, `member`,
+`invite` and `key` commands for the session-only actions; see the
+[CLI README](../apps/cli/README.md#organization-commands-session-only)).
 
 Sign in to the dashboard at the controller's address as the owner, with the password from its
 file. The operator creates organizations and has no access inside them. `--out <dir>` moves
