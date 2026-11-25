@@ -8,10 +8,12 @@ import {
     createOrganization,
     listApiKeys,
     listApiKeysPage,
+    listAppsPage,
     listInvitations,
     listInvitationsPage,
     listMyOrganizations,
     listMyOrganizationsPage,
+    listProjectsPage,
     ServiceError,
     type Page,
     type Principal,
@@ -192,5 +194,17 @@ describe("a user's organizations", () => {
         expect(
             await code(listMyOrganizationsPage(testDb.db, ann, { limit: 1, cursor: keys.next! })),
         ).toBe("invalid");
+    });
+});
+
+describe("an empty project allow-list", () => {
+    it("still refuses a malformed cursor, and gives an empty page without one", async () => {
+        for (const list of [listAppsPage, listProjectsPage]) {
+            const empty = await list(testDb.db, ann, org, { limit: 1 }, []);
+            expect(empty).toEqual({ items: [], next: null });
+            expect(
+                await code(list(testDb.db, ann, org, { limit: 1, cursor: "not*base64" }, [])),
+            ).toBe("invalid");
+        }
     });
 });

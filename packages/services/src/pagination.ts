@@ -222,4 +222,8 @@ export async function pageRows<O>(
     return { items, next };
 }
 
-export const emptyPage = <T>(): Page<T> => ({ items: [], next: null });
+// An empty allow-list has nothing to list, but a malformed or foreign cursor is still a 422.
+export function emptyPage<T>(spec: PageSpec, page: PageRequest): Page<T> {
+    if (page.cursor !== undefined) decodeCursor(spec, page.cursor);
+    return { items: [], next: null };
+}

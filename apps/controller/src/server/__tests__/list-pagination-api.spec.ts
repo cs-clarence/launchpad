@@ -95,7 +95,9 @@ async function walk<T>(key: string, first: string) {
 }
 
 const appsPath = (organization = orgA) => `/api/v1/organizations/${organization}/apps`;
-const ids = (rows: { id: string }[]) => rows.map((row) => row.id);
+// Members have no `id` of their own; they are identified by `userId`.
+const ids = (rows: { id?: string; userId?: string }[]) =>
+    rows.map((row) => (row.id ?? row.userId)!);
 let counter = 0;
 
 async function makeApp(organization: string, project: string) {
@@ -571,13 +573,18 @@ describe("paginated lists share one contract", () => {
 
     for (const list of lists) {
         it(`${list.name}: pages equal the whole list, with no repeats`, async () => {
-            const all = ids((await (await get("a", list.path())).json()) as { id: string }[]);
+            const all = ids(
+                (await (await get("a", list.path())).json()) as { id?: string; userId?: string }[],
+            );
             expect(all.length).toBe(list.total);
             const first = await get("a", `${list.path()}?limit=2`);
             expect(nextOf(first)).toMatch(
                 new RegExp(`^${list.path()}\\?limit=2&cursor=[A-Za-z0-9_-]+$`),
             );
-            const { items, pages } = await walk<{ id: string }>("a", `${list.path()}?limit=2`);
+            const { items, pages } = await walk<{ id?: string; userId?: string }>(
+                "a",
+                `${list.path()}?limit=2`,
+            );
             expect(pages.map((page) => page.length)).toEqual([2, 2, 1]);
             expect(ids(items)).toEqual(all);
             const exact = await get("a", `${list.path()}?limit=${list.total}`);

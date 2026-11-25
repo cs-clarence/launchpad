@@ -51,7 +51,10 @@ export async function listProjectsPage(
 ) {
     await requireMembership(db, principal, organizationId, "project:read");
     if (restrictTo && restrictTo.length === 0) {
-        return emptyPage<Awaited<ReturnType<typeof listProjects>>[number]>();
+        return emptyPage<Awaited<ReturnType<typeof listProjects>>[number]>(
+            projectsSpec(organizationId),
+            page,
+        );
     }
     return pageRows(
         projectsQuery(db, organizationId, restrictTo),

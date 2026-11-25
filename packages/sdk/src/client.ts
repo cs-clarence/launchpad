@@ -275,7 +275,7 @@ export function createClient(options: ClientOptions) {
         return null;
     }
 
-    const CURSOR = /^[A-Za-z0-9_-]{1,512}$/;
+    const CURSOR = /^[A-Za-z0-9_-]{1,1024}$/;
     function checkLimit(limit: number, max: number) {
         if (!Number.isInteger(limit) || limit < 1 || limit > max) {
             throw new LaunchpadConfigError(`limit must be an integer from 1 to ${max}.`);

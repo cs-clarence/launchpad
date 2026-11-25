@@ -150,7 +150,8 @@ export async function listAppsPage(
     restrictTo?: string[] | null,
 ) {
     await requireMembership(db, principal, organizationId, "app:read");
-    if (restrictTo && restrictTo.length === 0) return emptyPage<AppSummary>();
+    if (restrictTo && restrictTo.length === 0)
+        return emptyPage<AppSummary>(appsSpec(organizationId), page);
     return pageRows(appsQuery(db, organizationId, restrictTo), appsSpec(organizationId), page);
 }
 
