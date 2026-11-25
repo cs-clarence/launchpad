@@ -119,6 +119,15 @@ Rules that keep the graph correct:
   run using the built `admin` image and an empty second database and archive
   directory. It includes the real writer drain and 25-minute recovery wait and
   cannot be combined with public ingress or fast lease mode.
+- **Local seed.** `omni -i run local:seed` (`tooling/local-seed.ts`, options through
+  `-a "options=..."`) prepares a controller you started yourself for development: it runs the
+  controller's `admin` task (`migrate`, `setup`, `create-user`) through Omni without a shell, then
+  signs in over HTTP to create an organization, a project and an API key, and saves the key with
+  `login` from `@launchpad-kit/client-core` so the profile is what `launchpad login` writes. It
+  starts no server or database, takes passwords only from mode-600 files and prints no secret. Its
+  tests use a fake `fetch` and a fake command runner; `tooling/local-quickstart.spec.ts` fails when
+  the guide ([run Launchpad on your machine](local-quickstart.md)) names an Omni task, script flag,
+  admin or CLI command, setting or link that no longer exists. Update the guide with the script.
 - **Omni loads `.env.local`** from the repository root and the project into task
   environments without expanding variables, and task `env.vars` override the shell. For
   a default that the shell may override, apply it in the command
