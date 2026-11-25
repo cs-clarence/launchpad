@@ -18,7 +18,7 @@ import {
     type RawOptions,
     type RawResponse,
 } from "@launchpad-kit/sdk";
-import type { Io } from "./io";
+import type { Io, SecretFile } from "./io";
 import { applyJq, checkJq, chooseJq, findOnPath } from "./jq";
 import { arrayItems, prettyJson } from "./json-text";
 import { SessionFlow, withSession } from "./session-flow";
@@ -132,11 +132,38 @@ export function addApiCommand(
             "with --session, the controller (else the selected profile's, else LAUNCHPAD_CONTROLLER)",
         )
         .option(
+            "--secret-file <path>",
+            "create this new file (mode 0600) before the request and write the response's `secret` (a new API key) to it; the screen shows it redacted",
+        )
+        .option(
             "--keep",
             "with --session, save the session (session.json, owner-only) instead of signing out; later calls reuse it until `launchpad logout --session`",
         )
         .action(async (endpoint, options, command) => {
-            await withSession(io, (holder) => execute(endpoint, options, command, holder));
+            if (options.secretFile !== undefined && options.paginate) {
+                throw bad("--secret-file cannot be combined with --paginate.");
+            }
+            // Created before anything is sent: an existing file or a failed create means no request.
+            let secretFile: SecretFile | undefined;
+            if (options.secretFile !== undefined) {
+                try {
+                    secretFile = await io.createSecretFile(options.secretFile);
+                } catch (error) {
+                    throw bad(
+                        error instanceof Error
+                            ? error.message
+                            : "The secret file cannot be created.",
+                    );
+                }
+            }
+            try {
+                await withSession(io, (holder) =>
+                    execute(endpoint, options, command, holder, secretFile),
+                );
+            } catch (error) {
+                await secretFile?.remove().catch(() => {});
+                throw error;
+            }
         });
 
     async function execute(
@@ -157,9 +184,11 @@ export function addApiCommand(
             passwordFile?: string;
             controller?: string;
             keep?: true;
+            secretFile?: string;
         },
         command: Command<any, any, any>,
         holder: { flow?: SessionFlow },
+        secretFile?: SecretFile,
     ) {
         {
             const { profile } = command.optsWithGlobals() as { profile?: string };
@@ -481,6 +510,29 @@ export function addApiCommand(
             if (!options.paginate) {
                 const response = await call(query);
                 showResponse(response);
+                if (secretFile) {
+                    let secret: unknown;
+                    try {
+                        secret = (JSON.parse(response.body) as { secret?: unknown } | null)?.secret;
+                    } catch {
+                        secret = undefined;
+                    }
+                    if (typeof secret !== "string" || secret.length === 0) {
+                        throw new Error(
+                            "The response had no secret to save, so the --secret-file was removed.",
+                        );
+                    }
+                    // A key-shaped secret is already shown as lp_[redacted].
+                    if (!secret.startsWith("lp_")) remember(secret);
+                    try {
+                        await secretFile.write(`${secret}\n`);
+                    } catch {
+                        throw new ClientCoreError(
+                            "store-unavailable",
+                            `The key was created but could not be written to ${options.secretFile}. It exists: revoke it in the dashboard or with \`launchpad api\`.`,
+                        );
+                    }
+                }
                 if (options.include) {
                     io.out(
                         [`HTTP ${response.status}`, ...headerLines(response.headers), ""].join(

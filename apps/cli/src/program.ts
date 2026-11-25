@@ -92,6 +92,7 @@ export function buildProgram(rawIo: Io, secrets: Set<string> = new Set()) {
         readStdin: () => rawIo.readStdin(),
         readSecret: (prompt, options) => rawIo.readSecret(prompt, options),
         readPasswordFile: (path) => rawIo.readPasswordFile(path),
+        createSecretFile: (path) => rawIo.createSecretFile(path),
         readFile: (path) => rawIo.readFile(path),
         readData: (source) => rawIo.readData(source),
         findExecutable: rawIo.findExecutable?.bind(rawIo),

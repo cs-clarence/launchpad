@@ -22,8 +22,18 @@ export interface Io {
     readData(source: string): Promise<Uint8Array>;
     // Where `jq` is, if anywhere; tests replace it. Defaults to a search of PATH.
     findExecutable?(name: string): string | null;
+    // Creates `path` exclusively with mode 0600 (it must not exist); nothing is written yet.
+    createSecretFile(path: string): Promise<SecretFile>;
     // Where `--session` listens for SIGINT, SIGTERM and SIGHUP; without it no handler is installed.
     signals?: SignalHooks;
+}
+
+// A file created for a secret the controller shows once, such as a new API key.
+export interface SecretFile {
+    // Writes the secret and closes the file; afterwards `remove` does nothing.
+    write(text: string): Promise<void>;
+    // Deletes the file unless a secret was written to it.
+    remove(): Promise<void>;
 }
 
 export interface SecretOptions {
@@ -127,6 +137,42 @@ export function readSecretFrom(
 const readSecret = (prompt: string, options?: SecretOptions) =>
     readSecretFrom({ stdin: process.stdin as never, stderr: process.stderr }, prompt, options);
 
+export async function createSecretFile(file: string): Promise<SecretFile> {
+    let handle;
+    try {
+        handle = await fs.open(file, "wx", 0o600);
+    } catch (error) {
+        const code = (error as NodeJS.ErrnoException).code;
+        throw new Error(
+            code === "EEXIST"
+                ? "The secret file already exists; choose a path that does not exist."
+                : code === "ENOENT"
+                  ? "The secret file's directory does not exist."
+                  : "The secret file cannot be created.",
+        );
+    }
+    let written = false;
+    let closed = false;
+    return {
+        async write(text) {
+            try {
+                await handle.writeFile(text);
+                await handle.sync();
+            } finally {
+                closed = true;
+                await handle.close();
+            }
+            written = true;
+        },
+        async remove() {
+            if (written) return;
+            if (!closed) await handle.close().catch(() => {});
+            closed = true;
+            await fs.rm(file, { force: true });
+        },
+    };
+}
+
 const refusal = (why: string) => new Error(`The password file ${why}.`);
 
 // The file must be ours and closed to others, like the credential store; a link or a FIFO is
@@ -229,6 +275,7 @@ export function realIo(env: Record<string, string | undefined> = process.env): I
         stdinIsTTY: Boolean(process.stdin.isTTY),
         readSecret,
         readPasswordFile,
+        createSecretFile,
         readStdin,
         readFile: async (path) => {
             const handle = await fs.open(path, "r");

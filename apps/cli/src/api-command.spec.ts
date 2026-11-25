@@ -72,6 +72,9 @@ async function api(
         interactive: false,
         readSecret: async () => "",
         readPasswordFile: async () => "",
+        createSecretFile: async () => {
+            throw new Error("unused");
+        },
         readStdin: async () => "",
         readFile: async () => ({ text: "", mode: 0o600 }),
         findExecutable: () => options.jq ?? null,

@@ -2,8 +2,8 @@ import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { createContext } from "@launchpad-kit/client-core";
-import type { Io, SignalHooks } from "./io";
-import { readSecretFrom } from "./io";
+import type { Io, SecretFile, SignalHooks } from "./io";
+import { createSecretFile, readSecretFrom } from "./io";
 import { run } from "./program";
 
 // A fake controller and terminal for the `--session` tests. Every fetch is recorded, so a test
@@ -91,6 +91,8 @@ export interface Options {
     // Called just after the hidden prompt starts, to type, press Ctrl-C or send a signal.
     onPrompt?: (world: World) => void;
     server?: Server;
+    // Wraps the secret file, to fail a write.
+    secretFile?: (file: SecretFile) => SecretFile;
 }
 
 export async function makeDir() {
@@ -276,6 +278,10 @@ export async function session(args: string[], dir: string, options: Options = {}
             const found = options.files?.[file];
             if (found === undefined) throw new Error("The password file was not found.");
             return found;
+        },
+        createSecretFile: async (file) => {
+            const created = await createSecretFile(file);
+            return options.secretFile ? options.secretFile(created) : created;
         },
         readStdin: async () => "",
         readFile: async () => ({ text: "", mode: 0o600 }),
