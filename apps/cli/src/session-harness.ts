@@ -44,6 +44,14 @@ export const json = (body: unknown, init: ResponseInit = {}) =>
 
 export type Responder = (api: Api, world: World) => Response | Promise<Response>;
 
+// The controller's state, shared between runs when a test needs a session to outlive one command.
+export interface Server {
+    sessions: Map<string, string>;
+    counter: number;
+}
+export const newServer = (): Server => ({ sessions: new Map(), counter: 0 });
+export const COOKIE_NAME = "__Secure-better-auth.session_token";
+
 export interface World {
     requests: Recorded[];
     out: string[];
@@ -82,6 +90,7 @@ export interface Options {
     onRequest?: (request: Recorded, world: World) => void;
     // Called just after the hidden prompt starts, to type, press Ctrl-C or send a signal.
     onPrompt?: (world: World) => void;
+    server?: Server;
 }
 
 export async function makeDir() {
@@ -92,7 +101,8 @@ export async function session(args: string[], dir: string, options: Options = {}
     const requests: Recorded[] = [];
     const out: string[] = [];
     const err: string[] = [];
-    const sessions = new Map<string, string>(); // cookie pair -> email
+    const server = options.server ?? newServer();
+    const sessions = server.sessions; // cookie pair -> email
     const signedIn: string[] = [];
     const signedOut: string[] = [];
     const listeners = new Map<string, Set<() => void>>();
@@ -100,7 +110,6 @@ export async function session(args: string[], dir: string, options: Options = {}
     const prompts: string[] = [];
     const rawMode: boolean[] = [];
     const dataListeners: Array<(chunk: string) => void> = [];
-    let counter = 0;
     let releaseHang: () => void = () => {};
 
     const world: World = {
@@ -126,7 +135,7 @@ export async function session(args: string[], dir: string, options: Options = {}
             }),
     };
 
-    const cookieName = "__Secure-better-auth.session_token";
+    const cookieName = COOKIE_NAME;
     const fetchImpl = (async (url: string, init: RequestInit) => {
         const parsed = new URL(url);
         const headers: Record<string, string> = {};
@@ -158,7 +167,7 @@ export async function session(args: string[], dir: string, options: Options = {}
                         { status: 401 },
                     );
                 }
-                const pair = `${cookieName}=tok${++counter}.sig%2Bsecretvalue`;
+                const pair = `${cookieName}=tok${++server.counter}.sig%2Bsecretvalue`;
                 sessions.set(pair, body.email.trim().toLowerCase());
                 signedIn.push(body.email);
                 return new Response(JSON.stringify({ token: "t" }), {

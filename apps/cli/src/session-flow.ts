@@ -1,5 +1,5 @@
 import { createSessionClient, type LaunchpadSessionClient } from "@launchpad-kit/sdk";
-import { describe } from "./errors";
+import { describe, ExitWith } from "./errors";
 import type { Io } from "./io";
 import { readPassword } from "./password";
 
@@ -13,6 +13,8 @@ export interface SessionFlowOptions {
     email: string;
     passwordFile?: string;
     verbose?: boolean;
+    // Keep the session in session.json instead of signing out (`--keep`, `login --session`).
+    keep?: boolean;
     // Called with every secret the flow learns, so the output filter can hide it.
     remember(secret: string): void;
 }
@@ -25,6 +27,8 @@ export class SessionFlow {
     private client: LaunchpadSessionClient | null = null;
     private signingIn: Promise<LaunchpadSessionClient> | null = null;
     private listeners: Array<[NodeJS.Signals, () => void]> = [];
+    // A session that is not ours to sign out: kept earlier, or kept just now.
+    private kept = false;
     // The exit code of the signal that interrupted the command, if any.
     interruptedWith: number | null = null;
 
@@ -58,6 +62,21 @@ export class SessionFlow {
         this.listeners = [];
     }
 
+    // Uses a session kept earlier: no prompt, no sign-out, no signal handlers.
+    attach(cookie: string): LaunchpadSessionClient {
+        const client = createSessionClient({
+            baseUrl: this.options.controller,
+            cookie,
+            fetch: this.options.io.context.fetch,
+        });
+        this.options.remember(cookie);
+        this.options.remember(cookie.slice(cookie.indexOf("=") + 1));
+        this.client = client;
+        this.kept = true;
+        this.signingIn = Promise.resolve(client);
+        return client;
+    }
+
     // Signs in once; later callers share the result.
     signIn(): Promise<LaunchpadSessionClient> {
         this.signingIn ??= this.start();
@@ -82,7 +101,33 @@ export class SessionFlow {
         const { cookie } = await client.signIn(email, password, { signal: this.abort.signal });
         this.options.remember(cookie);
         this.options.remember(cookie.slice(cookie.indexOf("=") + 1));
+        if (this.options.keep) await this.keep(cookie);
         return client;
+    }
+
+    // Replaces the saved session for this controller, then signs the one it replaced out, so no
+    // old server session is orphaned. If saving fails the new session is signed out by `close`.
+    private async keep(cookie: string) {
+        const { io, controller, email } = this.options;
+        const previous = await io.context.sessions.put({ controller, email, cookie });
+        this.kept = true;
+        io.err(
+            "Session saved. It lasts until `launchpad logout --session`, or 7 days after its last use.",
+        );
+        if (!previous) return;
+        this.options.remember(previous.cookie);
+        try {
+            const old = createSessionClient({
+                baseUrl: controller,
+                cookie: previous.cookie,
+                fetch: io.context.fetch,
+            });
+            await old.signOut();
+        } catch (error) {
+            io.err(
+                `Warning: could not sign the previous session out (${describe(error).message}). It ends on its own, at most 7 days after its last use.`,
+            );
+        }
     }
 
     // Revokes the session, best effort, and removes the signal handlers. A failure is a warning:
@@ -92,7 +137,7 @@ export class SessionFlow {
         try {
             const client = this.client;
             this.client = null;
-            if (client?.cookie()) {
+            if (client?.cookie() && !this.kept) {
                 if (this.options.verbose) io.err("> POST /api/auth/sign-out");
                 try {
                     await client.signOut();
@@ -106,4 +151,25 @@ export class SessionFlow {
             this.uninstall();
         }
     }
+}
+
+// Runs a command that may start a session: whatever happens, the session is closed, and a
+// signal that interrupted it becomes the matching exit code.
+export async function withSession(
+    io: Io,
+    body: (holder: { flow?: SessionFlow }) => Promise<void>,
+): Promise<void> {
+    const holder: { flow?: SessionFlow } = {};
+    try {
+        await body(holder);
+    } catch (error) {
+        await holder.flow?.close();
+        if (holder.flow?.interruptedWith != null) {
+            io.err("Interrupted.");
+            throw new ExitWith(holder.flow.interruptedWith);
+        }
+        throw error;
+    }
+    await holder.flow?.close();
+    if (holder.flow?.interruptedWith != null) throw new ExitWith(holder.flow.interruptedWith);
 }

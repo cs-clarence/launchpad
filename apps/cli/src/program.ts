@@ -14,6 +14,7 @@ import { addAppCommands } from "./app-commands";
 import { describe, EXIT, ExitWith } from "./errors";
 import type { Io } from "./io";
 import { safeOutput } from "./output";
+import { sessionLogin, sessionLogout } from "./session-commands";
 
 const text = (rows: string[][]) => {
     const widths = rows[0]!.map((_, column) =>
@@ -95,6 +96,7 @@ export function buildProgram(rawIo: Io, secrets: Set<string> = new Set()) {
         readData: (source) => rawIo.readData(source),
         findExecutable: rawIo.findExecutable?.bind(rawIo),
     };
+    const remember = (secret: string) => void secrets.add(secret);
     const program = new Command()
         .name("launchpad")
         .description("Work with a Launchpad controller using an organization API key.")
@@ -119,14 +121,49 @@ export function buildProgram(rawIo: Io, secrets: Set<string> = new Set()) {
         .description(
             "Save an API key for a controller. The key is read from a file, stdin or the terminal, never an argument.",
         )
-        .requiredOption(
-            "--controller <url>",
-            "the controller's address, e.g. https://control.example.com",
-        )
+        .option("--controller <url>", "the controller's address, e.g. https://control.example.com")
         .option("--key-file <path>", "read the key from this file")
         .option("--key-stdin", "read the key from standard input")
+        .option(
+            "--session",
+            "instead of a key, sign in with your own account and keep the session (session.json, owner-only) for `api --session`; it replaces a saved session for the controller",
+        )
+        .option("--email <address>", "with --session, the account's email address")
+        .option(
+            "--password-file <path>",
+            "with --session, read the password from this private file",
+        )
         .action(async (options, command) => {
             const { profile, json } = wants(command);
+            if (options.session) {
+                if (options.keyFile !== undefined || options.keyStdin) {
+                    throw new CommanderError(
+                        EXIT.usage,
+                        "commander.mixedLogin",
+                        "error: --session cannot be combined with --key-file or --key-stdin",
+                    );
+                }
+                return sessionLogin(io, { ...options, profile, json }, remember);
+            }
+            for (const [flag, value] of [
+                ["--email", options.email],
+                ["--password-file", options.passwordFile],
+            ] as const) {
+                if (value !== undefined) {
+                    throw new CommanderError(
+                        EXIT.usage,
+                        "commander.needsSession",
+                        `error: ${flag} needs --session`,
+                    );
+                }
+            }
+            if (options.controller === undefined) {
+                throw new CommanderError(
+                    EXIT.usage,
+                    "commander.missingControllerOption",
+                    "error: required option '--controller <url>' not specified",
+                );
+            }
             const key = await readKey(io, options);
             const result = await login(io.context, {
                 controller: options.controller,
@@ -148,8 +185,36 @@ export function buildProgram(rawIo: Io, secrets: Set<string> = new Set()) {
 
     program
         .command("logout")
-        .description("Forget a saved profile.")
-        .action(async (_options, command) => {
+        .description(
+            "Forget a saved profile, or with --session revoke and forget the saved session.",
+        )
+        .option("--session", "revoke and delete the session saved by `login --session` or `--keep`")
+        .option(
+            "--controller <url>",
+            "with --session, the controller (else the selected profile's)",
+        )
+        .option("--email <address>", "accepted with --session and ignored")
+        .action(async (options, command) => {
+            if (options.session) {
+                const { profile, json } = wants(command);
+                return sessionLogout(
+                    io,
+                    { controller: options.controller, profile, json },
+                    remember,
+                );
+            }
+            for (const [flag, value] of [
+                ["--controller", options.controller],
+                ["--email", options.email],
+            ] as const) {
+                if (value !== undefined) {
+                    throw new CommanderError(
+                        EXIT.usage,
+                        "commander.needsSession",
+                        `error: ${flag} needs --session`,
+                    );
+                }
+            }
             const result = await logout(io.context, wants(command).profile);
             print(command, result, () => `Logged out of profile "${result.profile}".`);
         });
@@ -232,7 +297,7 @@ export function buildProgram(rawIo: Io, secrets: Set<string> = new Set()) {
             );
         });
 
-    addApiCommand(program, io, (secret) => void secrets.add(secret));
+    addApiCommand(program, io, remember);
     addAppCommands(program, io.context, io.workingDir ?? process.cwd(), io.out);
     return program;
 }

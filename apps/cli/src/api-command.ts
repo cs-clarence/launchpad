@@ -11,23 +11,27 @@ import {
 } from "@launchpad-kit/client-core";
 import {
     FORBIDDEN_RAW_HEADERS,
+    LaunchpadApiError,
     LaunchpadTransportError,
     normalizeBaseUrl,
     RAW_METHODS,
     type RawOptions,
     type RawResponse,
 } from "@launchpad-kit/sdk";
-import { ExitWith } from "./errors";
 import type { Io } from "./io";
 import { applyJq, checkJq, chooseJq, findOnPath } from "./jq";
 import { arrayItems, prettyJson } from "./json-text";
-import { SessionFlow } from "./session-flow";
+import { SessionFlow, withSession } from "./session-flow";
 import { checkEmail, refuseWithKey, resolveSessionTarget } from "./session-target";
 
 const MAX_PAGES = 1000;
 const MAX_TOTAL_ITEMS = 100_000;
 const MAX_TOTAL_BYTES = 16 * 1024 * 1024;
 const PAGINATE_DEADLINE_MS = 5 * 60 * 1000;
+const FRESH_MS = 15 * 60 * 1000;
+// Issuing a key is the call the controller allows only for a session signed in recently.
+const needsFreshSession = (method: string, path: string) =>
+    method === "POST" && /^\/organizations\/[^/]+\/api-keys\/?$/.test(path);
 const PLACEHOLDER = /\{(org|project)\}/g;
 
 const bad = (message: string) => new ClientCoreError("bad-input", message);
@@ -127,21 +131,12 @@ export function addApiCommand(
             "--controller <url>",
             "with --session, the controller (else the selected profile's, else LAUNCHPAD_CONTROLLER)",
         )
+        .option(
+            "--keep",
+            "with --session, save the session (session.json, owner-only) instead of signing out; later calls reuse it until `launchpad logout --session`",
+        )
         .action(async (endpoint, options, command) => {
-            const holder: { flow?: SessionFlow } = {};
-            try {
-                await execute(endpoint, options, command, holder);
-            } catch (error) {
-                await holder.flow?.close();
-                if (holder.flow?.interruptedWith != null) {
-                    io.err("Interrupted.");
-                    throw new ExitWith(holder.flow.interruptedWith);
-                }
-                throw error;
-            }
-            await holder.flow?.close();
-            if (holder.flow?.interruptedWith != null)
-                throw new ExitWith(holder.flow.interruptedWith);
+            await withSession(io, (holder) => execute(endpoint, options, command, holder));
         });
 
     async function execute(
@@ -161,6 +156,7 @@ export function addApiCommand(
             email?: string;
             passwordFile?: string;
             controller?: string;
+            keep?: true;
         },
         command: Command<any, any, any>,
         holder: { flow?: SessionFlow },
@@ -172,16 +168,14 @@ export function addApiCommand(
                     ["--email", options.email],
                     ["--password-file", options.passwordFile],
                     ["--controller", options.controller],
+                    ["--keep", options.keep],
                 ] as const) {
                     if (value !== undefined) throw bad(`${flag} needs --session.`);
                 }
             } else {
                 refuseWithKey(io.context, "--session");
-                if (options.email === undefined) {
-                    throw bad("--session needs --email <address> to sign in.");
-                }
             }
-            const email = options.session ? checkEmail(options.email!) : null;
+            const email = options.email === undefined ? null : checkEmail(options.email);
             const method = (
                 options.method ?? (fields.length > 0 || options.input ? "POST" : "GET")
             ).toUpperCase();
@@ -255,23 +249,57 @@ export function addApiCommand(
                     controller: options.controller,
                     profile: profile ?? workspace.config?.profile,
                 });
+                // `--keep` always signs in again; otherwise a saved session for this controller is used.
+                const saved = options.keep
+                    ? null
+                    : await io.context.sessions.get(target.controller);
+                if (saved && email !== null && email !== saved.email) {
+                    throw bad(
+                        "--email differs from the saved session's account. Use `launchpad login --session` to switch, or `launchpad logout --session` first.",
+                    );
+                }
+                if (!saved && email === null) {
+                    throw bad("--session needs --email <address> to sign in.");
+                }
                 const flow = new SessionFlow({
                     io,
                     controller: target.controller,
-                    email: email!,
+                    email: saved?.email ?? email!,
                     passwordFile: options.passwordFile,
                     verbose: options.verbose,
+                    keep: options.keep,
                     remember,
                 });
                 holder.flow = flow;
+                if (saved) flow.attach(saved.cookie);
                 const raw = async (method: string, path: string, rawOptions: RawOptions) => {
                     const client = await flow.signIn();
-                    return client.raw(method, path, {
-                        ...rawOptions,
-                        signal: rawOptions.signal
-                            ? AbortSignal.any([flow.signal, rawOptions.signal])
-                            : flow.signal,
-                    });
+                    if (
+                        saved &&
+                        needsFreshSession(method, path) &&
+                        Date.now() - Date.parse(saved.savedAt) > FRESH_MS
+                    ) {
+                        io.err(
+                            "Warning: this saved session is older than 15 minutes, and issuing a key needs a sign-in from the last 15 minutes. Run `launchpad login --session` again if the controller refuses.",
+                        );
+                    }
+                    try {
+                        return await client.raw(method, path, {
+                            ...rawOptions,
+                            signal: rawOptions.signal
+                                ? AbortSignal.any([flow.signal, rawOptions.signal])
+                                : flow.signal,
+                        });
+                    } catch (error) {
+                        if (saved && error instanceof LaunchpadApiError && error.status === 401) {
+                            await io.context.sessions.remove(target.controller, saved.cookie);
+                            throw new ClientCoreError(
+                                "not-logged-in",
+                                "The saved session is no longer valid and was removed. Sign in again with `launchpad login --session`.",
+                            );
+                        }
+                        throw error;
+                    }
                 };
                 return {
                     controller: target.controller,
