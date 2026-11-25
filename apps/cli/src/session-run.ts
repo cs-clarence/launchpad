@@ -30,8 +30,14 @@ export interface SessionRunOptions {
     // Warn when a saved session is older than 15 minutes and the call is one the controller
     // allows only after a recent sign-in. A function decides per request.
     needsFresh: boolean | ((method: string, path: string) => boolean);
-    // Print `Acting as ...` on stderr once, after sign-in and before the first request.
-    acting?: { organization: string | null };
+    // Print `Acting as ...` on stderr once, after sign-in and before the first request. With
+    // `chooseOrganization` the line names the organization it returns.
+    acting?: boolean;
+    // Picks the organization from the profile's or LAUNCHPAD_ORG (null if none) before any
+    // sign-in; throwing here means nothing was asked or sent.
+    chooseOrganization?: (fromTarget: string | null) => string;
+    // Wording for a missing `--email` when no session is saved.
+    missingEmail?: string;
 }
 
 // What a call is made through. Signing in happens at the first call, never before.
@@ -47,6 +53,8 @@ export interface SessionCaller {
 
 export interface OpenSession {
     caller: SessionCaller;
+    // What `chooseOrganization` returned, if given.
+    organization: string | null;
     controller: string;
     // The account that signs in, or the saved session's.
     email: string;
@@ -74,8 +82,11 @@ export async function openSession(
         );
     }
     if (!saved && email === null) {
-        throw bad("--session needs --email <address> to sign in.");
+        throw bad(options.missingEmail ?? "--session needs --email <address> to sign in.");
     }
+    const organization = options.chooseOrganization
+        ? options.chooseOrganization(target.organizationId)
+        : null;
     const actingEmail = saved?.email ?? email!;
     const flow = new SessionFlow({
         io,
@@ -96,9 +107,7 @@ export async function openSession(
             announced = true;
             io.err(
                 `Acting as ${actingEmail} on ${target.controller}${
-                    options.acting.organization === null
-                        ? ""
-                        : `, organization ${options.acting.organization}`
+                    organization === null ? "" : `, organization ${organization}`
                 }`,
             );
         }
@@ -148,6 +157,7 @@ export async function openSession(
         caller,
         controller: target.controller,
         email: actingEmail,
+        organization,
         organizationId: target.organizationId,
     };
 }
@@ -156,7 +166,12 @@ export async function openSession(
 // a signal that interrupted it becomes the matching exit code.
 export function runWithSession<T>(
     options: SessionRunOptions,
-    body: (session: { client: SessionCaller; email: string; controller: string }) => Promise<T>,
+    body: (session: {
+        client: SessionCaller;
+        email: string;
+        controller: string;
+        organization: string | null;
+    }) => Promise<T>,
 ): Promise<T> {
     let result!: T;
     return withSession(options.io, async (holder) => {
@@ -165,6 +180,7 @@ export function runWithSession<T>(
             client: open.caller,
             email: open.email,
             controller: open.controller,
+            organization: open.organization,
         });
     }).then(() => result);
 }
