@@ -315,7 +315,9 @@ launchpad key revoke KEY_ID --org ORG_ID --confirm
   of the answer could not be read, the file keeps the secret and a warning says the key exists. If the write
   fails after the key was created, the error says it exists and must be revoked.
 - **A kept session goes stale** for `key issue` after 15 minutes: the command prints a warning first and the
-  controller's 403 "Sign in again to do this." exits 3; run `launchpad login --session` again.
+  controller's 403 "Sign in again to do this." exits 3; run `launchpad login --session` again. A 401 from
+  a kept session that has expired is a refusal too: the saved session is removed, the exit code is 3 and no key
+  exists, so there is no "may exist" message.
 - **`key revoke`** (`DELETE /organizations/:org/api-keys/:id`; owner or admin; repeating it is fine) takes the ID
   `key list` prints.
 
