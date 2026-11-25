@@ -22,6 +22,7 @@ import {
 } from "@launchpad-kit/contracts";
 import { z } from "zod";
 import { LaunchpadConfigError, LaunchpadTransportError } from "./errors";
+import { loose } from "./loose";
 import {
     createTransport,
     type Extra,
@@ -84,9 +85,6 @@ export interface ClientOptions {
 }
 
 const API_KEY_FORMAT = /^lp_[A-Za-z0-9_-]{20,200}$/;
-// Loose: a newer controller may add fields without breaking an older client.
-const loose = <S extends z.ZodObject>(schema: S) =>
-    schema.loose() as unknown as z.ZodType<z.infer<S>>;
 
 export function createClient(options: ClientOptions) {
     const base = normalizeBaseUrl(options.baseUrl);

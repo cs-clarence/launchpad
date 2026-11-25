@@ -1,4 +1,18 @@
-import { LaunchpadApiError, LaunchpadConfigError } from "./errors";
+import {
+    addedMemberSchema,
+    type ApiKeyScopeName,
+    apiKeySummarySchema,
+    createdApiKeySchema,
+    createdInvitationSchema,
+    createdOrganizationSchema,
+    invitationSchema,
+    memberSchema,
+    okSchema,
+    type OrganizationRoleName,
+} from "@launchpad-kit/contracts";
+import { z } from "zod";
+import { LaunchpadApiError, LaunchpadConfigError, LaunchpadTransportError } from "./errors";
+import { loose } from "./loose";
 import {
     createTransport,
     normalizeBaseUrl,
@@ -7,6 +21,37 @@ import {
     rawRequest,
     scrub,
 } from "./transport";
+
+// The request bodies the controller validates (its schemas live in the services package, which
+// this one does not depend on), typed by hand. The controller is the validator.
+export interface CreateOrganizationInput {
+    name: string;
+    slug: string;
+    ownerEmail: string;
+}
+export interface AddMemberInput {
+    email: string;
+    role: OrganizationRoleName;
+}
+export interface CreateInvitationInput {
+    email: string;
+    role: OrganizationRoleName;
+}
+export interface IssueApiKeyInput {
+    name: string;
+    scopes: ApiKeyScopeName[];
+    projectIds?: string[];
+    expiresInDays: number;
+}
+
+export interface SessionCallOptions {
+    signal?: AbortSignal;
+}
+export interface IssueApiKeyOptions extends SessionCallOptions {
+    // Receives the `secret` string of a successful answer before the answer is parsed, and is
+    // awaited, so the caller can put it somewhere safe even if the rest of the body is unusable.
+    onSecret?: (secret: string) => void | Promise<void>;
+}
 
 export interface SessionClientOptions {
     // The controller's origin, with the same rules as the key client (https, or loopback http).
@@ -77,6 +122,51 @@ export function createSessionClient(options: SessionClientOptions) {
     const signInTransport = createTransport(config("/api/auth", false));
     const authTransport = createTransport(config("/api/auth", true));
     const apiTransport = createTransport(config("/api/v1", true));
+
+    // One `/api/v1` call with the session: path segments are encoded, the answer is parsed with
+    // the contracts' response schema, and anything else is the SDK's "unexpected answer".
+    async function call<T>(
+        method: string,
+        path: string,
+        schema: z.ZodType<T>,
+        body?: unknown,
+        extra: SessionCallOptions & { onText?: (text: string) => Promise<void> } = {},
+    ): Promise<T> {
+        if (!cookie) throw new LaunchpadConfigError("This client has no session.");
+        const { text: raw } = await apiTransport.exchange(method, path, body, {
+            signal: extra.signal,
+        });
+        const text = scrub(raw, secrets());
+        await extra.onText?.(raw);
+        let json: unknown;
+        try {
+            json = text.length > 0 ? JSON.parse(text) : undefined;
+        } catch {
+            json = undefined;
+        }
+        const parsed = schema.safeParse(json);
+        if (!parsed.success) {
+            throw new LaunchpadTransportError(
+                "invalid-response",
+                "The controller's answer is not what this version of the SDK expects.",
+            );
+        }
+        return parsed.data;
+    }
+    const seg = (id: string) => {
+        if (
+            typeof id !== "string" ||
+            id.length === 0 ||
+            id.length > 256 ||
+            id === "." ||
+            id === ".." ||
+            /[\u0000-\u001f\u007f]/.test(id)
+        ) {
+            throw new LaunchpadConfigError("A resource ID is required.");
+        }
+        return encodeURIComponent(id);
+    };
+    const org = (id: string) => `/organizations/${seg(id)}`;
 
     return {
         origin,
@@ -150,6 +240,113 @@ export function createSessionClient(options: SessionClientOptions) {
                     headers.append(name, scrub(value, secrets()));
             }
             return { ...result, headers, body: scrub(result.body, secrets()) };
+        },
+
+        // Session-only actions. Each is one call; none looks anything up.
+        organizations: {
+            create: async (input: CreateOrganizationInput, extra?: SessionCallOptions) =>
+                call("POST", "/organizations", loose(createdOrganizationSchema), input, extra),
+        },
+        members: {
+            list: async (organizationId: string, extra?: SessionCallOptions) =>
+                call(
+                    "GET",
+                    `${org(organizationId)}/members`,
+                    z.array(loose(memberSchema)),
+                    undefined,
+                    extra,
+                ),
+            add: async (
+                organizationId: string,
+                input: AddMemberInput,
+                extra?: SessionCallOptions,
+            ) =>
+                call(
+                    "POST",
+                    `${org(organizationId)}/members`,
+                    loose(addedMemberSchema),
+                    input,
+                    extra,
+                ),
+            remove: async (organizationId: string, userId: string, extra?: SessionCallOptions) =>
+                call(
+                    "DELETE",
+                    `${org(organizationId)}/members/${seg(userId)}`,
+                    loose(okSchema),
+                    undefined,
+                    extra,
+                ),
+        },
+        invitations: {
+            create: async (
+                organizationId: string,
+                input: CreateInvitationInput,
+                extra?: SessionCallOptions,
+            ) =>
+                call(
+                    "POST",
+                    `${org(organizationId)}/invitations`,
+                    loose(createdInvitationSchema),
+                    input,
+                    extra,
+                ),
+            list: async (organizationId: string, extra?: SessionCallOptions) =>
+                call(
+                    "GET",
+                    `${org(organizationId)}/invitations`,
+                    z.array(loose(invitationSchema)),
+                    undefined,
+                    extra,
+                ),
+            revoke: async (
+                organizationId: string,
+                invitationId: string,
+                extra?: SessionCallOptions,
+            ) =>
+                call(
+                    "DELETE",
+                    `${org(organizationId)}/invitations/${seg(invitationId)}`,
+                    loose(okSchema),
+                    undefined,
+                    extra,
+                ),
+        },
+        apiKeys: {
+            list: async (organizationId: string, extra?: SessionCallOptions) =>
+                call(
+                    "GET",
+                    `${org(organizationId)}/api-keys`,
+                    z.array(loose(apiKeySummarySchema)),
+                    undefined,
+                    extra,
+                ),
+            issue: async (
+                organizationId: string,
+                input: IssueApiKeyInput,
+                extra: IssueApiKeyOptions = {},
+            ) =>
+                call("POST", `${org(organizationId)}/api-keys`, loose(createdApiKeySchema), input, {
+                    signal: extra.signal,
+                    onText: async (text) => {
+                        let secret: unknown;
+                        try {
+                            secret = (JSON.parse(text) as { secret?: unknown } | null)?.secret;
+                        } catch {
+                            return;
+                        }
+                        if (typeof secret === "string" && secret.length > 0) {
+                            await extra.onSecret?.(secret);
+                        }
+                    },
+                }),
+            revoke: async (organizationId: string, keyId: string, extra?: SessionCallOptions) =>
+                call(
+                    "DELETE",
+                    `${org(organizationId)}/api-keys/${seg(keyId)}`,
+                    loose(okSchema),
+                    undefined,
+                    extra,
+                ),
         },
     };
 }
