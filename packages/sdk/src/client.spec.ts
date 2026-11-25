@@ -610,3 +610,54 @@ describe("raw", () => {
         expect(calls).toEqual([]);
     });
 });
+
+describe("raw: base URL with a path prefix", () => {
+    const prefixed = (link: string) => {
+        const fetchImpl = (async () =>
+            json([], { headers: { link: `<${link}>; rel="next"` } })) as unknown as typeof fetch;
+        return createClient({
+            baseUrl: "https://control.example.com/controller",
+            apiKey: KEY,
+            fetch: fetchImpl,
+        });
+    };
+    const list = "organizations/o/apps";
+
+    it("follows a next link under the prefix or in the controller's own form", async () => {
+        for (const link of [
+            "/controller/api/v1/organizations/o/apps?limit=2&cursor=c1",
+            "https://control.example.com/controller/api/v1/organizations/o/apps?limit=2&cursor=c1",
+            "/api/v1/organizations/o/apps?limit=2&cursor=c1",
+        ]) {
+            expect((await prefixed(link).raw("GET", list)).next, link).toEqual([
+                ["limit", "2"],
+                ["cursor", "c1"],
+            ]);
+        }
+    });
+
+    it("still refuses another path or origin", async () => {
+        for (const link of [
+            "/controller/api/v1/organizations/o/members?cursor=c1",
+            "/controller/api/v1/other?cursor=c1",
+            "/other/api/v1/organizations/o/apps?cursor=c1",
+            "https://evil.example.net/controller/api/v1/organizations/o/apps?cursor=c1",
+            "//evil.example.net/controller/api/v1/organizations/o/apps?cursor=c1",
+        ]) {
+            expect((await prefixed(link).raw("GET", list)).next, link).toBeNull();
+        }
+    });
+
+    it("sends raw bytes unchanged", async () => {
+        const bytes = new Uint8Array([0x1f, 0x8b, 0x08, 0xff, 0x00]);
+        const { client, calls } = recording(() => json({}));
+        await client.raw("POST", "x", {
+            body: bytes,
+            headers: { "content-type": "application/gzip" },
+        });
+        expect([...(calls[0]!.init.body as Uint8Array)]).toEqual([...bytes]);
+        await expect(
+            client.raw("POST", "x", { body: new Uint8Array(1024 * 1024 + 1) }),
+        ).rejects.toBeInstanceOf(LaunchpadConfigError);
+    });
+});

@@ -13,8 +13,8 @@ export interface Io {
     readSecret(prompt: string): Promise<string>;
     readStdin(): Promise<string>;
     readFile(path: string): Promise<{ text: string; mode: number; regular?: boolean }>;
-    // Request data for `api`: a file, or standard input for "-". At most 1 MiB, UTF-8.
-    readData(source: string): Promise<string>;
+    // Request data for `api`: a file, or standard input for "-". At most 1 MiB, as bytes.
+    readData(source: string): Promise<Uint8Array>;
     // Where `jq` is, if anywhere; tests replace it. Defaults to a search of PATH.
     findExecutable?(name: string): string | null;
 }
@@ -27,6 +27,14 @@ async function readBounded(
     limit = MAX_SECRET_BYTES,
     tooLong = "Input is too long to be a key.",
 ): Promise<string> {
+    return Buffer.from(await readBytes(chunks, limit, tooLong)).toString("utf8");
+}
+
+async function readBytes(
+    chunks: AsyncIterable<Uint8Array>,
+    limit: number,
+    tooLong: string,
+): Promise<Uint8Array> {
     const parts: Uint8Array[] = [];
     let bytes = 0;
     for await (const chunk of chunks) {
@@ -34,7 +42,7 @@ async function readBounded(
         if (bytes > limit) throw new Error(tooLong);
         parts.push(chunk);
     }
-    return Buffer.concat(parts).toString("utf8");
+    return Buffer.concat(parts);
 }
 
 async function readStdin(): Promise<string> {
@@ -72,9 +80,9 @@ function readSecret(prompt: string): Promise<string> {
     });
 }
 
-async function readData(source: string, store: string): Promise<string> {
+async function readData(source: string, store: string): Promise<Uint8Array> {
     const tooLong = "The data is larger than 1 MiB.";
-    if (source === "-") return readBounded(process.stdin, MAX_DATA_BYTES, tooLong);
+    if (source === "-") return readBytes(process.stdin, MAX_DATA_BYTES, tooLong);
     const location = await fs.realpath(source);
     // The process environment (and so a key) is readable here on Linux.
     if (process.platform === "linux" && /^\/(?:proc|sys)(?:\/|$)/.test(location)) {
@@ -94,7 +102,7 @@ async function readData(source: string, store: string): Promise<string> {
         const stat = await handle.stat();
         if (!stat.isFile()) throw new Error("The data source is not a regular file.");
         if (stat.size > MAX_DATA_BYTES) throw new Error(tooLong);
-        return await readBounded(
+        return await readBytes(
             handle.createReadStream({ autoClose: false, highWaterMark: 64 * 1024 }),
             MAX_DATA_BYTES,
             tooLong,

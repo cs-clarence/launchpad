@@ -14,17 +14,27 @@ const MAX_EXPRESSION_CHARS = 4096;
 
 export type JqEngine = { kind: "system"; file: string } | { kind: "builtin" };
 
+// The file names to try for `name`: on Windows the program is `name.exe`.
+export const candidateNames = (name: string, platform: string = process.platform) =>
+    platform === "win32" ? [name, `${name}.exe`] : [name];
+
 // The first executable `name` on PATH, or null. Plain files only, so a directory named jq is skipped.
-export function findOnPath(name: string, searchPath: string | undefined): string | null {
+export function findOnPath(
+    name: string,
+    searchPath: string | undefined,
+    platform: string = process.platform,
+): string | null {
     for (const directory of (searchPath ?? "").split(path.delimiter)) {
         if (!directory || !path.isAbsolute(directory)) continue;
-        const file = path.join(directory, name);
-        try {
-            if (!statSync(file).isFile()) continue;
-            accessSync(file, constants.X_OK);
-            return file;
-        } catch {
-            continue;
+        for (const candidate of candidateNames(name, platform)) {
+            const file = path.join(directory, candidate);
+            try {
+                if (!statSync(file).isFile()) continue;
+                accessSync(file, constants.X_OK);
+                return file;
+            } catch {
+                continue;
+            }
         }
     }
     return null;
@@ -62,7 +72,10 @@ function runSystemJq(
         const stop = (error: Error) => {
             failure ??= error;
             child.kill("SIGKILL");
-            // Do not wait for a grandchild that still holds the pipes.
+            // Do not wait for a grandchild that still holds the pipes, and let go of them so
+            // it cannot keep this process alive.
+            child.stdout.destroy();
+            child.stderr.destroy();
             clearTimeout(timer);
             reject(failure);
         };

@@ -74,10 +74,10 @@ function fakeIo(
             return found;
         },
         readData: async (source) => {
-            if (source === "-") return options.stdin ?? "";
+            if (source === "-") return new TextEncoder().encode(options.stdin ?? "");
             const found = options.files?.[source];
             if (!found) throw new Error("ENOENT");
-            return found.text;
+            return new TextEncoder().encode(found.text);
         },
     };
     return { io, out, err, all: () => [...out, ...err].join("\n") };
@@ -199,7 +199,7 @@ describe("login", () => {
                 return { text: this.key, mode: 0o600 };
             }
             async readData(_source: string) {
-                return "";
+                return new Uint8Array();
             }
         }
         for (const source of [["--key-stdin"], ["--key-file", "/key"], []]) {

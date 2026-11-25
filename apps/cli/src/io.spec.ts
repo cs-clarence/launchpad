@@ -60,9 +60,11 @@ describe.skipIf(process.platform === "win32")("api data input", () => {
         ).rejects.toThrow("not a regular file");
         const file = path.join(dir, "body.json");
         await fs.writeFile(file, "{}");
-        expect(await realIo({ LAUNCHPAD_CONFIG_DIR: path.join(dir, "cfg") }).readData(file)).toBe(
-            "{}",
-        );
+        expect(
+            Buffer.from(
+                await realIo({ LAUNCHPAD_CONFIG_DIR: path.join(dir, "cfg") }).readData(file),
+            ).toString(),
+        ).toBe("{}");
     });
 
     it("refuses a file inside the credential store", async () => {

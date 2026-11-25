@@ -3,7 +3,8 @@ import os from "node:os";
 import path from "node:path";
 import { ClientCoreError } from "@launchpad-kit/client-core";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { applyJq, checkJq, chooseJq, findOnPath, type JqEngine } from "./jq";
+import { spawnSync } from "node:child_process";
+import { applyJq, candidateNames, checkJq, chooseJq, findOnPath, type JqEngine } from "./jq";
 
 const system = findOnPath("jq", process.env.PATH);
 const builtin: JqEngine = { kind: "builtin" };
@@ -101,5 +102,53 @@ describe.skipIf(process.platform === "win32")("system jq arguments", () => {
         expect((await fs.readFile(log, "utf8")).split("\n").slice(0, 3)).toEqual(["-r", " -1", ""]);
         await applyJq(engine, ".a", "{}");
         expect((await fs.readFile(log, "utf8")).split("\n").slice(0, 3)).toEqual(["-r", ".a", ""]);
+    });
+});
+
+describe("windows executable names", () => {
+    it("also tries name.exe on win32 only", async () => {
+        expect(candidateNames("jq", "win32")).toEqual(["jq", "jq.exe"]);
+        expect(candidateNames("jq", "linux")).toEqual(["jq"]);
+        await fs.writeFile(path.join(dir, "jq.exe"), "x", { mode: 0o755 });
+        expect(findOnPath("jq", dir, "win32")).toBe(path.join(dir, "jq.exe"));
+        expect(findOnPath("jq", dir, "linux")).toBeNull();
+        await fs.mkdir(path.join(dir, "sub"));
+        await fs.mkdir(path.join(dir, "sub", "jq.exe"));
+        expect(findOnPath("jq", path.join(dir, "sub"), "win32")).toBeNull();
+    });
+});
+
+describe.skipIf(process.platform === "win32")("system jq cleanup", () => {
+    it("does not stay alive for a grandchild that holds the pipes", async () => {
+        const engine = await script("sleep 8 &\nsleep 8");
+        const runner = path.join(dir, "run.ts");
+        await fs.writeFile(
+            runner,
+            `import { applyJq } from ${JSON.stringify(path.resolve(import.meta.dirname, "jq.ts"))};
+await applyJq(${JSON.stringify(engine)}, ".", "{}", { timeoutMs: 100, maxOutputBytes: 1024 }).catch(() => {});
+`,
+        );
+        const started = Date.now();
+        const result = spawnSync(process.execPath, [runner], { timeout: 4000, stdio: "ignore" });
+        expect(result.error).toBeUndefined();
+        expect(result.status).toBe(0);
+        expect(Date.now() - started).toBeLessThan(4000);
+    });
+});
+
+describe("numbers", () => {
+    it.skipIf(
+        !system ||
+            !/jq-1\.(?:[7-9]|\d\d)/.test(
+                spawnSync(system!, ["--version"]).stdout?.toString() ?? "",
+            ),
+    )("system jq keeps a large integer literal", async () => {
+        expect(await applyJq({ kind: "system", file: system! }, ".[0]", "[9007199254740993]")).toBe(
+            "9007199254740993",
+        );
+    });
+
+    it("documents that the built-in engine rounds it", async () => {
+        expect(await applyJq(builtin, ".[0]", "[9007199254740993]")).toBe("9007199254740992");
     });
 });

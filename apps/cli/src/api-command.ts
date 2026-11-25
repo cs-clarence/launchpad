@@ -7,18 +7,20 @@ import {
     readWorkspace,
     requireConfirmation,
     resolve,
-    workspaceContext,
     type FieldInput,
+    type Resolved,
 } from "@launchpad-kit/client-core";
 import {
     FORBIDDEN_RAW_HEADERS,
     LaunchpadTransportError,
+    type LaunchpadClient,
     normalizeBaseUrl,
     RAW_METHODS,
     type RawResponse,
 } from "@launchpad-kit/sdk";
 import type { Io } from "./io";
 import { applyJq, checkJq, chooseJq, findOnPath } from "./jq";
+import { arrayItems, prettyJson } from "./json-text";
 
 const MAX_PAGES = 1000;
 const MAX_TOTAL_ITEMS = 100_000;
@@ -36,9 +38,10 @@ const headerLines = (headers: Headers) =>
             `${name}: ${SENSITIVE_RESPONSE_HEADERS.has(name) ? "[redacted]" : value}`,
     );
 
+// JSON is re-indented with every number as the controller wrote it; anything else is shown as is.
 const pretty = (text: string) => {
     try {
-        return JSON.stringify(JSON.parse(text), null, 2);
+        return prettyJson(text);
     } catch {
         return text.replace(/\n$/, "");
     }
@@ -64,7 +67,10 @@ export function addApiCommand(program: Command<any, any, any>, io: Io) {
             "add a typed parameter: true, false, null and integers convert; @file and @- read a file or stdin",
             (value: string) => void fields.push({ typed: true, text: value }),
         )
-        .option("--input <file>", "send this file (or - for stdin) as the JSON body")
+        .option(
+            "--input <file>",
+            "send this file (or - for stdin) as the body, byte for byte (JSON unless -H sets a content-type)",
+        )
         .option(
             "-H, --header <name:value>",
             `add a request header (refused: ${[...FORBIDDEN_RAW_HEADERS].join(", ")})`,
@@ -101,6 +107,23 @@ export function addApiCommand(program: Command<any, any, any>, io: Io) {
             }
             if (endpoint.includes("#")) throw bad("The endpoint must not contain a fragment.");
 
+            // An explicit --jq, even an empty one, is checked before anything else is sent or
+            // looked up; an omitted one is not.
+            const engine =
+                options.jq !== undefined
+                    ? chooseJq(
+                          io.context.env.PATH,
+                          (name, searchPath) =>
+                              io.findExecutable?.(name) ?? findOnPath(name, searchPath),
+                      )
+                    : undefined;
+            if (engine) await checkJq(engine, options.jq!);
+            if (engine && options.verbose) {
+                io.err(
+                    `> jq: ${engine.kind === "system" ? engine.file : "built-in micro-jq subset"}`,
+                );
+            }
+
             // Placeholders are resolved only when used, so a plain call needs no extra request.
             const used = new Set<string>();
             for (const text of [
@@ -114,20 +137,39 @@ export function addApiCommand(program: Command<any, any, any>, io: Io) {
                 for (const match of text.matchAll(PLACEHOLDER)) used.add(match[1]!);
             }
             const workingDir = io.workingDir ?? process.cwd();
+            // One read of launchpad.json and one resolution of the saved profile serve both
+            // placeholders and the request, so a concurrent edit or login cannot mix them.
             const workspace = await readWorkspace(workingDir);
-            const chosenProfile = profile ?? workspace.config?.profile;
-            let context = io.context;
-            let activeProfile = chosenProfile;
+            let identity: Promise<{ resolved: Resolved; client: LaunchpadClient }> | undefined;
+            const identify = () =>
+                (identity ??= (async () => {
+                    const resolved = await resolve(
+                        io.context,
+                        profile ?? workspace.config?.profile,
+                    );
+                    return { resolved, client: clientFor(io.context, resolved) };
+                })());
             const values = new Map<string, string>();
             if (used.has("org")) {
-                const scoped = await workspaceContext(io.context, { workingDir, profile });
-                context = scoped.context;
-                activeProfile = scoped.profile;
-                const resolved = await resolve(context, activeProfile);
-                const organizationId =
-                    resolved.organizationId ??
-                    (await clientFor(context, resolved).key.get()).organizationId;
-                values.set("org", organizationId);
+                const { resolved, client } = await identify();
+                const named = workspace.config?.organization;
+                if (named) {
+                    const match = (await client.organizations.list()).find(
+                        (o) => o.id === named || o.slug === named,
+                    );
+                    if (!match) {
+                        throw new ClientCoreError(
+                            "no-organization",
+                            "This key cannot see the selected organization.",
+                        );
+                    }
+                    values.set("org", match.id);
+                } else {
+                    values.set(
+                        "org",
+                        resolved.organizationId ?? (await client.key.get()).organizationId,
+                    );
+                }
             }
             if (used.has("project")) {
                 const project = workspace.config?.project;
@@ -161,9 +203,17 @@ export function addApiCommand(program: Command<any, any, any>, io: Io) {
                     );
                 }
             };
+            const asText = async (source: string) => {
+                try {
+                    return new TextDecoder("utf-8", { fatal: true }).decode(await readData(source));
+                } catch (error) {
+                    if (error instanceof ClientCoreError) throw error;
+                    throw bad("A field value read from a file or stdin must be UTF-8 text.");
+                }
+            };
             const parsed = await parseFields(fields, {
-                readFile: readData,
-                readStdin: () => readData("-"),
+                readFile: asText,
+                readStdin: () => asText("-"),
                 fill: (text) => fill(text, false),
             });
 
@@ -177,7 +227,7 @@ export function addApiCommand(program: Command<any, any, any>, io: Io) {
             const query: Array<[string, string]> = [...new URLSearchParams(rawQuery).entries()].map(
                 ([k, v]) => [k, fill(v, false)],
             );
-            let body: string | undefined;
+            let body: string | Uint8Array | undefined;
             if (options.input !== undefined) {
                 body = await readData(options.input);
                 query.push(...fieldsToQuery(parsed));
@@ -197,7 +247,11 @@ export function addApiCommand(program: Command<any, any, any>, io: Io) {
                 !Object.keys(extraHeaders).some((n) => n.toLowerCase() === "content-type")
             ) {
                 try {
-                    JSON.parse(body);
+                    JSON.parse(
+                        typeof body === "string"
+                            ? body
+                            : new TextDecoder("utf-8", { fatal: true }).decode(body),
+                    );
                 } catch {
                     throw bad(
                         "The request body is not valid JSON; set a content-type with -H to send it anyway.",
@@ -205,19 +259,6 @@ export function addApiCommand(program: Command<any, any, any>, io: Io) {
                 }
             }
 
-            const engine = options.jq
-                ? chooseJq(
-                      io.context.env.PATH,
-                      (name, searchPath) =>
-                          io.findExecutable?.(name) ?? findOnPath(name, searchPath),
-                  )
-                : undefined;
-            if (engine && options.verbose) {
-                io.err(
-                    `> jq: ${engine.kind === "system" ? engine.file : "built-in micro-jq subset"}`,
-                );
-            }
-            if (engine) await checkJq(engine, options.jq!);
             // The request is already sent when this runs, so a failure is not a usage error.
             const filter = async (text: string) => {
                 if (!engine) return pretty(text);
@@ -228,8 +269,7 @@ export function addApiCommand(program: Command<any, any, any>, io: Io) {
                     throw new Error(`The request succeeded; the --jq filter failed: ${reason}`);
                 }
             };
-            const resolved = await resolve(context, activeProfile);
-            const client = clientFor(context, resolved);
+            const { resolved, client } = await identify();
             // The request is shown before it is sent, so --verbose helps when it fails.
             const showRequest = (shownPath: string) => {
                 if (!options.verbose) return;
@@ -237,8 +277,13 @@ export function addApiCommand(program: Command<any, any, any>, io: Io) {
                 io.err(`> ${method} ${url.pathname}${url.search}`);
                 io.err(`> host: ${url.host}`);
                 io.err("> authorization: [redacted]");
-                for (const [name, value] of Object.entries(extraHeaders))
-                    io.err(`> ${name.toLowerCase()}: ${value}`);
+                for (const [name, value] of Object.entries(extraHeaders)) {
+                    const lower = name.toLowerCase();
+                    // A header the SDK refuses may carry a credential; never echo it.
+                    io.err(
+                        `> ${lower}: ${FORBIDDEN_RAW_HEADERS.has(lower) ? "[redacted]" : value}`,
+                    );
+                }
                 if (options.idempotencyKey) io.err(`> idempotency-key: ${options.idempotencyKey}`);
             };
             const showResponse = (response: RawResponse) => {
@@ -246,11 +291,10 @@ export function addApiCommand(program: Command<any, any, any>, io: Io) {
                 io.err(`< HTTP ${response.status}`);
                 for (const line of headerLines(response.headers)) io.err(`< ${line}`);
             };
-            const call = (
-                pageQuery: ReadonlyArray<readonly [string, string]>,
-                signal?: AbortSignal,
-            ) => {
-                showRequest(request(pageQuery as Array<[string, string]>));
+            const request = (pageQuery: Array<[string, string]>) =>
+                `${path}${pageQuery.length ? `?${new URLSearchParams(pageQuery)}` : ""}`;
+            const call = (pageQuery: Array<[string, string]>, signal?: AbortSignal) => {
+                showRequest(request(pageQuery));
                 return client.raw(method, path, {
                     query: pageQuery,
                     body,
@@ -259,8 +303,6 @@ export function addApiCommand(program: Command<any, any, any>, io: Io) {
                     signal,
                 });
             };
-            const request = (pageQuery: Array<[string, string]>) =>
-                `${path}${pageQuery.length ? `?${new URLSearchParams(pageQuery)}` : ""}`;
 
             if (!options.paginate) {
                 const response = await call(query);
@@ -277,7 +319,8 @@ export function addApiCommand(program: Command<any, any, any>, io: Io) {
                 return;
             }
 
-            const pages: unknown[][] = [];
+            // Pages are merged as text, so numbers keep the digits the controller sent.
+            const pages: string[][] = [];
             const seen = new Set<string>();
             let pageQuery = query;
             seen.add(new URLSearchParams(query).toString());
@@ -300,20 +343,19 @@ export function addApiCommand(program: Command<any, any, any>, io: Io) {
                         throw error;
                     }
                     showResponse(response);
-                    let page: unknown;
+                    let items: string[] | null;
                     try {
-                        page = JSON.parse(response.body);
+                        items = arrayItems(response.body);
                     } catch {
-                        page = undefined;
+                        items = null;
                     }
-                    if (!Array.isArray(page))
-                        throw bad("--paginate needs an endpoint that returns a list.");
+                    if (!items) throw bad("--paginate needs an endpoint that returns a list.");
                     totalBytes += Buffer.byteLength(response.body);
                     if (totalBytes > MAX_TOTAL_BYTES) {
                         throw bad("The list is larger than --paginate will collect (16 MiB).");
                     }
-                    pages.push(page);
-                    total += page.length;
+                    pages.push(items);
+                    total += items.length;
                     if (total > MAX_TOTAL_ITEMS)
                         throw bad("The list is longer than --paginate will collect.");
                     if (!response.next) break;
@@ -328,7 +370,10 @@ export function addApiCommand(program: Command<any, any, any>, io: Io) {
                 clearTimeout(timer);
             }
             if (!options.silent) {
-                io.out(await filter(JSON.stringify(options.slurp ? pages : pages.flat())));
+                const merged = options.slurp
+                    ? `[${pages.map((page) => `[${page.join(",")}]`).join(",")}]`
+                    : `[${pages.flat().join(",")}]`;
+                io.out(await filter(merged));
             }
         });
 }

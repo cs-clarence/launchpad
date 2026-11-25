@@ -115,7 +115,7 @@ Happy path:
 - `launchpad api organizations/{org}/projects -f name=Demo -f slug=demo --confirm` creates a
   project (key needs `project:create`) and prints it.
 - `launchpad api -X POST organizations/{org}/projects --input body.json --confirm`.
-- `launchpad api organizations/{org}/deployments/<id>/events -F after=12 -F limit=500 --method GET`
+- `launchpad api "organizations/{org}/deployments/${DEPLOYMENT_ID}/events" -F after=12 -F limit=500 --method GET`
   sends `?after=12&limit=500`.
 - `launchpad api organizations/{org}/apps --jq '.[].slug'` prints one slug per line.
 
@@ -244,3 +244,21 @@ Second review follow-up: the refused-header list gained method-override and forw
 request before sending; a `--jq` failure after the request exits 1 with a message saying the
 request succeeded; `@file` values are not scanned for placeholders; `/proc` and `/sys` files
 are refused on Linux.
+
+### Code review follow-up (PR #91)
+
+Fixed: README shell examples no longer use `<...>` (a test checks the `sh` blocks); the test harness
+records every fetch (`requests`) so refusal tests prove "no request" including the organization
+lookup; numbers are preserved by a token-preserving printer and textual page merge
+(`apps/cli/src/json-text.ts`) and `--input` is sent as bytes (`raw` accepts `Uint8Array`);
+`--jq ""` and an invalid `--jq` are refused before any lookup or request; one `launchpad.json`
+read and one profile resolution serve `{org}`, `{project}` and the request (the `{org}` check is
+done inline instead of through `workspaceContext`, with the same visibility rule); `--verbose`
+hides the values of refused headers; `findOnPath` tries `jq.exe` on Windows; a stopped jq's pipes
+are destroyed; `nextLink` accepts the path under a prefixed `baseUrl` (and the controller's own
+`/api/v1` form, since only the link's query is used).
+
+Documented limit: the built-in micro-jq engine, and system jq older than 1.7, read numbers as
+doubles, so a filter rounds integers above 2^53; without `--jq`, and with system jq 1.7+, they are
+exact. The single-snapshot race for `launchpad.json` cannot be forced in a unit test; the test
+checks both placeholders come from one read and one lookup, and the profile race is tested.

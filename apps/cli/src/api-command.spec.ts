@@ -1,7 +1,8 @@
 import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { createContext } from "@launchpad-kit/client-core";
+import { createContext, CredentialStore } from "@launchpad-kit/client-core";
+import { gzipSync } from "node:zlib";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { EXIT } from "./errors";
 import type { Io } from "./io";
@@ -31,11 +32,14 @@ async function api(
     options: {
         respond?: Responder;
         stdin?: string;
-        files?: Record<string, string>;
-        env?: Record<string, string>;
+        files?: Record<string, string | Uint8Array>;
+        env?: Record<string, string | undefined>;
         jq?: string | null;
+        onLookup?: () => Promise<void>;
     } = {},
 ) {
+    // Every fetch, including the organization lookup; `calls` is only the target requests.
+    const requests: Call[] = [];
     const calls: Call[] = [];
     const out: string[] = [];
     const err: string[] = [];
@@ -43,7 +47,9 @@ async function api(
     const respond: Responder = options.respond ?? (() => json({ ok: true }));
     const fetchImpl = (async (url: string, init: RequestInit) => {
         const call = { url, init };
+        requests.push(call);
         if (new URL(url).pathname === "/api/v1/organizations") {
+            await options.onLookup?.();
             return json([{ id: ORG, name: "Acme", slug: "acme", role: "admin" }]);
         }
         calls.push(call);
@@ -70,14 +76,14 @@ async function api(
         findExecutable: () => options.jq ?? null,
         readData: async (source) => {
             reads.push(source);
-            if (source === "-") return options.stdin ?? "";
+            if (source === "-") return new TextEncoder().encode(options.stdin ?? "");
             const found = options.files?.[source];
             if (found === undefined) throw new Error("ENOENT");
-            return found;
+            return typeof found === "string" ? new TextEncoder().encode(found) : found;
         },
     };
     const code = await run(args, io);
-    const result = { code, calls, reads, out: out.join("\n"), err: err.join("\n") };
+    const result = { code, calls, requests, reads, out: out.join("\n"), err: err.join("\n") };
     // The key must never be printed, whatever happened.
     expect(result.out + result.err).not.toContain(KEY);
     return result;
@@ -122,9 +128,9 @@ describe("api: requests", () => {
         );
         expect(code).toBe(EXIT.ok);
         expect(calls[0]!.url).toBe(`${base}/x/y?n=1`);
-        expect(calls[0]!.init.body).toBe('{"a":1}');
+        expect(new TextDecoder().decode(calls[0]!.init.body as Uint8Array)).toBe('{"a":1}');
         const stdin = await api(["api", "x", "--input", "-", "--confirm"], { stdin: "[1]" });
-        expect(stdin.calls[0]!.init.body).toBe("[1]");
+        expect(new TextDecoder().decode(stdin.calls[0]!.init.body as Uint8Array)).toBe("[1]");
     });
 
     it("turns fields into the query string with --method GET", async () => {
@@ -199,14 +205,14 @@ describe("api: requests", () => {
         expect(read.calls[0]!.url).toBe(`${base}/organizations/${ORG}/projects/proj-1/apps`);
         const write = await api(["api", "-X", "POST", "p/{project}"]);
         expect(write.code).toBe(EXIT.usage);
-        expect(write.calls).toEqual([]);
+        expect(write.requests).toEqual([]);
     });
 
     it("refuses a placeholder without a value, before any request", async () => {
-        const { code, calls, err } = await api(["api", "p/{project}"]);
+        const { code, requests, err } = await api(["api", "p/{project}"]);
         expect(code).toBe(EXIT.usage);
         expect(err).toContain("{project}");
-        expect(calls).toEqual([]);
+        expect(requests).toEqual([]);
     });
 
     it("encodes a placeholder value as one path segment", async () => {
@@ -214,10 +220,10 @@ describe("api: requests", () => {
         expect(calls[0]!.url).toBe(`${base}/o/a%20b`);
         const slash = await api(["api", "o/{org}"], { env: { LAUNCHPAD_ORG: "a/b" } });
         expect(slash.code).toBe(EXIT.usage);
-        expect(slash.calls).toEqual([]);
+        expect(slash.requests).toEqual([]);
         const dots = await api(["api", "o/{org}"], { env: { LAUNCHPAD_ORG: ".." } });
         expect(dots.code).toBe(EXIT.usage);
-        expect(dots.calls).toEqual([]);
+        expect(dots.requests).toEqual([]);
     });
 });
 
@@ -246,7 +252,7 @@ describe("api: refusals (exit 2, nothing sent)", () => {
     it.each(refused)("%s", async (...args) => {
         const result = await api(["api", ...args], { files: { "bad.json": "{nope" } });
         expect(result.code).toBe(EXIT.usage);
-        expect(result.calls).toEqual([]);
+        expect(result.requests).toEqual([]);
     });
 
     it("refuses an over-size input body", async () => {
@@ -254,7 +260,7 @@ describe("api: refusals (exit 2, nothing sent)", () => {
             files: { big: JSON.stringify("x".repeat(1024 * 1024)) },
         });
         expect(result.code).toBe(EXIT.usage);
-        expect(result.calls).toEqual([]);
+        expect(result.requests).toEqual([]);
     });
 
     it("reads standard input once", async () => {
@@ -262,7 +268,7 @@ describe("api: refusals (exit 2, nothing sent)", () => {
             stdin: "{}",
         });
         expect(result.code).toBe(EXIT.usage);
-        expect(result.calls).toEqual([]);
+        expect(result.requests).toEqual([]);
     });
 });
 
@@ -294,6 +300,15 @@ describe("api: output", () => {
         });
         expect(out).toBe("hi red  end");
         expect(out).not.toContain("\u001b");
+    });
+
+    it("strips C1 control characters from a JSON string after re-indenting", async () => {
+        const { out } = await api(["api", "x"], {
+            respond: () => new Response('{"a":"x\u009b31my\u007fz"}'),
+        });
+        expect(out).toContain("xy");
+        expect(out).not.toContain("\u009b");
+        expect(out).not.toContain("\u007f");
     });
 
     it("shows the request and response under --verbose without the key or cookies", async () => {
@@ -452,7 +467,7 @@ describe("api: --jq", () => {
     it("refuses an invalid expression before sending anything", async () => {
         const result = await api(["api", "x", "-X", "POST", "--confirm", "--jq", ".["]);
         expect(result.code).toBe(EXIT.usage);
-        expect(result.calls).toEqual([]);
+        expect(result.requests).toEqual([]);
     });
 
     it("filters merged pages and fails with exit 1 on a runtime error", async () => {
@@ -499,7 +514,7 @@ describe("api: validation happens before any I/O", () => {
             { env: { LAUNCHPAD_ORG: "" }, stdin: "x" },
         );
         expect(result.code).toBe(EXIT.usage);
-        expect(result.calls).toEqual([]);
+        expect(result.requests).toEqual([]);
         expect(result.reads).toEqual([]);
     });
 });
@@ -620,6 +635,159 @@ describe("api: review follow-ups", () => {
         for (const name of FORBIDDEN_RAW_HEADERS) {
             expect(readme, name).toContain(`\`${name}\``);
             expect(plan, name).toContain(`\`${name}\``);
+        }
+    });
+});
+
+describe("api: CodeRabbit follow-ups", () => {
+    const apps = `/api/v1/organizations/${ORG}/apps`;
+    const text = (body: string, init: ResponseInit = {}) => new Response(body, init);
+
+    it("prints numbers exactly as the controller wrote them", async () => {
+        const body = '{"id":9007199254740993,"f":1.0,"e":1E2,"s":"\\u00e9","a":[],"o":{}}';
+        const result = await api(["api", "x"], { respond: () => text(body) });
+        expect(result.out).toContain('"id": 9007199254740993');
+        expect(result.out).toContain('"f": 1.0');
+        expect(result.out).toContain('"e": 1E2');
+        expect(result.out).toContain('"a": []');
+        expect(result.out).toContain('"o": {}');
+        expect(result.out).toContain("\\u00e9");
+    });
+
+    it("merges pages as text so numbers are not rounded", async () => {
+        const pages: Record<string, string> = {
+            "": "[9007199254740993, 1.50]",
+            c1: "[18014398509481985]",
+        };
+        const respond = (call: Call) => {
+            const cursor = new URL(call.url).searchParams.get("cursor") ?? "";
+            return text(pages[cursor]!, {
+                headers: cursor ? {} : { link: `<${apps}?cursor=c1>; rel="next"` },
+            });
+        };
+        const merged = await api(["api", "organizations/{org}/apps", "--paginate"], { respond });
+        expect(merged.out).toContain("9007199254740993");
+        expect(merged.out).toContain("1.50");
+        expect(merged.out).toContain("18014398509481985");
+        const slurped = await api(["api", "organizations/{org}/apps", "--paginate", "--slurp"], {
+            respond,
+        });
+        expect(slurped.out).toContain("9007199254740993");
+        expect(JSON.parse(slurped.out)).toHaveLength(2);
+    });
+
+    it("sends --input bytes unchanged, such as a gzip file", async () => {
+        const bytes = new Uint8Array(gzipSync("hello world"));
+        expect(bytes[1]).toBe(0x8b);
+        const result = await api(
+            ["api", "x", "--input", "a.gz", "-H", "Content-Type: application/gzip", "--confirm"],
+            { files: { "a.gz": bytes } },
+        );
+        expect(result.code).toBe(EXIT.ok);
+        const sent = result.calls[0]!.init.body as Uint8Array;
+        expect([...sent]).toEqual([...bytes]);
+        expect((result.calls[0]!.init.headers as Record<string, string>)["content-type"]).toBe(
+            "application/gzip",
+        );
+        // Without a content type the body must still be JSON text.
+        const notJson = await api(["api", "x", "--input", "a.gz", "--confirm"], {
+            files: { "a.gz": bytes },
+        });
+        expect(notJson.code).toBe(EXIT.usage);
+        expect(notJson.requests).toEqual([]);
+    });
+
+    it("refuses an explicitly empty --jq before anything is sent", async () => {
+        const result = await api(["api", "x", "-X", "POST", "--confirm", "--jq", ""]);
+        expect(result.code).toBe(EXIT.usage);
+        expect(result.requests).toEqual([]);
+        // Omitting --jq is not validated.
+        expect((await api(["api", "x"])).code).toBe(EXIT.ok);
+    });
+
+    it("checks --jq before the {org} lookup", async () => {
+        await fs.writeFile(
+            path.join(dir, "launchpad.json"),
+            JSON.stringify({ organization: "acme", project: "p" }),
+        );
+        const bad = await api(["api", "organizations/{org}/apps", "--jq", ".["]);
+        expect(bad.code).toBe(EXIT.usage);
+        expect(bad.requests).toEqual([]);
+        const good = await api(["api", "organizations/{org}/apps", "--jq", "length"]);
+        expect(good.requests.map((r) => new URL(r.url).pathname)).toEqual([
+            "/api/v1/organizations",
+            `/api/v1/organizations/${ORG}/apps`,
+        ]);
+    });
+
+    it("uses one launchpad.json snapshot for {org} and {project}", async () => {
+        await fs.writeFile(
+            path.join(dir, "launchpad.json"),
+            JSON.stringify({ organization: "acme", project: "proj-9" }),
+        );
+        const result = await api(["api", "organizations/{org}/projects/{project}"]);
+        expect(result.calls[0]!.url).toBe(`${base}/organizations/${ORG}/projects/proj-9`);
+        expect(result.requests).toHaveLength(2);
+    });
+
+    it("keeps one identity when the saved profile changes during the lookup", async () => {
+        const store = new CredentialStore(dir);
+        const profile = (apiKey: string) => ({
+            controller: CONTROLLER,
+            apiKey,
+            organizationId: null,
+            savedAt: "2026-01-01T00:00:00.000Z",
+        });
+        await store.update((config) => {
+            config.profiles.default = profile(KEY);
+            config.currentProfile = "default";
+        });
+        await fs.writeFile(
+            path.join(dir, "launchpad.json"),
+            JSON.stringify({ organization: ORG, project: "p" }),
+        );
+        const result = await api(["api", "organizations/{org}/apps"], {
+            env: {
+                LAUNCHPAD_CONTROLLER: undefined,
+                LAUNCHPAD_API_KEY: undefined,
+                LAUNCHPAD_ORG: undefined,
+            },
+            onLookup: () =>
+                store.update((config) => {
+                    config.profiles.default = profile("lp_" + "b".repeat(43));
+                }),
+        });
+        expect(result.code).toBe(EXIT.ok);
+        const sent = result.calls[0]!.init.headers as Record<string, string>;
+        expect(sent.authorization).toBe(`Bearer ${KEY}`);
+        const lookup = result.requests[0]!.init.headers as Record<string, string>;
+        expect(lookup.authorization).toBe(`Bearer ${KEY}`);
+    });
+
+    it("never prints the value of a refused header under --verbose", async () => {
+        const result = await api([
+            "api",
+            "x",
+            "--verbose",
+            "-H",
+            "Cookie: sid=topsecret",
+            "-H",
+            "x-a: visible",
+        ]);
+        expect(result.code).toBe(EXIT.usage);
+        expect(result.err).toContain("> cookie: [redacted]");
+        expect(result.err).not.toContain("topsecret");
+        expect(result.err).toContain("> x-a: visible");
+    });
+
+    it("has no shell redirection characters in README sh examples", async () => {
+        const readme = await fs.readFile(new URL("../README.md", import.meta.url), "utf8");
+        const blocks = [...readme.matchAll(/```sh\n([\s\S]*?)```/g)].map((m) => m[1]!);
+        expect(blocks.length).toBeGreaterThan(0);
+        for (const block of blocks) {
+            for (const line of block.split("\n")) {
+                expect(line.replace(/"[^"]*"|'[^']*'/g, ""), line).not.toMatch(/[<>]/);
+            }
         }
     });
 });

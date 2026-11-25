@@ -65,8 +65,9 @@ export interface EventsPage<T> {
 export interface RawOptions {
     // Appended to the path; keys and values are encoded. Repeated keys are kept.
     query?: ReadonlyArray<readonly [string, string]>;
-    // A request body already serialized as text (1 MiB at most). Not allowed with GET or HEAD.
-    body?: string;
+    // A request body already serialized, as text or bytes (1 MiB at most). Not allowed with
+    // GET or HEAD. Bytes are sent as they are.
+    body?: string | Uint8Array;
     // Defaults to application/json when a body is given.
     contentType?: string;
     // Extra request headers. Credential and framing headers are refused.
@@ -231,7 +232,7 @@ export function createClient(options: ClientOptions) {
         signal?: AbortSignal;
         archive?: Blob;
         // Already-serialized body for `raw`, with its own content type.
-        rawBody?: { text: string; contentType: string };
+        rawBody?: { data: string | Uint8Array; contentType: string };
         headers?: Record<string, string>;
     }
 
@@ -270,7 +271,7 @@ export function createClient(options: ClientOptions) {
                 },
                 body:
                     extra.archive ??
-                    extra.rawBody?.text ??
+                    (extra.rawBody?.data as BodyInit | undefined) ??
                     (body === undefined ? undefined : JSON.stringify(body)),
                 // Never ambient browser credentials, and never forward the key elsewhere.
                 credentials: "omit",
@@ -375,7 +376,11 @@ export function createClient(options: ClientOptions) {
                 continue;
             }
             if (target.origin !== requested.origin) continue;
-            if (target.pathname !== `/api/v1${path}`) continue;
+            // Only the query is used, never the link's path, so both the controller's own form
+            // (`/api/v1/...`) and the form behind a path prefix on `baseUrl` are the same list.
+            if (target.pathname !== `/api/v1${path}` && target.pathname !== requested.pathname) {
+                continue;
+            }
             return target.searchParams;
         }
         return null;
@@ -439,18 +444,22 @@ export function createClient(options: ClientOptions) {
             }
             headers[key] = value;
         }
-        let rawBody: { text: string; contentType: string } | undefined;
+        let rawBody: { data: string | Uint8Array; contentType: string } | undefined;
         if (options.body !== undefined) {
             if (verb === "GET" || verb === "HEAD") {
                 throw new LaunchpadConfigError("GET and HEAD requests cannot have a body.");
             }
-            if (new TextEncoder().encode(options.body).byteLength > MAX_REQUEST_BYTES) {
+            const size =
+                typeof options.body === "string"
+                    ? new TextEncoder().encode(options.body).byteLength
+                    : options.body.byteLength;
+            if (size > MAX_REQUEST_BYTES) {
                 throw new LaunchpadConfigError("The request body is larger than 1 MiB.");
             }
             const contentType =
                 headers["content-type"] ?? options.contentType ?? "application/json";
             delete headers["content-type"];
-            rawBody = { text: options.body, contentType };
+            rawBody = { data: options.body, contentType };
         }
         const withQuery = `${path}${
             options.query && options.query.length > 0

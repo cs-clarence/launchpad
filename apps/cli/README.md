@@ -53,7 +53,7 @@ invitation and key creation) answer 401 or 403.
 launchpad api key
 launchpad api organizations/{org}/projects -f name=Demo -f slug=demo --confirm
 launchpad api -X POST organizations/{org}/projects --input body.json --confirm
-launchpad api organizations/{org}/deployments/<id>/events -X GET -F after=12 -F limit=500
+launchpad api "organizations/{org}/deployments/${DEPLOYMENT_ID}/events" -X GET -F after=12 -F limit=500
 launchpad api organizations/{org}/apps -X GET -F limit=50 --paginate
 ```
 
@@ -61,22 +61,29 @@ launchpad api organizations/{org}/apps -X GET -F limit=50 --paginate
   `-f key=value` is a string, `-F` converts `true`, `false`, `null` and integers and reads
   `@file` or `@-` (stdin). `a[b]=c` nests, `a[]=x` builds an array, a bare `a[]` is an empty
   array. Fields are the JSON body; with `GET`/`HEAD`, or with `--input`, they become the query
-  string. `--input <file>|-` sends a JSON body (1 MiB at most; use `-H content-type:...` for
-  another type). Standard input can be read once.
+  string. `--input <file>|-` sends the file's bytes unchanged (1 MiB at most). Without a
+  `-H content-type:...` it must be JSON text; with one (for example `application/gzip`) any bytes
+  are sent as they are. A `-F k=@file` value must be UTF-8 text. Standard input can be read once.
 - **Placeholders.** `{org}` (the selected organization, as other commands choose it) and
   `{project}` (the nearest `launchpad.json`) are filled in the endpoint and in field values.
   The endpoint value is encoded as one path segment. A placeholder with no value is a usage error.
-  `{project}` never makes a change allowed by itself: a non-`GET` still needs `--confirm`.
+  One read of `launchpad.json` and one resolution of the profile serve both placeholders and the
+  request. `{project}` never makes a change allowed by itself: a non-`GET` still needs `--confirm`.
 - **Output.** The body is printed (JSON is pretty-printed), `-i` first prints the status line
   and headers, `--silent` prints no body, `--verbose` prints the request (before it is sent, so it also shows for a failed request) and the response headers
-  to stderr. The key and `Set-Cookie` are never shown. Terminal escape sequences and control
+  to stderr. The key and `Set-Cookie` are never shown, nor the value of a header `-H` would refuse. Terminal escape sequences and control
   characters are stripped.
 - **Paging.** `--paginate` (`GET` only) follows `Link: rel="next"` for a list and prints the
   merged array; `--slurp` prints an array of the pages instead. A link is followed only if it
-  is on the controller's origin and names the same `/api/v1` path, so the key is never sent
+  is on the controller's origin and names the same `/api/v1` path (with or without the path
+  prefix of the profile's controller URL), so the key is never sent
   elsewhere; at most 1000 pages, 100000 items and 16 MiB are collected, within an overall deadline of 5 minutes (exit 5). Pass `-F limit=<n>` to page
   (without it a list is returned whole). Events keep `after` and `limit`. `--paginate` cannot be
   combined with `-i`.
+- **Numbers.** Output is re-indented from the response text, so numbers and strings print
+  exactly as the controller sent them (for example `9007199254740993`, `1.0`), and `--paginate`
+  merges pages as text. A filter keeps them only when the system `jq` is 1.7 or newer; the
+  built-in engine and older `jq` read numbers as doubles and round integers above 2^53.
 - **Filtering.** `-q, --jq <expression>` filters a JSON response; strings print raw and
   other values as indented JSON. It uses the system `jq` when one is on `PATH`
   (run without a shell and without your environment, expression as an argument, 10 s and
@@ -88,7 +95,7 @@ launchpad api organizations/{org}/apps -X GET -F limit=50 --paginate
   result per line only when the expression has an iterator (`[]` after a path) and does not
   start with `[`; a stream in an expression that also builds values (`{a: .[].x}`) may differ. With
   `--paginate` the filter sees the merged array (or the array of pages with `--slurp`).
-  An invalid expression is refused before the request (exit 2); `--verbose` names the engine. If the filter fails after the request was sent (a runtime error
+  An invalid or empty expression is refused before the request and before any placeholder lookup (exit 2); `--verbose` names the engine. If the filter fails after the request was sent (a runtime error
   on the response), the request is not undone: the message says so and the exit code is 1.
 - **Files.** `--input` and `-F k=@file` read regular files only (a FIFO is refused without
   opening it) and refuse paths inside the credential store and, on Linux, under `/proc` and
