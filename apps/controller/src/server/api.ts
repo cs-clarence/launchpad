@@ -19,7 +19,9 @@ import {
     getAlias,
     getApp,
     listAliases,
+    listAliasesPage,
     listAliasOperations,
+    listAliasOperationsPage,
     getDeployment,
     requestAppShutdown,
     requestPromotion,
@@ -27,8 +29,13 @@ import {
     requestWithdrawal,
     requestDeploymentDeletion,
     listApps,
-    listDeploymentEvents,
+    listAppsPage,
+    parsePageQuery,
+    type Page,
+    type PageRequest,
+    listDeploymentEventsPage,
     listDeployments,
+    listDeploymentsPage,
     resolveLimits,
     uploadArtifact,
     type AliasDeps,
@@ -37,6 +44,7 @@ import {
     type ArtifactDeps,
     createApiKey,
     listApiKeys,
+    listApiKeysPage,
     requireDeploymentsOn,
     requireKeyAccess,
     revokeApiKey,
@@ -47,9 +55,13 @@ import {
     getOrganization,
     type InvitationDeps,
     listInvitations,
+    listInvitationsPage,
     listMembers,
+    listMembersPage,
     listMyOrganizations,
+    listMyOrganizationsPage,
     listProjects,
+    listProjectsPage,
     previewInvitation,
     type Principal,
     removeMember,
@@ -60,7 +72,7 @@ import {
 import { Elysia } from "elysia";
 import { framingProblem, framingResponse, SAFE_METHODS } from "./body-framing";
 import { MAX_BODY_BYTES } from "./limits";
-import { docs, openApiPlugin } from "./openapi";
+import { docs, eventsQuery, openApiPlugin, pageQuery } from "./openapi";
 
 // Anything larger than the limit is refused before it is read.
 export { MAX_BODY_BYTES } from "./limits";
@@ -108,6 +120,12 @@ function isOrganizationPath(path: string): boolean {
         .toLowerCase()
         .startsWith("/api/auth/organization");
 }
+
+// The part of Elysia's `set` the adapter uses.
+type ResponseSet = {
+    status?: number | string;
+    headers: Record<string, string | number | string[] | undefined>;
+};
 
 export function createApi(deps: {
     docs?: boolean;
@@ -211,11 +229,7 @@ export function createApi(deps: {
         unavailable: 503,
     } as const;
 
-    async function execute(
-        set: { status?: number | string },
-        run: () => Promise<unknown>,
-        successStatus: number,
-    ) {
+    async function execute(set: ResponseSet, run: () => Promise<unknown>, successStatus: number) {
         try {
             const result = await run();
             set.status = successStatus;
@@ -250,7 +264,7 @@ export function createApi(deps: {
     }
     async function respond(
         request: Request,
-        set: { status?: number | string },
+        set: ResponseSet,
         access: Access | null,
         run: (
             principal: Principal,
@@ -296,7 +310,7 @@ export function createApi(deps: {
     // For endpoints a token holder may call without an account.
     async function respondPublic(
         request: Request,
-        set: { status?: number | string },
+        set: ResponseSet,
         run: (principal: Principal | null) => Promise<unknown>,
         successStatus = 200,
     ) {
@@ -313,11 +327,29 @@ export function createApi(deps: {
         return execute(set, () => run(principal), successStatus);
     }
 
+    // Without `limit` the whole list, exactly as before. With it, one page and, when more
+    // exist, a relative `Link: rel="next"` built only from the route's own path.
+    async function listed<T>(
+        request: Request,
+        set: ResponseSet,
+        path: string,
+        all: () => Promise<T[]>,
+        paged: (page: PageRequest) => Promise<Page<T>>,
+    ): Promise<T[]> {
+        const page = parsePageQuery(new URL(request.url).searchParams);
+        if (!page) return all();
+        const result = await paged(page);
+        if (result.next) {
+            set.headers.link = `<${path}?limit=${page.limit}&cursor=${result.next}>; rel="next"`;
+        }
+        return result.items;
+    }
+
     const body = (request: Request) => request.json().catch(() => undefined);
 
     function reconciliationRequest(
         request: Request,
-        set: { status?: number | string },
+        set: ResponseSet,
         organizationId: string,
         kind: "deployment" | "promotion",
         id: string,
@@ -440,11 +472,19 @@ export function createApi(deps: {
                 } = caller.key;
                 return { id, name, organizationId, scopes, projectIds, expiresAt };
             })
-            .get("/v1/organizations", { detail: docs.listOrganizations }, ({ request, set }) =>
-                respond(request, set, { scope: "organization:read" }, async (p, key) => {
-                    const all = await listMyOrganizations(db, p);
-                    return key ? all.filter((o) => o.id === key.organizationId) : all;
-                }),
+            .get(
+                "/v1/organizations",
+                { detail: docs.listOrganizations, query: pageQuery },
+                ({ request, set }) =>
+                    respond(request, set, { scope: "organization:read" }, (p, key) =>
+                        listed(
+                            request,
+                            set,
+                            "/api/v1/organizations",
+                            () => listMyOrganizations(db, p, key?.organizationId),
+                            (page) => listMyOrganizationsPage(db, p, page, key?.organizationId),
+                        ),
+                    ),
             )
             .post(
                 "/v1/organizations",
@@ -473,13 +513,20 @@ export function createApi(deps: {
             )
             .get(
                 "/v1/organizations/:orgId/members",
-                { detail: docs.listMembers },
+                { detail: docs.listMembers, query: pageQuery },
                 ({ request, set, params }) =>
                     respond(
                         request,
                         set,
                         { organizationId: params.orgId, scope: "member:read" },
-                        (p) => listMembers(db, p, params.orgId),
+                        (p) =>
+                            listed(
+                                request,
+                                set,
+                                `/api/v1/organizations/${encodeURIComponent(params.orgId)}/members`,
+                                () => listMembers(db, p, params.orgId),
+                                (page) => listMembersPage(db, p, params.orgId, page),
+                            ),
                     ),
             )
             .post(
@@ -506,9 +553,17 @@ export function createApi(deps: {
             )
             .get(
                 "/v1/organizations/:orgId/invitations",
-                { detail: docs.listInvitations },
+                { detail: docs.listInvitations, query: pageQuery },
                 ({ request, set, params }) =>
-                    respond(request, set, null, (p) => listInvitations(db, p, params.orgId)),
+                    respond(request, set, null, (p) =>
+                        listed(
+                            request,
+                            set,
+                            `/api/v1/organizations/${encodeURIComponent(params.orgId)}/invitations`,
+                            () => listInvitations(db, p, params.orgId),
+                            (page) => listInvitationsPage(db, p, params.orgId, page),
+                        ),
+                    ),
             )
             .post(
                 "/v1/organizations/:orgId/invitations",
@@ -555,13 +610,21 @@ export function createApi(deps: {
             )
             .get(
                 "/v1/organizations/:orgId/projects",
-                { detail: docs.listProjects },
+                { detail: docs.listProjects, query: pageQuery },
                 ({ request, set, params }) =>
                     respond(
                         request,
                         set,
                         { organizationId: params.orgId, scope: "project:read" },
-                        (p, key) => listProjects(db, p, params.orgId, key?.projectIds),
+                        (p, key) =>
+                            listed(
+                                request,
+                                set,
+                                `/api/v1/organizations/${encodeURIComponent(params.orgId)}/projects`,
+                                () => listProjects(db, p, params.orgId, key?.projectIds),
+                                (page) =>
+                                    listProjectsPage(db, p, params.orgId, page, key?.projectIds),
+                            ),
                     ),
             )
             .post(
@@ -589,9 +652,17 @@ export function createApi(deps: {
             )
             .get(
                 "/v1/organizations/:orgId/api-keys",
-                { detail: docs.listApiKeys },
+                { detail: docs.listApiKeys, query: pageQuery },
                 ({ request, set, params }) =>
-                    respond(request, set, null, (p) => listApiKeys(db, p, params.orgId)),
+                    respond(request, set, null, (p) =>
+                        listed(
+                            request,
+                            set,
+                            `/api/v1/organizations/${encodeURIComponent(params.orgId)}/api-keys`,
+                            () => listApiKeys(db, p, params.orgId),
+                            (page) => listApiKeysPage(db, p, params.orgId, page),
+                        ),
+                    ),
             )
             .post(
                 "/v1/organizations/:orgId/api-keys",
@@ -693,13 +764,20 @@ export function createApi(deps: {
             )
             .get(
                 "/v1/organizations/:orgId/apps",
-                { detail: docs.listApps },
+                { detail: docs.listApps, query: pageQuery },
                 ({ request, set, params }) =>
                     respond(
                         request,
                         set,
                         { organizationId: params.orgId, scope: "app:read" },
-                        (p, key) => listApps(db, p, params.orgId, key?.projectIds),
+                        (p, key) =>
+                            listed(
+                                request,
+                                set,
+                                `/api/v1/organizations/${encodeURIComponent(params.orgId)}/apps`,
+                                () => listApps(db, p, params.orgId, key?.projectIds),
+                                (page) => listAppsPage(db, p, params.orgId, page, key?.projectIds),
+                            ),
                     ),
             )
             .get(
@@ -738,13 +816,29 @@ export function createApi(deps: {
             )
             .get(
                 "/v1/organizations/:orgId/apps/:appId/aliases",
-                { detail: docs.listAliases },
+                { detail: docs.listAliases, query: pageQuery },
                 ({ request, set, params }) =>
                     respond(
                         request,
                         set,
                         { organizationId: params.orgId, scope: "app:read" },
-                        (p, key) => listAliases(db, p, params.orgId, params.appId, key?.projectIds),
+                        (p, key) =>
+                            listed(
+                                request,
+                                set,
+                                `/api/v1/organizations/${encodeURIComponent(params.orgId)}/apps/${encodeURIComponent(params.appId)}/aliases`,
+                                () =>
+                                    listAliases(db, p, params.orgId, params.appId, key?.projectIds),
+                                (page) =>
+                                    listAliasesPage(
+                                        db,
+                                        p,
+                                        params.orgId,
+                                        params.appId,
+                                        page,
+                                        key?.projectIds,
+                                    ),
+                            ),
                     ),
             )
             .get(
@@ -808,19 +902,34 @@ export function createApi(deps: {
             )
             .get(
                 "/v1/organizations/:orgId/aliases/:aliasId/operations",
-                { detail: docs.listAliasOperations },
+                { detail: docs.listAliasOperations, query: pageQuery },
                 ({ request, set, params }) =>
                     respond(
                         request,
                         set,
                         { organizationId: params.orgId, scope: "app:read" },
                         (p, key) =>
-                            listAliasOperations(
-                                db,
-                                p,
-                                params.orgId,
-                                params.aliasId,
-                                key?.projectIds,
+                            listed(
+                                request,
+                                set,
+                                `/api/v1/organizations/${encodeURIComponent(params.orgId)}/aliases/${encodeURIComponent(params.aliasId)}/operations`,
+                                () =>
+                                    listAliasOperations(
+                                        db,
+                                        p,
+                                        params.orgId,
+                                        params.aliasId,
+                                        key?.projectIds,
+                                    ),
+                                (page) =>
+                                    listAliasOperationsPage(
+                                        db,
+                                        p,
+                                        params.orgId,
+                                        params.aliasId,
+                                        page,
+                                        key?.projectIds,
+                                    ),
                             ),
                     ),
             )
@@ -875,14 +984,35 @@ export function createApi(deps: {
             )
             .get(
                 "/v1/organizations/:orgId/apps/:appId/deployments",
-                { detail: docs.listDeployments },
+                { detail: docs.listDeployments, query: pageQuery },
                 ({ request, set, params }) =>
                     respond(
                         request,
                         set,
                         { organizationId: params.orgId, scope: "app:read" },
                         (p, key) =>
-                            listDeployments(db, p, params.orgId, params.appId, key?.projectIds),
+                            listed(
+                                request,
+                                set,
+                                `/api/v1/organizations/${encodeURIComponent(params.orgId)}/apps/${encodeURIComponent(params.appId)}/deployments`,
+                                () =>
+                                    listDeployments(
+                                        db,
+                                        p,
+                                        params.orgId,
+                                        params.appId,
+                                        key?.projectIds,
+                                    ),
+                                (page) =>
+                                    listDeploymentsPage(
+                                        db,
+                                        p,
+                                        params.orgId,
+                                        params.appId,
+                                        page,
+                                        key?.projectIds,
+                                    ),
+                            ),
                     ),
             )
             .get(
@@ -925,7 +1055,7 @@ export function createApi(deps: {
             )
             .get(
                 "/v1/organizations/:orgId/deployments/:deploymentId/events",
-                { detail: docs.listDeploymentEvents },
+                { detail: docs.listDeploymentEvents, query: eventsQuery },
                 ({ request, set, params, query }) =>
                     respond(
                         request,
@@ -950,7 +1080,7 @@ export function createApi(deps: {
                             if (limit !== undefined && (limit < 1 || limit > 500)) {
                                 throw new ServiceError("invalid", "limit must be 1 to 500.");
                             }
-                            const events = await listDeploymentEvents(
+                            const { events, more } = await listDeploymentEventsPage(
                                 db,
                                 p,
                                 params.orgId,
@@ -961,6 +1091,12 @@ export function createApi(deps: {
                                 },
                                 key?.projectIds,
                             );
+                            // `after` stays the contract; the link only saves a client from
+                            // building it, and only when it asked for a page size.
+                            const last = events.at(-1);
+                            if (limit !== undefined && more && last) {
+                                set.headers.link = `</api/v1/organizations/${encodeURIComponent(params.orgId)}/deployments/${encodeURIComponent(params.deploymentId)}/events?after=${last.seq}&limit=${limit}>; rel="next"`;
+                            }
                             return events.map((event) => ({ ...event, seq: String(event.seq) }));
                         },
                     ),

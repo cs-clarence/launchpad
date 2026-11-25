@@ -41,6 +41,34 @@ the pinned `@scalar/api-reference` package (`vite.config.ts`); no third-party
 script runs next to the session cookie. Better Auth's `/api/auth/*` endpoints are
 not part of the document.
 
+### Paging lists
+
+Every list route under `/api/v1` (organizations, members, invitations, API keys, projects,
+apps, aliases, deployments and alias operations) is opt-in paged. Without `limit` the
+response is the whole bare array, exactly as before. With `limit` (1 to 100; there is no
+default) it is at most that many items in the same order, and when more exist a
+`Link: </api/v1/...?limit=N&cursor=...>; rel="next"` header. The reference is relative:
+resolve it against the request URL and follow it as given. The `cursor` is opaque; do not
+parse or build it. A cursor is bound to its list, parent and organization and is refused
+with `422` elsewhere, as are a `limit` outside 1 to 100, a repeated `limit`, and a `cursor`
+without a `limit`. A cursor never widens what a key may list: the organization, parent and
+project allow-list always come from the authenticated request. The deployment events
+route keeps `after` and `limit` (1 to 500, default 100) and adds a `Link` with
+`after=<last seq>&limit=<n>` when `limit` is given and more events exist.
+
+For key routes, access to the organization is checked first (`404` for another
+organization). A malformed `limit` or `cursor` is then a `422` even for a parent (app or
+alias) the key cannot see, and on the session-only lists (invitations, API keys) it is a
+`422` before the membership check, because the query is validated first, as the events route
+always did. The message is generic and names nothing.
+
+The controller has no CORS plugin, so a browser sees `Link` on same-origin calls. If CORS is
+ever added it must expose `Link` (`Access-Control-Expose-Headers: Link`). Query parameters
+are declared to the OpenAPI plugin as a route `query` schema (`pageQuery`, `eventsQuery` in
+`src/server/openapi.ts`) because the plugin replaces a route's `detail.parameters` with the
+parameters it derives from the route; those schemas accept any value, and the services
+return the API's own `422`.
+
 To document a new route, add an entry to `docs` in `src/server/openapi.ts` and pass it as
 the route's `detail`. In Elysia 2 RC the hook goes **before** the handler:
 `.get(path, { detail: docs.x }, handler)`; the legacy handler-first order throws.

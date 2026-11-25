@@ -39,4 +39,20 @@ Use the last read **reserved** generation (a string, never a number). A stale ge
 conflicts. Use the same idempotency key for retries of the exact same routing intent.
 Roll back by promoting a different retained deployment. Deploy and promote need separate scopes.
 
+Every `list` returns the whole array, as always. To page, use `listPage` (`organizations`,
+`members`, `projects`, `apps`, `deployments`, `aliases`) or `aliases.operationsPage` with a
+`limit` of 1 to 100; `next.cursor` is present only when more items exist and is opaque. A
+`Link` is followed only if it is relative or on the controller's origin, under `/api/v1` and
+for the list that was asked; anything else is ignored. `deployments.eventsPage` pages events by
+`after` and returns `nextAfter`.
+
+```ts
+let page = await client.apps.listPage(org, { limit: 50 });
+const all = [...page.items];
+while (page.next) {
+    page = await client.apps.listPage(org, { limit: 50, cursor: page.next.cursor });
+    all.push(...page.items);
+}
+```
+
 Depends on `zod` and `@launchpad-kit/contracts` only; no filesystem or credential storage (see `@launchpad-kit/client-core`).

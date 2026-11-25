@@ -6,6 +6,7 @@ import { z } from "zod";
 import { can, canAssignRole, ORGANIZATION_ROLES, type Principal } from "./authorization";
 import { isUniqueViolation, ServiceError } from "./errors";
 import { parseInput, recordAudit, requireMembership } from "./organizations";
+import { orderedRows, pageRows, type PageRequest, type PageSpec } from "./pagination";
 
 type Db = Kysely<Database>;
 
@@ -197,13 +198,39 @@ export async function createInvitation(
     return { id, email: data.email, role: data.role };
 }
 
+const invitationsSpec = (organizationId: string): PageSpec => ({
+    route: "invitations",
+    organizationId,
+    keys: [
+        { ref: "organization_invitation.created_at", type: "timestamptz" },
+        { ref: "organization_invitation.id", type: "uuid" },
+    ],
+});
+
+const invitationsQuery = (db: Db, organizationId: string) =>
+    pending(db)
+        .select([
+            "organization_invitation.id",
+            "organization_invitation.email",
+            "organization_invitation.role",
+            "organization_invitation.created_at as createdAt",
+            "organization_invitation.expires_at as expiresAt",
+        ])
+        .where("organization_invitation.organization_id", "=", organizationId);
+
 export async function listInvitations(db: Db, principal: Principal, organizationId: string) {
     await requireMembership(db, principal, organizationId, "member:manage");
-    return pending(db)
-        .select(["id", "email", "role", "created_at as createdAt", "expires_at as expiresAt"])
-        .where("organization_id", "=", organizationId)
-        .orderBy("created_at")
-        .execute();
+    return orderedRows(invitationsQuery(db, organizationId), invitationsSpec(organizationId));
+}
+
+export async function listInvitationsPage(
+    db: Db,
+    principal: Principal,
+    organizationId: string,
+    page: PageRequest,
+) {
+    await requireMembership(db, principal, organizationId, "member:manage");
+    return pageRows(invitationsQuery(db, organizationId), invitationsSpec(organizationId), page);
 }
 
 export async function revokeInvitation(

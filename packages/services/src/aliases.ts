@@ -9,6 +9,7 @@ import { isUniqueViolation, ServiceError } from "./errors";
 import { allocateHostname, HostnameTemplateError } from "./hostname-template";
 import { isUuid } from "./ids";
 import { parseInput, recordAudit, requireMembership } from "./organizations";
+import { orderedRows, pageRows, type PageRequest, type PageSpec } from "./pagination";
 
 type Db = Kysely<Database>;
 
@@ -157,14 +158,21 @@ export async function createAlias(
     }
 }
 
-export async function listAliases(
+const aliasesSpec = (organizationId: string, appId: string): PageSpec => ({
+    route: `aliases:${appId}`,
+    organizationId,
+    keys: [
+        { ref: "app_alias.created_at", type: "timestamptz" },
+        { ref: "app_alias.id", type: "uuid" },
+    ],
+});
+
+async function requireVisibleApp(
     db: Db,
-    principal: Principal,
     organizationId: string,
     appId: string,
     restrictTo?: string[] | null,
 ) {
-    await requireMembership(db, principal, organizationId, "app:read");
     if (!isUuid(appId)) throw new ServiceError("not-found", "App not found.");
     const app = await db
         .selectFrom("app")
@@ -176,15 +184,47 @@ export async function listAliases(
     if (!app || !visible(restrictTo, app.project_id)) {
         throw new ServiceError("not-found", "App not found.");
     }
-    const rows = await db
+}
+
+const aliasesQuery = (db: Db, organizationId: string, appId: string) =>
+    db
         .selectFrom("app_alias")
         .select([...ALIAS_COLUMNS])
         .where("app_alias.app_id", "=", appId)
-        .where("app_alias.organization_id", "=", organizationId)
-        .orderBy("app_alias.created_at")
-        .orderBy("app_alias.id")
-        .execute();
+        .where("app_alias.organization_id", "=", organizationId);
+
+export async function listAliases(
+    db: Db,
+    principal: Principal,
+    organizationId: string,
+    appId: string,
+    restrictTo?: string[] | null,
+) {
+    await requireMembership(db, principal, organizationId, "app:read");
+    await requireVisibleApp(db, organizationId, appId, restrictTo);
+    const rows = await orderedRows(
+        aliasesQuery(db, organizationId, appId),
+        aliasesSpec(organizationId, appId),
+    );
     return rows.map(shape);
+}
+
+export async function listAliasesPage(
+    db: Db,
+    principal: Principal,
+    organizationId: string,
+    appId: string,
+    page: PageRequest,
+    restrictTo?: string[] | null,
+) {
+    await requireMembership(db, principal, organizationId, "app:read");
+    await requireVisibleApp(db, organizationId, appId, restrictTo);
+    const result = await pageRows(
+        aliasesQuery(db, organizationId, appId),
+        aliasesSpec(organizationId, appId),
+        page,
+    );
+    return { ...result, items: result.items.map(shape) };
 }
 
 export async function getAlias(

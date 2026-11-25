@@ -9,6 +9,7 @@ import { isUniqueViolation, ServiceError } from "./errors";
 import { allocateHostname } from "./hostname-template";
 import { opaqueId } from "./ids";
 import { parseInput, recordAudit, requireMembership } from "./organizations";
+import { orderedRows, pageRows, type PageRequest, type PageSpec } from "./pagination";
 
 type Db = Kysely<Database>;
 
@@ -258,14 +259,21 @@ export async function getDeployment(
     return deployment;
 }
 
-export async function listDeployments(
+const deploymentsSpec = (organizationId: string, appId: string): PageSpec => ({
+    route: `deployments:${appId}`,
+    organizationId,
+    keys: [
+        { ref: "deployment.created_at", type: "timestamptz", desc: true },
+        { ref: "deployment.id", type: "uuid" },
+    ],
+});
+
+async function requireVisibleApp(
     db: Db,
-    principal: Principal,
     organizationId: string,
     appId: string,
     restrictTo?: string[] | null,
 ) {
-    await requireMembership(db, principal, organizationId, "app:read");
     const app = await db
         .selectFrom("app")
         .select("project_id")
@@ -276,18 +284,50 @@ export async function listDeployments(
     if (!app || !visible(restrictTo, app.project_id)) {
         throw new ServiceError("not-found", "App not found.");
     }
-    return db
+}
+
+const deploymentsQuery = (db: Db, organizationId: string, appId: string) =>
+    db
         .selectFrom("deployment")
         .select([...SUMMARY])
         .where("deployment.app_id", "=", appId)
-        .where("deployment.organization_id", "=", organizationId)
-        .orderBy("deployment.created_at", "desc")
-        .orderBy("deployment.id")
-        .execute();
+        .where("deployment.organization_id", "=", organizationId);
+
+export async function listDeployments(
+    db: Db,
+    principal: Principal,
+    organizationId: string,
+    appId: string,
+    restrictTo?: string[] | null,
+) {
+    await requireMembership(db, principal, organizationId, "app:read");
+    await requireVisibleApp(db, organizationId, appId, restrictTo);
+    return orderedRows(
+        deploymentsQuery(db, organizationId, appId),
+        deploymentsSpec(organizationId, appId),
+    );
 }
 
-// Events in order, after `afterSeq`, at most `limit` (default 100, at most 500).
-export async function listDeploymentEvents(
+export async function listDeploymentsPage(
+    db: Db,
+    principal: Principal,
+    organizationId: string,
+    appId: string,
+    page: PageRequest,
+    restrictTo?: string[] | null,
+) {
+    await requireMembership(db, principal, organizationId, "app:read");
+    await requireVisibleApp(db, organizationId, appId, restrictTo);
+    return pageRows(
+        deploymentsQuery(db, organizationId, appId),
+        deploymentsSpec(organizationId, appId),
+        page,
+    );
+}
+
+// Events in order, after `afterSeq`, at most `limit` (default 100, at most 500). `more` is true
+// when at least one further event exists, found by reading one row past the limit.
+export async function listDeploymentEventsPage(
     db: Db,
     principal: Principal,
     organizationId: string,
@@ -298,13 +338,33 @@ export async function listDeploymentEvents(
     await requireMembership(db, principal, organizationId, "app:read");
     await visibleDeployment(db, organizationId, deploymentId, restrictTo);
     const limit = Math.min(Math.max(options.limit ?? 100, 1), 500);
-    return db
+    const rows = await db
         .selectFrom("app_deployment_event")
         .select(["seq", "phase", "level", "message", "created_at as createdAt"])
         .where("deployment_id", "=", deploymentId)
         .where("organization_id", "=", organizationId)
         .where("seq", ">", options.afterSeq ?? 0)
         .orderBy("seq")
-        .limit(limit)
+        .limit(limit + 1)
         .execute();
+    return { events: rows.slice(0, limit), more: rows.length > limit };
+}
+
+export async function listDeploymentEvents(
+    db: Db,
+    principal: Principal,
+    organizationId: string,
+    deploymentId: string,
+    options: { afterSeq?: number; limit?: number } = {},
+    restrictTo?: string[] | null,
+) {
+    const { events } = await listDeploymentEventsPage(
+        db,
+        principal,
+        organizationId,
+        deploymentId,
+        options,
+        restrictTo,
+    );
+    return events;
 }

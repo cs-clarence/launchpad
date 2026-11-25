@@ -350,3 +350,100 @@ describe("errors", () => {
         await expect(odd.projects.list(ORG)).rejects.toMatchObject({ reason: "invalid-response" });
     });
 });
+
+describe("paged lists", () => {
+    const APP = {
+        id: ID,
+        projectId: ID,
+        slug: "site",
+        state: "active",
+        createdAt: "2026-11-15T00:00:00.000Z",
+    };
+    const apps = `/api/v1/organizations/${ORG}/apps`;
+
+    it("returns items and the next cursor from a relative Link, then the last page", async () => {
+        const { client, calls } = recording((url) =>
+            new URL(url).searchParams.get("cursor") === "c1"
+                ? json([APP])
+                : json([APP, APP], {
+                      headers: { link: `<${apps}?limit=2&cursor=c1>; rel="next"` },
+                  }),
+        );
+        const first = await client.apps.listPage(ORG, { limit: 2 });
+        expect(first.items.length).toBe(2);
+        expect(first.next).toEqual({ cursor: "c1" });
+        const last = await client.apps.listPage(ORG, { limit: 2, cursor: first.next!.cursor });
+        expect(last).toEqual({ items: [expect.objectContaining({ slug: "site" })] });
+        expect(calls.map((call) => call.url)).toEqual([
+            `https://control.example.com${apps}?limit=2`,
+            `https://control.example.com${apps}?limit=2&cursor=c1`,
+        ]);
+    });
+
+    it("ignores links to another host, another path or without a cursor", async () => {
+        for (const link of [
+            `<https://evil.example.net${apps}?limit=2&cursor=c1>; rel="next"`,
+            `<//evil.example.net${apps}?limit=2&cursor=c1>; rel="next"`,
+            `</other/path?limit=2&cursor=c1>; rel="next"`,
+            `<${apps.replace("/api/v1", "")}?limit=2&cursor=c1>; rel="next"`,
+            `<${apps}?limit=2>; rel="next"`,
+            `<${apps}?limit=2&cursor=c1>; rel="prev"`,
+            `<${apps}?limit=2&cursor=a%20b>; rel="next"`,
+            "garbage",
+        ]) {
+            const { client } = recording(() => json([APP], { headers: { link } }));
+            expect((await client.apps.listPage(ORG, { limit: 2 })).next, link).toBeUndefined();
+        }
+    });
+
+    it("accepts an absolute link on the controller's own origin", async () => {
+        const { client } = recording(() =>
+            json([APP], {
+                headers: {
+                    link: `<https://control.example.com${apps}?limit=2&cursor=c9>; rel="next"`,
+                },
+            }),
+        );
+        expect((await client.apps.listPage(ORG, { limit: 2 })).next).toEqual({ cursor: "c9" });
+    });
+
+    it("rejects a limit outside 1 to 100 before any request", async () => {
+        const { client, calls } = recording(() => json([]));
+        for (const limit of [0, 101, 1.5, Number.NaN]) {
+            await expect(client.apps.listPage(ORG, { limit })).rejects.toBeInstanceOf(
+                LaunchpadConfigError,
+            );
+        }
+        expect(calls).toEqual([]);
+    });
+
+    it("keeps list unchanged: no query, bare array", async () => {
+        const { client, calls } = recording(() => json([APP]));
+        expect(await client.apps.list(ORG)).toHaveLength(1);
+        expect(calls[0]!.url).toBe(`https://control.example.com${apps}`);
+    });
+
+    it("pages events by after, taking nextAfter from the Link", async () => {
+        const path = `/api/v1/organizations/${ORG}/deployments/${ID}/events`;
+        const EVENT = {
+            seq: "2",
+            phase: "build",
+            level: "info",
+            message: "x",
+            createdAt: "2026-11-15T00:00:00.000Z",
+        };
+        const { client, calls } = recording(() =>
+            json([EVENT], { headers: { link: `<${path}?after=2&limit=1>; rel="next"` } }),
+        );
+        const page = await client.deployments.eventsPage(ORG, ID, { after: "1", limit: 1 });
+        expect(page.nextAfter).toBe("2");
+        expect(calls[0]!.url).toBe(`https://control.example.com${path}?after=1&limit=1`);
+        const { client: bad } = recording(() =>
+            json([EVENT], { headers: { link: `<${path}?after=x&limit=1>; rel="next"` } }),
+        );
+        expect((await bad.deployments.eventsPage(ORG, ID, { limit: 1 })).nextAfter).toBeUndefined();
+        await expect(client.deployments.eventsPage(ORG, ID, { limit: 501 })).rejects.toBeInstanceOf(
+            LaunchpadConfigError,
+        );
+    });
+});

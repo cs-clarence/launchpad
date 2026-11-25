@@ -8,6 +8,7 @@ import { appendDeploymentEvent } from "./deployment-claims";
 import { withModelMutation } from "./deployment-recovery";
 import { isUniqueViolation, ServiceError } from "./errors";
 import { isUuid } from "./ids";
+import { orderedRows, pageRows, type PageRequest, type PageSpec } from "./pagination";
 import { parseInput, recordAudit, requireMembership } from "./organizations";
 import { boundedPromotionEvidence, type PromotionReadback } from "./promotion-claims";
 import {
@@ -234,14 +235,21 @@ export async function requestWithdrawal(
     });
 }
 
-export async function listAliasOperations(
+const operationsSpec = (organizationId: string, aliasId: string): PageSpec => ({
+    route: `alias-operations:${aliasId}`,
+    organizationId,
+    keys: [
+        { ref: "promotion_operation.generation", type: "bigint", desc: true },
+        { ref: "promotion_operation.id", type: "uuid" },
+    ],
+});
+
+async function requireVisibleAlias(
     db: Db,
-    principal: Principal,
     organizationId: string,
     aliasId: string,
     restrictTo?: string[] | null,
 ) {
-    await requireMembership(db, principal, organizationId, "app:read");
     if (!isUuid(aliasId)) throw new ServiceError("not-found", "Alias not found.");
     const alias = await db
         .selectFrom("app_alias")
@@ -254,13 +262,46 @@ export async function listAliasOperations(
     if (!alias || (restrictTo && !restrictTo.includes(alias.projectId))) {
         throw new ServiceError("not-found", "Alias not found.");
     }
-    const rows = await db
+}
+
+const operationsQuery = (db: Db, aliasId: string) =>
+    db
         .selectFrom("promotion_operation")
         .select([...OPERATION_COLUMNS])
-        .where("alias_id", "=", aliasId)
-        .orderBy("generation", "desc")
-        .execute();
+        .where("promotion_operation.alias_id", "=", aliasId);
+
+export async function listAliasOperations(
+    db: Db,
+    principal: Principal,
+    organizationId: string,
+    aliasId: string,
+    restrictTo?: string[] | null,
+) {
+    await requireMembership(db, principal, organizationId, "app:read");
+    await requireVisibleAlias(db, organizationId, aliasId, restrictTo);
+    const rows = await orderedRows(
+        operationsQuery(db, aliasId),
+        operationsSpec(organizationId, aliasId),
+    );
     return rows.map(shape);
+}
+
+export async function listAliasOperationsPage(
+    db: Db,
+    principal: Principal,
+    organizationId: string,
+    aliasId: string,
+    page: PageRequest,
+    restrictTo?: string[] | null,
+) {
+    await requireMembership(db, principal, organizationId, "app:read");
+    await requireVisibleAlias(db, organizationId, aliasId, restrictTo);
+    const result = await pageRows(
+        operationsQuery(db, aliasId),
+        operationsSpec(organizationId, aliasId),
+        page,
+    );
+    return { ...result, items: result.items.map(shape) };
 }
 
 // A corrective operation for one the worker could not settle (an operator action; the audited

@@ -6,6 +6,7 @@ import type { Principal } from "./authorization";
 import { withModelMutation } from "./deployment-recovery";
 import { isUniqueViolation, ServiceError } from "./errors";
 import { parseInput, recordAudit, requireMembership } from "./organizations";
+import { emptyPage, orderedRows, pageRows, type PageRequest, type PageSpec } from "./pagination";
 
 type Db = Kysely<Database>;
 
@@ -109,6 +110,27 @@ export async function createApp(
     }
 }
 
+type AppSummary = Awaited<ReturnType<typeof listApps>>[number];
+
+const appsSpec = (organizationId: string): PageSpec => ({
+    route: "apps",
+    organizationId,
+    keys: [
+        { ref: "app.created_at", type: "timestamptz" },
+        { ref: "app.id", type: "uuid" },
+    ],
+});
+
+function appsQuery(db: Db, organizationId: string, restrictTo?: string[] | null) {
+    let query = db
+        .selectFrom("app")
+        .select([...APP_COLUMNS])
+        .where("app.organization_id", "=", organizationId)
+        .where("app.state", "<>", "deleted");
+    if (restrictTo) query = query.where("app.project_id", "in", restrictTo);
+    return query;
+}
+
 export async function listApps(
     db: Db,
     principal: Principal,
@@ -117,13 +139,19 @@ export async function listApps(
 ) {
     await requireMembership(db, principal, organizationId, "app:read");
     if (restrictTo && restrictTo.length === 0) return [];
-    let query = db
-        .selectFrom("app")
-        .select([...APP_COLUMNS])
-        .where("app.organization_id", "=", organizationId)
-        .where("app.state", "<>", "deleted");
-    if (restrictTo) query = query.where("app.project_id", "in", restrictTo);
-    return query.orderBy("app.created_at").orderBy("app.id").execute();
+    return orderedRows(appsQuery(db, organizationId, restrictTo), appsSpec(organizationId));
+}
+
+export async function listAppsPage(
+    db: Db,
+    principal: Principal,
+    organizationId: string,
+    page: PageRequest,
+    restrictTo?: string[] | null,
+) {
+    await requireMembership(db, principal, organizationId, "app:read");
+    if (restrictTo && restrictTo.length === 0) return emptyPage<AppSummary>();
+    return pageRows(appsQuery(db, organizationId, restrictTo), appsSpec(organizationId), page);
 }
 
 export async function getApp(
