@@ -191,8 +191,11 @@ such as Tailscale in front of it, and do not publish it directly.
     | `true`  | through the proxy, a second client address            | not throttled by the first client's attempts                                                                            |
     | `true`  | straight to the controller, spoofed `X-Forwarded-For` | the per-address limit is bypassed; only the per-account cap of 20 in ten minutes stops it                               |
 
-    So never set `true` if anything can reach the controller without the proxy. Not verified
-    against a real Cloudflare Tunnel or Tailscale: check what yours puts in `X-Forwarded-For`.
+    So never set `true` if anything can reach the controller without the proxy. That includes
+    other processes on the same host: they can connect to the loopback listener directly and
+    supply `X-Forwarded-For`, so on a shared host either trust or isolate the other local users
+    and processes, or leave it `false`. Not verified against a real Cloudflare Tunnel or
+    Tailscale: check what yours puts in `X-Forwarded-For`.
 
 5. Seed through the loopback address while sending the public origin (the script sends the
    controller address as the origin unless you pass `--origin`, and the controller then refuses
