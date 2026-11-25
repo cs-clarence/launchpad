@@ -10,13 +10,36 @@ export interface Io {
     err(text: string): void;
     interactive: boolean;
     stdinIsTTY?: boolean;
-    readSecret(prompt: string): Promise<string>;
+    // A hidden line from the terminal. Aborting `signal` restores the terminal and rejects.
+    readSecret(prompt: string, options?: SecretOptions): Promise<string>;
+    // The password for `--password-file`: a regular file of ours that only we can read, read
+    // without following a link or blocking. One trailing newline is removed. Messages never
+    // contain the file's contents.
+    readPasswordFile(path: string): Promise<string>;
     readStdin(): Promise<string>;
     readFile(path: string): Promise<{ text: string; mode: number; regular?: boolean }>;
     // Request data for `api`: a file, or standard input for "-". At most 1 MiB, as bytes.
     readData(source: string): Promise<Uint8Array>;
     // Where `jq` is, if anywhere; tests replace it. Defaults to a search of PATH.
     findExecutable?(name: string): string | null;
+}
+
+export interface SecretOptions {
+    kind?: "key" | "password";
+    signal?: AbortSignal;
+}
+
+// What the hidden prompt reads from and writes to; replaced in tests.
+export interface PromptStreams {
+    stdin: {
+        setRawMode(mode: boolean): unknown;
+        resume(): unknown;
+        pause(): unknown;
+        setEncoding(encoding: BufferEncoding): unknown;
+        on(event: "data", listener: (chunk: string) => void): unknown;
+        off(event: "data", listener: (chunk: string) => void): unknown;
+    };
+    stderr: { write(text: string): unknown };
 }
 
 const MAX_SECRET_BYTES = 4096;
@@ -50,21 +73,31 @@ async function readStdin(): Promise<string> {
 }
 
 // Reads a line from the terminal without echoing it.
-function readSecret(prompt: string): Promise<string> {
-    const stdin = process.stdin;
-    process.stderr.write(prompt);
+export function readSecretFrom(
+    { stdin, stderr }: PromptStreams,
+    prompt: string,
+    options: SecretOptions = {},
+): Promise<string> {
+    const tooLong = `Input is too long to be a ${options.kind ?? "key"}.`;
+    if (options.signal?.aborted) return Promise.reject(new Error("Cancelled."));
+    stderr.write(prompt);
     stdin.setRawMode(true);
     stdin.resume();
     stdin.setEncoding("utf8");
     return new Promise((resolve, reject) => {
         let buffer = "";
+        let done = false;
         const finish = (settle: () => void) => {
+            if (done) return;
+            done = true;
+            options.signal?.removeEventListener("abort", onAbort);
             stdin.off("data", onData);
             stdin.setRawMode(false);
             stdin.pause();
-            process.stderr.write("\n");
+            stderr.write("\n");
             settle();
         };
+        const onAbort = () => finish(() => reject(new Error("Cancelled.")));
         const onData = (chunk: string) => {
             for (const ch of chunk) {
                 if (ch === "\r" || ch === "\n") return finish(() => resolve(buffer));
@@ -72,12 +105,69 @@ function readSecret(prompt: string): Promise<string> {
                 if (ch === "\u007f" || ch === "\b") buffer = buffer.slice(0, -1);
                 else buffer += ch;
                 if (Buffer.byteLength(buffer, "utf8") > MAX_SECRET_BYTES) {
-                    return finish(() => reject(new Error("Input is too long to be a key.")));
+                    return finish(() => reject(new Error(tooLong)));
                 }
             }
         };
+        options.signal?.addEventListener("abort", onAbort, { once: true });
         stdin.on("data", onData);
     });
+}
+
+const readSecret = (prompt: string, options?: SecretOptions) =>
+    readSecretFrom({ stdin: process.stdin as never, stderr: process.stderr }, prompt, options);
+
+const refusal = (why: string) => new Error(`The password file ${why}.`);
+
+// The file must be ours and closed to others, like the credential store; a link or a FIFO is
+// refused without waiting for a writer.
+export async function readPasswordFile(file: string): Promise<string> {
+    let handle;
+    try {
+        handle = await fs.open(
+            file,
+            constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0) | (constants.O_NONBLOCK ?? 0),
+        );
+    } catch (error) {
+        const code = (error as NodeJS.ErrnoException).code;
+        if (code === "ELOOP") throw refusal("is a symbolic link; it is not read");
+        if (code === "ENOENT") throw refusal("was not found");
+        if (code === "EACCES") throw refusal("is not readable by you");
+        throw refusal("cannot be opened");
+    }
+    try {
+        const stat = await handle.stat();
+        if (!stat.isFile()) throw refusal("is not a regular file");
+        if (process.platform !== "win32") {
+            const owner = process.getuid?.();
+            if (owner !== undefined && stat.uid !== owner)
+                throw refusal("is owned by another user");
+            if ((stat.mode & 0o077) !== 0) {
+                throw refusal("is readable by others; restrict it with chmod 600");
+            }
+        }
+        if (stat.size > MAX_SECRET_BYTES) throw refusal("is too long to be a password");
+        let text: string;
+        try {
+            const bytes = await readBytes(
+                handle.createReadStream({ autoClose: false, highWaterMark: MAX_SECRET_BYTES + 1 }),
+                MAX_SECRET_BYTES,
+                "The password file is too long to be a password.",
+            );
+            text = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+        } catch (error) {
+            if (error instanceof Error && /too long/.test(error.message)) throw error;
+            if (error instanceof TypeError) throw refusal("is not valid UTF-8 text");
+            throw refusal("cannot be read");
+        }
+        return text.endsWith("\r\n")
+            ? text.slice(0, -2)
+            : text.endsWith("\n")
+              ? text.slice(0, -1)
+              : text;
+    } finally {
+        await handle.close();
+    }
 }
 
 async function readData(source: string, store: string): Promise<Uint8Array> {
@@ -123,6 +213,7 @@ export function realIo(env: Record<string, string | undefined> = process.env): I
         interactive: Boolean(process.stdin.isTTY && process.stderr.isTTY),
         stdinIsTTY: Boolean(process.stdin.isTTY),
         readSecret,
+        readPasswordFile,
         readStdin,
         readFile: async (path) => {
             const handle = await fs.open(path, "r");

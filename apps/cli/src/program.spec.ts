@@ -67,6 +67,7 @@ function fakeIo(
         interactive: options.interactive ?? false,
         stdinIsTTY: options.stdinIsTTY,
         readSecret: async () => options.secret ?? "",
+        readPasswordFile: async () => "",
         readStdin: async () => options.stdin ?? "",
         readFile: async (file) => {
             const found = options.files?.[file];
@@ -200,6 +201,9 @@ describe("login", () => {
             }
             async readData(_source: string) {
                 return new Uint8Array();
+            }
+            async readPasswordFile(_path: string) {
+                return "";
             }
         }
         for (const source of [["--key-stdin"], ["--key-file", "/key"], []]) {

@@ -71,6 +71,7 @@ async function api(
         err: (t) => void err.push(t),
         interactive: false,
         readSecret: async () => "",
+        readPasswordFile: async () => "",
         readStdin: async () => "",
         readFile: async () => ({ text: "", mode: 0o600 }),
         findExecutable: () => options.jq ?? null,
