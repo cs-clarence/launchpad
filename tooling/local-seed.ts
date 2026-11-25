@@ -28,7 +28,7 @@ export class SeedError extends Error {
     }
 }
 
-export const DEFAULT_CONTROLLER = "http://127.0.0.1:5173";
+export const DEFAULT_CONTROLLER = "http://127.0.0.1:3000";
 export const KEY_DAYS = 90;
 const KEY_NAME = "local-quickstart";
 // What the guide's walkthrough needs: whoami, reading and creating projects, reading apps.
@@ -180,7 +180,7 @@ export function checkController(value: string, allowRemote: boolean): string {
     try {
         url = new URL(value);
     } catch {
-        throw new SeedError("--controller must be a URL such as http://127.0.0.1:5173.");
+        throw new SeedError("--controller must be a URL such as http://127.0.0.1:3000.");
     }
     if (url.protocol !== "http:" && url.protocol !== "https:") {
         throw new SeedError("--controller must be an http or https URL.");
@@ -206,7 +206,7 @@ export function checkOrigin(value: string): string {
     try {
         url = new URL(value);
     } catch {
-        throw new SeedError("--origin must be an origin such as http://127.0.0.1:5173.");
+        throw new SeedError("--origin must be an origin such as http://127.0.0.1:3000.");
     }
     if ((url.protocol !== "http:" && url.protocol !== "https:") || url.pathname !== "/") {
         throw new SeedError("--origin must be an http or https origin with no path.");
@@ -393,15 +393,19 @@ async function send(api: Api, url: string, init: RequestInit): Promise<Response>
     }
 }
 
-export async function checkHealth(api: Api): Promise<void> {
+// A controller whose database has no schema yet answers 503 `schema-mismatch`: it is up, and
+// the migration below is what fixes it. Anything else but 200 is not this controller.
+export async function checkHealth(api: Api, options: { pending?: boolean } = {}): Promise<void> {
     const response = await send(api, `${api.controller}/api/health`, { method: "GET" });
-    await response.body?.cancel();
-    if (response.status !== 200) {
-        throw new SeedError(
-            `${api.controller}/api/health answered ${response.status}, not 200. ` +
-                "Is that the Launchpad controller?",
-        );
-    }
+    const body = await response.text().catch(() => "");
+    if (response.status === 200) return;
+    if (options.pending && response.status === 503 && /"schema-mismatch"/.test(body)) return;
+    throw new SeedError(
+        `${api.controller}/api/health answered ${response.status}, not 200. ` +
+            (response.status === 503
+                ? "The controller is up but not ready; check its log and DATABASE_URL."
+                : "Is that the Launchpad controller?"),
+    );
 }
 
 function failure(api: Api, what: string, status: number): SeedError {
@@ -705,9 +709,10 @@ async function seedWith(deps: Deps, options: Options, secrets: string[]): Promis
 
     await ensureOutDirectory(out);
     for (const file of [operatorFile, ownerFile]) await ensureOutDirectory(path.dirname(file));
-    await checkHealth(api);
+    await checkHealth(api, { pending: true });
     classifyAdmin("migrate", await deps.run(adminArgs("migrate", [])));
     deps.log("Database is migrated.");
+    await checkHealth(api);
 
     const operatorPassword = await ensureAccount(
         deps,

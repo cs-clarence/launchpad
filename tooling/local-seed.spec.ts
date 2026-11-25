@@ -34,7 +34,7 @@ import {
     type RunResult,
 } from "./local-seed";
 
-const BASE = "http://127.0.0.1:5173";
+const BASE = "http://127.0.0.1:3000";
 const json = (body: unknown, status = 200, headers: Record<string, string> = {}) =>
     new Response(JSON.stringify(body), {
         status,
@@ -59,13 +59,17 @@ class Fake {
     keyStatus = 201;
     projectStatus = 201;
     private seq = 0;
+    migrated = true;
 
     run = async (args: string[]): Promise<RunResult> => {
         this.adminCalls.push(args);
         this.transcript.push(args.join(" "));
         if (this.adminFailure) return this.adminFailure;
         const command = args.find((a) => a.startsWith("command="))!.slice("command=".length);
-        if (command === "migrate") return { code: 0, output: "Database is up to date." };
+        if (command === "migrate") {
+            this.migrated = true;
+            return { code: 0, output: "Database is up to date." };
+        }
         const options = (args.find((a) => a.startsWith("options=")) ?? "").slice(8).split(" ");
         const email = options[options.indexOf("--email") + 1]!.toLowerCase();
         const password = readFileSync(options[options.indexOf("--password-file") + 1]!, "utf8");
@@ -85,7 +89,11 @@ class Fake {
         this.calls.push(`${method} ${url.pathname}`);
         if (!this.up) throw new TypeError("connection refused");
         const headers = new Headers(init.headers);
-        if (url.pathname === "/api/health") return json({ name: "launchpad" });
+        if (url.pathname === "/api/health") {
+            return this.migrated
+                ? json({ name: "launchpad" })
+                : json({ code: "schema-mismatch", status: 503 }, 503);
+        }
         if (url.pathname === "/api/auth/sign-in/email") {
             if (headers.get("origin") !== this.trustedOrigin) return json({}, 403);
             const body = JSON.parse(init.body as string);
@@ -208,7 +216,7 @@ describe("arguments", () => {
 
 describe("controller address", () => {
     it("accepts loopback over http and any https origin only with --allow-remote", () => {
-        expect(checkController("http://127.0.0.1:5173", false)).toBe(BASE);
+        expect(checkController("http://127.0.0.1:3000", false)).toBe(BASE);
         expect(checkController("http://localhost:3000/", false)).toBe("http://localhost:3000");
         expect(checkController("http://[::1]:3000", false)).toBe("http://[::1]:3000");
         expect(() => checkController("https://control.example.com", false)).toThrow(
@@ -387,8 +395,26 @@ describe("failures give one clear message", () => {
     it("controller not up", async () => {
         fake.up = false;
         expect(await message(() => seed(deps(), options()))).toMatch(
-            /Cannot reach the controller at http:\/\/127\.0\.0\.1:5173.*omni -i run dev/,
+            /Cannot reach the controller at http:\/\/127\.0\.0\.1:3000.*omni -i run dev/,
         );
+        expect(fake.adminCalls).toHaveLength(0);
+    });
+
+    it("seeds a controller whose database has no schema yet (503 until migrated)", async () => {
+        fake.migrated = false;
+        await seed(deps(), options());
+        expect(fake.migrated).toBe(true);
+        expect(fake.transcript[0]).toMatch(/command=migrate/);
+    });
+
+    it("a controller that is not ready for another reason", async () => {
+        fake.migrated = true;
+        const original = fake.fetch;
+        fake.fetch = (async (input: string, init: RequestInit = {}) =>
+            new URL(input).pathname === "/api/health"
+                ? json({ code: "unavailable" }, 503)
+                : original(input, init)) as typeof fetch;
+        expect(await message(() => seed(deps(), options()))).toMatch(/answered 503.*not ready/);
         expect(fake.adminCalls).toHaveLength(0);
     });
 
