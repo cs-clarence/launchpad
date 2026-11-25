@@ -22,6 +22,8 @@ launchpad api <endpoint> [-X <method>] [-f|-F <key=value>]... [--input <file>] [
 launchpad api --session [--email <address>] [--password-file <path>] [--controller <url>] [--keep] [--secret-file <path>] <endpoint> ...
 launchpad login --session --email <address> [--password-file <path>] [--controller <url>]
 launchpad logout --session [--controller <url>]
+launchpad org create --name <name> --slug <slug> --owner-email <address> --confirm
+launchpad member list | add --user-email <address> --role <role> --confirm | remove <user-id> --confirm
 launchpad key list | issue --name <name> --scope <scope>... --expires-in-days <n> --secret-file <path> --confirm | revoke <key-id> --confirm
 ```
 
@@ -241,6 +243,29 @@ Shared by every command in this group:
   a kept session, where nothing is asked first. It is not an interrupt: `--confirm` is the intent check.
 - **Output:** a table (headers first, `No <things>.` when empty) or, with `--json`, the response as JSON. Exit
   codes are the usual ones; 409, 422 and 502 exit 1 with the controller's message.
+
+### Organizations and members
+
+```sh
+launchpad org create --email op@example.com --name Demo --slug demo --owner-email ann@example.com --confirm
+launchpad member list --org ORG_ID
+launchpad member add --org ORG_ID --user-email bob@example.com --role deployer --confirm
+launchpad member remove USER_ID --org ORG_ID --confirm
+```
+
+- **`org create`** (`POST /organizations`) needs the instance operator's account (anyone else gets 403, exit
+  3). The owner must be an existing user (422, exit 1), a duplicate slug is 409 (exit 1), and the operator gets
+  no membership. It takes no `--org`. It prints `Created organization <slug> (<id>) with owner <email>.`
+- **`member list`** (`GET /organizations/:org/members`; any member) prints `USER ID EMAIL NAME ROLE`. A key
+  holder can already read members with `launchpad api`; the command is here because `member remove` needs the
+  user ID it prints.
+- **`member add`** (`POST /organizations/:org/members`) adds an **existing** user by `--user-email` with a
+  `--role` of `owner`, `admin`, `deployer` or `viewer`. Owners and admins may add; an admin may assign only
+  deployer and viewer (the controller answers 403, exit 3). Already a member is 409 (exit 1). The target is
+  `--user-email` because `--email` is always the account that signs in.
+- **`member remove`** (`DELETE /organizations/:org/members/:userId`) takes the user ID `member list` prints.
+  Owners and admins may remove anyone; a member may remove themselves (leaving is not special-cased). Removing
+  the last owner is 409 (exit 1).
 
 ### Key management
 

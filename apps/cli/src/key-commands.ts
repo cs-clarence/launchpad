@@ -16,6 +16,7 @@ import {
     collect,
     describeAction,
     isUuid,
+    printer,
     runAction,
     type SharedOptions,
 } from "./session-actions";
@@ -58,8 +59,7 @@ export function addKeyCommands(
     wants: (command: Command<any, any, any>) => { json?: boolean },
 ) {
     const { io, remember } = deps;
-    const print = (command: Command<any, any, any>, data: unknown, human: () => string) =>
-        io.out(wants(command).json ? JSON.stringify(data, null, 2) : human());
+    const print = printer(io, wants);
 
     const key = program
         .command("key")

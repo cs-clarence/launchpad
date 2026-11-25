@@ -12,6 +12,7 @@ import {
 import { addApiCommand } from "./api-command";
 import { addAppCommands } from "./app-commands";
 import { addKeyCommands } from "./key-commands";
+import { addOrgCommands } from "./org-commands";
 import { describe, EXIT, ExitWith } from "./errors";
 import type { Io } from "./io";
 import { safeOutput } from "./output";
@@ -254,7 +255,11 @@ export function buildProgram(rawIo: Io, secrets: Set<string> = new Set()) {
             print(command, result, () => `Using profile "${result.profile}".`);
         });
 
-    const org = program.command("org").description("Organizations visible to the key.");
+    const org = program
+        .command("org")
+        .description(
+            "Organizations: `list` and `use` need a key, `create` your own account's session.",
+        );
     org.command("list")
         .description("List organizations the key can see.")
         .action(async (_options, command) => {
@@ -287,6 +292,7 @@ export function buildProgram(rawIo: Io, secrets: Set<string> = new Set()) {
         });
 
     addApiCommand(program, io, remember);
+    addOrgCommands(program, org, { io, remember }, wants);
     addKeyCommands(program, { io, remember }, wants);
     addAppCommands(program, io.context, io.workingDir ?? process.cwd(), io.out);
     return program;

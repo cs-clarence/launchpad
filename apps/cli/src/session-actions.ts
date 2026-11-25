@@ -1,5 +1,6 @@
 import type { Command } from "@commander-js/extra-typings";
 import { ClientCoreError, readWorkspace, requireConfirmation } from "@launchpad-kit/client-core";
+import { ORGANIZATION_ROLES, type OrganizationRoleName } from "@launchpad-kit/sdk";
 import type { Io } from "./io";
 import { refuseWithKey } from "./session-target";
 import { runWithSession, withSecretFile, type SessionCaller } from "./session-run";
@@ -51,6 +52,19 @@ export function checkPathId(value: string, what: string, uuid: boolean): string 
         );
     }
     return value;
+}
+
+// Prints a result as a table or sentence, or as pretty JSON with `--json`.
+export function printer(io: Io, wants: (command: Command<any, any, any>) => { json?: boolean }) {
+    return (command: Command<any, any, any>, data: unknown, human: () => string) =>
+        io.out(wants(command).json ? JSON.stringify(data, null, 2) : human());
+}
+
+export function checkRole(value: string): OrganizationRoleName {
+    if (!(ORGANIZATION_ROLES as readonly string[]).includes(value)) {
+        throw bad(`--role must be one of ${ORGANIZATION_ROLES.join(", ")}.`);
+    }
+    return value as OrganizationRoleName;
 }
 
 export function collect(value: string, previous: string[] = []) {
