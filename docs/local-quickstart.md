@@ -150,17 +150,57 @@ This is for a short trial, not hosting. The controller has not had a review for 
 the public internet; read [keep management private](access.md) first, put a tunnel or a VPN
 such as Tailscale in front of it, and do not publish it directly.
 
-1. Run the built server, not the dev server: `omni -i run build -p @launchpad-kit/controller`,
-   then from `apps/controller` load your settings and run `bun .output/server/index.mjs`.
-   Keep `HOST=127.0.0.1` so only the tunnel reaches it, with the `PORT` you choose.
-2. Set `LAUNCHPAD_BASE_URL` to the public `https` origin the tunnel serves, exactly (no path).
-   Restart the controller.
-3. Set `LAUNCHPAD_PUBLIC_SIGNUP=false` (the default) and `LAUNCHPAD_API_DOCS=false`, so no one
-   can register and the API reference is not public.
+1. Run the built server, not the dev server. From the repository root build it, then start it
+   from `apps/controller`, where Bun reads `.env.local` itself (no `source` needed):
+
+    ```sh
+    omni -i run build -p @launchpad-kit/controller
+    cd apps/controller && bun .output/server/index.mjs
+    ```
+
+    It listens on `HOST` and `PORT` from `.env.local`. `HOST=127.0.0.1` binds loopback only;
+    with `HOST` unset it also bound `127.0.0.1` in the check below, and `HOST=0.0.0.0` made it
+    answer on the machine's LAN address. Keep `127.0.0.1` so only the tunnel reaches it.
+
+2. Set `LAUNCHPAD_BASE_URL` to the public `https` origin the tunnel serves, exactly (no path),
+   and restart the controller; it reads its settings only at start. Cookie-carrying requests that
+   are not `GET`, `HEAD` or `OPTIONS` must send `Origin` equal to it. If it differs
+   (for example it is `http://127.0.0.1:3000` while people use `https://control.example.com`), sign-in answers 403
+   `INVALID_ORIGIN` ("Invalid origin"), other session requests answer 403 `forbidden-origin`, and
+   `launchpad api --session` prints: "The controller accepts only the exact origin set as its
+   LAUNCHPAD_BASE_URL; an http/https or proxy-host mismatch looks like this." Fix the setting
+   rather than the client. With an `https` origin the session cookie is named
+   `__Secure-better-auth.session_token` and is `Secure`; with an `http` origin it is
+   `better-auth.session_token` and not `Secure`.
+3. Set `LAUNCHPAD_PUBLIC_SIGNUP=false` (the default) and `LAUNCHPAD_API_DOCS=false`. With the
+   first, `POST /api/auth/sign-up/email` answers 400 `EMAIL_PASSWORD_SIGN_UP_DISABLED`; with
+   `true` it created an account. With the second, `/api/openapi` and `/api/openapi/json` answer 404. The Scalar script under `/_scalar/<version>/standalone.js` is still served: it is a
+   static file and holds no API data.
 4. Set `LAUNCHPAD_TRUSTED_PROXY=true` only if exactly one proxy sits in front and appends the
-   client address to `X-Forwarded-For`; otherwise leave it `false`.
-5. Seed through the loopback address while sending the public origin. The profile it saves
-   points at the loopback address, which is right on this machine:
+   client address to `X-Forwarded-For`; otherwise leave it `false`. The controller uses the
+   rightmost entry, so a client-supplied `X-Forwarded-For` cannot change the address as long as
+   that proxy appends. Sign-in is limited per client address and account (5 a minute), per
+   account across all addresses (20 in ten minutes) and, separately, per address (5 a minute).
+   Observed against a proxy that appends the peer address:
+
+    | Setting | Path                                                  | Result                                                                                                                  |
+    | ------- | ----------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
+    | `false` | through the proxy, spoofed `X-Forwarded-For`          | 5 attempts pass, then 429: the address is always the proxy's, so spoofing changes nothing                               |
+    | `false` | through the proxy, a second client address            | still 429: every client shares the proxy's address, so one person's failed sign-ins lock others out of the same account |
+    | `true`  | through the proxy, spoofed `X-Forwarded-For`          | 5 pass, then 429: the proxy's appended address wins                                                                     |
+    | `true`  | through the proxy, a second client address            | not throttled by the first client's attempts                                                                            |
+    | `true`  | straight to the controller, spoofed `X-Forwarded-For` | the per-address limit is bypassed; only the per-account cap of 20 in ten minutes stops it                               |
+
+    So never set `true` if anything can reach the controller without the proxy. That includes
+    other processes on the same host: they can connect to the loopback listener directly and
+    supply `X-Forwarded-For`, so on a shared host either trust or isolate the other local users
+    and processes, or leave it `false`. Not verified against a real Cloudflare Tunnel or
+    Tailscale: check what yours puts in `X-Forwarded-For`.
+
+5. Seed through the loopback address while sending the public origin (the script sends the
+   controller address as the origin unless you pass `--origin`, and the controller then refuses
+   with "was refused (403)"). The profile it saves points at the loopback address, which is
+   right on this machine:
 
     ```sh
     omni -i run local:seed -a "options=--controller http://127.0.0.1:3000 --origin https://control.example.com --profile tunnel"
@@ -168,6 +208,16 @@ such as Tailscale in front of it, and do not publish it directly.
 
     Other people use the public address: the owner issues them a key in the dashboard and they
     run `launchpad login --controller https://control.example.com --key-file <file>`.
+
+6. Check `https://control.example.com/api/health`: it answers 200 `{"name":"launchpad",...}`
+   through the proxy.
+
+The CLI needs `https` for a controller that is not loopback. A tunnel with a public certificate
+needs nothing more. If you test with a private certificate authority or a self-signed
+certificate, Bun does not trust it, and the CLI fails with only "Could not reach the controller."
+Run it with `NODE_EXTRA_CA_CERTS=<ca.pem>` (verified: `login`, `whoami`, `api` and
+`api --session` then work over `https`); `SSL_CERT_FILE` also worked for Bun's `fetch`.
+Do not use `NODE_TLS_REJECT_UNAUTHORIZED=0`.
 
 Both [access](access.md) and the [controller README](../apps/controller/README.md) describe each
 setting.
