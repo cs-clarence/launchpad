@@ -28,9 +28,10 @@ tag_prefix = "v"
 script = """#!/bin/sh
 set -e
 cog verify --file "$1"
-# An unborn branch has no history for cog check to inspect.
-if git rev-parse --verify HEAD >/dev/null 2>&1; then
-    cog check
+# Same scope as CI: this branch's commits, not the whole history (which holds old squash-merge
+# titles). An unborn branch, or a clone without origin/main, has nothing to compare against.
+if git rev-parse --verify HEAD >/dev/null 2>&1 && git rev-parse --verify origin/main >/dev/null 2>&1; then
+    cog check origin/main..HEAD
 fi
 """
 

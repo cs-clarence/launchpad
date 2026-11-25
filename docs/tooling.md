@@ -208,8 +208,9 @@ tooling packages independently. Apps and test projects are not registered.
 
 Cocogitto (`cog`) is available locally. `cog verify "feat: add a preview"` checks
 a Conventional Commit message. Install the configured commit-msg hook in each
-checkout with `cog install-hook --all`. It validates every commit message and
-runs `cog check` when `HEAD` exists, so the first commit on an unborn branch
+checkout with `cog install-hook --all`. It validates every commit message and,
+when `HEAD` and `origin/main` exist, runs `cog check origin/main..HEAD`, the same range CI
+checks, so old history does not block new commits and the first commit on an unborn branch
 is supported. Installation does not change Git configuration.
 
 `cog bump` is wired to version synchronization: the `core` group in `cog.toml` lists everything
