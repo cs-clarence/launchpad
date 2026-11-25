@@ -187,7 +187,7 @@ together with the version you use locally. Bun comes from `packageManager` in
 
 No CI-only checks exist: anything CI runs you can run locally with the commands above. Install the Cocogitto commit-msg hook
 locally with `cog install-hook --all`; it validates Conventional Commit messages
-and checks existing history once the repository has a first commit. Browser tests, live
+and checks this branch's commits (`origin/main..HEAD`), the range CI checks. Browser tests, live
 SSH tests and deployment tests are not part of the default checks; image builds run in
 the integration job.
 See [tooling](docs/tooling.md) and [patterns](docs/patterns/README.md).
@@ -199,5 +199,14 @@ commit or merge convention was detected. The approved starting convention is:
 short-lived `<type>/<short-slug>` branches, focused Conventional Commit messages
 (for example `feat: add a preview`), as configured in `cog.toml`,
 PRs and squash merges, and no force-pushes to shared branches or committed
-secrets. Passing checks and one review are recommended before merging, but
+secrets.
+
+Titles must be Conventional Commit (semantic) messages: `<type>[(scope)]: <summary>`, for
+example `feat(worker): add an optional worker id` or `fix: check only the branch's commits`.
+This applies to every commit message **and to the PR title**, because a squash merge uses the
+PR title as the commit on `main`, so a title like `Add an optional LAUNCHPAD_WORKER_ID (#86)`
+fails `cog check`. Allowed types are the Conventional Commit set (`feat`, `fix`, `docs`,
+`chore`, `refactor`, `test`, `perf`, `build`, `ci`, `style`, `revert`). The `Check Commits`
+job and the commit-msg hook enforce it on the commits of a PR, not on the PR title, so
+check the title yourself before merging. Check a message with `cog verify "<title>"`. Passing checks and one review are recommended before merging, but
 branch protections and remote settings have not been configured.
