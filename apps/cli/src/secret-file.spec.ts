@@ -333,6 +333,42 @@ describe("--secret-file with a session and signals", () => {
             }
         }
     });
+
+    it("hides the key however the controller escaped it", async () => {
+        const jq = path.join(dir, "fake-jq");
+        await fs.writeFile(
+            jq,
+            '#!/bin/sh\nif [ "$1" = "-n" ]; then exit 0; fi\nsed \'s/lp_//g; s/plain-//g; s/kkkk*//g\'\n',
+            { mode: 0o700 },
+        );
+        const plain = "plain-secret/value-1234567890";
+        for (const [secret, body] of [
+            [
+                SECRET,
+                `{"id":"k1","secret":"lp_\\u006b${"k".repeat(42)}","again":["lp_${"\\u006b".repeat(43)}"]}`,
+            ],
+            [plain, '{"id":"k1","secret":"plain-secret\\/value-1234567890"}'],
+        ] as const) {
+            await fs.rm(target, { force: true });
+            const w = await run(
+                { jq, respond: () => new Response(body, { status: 201 }) },
+                "--jq",
+                ".",
+            );
+            expect(w.code).toBe(EXIT.ok);
+            expect(await fs.readFile(target, "utf8")).toBe(`${secret}\n`);
+            expect(w.text()).toContain("[redacted]");
+            for (const piece of [
+                secret,
+                secret.slice(3, 20),
+                "secret/value",
+                "secret\\/value",
+                "u006b",
+            ]) {
+                expect(w.text()).not.toContain(piece);
+            }
+        }
+    });
 });
 
 describe("interrupted before the first read", () => {
@@ -354,6 +390,48 @@ describe("interrupted before the first read", () => {
         expect(reads).toEqual([]);
         expect(w.requests).toEqual([]);
         expect(await exists()).toBe(false);
+    });
+
+    it("removes the abort listener and fails cleanly when a reader throws synchronously", async () => {
+        const added: number[] = [];
+        const removed: number[] = [];
+        const add = AbortSignal.prototype.addEventListener;
+        const remove = AbortSignal.prototype.removeEventListener;
+        AbortSignal.prototype.addEventListener = function (
+            this: AbortSignal,
+            type: string,
+            ...rest: never[]
+        ) {
+            if (type === "abort") added.push(1);
+            return (add as (...a: unknown[]) => void).call(this, type, ...rest);
+        } as typeof add;
+        AbortSignal.prototype.removeEventListener = function (
+            this: AbortSignal,
+            type: string,
+            ...rest: never[]
+        ) {
+            if (type === "abort") removed.push(1);
+            return (remove as (...a: unknown[]) => void).call(this, type, ...rest);
+        } as typeof remove;
+        let w: World;
+        try {
+            w = await session(issue("-F", "k=@-"), dir, {
+                readData: () => {
+                    throw new Error("reader exploded");
+                },
+            });
+        } finally {
+            AbortSignal.prototype.addEventListener = add;
+            AbortSignal.prototype.removeEventListener = remove;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 10));
+        expect(added.length).toBeGreaterThan(0);
+        expect(removed.length).toBeGreaterThanOrEqual(added.length);
+        expect(w.code).toBe(EXIT.usage);
+        expect(w.err.join("\n")).toContain("reader exploded");
+        expect(w.requests).toEqual([]);
+        expect(await exists()).toBe(false);
+        for (const set of w.listeners.values()) expect(set.size).toBe(0);
     });
 
     it("observes a read that fails after the interruption, with no unhandled rejection", async () => {

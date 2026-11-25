@@ -199,7 +199,8 @@ launchpad api --session --email op@example.com -X POST organizations -f name=Dem
   combined with `--paginate`. SIGINT, SIGTERM and SIGHUP remove an empty secret file before exiting, with
   or without `--session` (also for a kept session and while stdin is still being read); a file that
   already holds the key is kept. The copy of the response given to `--jq` and to the screen has the key
-  replaced, so a filter cannot print part of it; only the file gets the original. **Limit:** the file is
+  replaced (built from the parsed JSON, so any escaping of the key is covered; the copy is re-serialized, so
+  number formatting may differ), so a filter cannot print part of it; only the file gets the original. **Limit:** the file is
   removed by path after a device and inode check, and Node cannot make that atomic: someone who can
   already write to the owner-only directory could swap the path between the check and the removal (a
   swapped symlink is removed itself, never followed).

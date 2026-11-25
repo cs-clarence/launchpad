@@ -38,9 +38,14 @@ function untilInterrupted<T>(start: () => Promise<T>, signal?: AbortSignal): Pro
     return new Promise<T>((resolve, reject) => {
         const stop = () => reject(new Error("Interrupted."));
         signal.addEventListener("abort", stop, { once: true });
-        start()
-            .then(resolve, reject)
-            .finally(() => signal.removeEventListener("abort", stop));
+        let work: Promise<T>;
+        try {
+            work = start();
+        } catch (error) {
+            // A reader that throws instead of returning a promise is a failed read.
+            work = Promise.reject(error);
+        }
+        work.then(resolve, reject).finally(() => signal.removeEventListener("abort", stop));
     });
 }
 const FRESH_MS = 15 * 60 * 1000;
@@ -544,8 +549,10 @@ export function addApiCommand(
                 let shown = response.body;
                 if (secretFile) {
                     let secret: unknown;
+                    let parsedBody: unknown;
                     try {
-                        secret = (JSON.parse(response.body) as { secret?: unknown } | null)?.secret;
+                        parsedBody = JSON.parse(response.body);
+                        secret = (parsedBody as { secret?: unknown } | null)?.secret;
                     } catch {
                         secret = undefined;
                     }
@@ -557,9 +564,19 @@ export function addApiCommand(
                     // A key-shaped secret is already shown as lp_[redacted].
                     if (!secret.startsWith("lp_")) remember(secret);
                     const mark = secret.startsWith("lp_") ? "lp_[redacted]" : "[redacted]";
-                    for (const form of new Set([secret, JSON.stringify(secret).slice(1, -1)])) {
-                        shown = shown.split(form).join(mark);
-                    }
+                    // Built from the parsed value, not by matching text, so however the controller
+                    // escaped the key (`\/`, `\uXXXX`) every copy of it is replaced.
+                    const hide = (value: unknown): unknown =>
+                        typeof value === "string"
+                            ? value.split(secret as string).join(mark)
+                            : Array.isArray(value)
+                              ? value.map(hide)
+                              : value && typeof value === "object"
+                                ? Object.fromEntries(
+                                      Object.entries(value).map(([k, v]) => [k, hide(v)]),
+                                  )
+                                : value;
+                    shown = JSON.stringify({ ...(hide(parsedBody) as object), secret: mark });
                     try {
                         await secretFile.write(`${secret}\n`);
                     } catch {
