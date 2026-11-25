@@ -276,6 +276,21 @@ database.
 One commit per step. If one PR is too large, split it: steps 1 to 6 in the first, steps 7 and 8
 in the second.
 
+## Status
+
+Built on branch `feat/cli-session-login`, one commit per step 1 to 7 and the docs in step 8. Deviations:
+
+- Step 4's check lists a `--secret-file` failure, but that flag is step 7; its sign-out on failure is
+  tested there (`apps/cli/src/secret-file.spec.ts`).
+- Step 2 moved the shared request guards (`readBounded`, path and header checks, `nextLink`) into
+  `packages/sdk/src/transport.ts` so both clients use one implementation; the key client's behavior and
+  tests are unchanged, and it now also reads `x-retry-after`.
+- `--keep` saves the entry right after the sign-in (before the call), then signs out the replaced
+  session; if the save fails, the new session is signed out.
+- The CLI test harness for `--session` is `apps/cli/src/session-harness.ts` (fake controller and terminal).
+- Not run: nothing against a real controller; the packaged-client check (`test:packages`) and
+  integration tests need Docker or the network.
+
 ## Undo
 
 Steps 1 to 8 are additive: reverting the commits removes the commands. Because `credentials.json`

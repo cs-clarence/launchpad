@@ -70,9 +70,14 @@ parameters it derives from the route; those schemas accept any value, and the se
 return the API's own `422`.
 
 The CLI's `launchpad api` command (see the [CLI README](../cli/README.md#launchpad-api)) reaches
-the key-allowed `/api/v1` routes only, including opt-in paging through `rel="next"` links. The
-session-only routes (organization, member, invitation and key creation or revocation) are
-dashboard or HTTP only.
+the key-allowed `/api/v1` routes with a key, including opt-in paging through `rel="next"` links. The
+session-only routes (organization, member, invitation and key creation or revocation) are reached
+with `launchpad api --session`, which signs in with the user's own email and password (the operator
+for organizations, owners and admins for keys and members) and sends only the session cookie and the
+exact `Origin`; see [session access](../cli/README.md#session-access---session) and the
+[decision record](../../docs/decisions/cli-session-login.md). The controller is unchanged: its roles,
+the 15-minute freshness rule for key issue, the sign-in throttle and the `LAUNCHPAD_BASE_URL` origin
+check are the only authorization. Keep that origin exact, or the CLI gets `forbidden-origin`.
 
 To document a new route, add an entry to `docs` in `src/server/openapi.ts` and pass it as
 the route's `detail`. In Elysia 2 RC the hook goes **before** the handler:

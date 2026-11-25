@@ -177,16 +177,11 @@ Every step is safe to stop after.
 `omni -i run check test build`. Part 1 is additive; removing the command and the SDK method
 undoes it. No data or deployment effects.
 
-## Part 2 (not planned): session login for admin use
+## Part 2: session login for admin use
 
-Needed for org, member and key creation. Requires a decision record in `docs/decisions/`
-first:
-
-- Where a session lives, its lifetime, and the 15-minute freshness rule for key issue.
-- Whether the credential file may hold a password-derived session, kept apart from the
-  CI-readable key profile.
-- Whether the operator surface belongs in the consumer CLI or in `admin`.
-- How trusted proxy and origin/CSRF checks apply to a non-browser client.
+Decided in [the decision record](../decisions/cli-session-login.md) and built per that record on
+branch `feat/cli-session-login`: `api --session`, `--keep`, `login --session`, `logout --session` and
+`--secret-file`. See its status section for the steps and any deviation.
 
 ## Open questions
 
