@@ -98,15 +98,30 @@ describe("invite", () => {
             expectClean(w, [TOKEN]);
             noHandlers(w);
         }
-        for (const flags of [
-            ["invite", "create", "--to", "a@b.co", "--role", "viewer", "--confirm"],
-            ["invite", "list"],
-        ]) {
+        const shapes: Array<[string[], unknown]> = [
+            [
+                ["invite", "create", "--to", "a@b.co", "--role", "viewer", "--confirm"],
+                { id: ID, email: "carol@example.com", role: "viewer" },
+            ],
+            [
+                ["invite", "list"],
+                [
+                    {
+                        id: ID,
+                        email: "carol@example.com",
+                        role: "viewer",
+                        createdAt: when,
+                        expiresAt: when,
+                    },
+                ],
+            ],
+        ];
+        for (const [flags, shape] of shapes) {
             const w = await go([...flags.slice(0, 2), ...base, ...flags.slice(2), "--json"], {
                 respond,
             });
+            expect(JSON.parse(w.out.join("\n"))).toEqual(shape);
             expect(w.out.join("\n")).not.toContain(TOKEN);
-            expect(JSON.parse(w.out.join("\n"))).toBeTruthy();
             expect(w.out.join("\n")).not.toContain("Acting as");
         }
     });

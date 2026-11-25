@@ -200,6 +200,29 @@ describe("member", () => {
         }
     });
 
+    it("--json prints exactly the response for add and remove", async () => {
+        const add = await go(
+            [
+                "member",
+                "add",
+                ...base,
+                "--user-email",
+                BOB,
+                "--role",
+                "viewer",
+                "--confirm",
+                "--json",
+            ],
+            { respond },
+        );
+        expect(JSON.parse(add.out.join("\n"))).toEqual({ userId: "u2", role: "viewer" });
+        const remove = await go(["member", "remove", "u2", ...base, "--confirm", "--json"], {
+            respond,
+        });
+        expect(JSON.parse(remove.out.join("\n"))).toEqual({ ok: true });
+        expect(add.out.join("\n") + remove.out.join("\n")).not.toContain("Acting as");
+    });
+
     it("--json prints the body with no acting line on stdout", async () => {
         const w = await go(["member", "list", ...base, "--json"], { respond });
         expect(JSON.parse(w.out.join("\n"))).toEqual(members);

@@ -22,7 +22,6 @@ import {
     newServer,
     OPERATOR,
     OWNER,
-    PASSWORD,
     session,
     trackProcessListeners,
     type Options,
@@ -347,6 +346,45 @@ describe("key issue", () => {
         expect(w.signedIn).toEqual([]);
     });
 
+    it("a kept session's 401 is a refusal: exit 3, no 'may exist', file removed, entry deleted", async () => {
+        await go(["login", "--session", ...auth]);
+        const w = await go(
+            [
+                "key",
+                "issue",
+                "--org",
+                ORG,
+                "--name",
+                "ci",
+                "--scope",
+                "project:read",
+                "--expires-in-days",
+                "30",
+                "--secret-file",
+                target,
+                "--confirm",
+            ],
+            {
+                respond: () =>
+                    json({ code: "unauthenticated", title: "Unauthorized" }, { status: 401 }),
+            },
+        );
+        expect(w.code).toBe(EXIT.unauthorized);
+        expect(w.text()).not.toContain("may exist");
+        expect(w.err.join("\n")).toContain("no longer valid");
+        expect(callLines(w)).toHaveLength(1);
+        expect(await exists()).toBe(false);
+        await expect(
+            fs.stat(path.join(dir, "session.json")).then((f) => f.size),
+        ).resolves.toBeGreaterThan(0);
+        expect(
+            JSON.parse(await fs.readFile(path.join(dir, "session.json"), "utf8")).sessions[
+                CONTROLLER
+            ],
+        ).toBeUndefined();
+        expectClean(w, [SECRET]);
+    });
+
     it("shows the 429 wait and does not retry", async () => {
         const w = await go(issueArgs(), {
             respond: () =>
@@ -527,6 +565,5 @@ describe("help", () => {
             expect(w.out.join("\n")).toContain("/api-keys");
             expect(w.out.join("\n")).toContain("dashboard sign-in");
         }
-        expect(PASSWORD).toBeTruthy();
     });
 });

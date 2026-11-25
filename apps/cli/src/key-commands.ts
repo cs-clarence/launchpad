@@ -257,7 +257,13 @@ export function addKeyCommands(
                             );
                             throw error;
                         }
-                        if (refused(error)) throw error;
+                        // A kept session's 401 becomes a not-logged-in error: a refusal too.
+                        if (
+                            refused(error) ||
+                            (error instanceof ClientCoreError && error.code === "not-logged-in")
+                        ) {
+                            throw error;
+                        }
                         throw ambiguous(error, io);
                     }
                 },

@@ -242,6 +242,8 @@ Shared by every command in this group:
   session's stored email) and before the first request, never to stdout, so `--json` stays machine-clean. With
   the default flow the sign-in has already happened by then, so it is an audit trail, and a real check only for
   a kept session, where nothing is asked first. It is not an interrupt: `--confirm` is the intent check.
+  Without `--email`, a saved session of another account is used: run `launchpad logout --session` first if
+  that is not the account you mean to act as.
 - **Output:** a table (headers first, `No <things>.` when empty) or, with `--json`, the response as JSON. Exit
   codes are the usual ones; 409, 422 and 502 exit 1 with the controller's message.
 
@@ -255,14 +257,14 @@ launchpad member remove USER_ID --org ORG_ID --confirm
 ```
 
 - **`org create`** (`POST /organizations`) needs the instance operator's account (anyone else gets 403, exit
-  3). The owner must be an existing user (422, exit 1), a duplicate slug is 409 (exit 1), and the operator gets
+  3). The owner must be an existing user, and one whose email address is verified or that the operator provisioned (otherwise 422, exit 1: invite the address instead), a duplicate slug is 409 (exit 1), and the operator gets
   no membership. It takes no `--org`. It prints `Created organization <slug> (<id>) with owner <email>.`
 - **`member list`** (`GET /organizations/:org/members`; any member) prints `USER ID EMAIL NAME ROLE`. A key
   holder can already read members with `launchpad api`; the command is here because `member remove` needs the
   user ID it prints.
 - **`member add`** (`POST /organizations/:org/members`) adds an **existing** user by `--user-email` with a
   `--role` of `owner`, `admin`, `deployer` or `viewer`. Owners and admins may add; an admin may assign only
-  deployer and viewer (the controller answers 403, exit 3). Already a member is 409 (exit 1). The target is
+  deployer and viewer (the controller answers 403, exit 3). Already a member is 409 (exit 1). An unknown email is 422 "No user has that email address.", and so is an account whose email is unverified and not operator-provisioned (invite it instead) (exit 1). The target is
   `--user-email` because `--email` is always the account that signs in.
 - **`member remove`** (`DELETE /organizations/:org/members/:userId`) takes the user ID `member list` prints.
   Owners and admins may remove anyone; a member may remove themselves (leaving is not special-cased). Removing
