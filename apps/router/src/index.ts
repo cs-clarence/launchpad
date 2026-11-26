@@ -1,5 +1,5 @@
+import { Command, CommanderError } from "@commander-js/extra-typings";
 import { RouterError, parseRouterHostConfig } from "@launchpad-kit/alias-router";
-import { parseArgs } from "node:util";
 import { initRouter, rotateRouter } from "./commands";
 import { checkHealth } from "./healthcheck";
 import { LockError } from "./lock";
@@ -38,79 +38,68 @@ function describe(error: unknown): string {
     return "The command failed.";
 }
 
-async function main(): Promise<void> {
-    const [command, ...rest] = process.argv.slice(2);
-    if (!command || command === "--help" || command === "-h") {
-        process.stdout.write(USAGE);
-        return;
-    }
-    if (!["serve", "init", "rotate", "healthcheck"].includes(command)) {
-        fail(`unknown command "${command.slice(0, 40)}"; see --help`);
-    }
-    let config: ReturnType<typeof parseRouterHostConfig>;
+const TOKEN_USAGE = "expected exactly one of --token-file <path> or --token-stdin";
+
+interface SecretValues {
+    tokenFile?: string;
+    tokenStdin?: true;
+    standalone?: true;
+    databaseUrlFile?: string;
+}
+
+function loadConfig(): ReturnType<typeof parseRouterHostConfig> {
     try {
-        config = parseRouterHostConfig(process.env);
+        return parseRouterHostConfig(process.env);
     } catch (error) {
         return fail(describe(error));
     }
+}
 
-    if (command === "healthcheck" || command === "serve") {
-        try {
-            parseArgs({ args: rest, options: {}, strict: true });
-        } catch {
-            return fail(`${command} takes no arguments`);
-        }
-        if (command === "healthcheck") {
-            const healthy = await checkHealth(config.control, fetch, 3000, config.controlTls);
-            process.stdout.write(healthy ? "ok\n" : "unhealthy\n");
-            process.exit(healthy ? 0 : 1);
-        }
-        let router: ReturnType<typeof startRouter>;
-        try {
-            router = startRouter(config);
-        } catch (error) {
-            return fail(describe(error));
-        }
-        process.stdout.write(
-            `${JSON.stringify({ event: "listening", control: router.control, data: router.data })}\n`,
-        );
-        const stop = (signal: string) => {
-            process.stdout.write(`${JSON.stringify({ event: "stopping", signal })}\n`);
-            router.shutdown().then(
-                () => process.exit(0),
-                () => process.exit(1),
-            );
-        };
-        process.once("SIGTERM", () => stop("SIGTERM"));
-        process.once("SIGINT", () => stop("SIGINT"));
-        return;
+// Commander takes `--token-file --token-stdin` as a path; Node's strict parser refused it, so a
+// missing value or one that starts with "-" is refused here. `--token-file=-x` stays accepted.
+function refuseDashValues(args: string[]): void {
+    args.forEach((arg, index) => {
+        if (arg !== "--token-file" && arg !== "--database-url-file") return;
+        const value = args[index + 1];
+        if (value === undefined || (value.length > 1 && value.startsWith("-"))) fail(TOKEN_USAGE);
+    });
+}
+
+async function runNoArguments(command: "serve" | "healthcheck", rest: string[]): Promise<void> {
+    const config = loadConfig();
+    if (rest.length > 0) return fail(`${command} takes no arguments`);
+    if (command === "healthcheck") {
+        const healthy = await checkHealth(config.control, fetch, 3000, config.controlTls);
+        process.stdout.write(healthy ? "ok\n" : "unhealthy\n");
+        process.exit(healthy ? 0 : 1);
     }
-
-    let values: {
-        "token-file"?: string;
-        "token-stdin"?: boolean;
-        standalone?: boolean;
-        "database-url-file"?: string;
-    };
+    let router: ReturnType<typeof startRouter>;
     try {
-        ({ values } = parseArgs({
-            args: rest,
-            options: {
-                "token-file": { type: "string" },
-                "token-stdin": { type: "boolean" },
-                standalone: { type: "boolean" },
-                "database-url-file": { type: "string" },
-            },
-            strict: true,
-        }));
-    } catch {
-        return fail("expected exactly one of --token-file <path> or --token-stdin");
+        router = startRouter(config);
+    } catch (error) {
+        return fail(describe(error));
     }
-    if ((values["token-file"] === undefined) === (values["token-stdin"] !== true)) {
-        return fail("expected exactly one of --token-file <path> or --token-stdin");
+    process.stdout.write(
+        `${JSON.stringify({ event: "listening", control: router.control, data: router.data })}\n`,
+    );
+    const stop = (signal: string) => {
+        process.stdout.write(`${JSON.stringify({ event: "stopping", signal })}\n`);
+        router.shutdown().then(
+            () => process.exit(0),
+            () => process.exit(1),
+        );
+    };
+    process.once("SIGTERM", () => stop("SIGTERM"));
+    process.once("SIGINT", () => stop("SIGINT"));
+}
+
+async function runSecretCommand(command: "init" | "rotate", values: SecretValues): Promise<void> {
+    const config = loadConfig();
+    if ((values.tokenFile === undefined) === (values.tokenStdin !== true)) {
+        return fail(TOKEN_USAGE);
     }
     const standalone = values.standalone === true;
-    const databaseFile = values["database-url-file"];
+    const databaseFile = values.databaseUrlFile;
     if (command === "init" && (standalone || databaseFile !== undefined)) {
         return fail("database and standalone options are for rotate only");
     }
@@ -119,8 +108,8 @@ async function main(): Promise<void> {
     }
     try {
         const token =
-            values["token-file"] !== undefined
-                ? readSecretFile(values["token-file"])
+            values.tokenFile !== undefined
+                ? readSecretFile(values.tokenFile)
                 : await readSecretStdin(process.stdin);
         let epoch: string;
         if (command === "init") epoch = initRouter(config, token);
@@ -187,6 +176,63 @@ async function main(): Promise<void> {
         process.stdout.write(`${epoch}\n`);
     } catch (error) {
         fail(describe(error));
+    }
+}
+
+function program(): Command {
+    const root = new Command("launchpad-router")
+        .exitOverride()
+        .configureOutput({ writeOut: () => {}, writeErr: () => {} })
+        .helpOption(false)
+        .helpCommand(false);
+    for (const name of ["serve", "healthcheck"] as const) {
+        root.command(name)
+            .helpOption("-h, --help")
+            .allowExcessArguments()
+            .allowUnknownOption()
+            .argument("[args...]")
+            .action((args, _options, command) => runNoArguments(name, [...args, ...command.args]));
+    }
+    root.command("init")
+        .helpOption("-h, --help")
+        .option("--token-file <path>")
+        .option("--token-stdin")
+        .option("--standalone")
+        .option("--database-url-file <path>")
+        .action((options) => runSecretCommand("init", options));
+    root.command("rotate")
+        .helpOption("-h, --help")
+        .option("--token-file <path>")
+        .option("--token-stdin")
+        .option("--standalone")
+        .option("--database-url-file <path>")
+        .action((options) => runSecretCommand("rotate", options));
+    return root;
+}
+
+async function main(): Promise<void> {
+    const [command, ...rest] = process.argv.slice(2);
+    if (!command || command === "--help" || command === "-h") {
+        process.stdout.write(USAGE);
+        return;
+    }
+    if (!["serve", "init", "rotate", "healthcheck"].includes(command)) {
+        fail(`unknown command "${command.slice(0, 40)}"; see --help`);
+    }
+    if (command === "init" || command === "rotate") refuseDashValues(rest);
+    try {
+        await program().parseAsync(process.argv.slice(2), { from: "user" });
+    } catch (error) {
+        if (!(error instanceof CommanderError)) throw error;
+        if (error.code === "commander.helpDisplayed") {
+            process.stdout.write(USAGE);
+            return;
+        }
+        fail(
+            command === "serve" || command === "healthcheck"
+                ? `${command} takes no arguments`
+                : TOKEN_USAGE,
+        );
     }
 }
 

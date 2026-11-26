@@ -82,10 +82,9 @@ functions (names, ports, env, inventory validation) and `up`, `status` and `down
 `tooling/docs-check.ts`.
 
 Scripts and apps that take arguments parse them with commander (`apps/cli`, the controller's `admin`,
-`apps/mcp` and the tooling scripts through `tooling/cli.ts`); tooling uses the root
+`apps/mcp`, `apps/router` and the tooling scripts through `tooling/cli.ts`); tooling uses the root
 `devDependencies`, and every other manifest that imports commander declares it itself
-(`tooling/declared-deps.spec.ts`). `bundle-migrations.mjs`, the container-copied experiment drivers
-and, for now, `apps/router` (`node:util` `parseArgs`) are the exceptions.
+(`tooling/declared-deps.spec.ts`). `bundle-migrations.mjs` and the container-copied experiment drivers are the exceptions.
 
 Opt-in disposable rehearsals live under `tooling/experiments/`: `routing/` (the router
 experiment and its production-router rehearsal) and `acceptance/` (the full-stack P7 rehearsal:

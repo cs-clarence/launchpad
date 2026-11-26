@@ -11,8 +11,10 @@
         "test:integration": "bun --bun vitest run --config vitest.config.integration.ts"
     },
     "dependencies": {
+        "@commander-js/extra-typings": "catalog:",
         "@launchpad-kit/alias-router": "workspace:^",
-        "@launchpad-kit/database": "workspace:^"
+        "@launchpad-kit/database": "workspace:^",
+        "commander": "catalog:"
     },
     "devDependencies": {
         "@launchpad-kit/tsconfig": "workspace:^",
