@@ -242,6 +242,7 @@ async function main() {
             "app/.output/server/index.mjs",
             "app/.output/admin.mjs",
             "app/.output/migrations/20261124_001_initial_schema.mjs",
+            "app/.output/migrations/20261126_002_worker_heartbeat.mjs",
         ]);
         if (!controller.Healthcheck) fail("the controller image has no healthcheck");
         const workerConfig = JSON.parse((await docker(["image", "inspect", images.worker])).out)[0]

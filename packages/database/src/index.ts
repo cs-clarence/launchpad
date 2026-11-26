@@ -330,6 +330,16 @@ export interface VerificationTable {
     expiresAt: Date;
 }
 
+// One row per worker name; the worker writes facts and the controller derives the state.
+export interface WorkerHeartbeatTable {
+    name: string;
+    run_id: string;
+    started_at: Date;
+    seen_at: Date;
+    stopped_at: Date | null;
+    beat_seconds: number;
+}
+
 export interface Database {
     verification: VerificationTable;
     organization_invitation: InvitationTable;
@@ -354,6 +364,7 @@ export interface Database {
     account: AccountTable;
     session: SessionTable;
     audit_event: AuditEventTable;
+    worker_heartbeat: WorkerHeartbeatTable;
 }
 
 // Explicit construction only; importing this package never opens a connection.

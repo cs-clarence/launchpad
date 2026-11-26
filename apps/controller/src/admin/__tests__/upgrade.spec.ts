@@ -267,6 +267,8 @@ it(
             const before = await admin(source.url, data, work, "migrate", "--status");
             expect(before.status).toBe(1);
             expect(before.stdout).toMatch(/pending: [1-9]\d*/);
+            // The image carries the worker heartbeat migration beside the baseline.
+            expect(before.stdout).toContain("20261126_002_worker_heartbeat");
             expect((await admin(source.url, data, work, "migrate")).status).toBe(0);
             expect(
                 (
@@ -289,6 +291,13 @@ it(
             expect((await admin(source.url, data, work, "migrate", "--status")).stdout).toContain(
                 "pending: 0",
             );
+            expect(
+                (
+                    await sql`select to_regclass('public.worker_heartbeat')::text as t`.execute(
+                        source.db,
+                    )
+                ).rows,
+            ).toEqual([{ t: "worker_heartbeat" }]);
             server = await start(source.url, data, work);
             expect((await server.health()).status).toBe(200);
             await server.stop();
