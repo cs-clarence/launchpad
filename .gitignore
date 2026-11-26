@@ -2,6 +2,7 @@
 .env.*.local
 .data/
 .local-deploy/
+.dev-infra/
 node_modules/
 dist/
 .output/

@@ -10,6 +10,7 @@ docs
 **/.env*
 docker-compose.env
 .local-deploy
+.dev-infra
 **/*.pem
 **/*.key
 **/id_*
