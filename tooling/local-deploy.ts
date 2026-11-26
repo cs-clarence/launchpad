@@ -861,6 +861,22 @@ async function waitHealthy(c: Ctx, service: string, budgetMs: number) {
 
 // ---- state directory ---------------------------------------------------------------------
 
+// Atomic: a kill leaves the old record or the new one, never a torn file.
+async function writeState(c: Ctx, profileSetByUp: boolean): Promise<void> {
+    const next = c.layout.file("state.json.next");
+    await c.d.fs.writeFile(
+        next,
+        JSON.stringify({
+            project: c.project,
+            repo: c.layout.repo,
+            version: TOOL_VERSION,
+            ...(profileSetByUp ? { profileSetByUp: true } : {}),
+        }),
+        0o600,
+    );
+    await c.d.fs.rename(next, c.layout.file("state.json"));
+}
+
 async function readState(c: Ctx): Promise<{ kind: "none" | "corrupt" | "ok"; state?: State }> {
     const text = await c.d.fs.readFile(c.layout.file("state.json"));
     if (text === null) return { kind: "none" };
@@ -1018,9 +1034,25 @@ const GENERATED = [
     "tls/server.pem",
 ] as const;
 
+// A real directory (not a link) that the invoking user owns, with the exact mode.
+async function checkOwnDirectory(c: Ctx, name: string, mode: number): Promise<void> {
+    const stat = await c.d.fs.stat(c.layout.file(name));
+    if (!stat || stat.isSymlink || !stat.isDirectory) {
+        throw new DeployError(
+            `${STATE_DIR}/${name} must be a real directory, not a link or a file. Run down, then up again.`,
+        );
+    }
+    if (stat.uid !== c.d.uid || (stat.mode & 0o777) !== mode) {
+        throw new DeployError(
+            `${STATE_DIR}/${name} must be owned by you with mode ${mode.toString(8)}. Run down, then up again.`,
+        );
+    }
+}
+
 async function ensureDirectory(c: Ctx, name: string, mode: number): Promise<void> {
     const path = c.layout.file(name);
     if ((await c.d.fs.stat(path)) === null) await c.d.fs.mkdir(path, mode);
+    await checkOwnDirectory(c, name, mode);
 }
 
 async function generateCredentials(c: Ctx): Promise<void> {
@@ -1034,7 +1066,15 @@ async function generateCredentials(c: Ctx): Promise<void> {
     }
     await ensureDirectory(c, "dokku", 0o755);
     for (const name of ["backups", "tls", "credentials"]) await ensureDirectory(c, name, 0o700);
-    for (const name of GENERATED) await d.fs.unlink(f(name));
+    for (const name of GENERATED) {
+        try {
+            await d.fs.unlink(f(name));
+        } catch {
+            throw new DeployError(
+                `Could not remove ${f(name)} (is it a directory?). Remove it by hand: rm -rf ${f(name)}, then run up again.`,
+            );
+        }
+    }
     const cmds = credentialCommands(layout);
     const gen = async (args: string[], what: string) => {
         const r = await d.run(args);
@@ -1063,6 +1103,8 @@ async function generateCredentials(c: Ctx): Promise<void> {
 // Compose would create a root-owned directory for a missing bind source, so check first.
 async function verifyCredentials(c: Ctx): Promise<void> {
     const f = c.layout.file;
+    await checkOwnDirectory(c, "tls", 0o700);
+    await checkOwnDirectory(c, "credentials", 0o700);
     const problems: string[] = [];
     for (const [name, secret] of [
         ["credentials/id_ed25519", true],
@@ -1080,7 +1122,9 @@ async function verifyCredentials(c: Ctx): Promise<void> {
     }
     for (const name of ["dokku", "backups"]) {
         const stat = await c.d.fs.stat(f(name));
-        if (!stat || !stat.isDirectory) problems.push(`${name} is missing or not a directory`);
+        if (!stat || stat.isSymlink || !stat.isDirectory) {
+            problems.push(`${name} is missing or not a real directory`);
+        }
     }
     if (problems.length > 0) {
         throw new DeployError(`${problems.join("; ")}. Run down, then up again.`);
@@ -1295,9 +1339,15 @@ export async function up(d: Deps, options: UpOptions = {}): Promise<Summary> {
     if (!epoch || epoch.size === 0) {
         d.log("Pinning Dokku's host key, registering the worker's key, initialising the router...");
         await bootstrapDokkuAndRouter(c);
-    } else if (epoch.uid !== SERVICE_UID) {
-        // An earlier run stopped between writing the epoch and fixing ownership.
-        await ownedByServiceUser(c);
+    } else {
+        // An earlier run may have stopped part-way through the chown: every entry must be ours to
+        // the service user, not just the first one it reaches.
+        let wrong = false;
+        for (const name of OWNED_BY_SERVICE) {
+            const stat = await d.fs.stat(layout.file(name));
+            if (!stat || stat.uid !== SERVICE_UID) wrong = true;
+        }
+        if (wrong) await ownedByServiceUser(c);
     }
     const mode = adminMode(layout, project);
     classifyAdmin("migrate", await d.run(adminArgs("migrate", [], mode)), mode);
@@ -1322,6 +1372,10 @@ export async function up(d: Deps, options: UpOptions = {}): Promise<Summary> {
         path.join(config, "local-deploy-owner.password"),
     ]);
     const profileBefore = await d.currentProfile();
+    // Recorded before the seed's login can make the profile current, so a kill in between
+    // cannot leave a current profile that `down` does not know about.
+    const claimedBefore = record.kind === "ok" && record.state?.profileSetByUp === true;
+    if (profileBefore === null && !claimedBefore) await writeState(c, true);
     const summary = await (d.seed ?? seed)(
         {
             fetch: d.fetch,
@@ -1336,18 +1390,8 @@ export async function up(d: Deps, options: UpOptions = {}): Promise<Summary> {
         },
         options2,
     );
-    const claimed = record.kind === "ok" && record.state?.profileSetByUp === true;
-    if (claimed || (profileBefore === null && (await d.currentProfile()) === PROFILE)) {
-        await d.fs.writeFile(
-            layout.file("state.json"),
-            JSON.stringify({
-                project,
-                repo: layout.repo,
-                version: TOOL_VERSION,
-                profileSetByUp: true,
-            }),
-            0o600,
-        );
+    if (profileBefore === null && !claimedBefore && (await d.currentProfile()) !== PROFILE) {
+        await writeState(c, false);
     }
     const result: Summary = {
         project,
@@ -1478,6 +1522,7 @@ const CLEAN_EXTRAS = new Set([
     "override.json",
     "inventory.json",
     "inventory.json.next",
+    "state.json.next",
 ]);
 
 function postgresImage(): string {
@@ -1815,6 +1860,7 @@ export async function down(d: Deps, options: UpOptions = {}): Promise<void> {
         "override.json",
         "inventory.json",
         "inventory.json.next",
+        "state.json.next",
         "state.json",
     ]) {
         await d.fs.unlink(layout.file(name));
@@ -1901,8 +1947,12 @@ function interruptible(): AbortController {
     return controller;
 }
 
-export function realDeps(repo: string, version: string, signal: AbortSignal): Deps {
-    const env = process.env;
+export function realDeps(
+    repo: string,
+    version: string,
+    signal: AbortSignal,
+    env: Record<string, string | undefined> = process.env,
+): Deps {
     const sleep = (ms: number) =>
         new Promise<void>((resolve) => {
             const timer = setTimeout(resolve, ms);
@@ -1934,7 +1984,8 @@ export function realDeps(repo: string, version: string, signal: AbortSignal): De
             await ctx.store.update((current) => {
                 delete current.profiles[PROFILE];
                 if (resetCurrent && current.currentProfile === PROFILE) {
-                    current.currentProfile = Object.keys(current.profiles)[0] ?? null;
+                    // `up` made it current because none existed, so none is current again.
+                    current.currentProfile = null;
                 }
             });
         },

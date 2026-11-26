@@ -240,6 +240,80 @@ describe("resumable credentials", () => {
     });
 });
 
+describe("directories and ownership", () => {
+    it("repairs every service-owned entry after a partly finished chown", async () => {
+        await up(deps());
+        (host.nodes.get(`${host.dir}/credentials/known_hosts`) as { uid: number }).uid = 1000;
+        host.calls.length = 0;
+        await up(deps());
+        expect(host.calls.some((a) => a.includes("chown"))).toBe(true);
+        expect((host.nodes.get(`${host.dir}/credentials/known_hosts`) as { uid: number }).uid).toBe(
+            10001,
+        );
+    });
+
+    it("refuses linked, foreign or loosely moded directories before generating", async () => {
+        for (const tamper of [
+            () =>
+                host.nodes.set(`${host.dir}/tls`, {
+                    kind: "link",
+                    uid: 1000,
+                    mode: 0o777,
+                    target: "/etc",
+                }),
+            () => ((host.nodes.get(`${host.dir}/credentials`) as { mode: number }).mode = 0o755),
+            () => ((host.nodes.get(`${host.dir}/credentials`) as { uid: number }).uid = 0),
+        ]) {
+            host = new FakeHost();
+            host.addDir(host.dir, 0o700);
+            host.addFile(
+                `${host.dir}/state.json`,
+                JSON.stringify({
+                    project: projectNameFor(host.repo),
+                    repo: host.repo,
+                    version: "1",
+                }),
+            );
+            for (const n of ["dokku", "backups", "tls", "credentials"])
+                host.addDir(`${host.dir}/${n}`, n === "dokku" ? 0o755 : 0o700);
+            tamper();
+            expect(await fails(up(deps()))).toContain(".local-deploy/");
+            expect(host.calls.some((a) => a.includes("ssh-keygen") || a.includes("build"))).toBe(
+                false,
+            );
+        }
+    });
+
+    it("refuses a linked backups directory before Compose starts", async () => {
+        await up(deps());
+        host.nodes.set(`${host.dir}/backups`, {
+            kind: "link",
+            uid: 1000,
+            mode: 0o777,
+            target: "/etc",
+        });
+        host.calls.length = 0;
+        expect(await fails(up(deps()))).toContain("backups is missing or not a real directory");
+        expect(host.calls.some((a) => a.includes("build"))).toBe(false);
+    });
+
+    it("names the fix when a generated file cannot be removed", async () => {
+        host.addDir(host.dir, 0o700);
+        host.addFile(
+            `${host.dir}/state.json`,
+            JSON.stringify({ project: projectNameFor(host.repo), repo: host.repo, version: "1" }),
+        );
+        const unlink = host.fs.unlink;
+        host.fs.unlink = async (p) => {
+            if (p.endsWith("credentials/token")) throw new Error("EISDIR");
+            return unlink(p);
+        };
+        const message = await fails(up(deps()));
+        expect(message).toContain("Remove it by hand: rm -rf");
+        expect(message).toContain("credentials/token");
+    });
+});
+
 describe("the current CLI profile", () => {
     const claiming = (async (_d: unknown, o: { org: string; project: string; profile: string }) => {
         host.current ??= o.profile;
@@ -259,6 +333,32 @@ describe("the current CLI profile", () => {
         expect(state().profileSetByUp).toBe(true);
         await up(host.deps({ seed: claiming }));
         expect(state().profileSetByUp).toBe(true);
+    });
+
+    it("is recorded before the seed can make it current, and atomically", async () => {
+        let atSeed: string | null = null;
+        const seen = (async (...args: unknown[]) => {
+            atSeed = host.text(`${host.dir}/state.json`);
+            return (claiming as (...a: unknown[]) => Promise<unknown>)(...args);
+        }) as never;
+        await up(host.deps({ seed: seen }));
+        expect(JSON.parse(atSeed!).profileSetByUp).toBe(true);
+        expect(host.nodes.has(`${host.dir}/state.json.next`)).toBe(false);
+    });
+
+    it("leaves a readable state.json when the write is killed", async () => {
+        const write = host.fs.writeFile;
+        host.fs.writeFile = async (p, ...rest) => {
+            if (p.endsWith("state.json.next")) throw new Error("killed");
+            return write(p, ...rest);
+        };
+        await expect(up(host.deps({ seed: claiming }))).rejects.toThrow("killed");
+        expect(JSON.parse(host.text(`${host.dir}/state.json`)!).project).toBe(project);
+    });
+
+    it("drops the record when the seed did not claim the profile", async () => {
+        await up(host.deps({ seed: stubSeed as never }));
+        expect(state().profileSetByUp).toBeUndefined();
     });
 
     it("is left alone when another profile is current", async () => {

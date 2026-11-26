@@ -596,8 +596,10 @@ author reviewed the script against real Docker behaviour (and the real run then 
 - The two password files `local-deploy-*.password` in the CLI config directory are kept by `down` (documented).
 - Profiles (after review): the guide uses `export LAUNCHPAD_PROFILE=local-deploy`, never `profile use`. `up`
   makes `local-deploy` current only when the config had no current profile and records `profileSetByUp` in
-  `state.json`; `down` resets the current profile only when that flag is set and it still names
-  `local-deploy`, otherwise it leaves it alone.
+  `state.json` (written atomically, before the seed can log in); `down` resets the current profile to none only
+  when that flag is set and it still names `local-deploy`, otherwise it leaves it alone. The service-owned files
+  are re-chowned unless every entry already belongs to uid 10001; state directories are lstat-checked (real
+  directory, owner, mode) before use.
 - Credentials (after review): generation is resumable. `tls/server.pem` is the completion marker; without it
   partial output (fixed names only) is removed and regenerated, unless the router was already initialised (then
   `up` refuses: run `down`, then `up`). All expected files are checked for type and mode before Compose starts.

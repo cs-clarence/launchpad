@@ -30,7 +30,7 @@ repository root.
 | --------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Memory limits of the five services      | 0.5 + 0.5 + 1 + 1 + 0.125 GiB, about 3.1 GiB (3.6 GiB while the admin container runs)                                                                                                                                                                                      |
 | Idle memory (measured)                  | about 175 MiB with one deployed site (PostgreSQL 61, controller 52, Dokku 26, worker 25, router 11 MiB)                                                                                                                                                                    |
-| First `up` (cold image cache, measured) | 72 s with warm Docker layer and base-image caches (Dokku healthy after about a minute). A cold first run was not measured; earlier rehearsals saw 4.5 minutes for Dokku's first start alone, so allow 10 to 20 minutes (a guess)                                           |
+| First `up` (warm caches, measured)      | 72 s with warm Docker layer and base-image caches (Dokku healthy after about a minute). A cold first run was not measured; earlier rehearsals saw 4.5 minutes for Dokku's first start alone, so allow 10 to 20 minutes (a guess)                                           |
 | `up` again with warm layers (measured)  | 51 to 55 s (images rebuilt from cache, services re-checked, nothing re-seeded)                                                                                                                                                                                             |
 | One deployment of `hello` (measured)    | 53 to 59 s from `app deploy` to `succeeded`                                                                                                                                                                                                                                |
 | Disk (images and build cache, measured) | the five images are about 2.4 GB (Dokku 1.53 GB, worker 242 MB, controller 212 MB, admin 269 MB, router 190 MB), removed by `down`; the build cache grew by about 1.2 GB over the runs and stays, as do a few superseded layers (docker builder prune, docker image prune) |
@@ -95,16 +95,17 @@ Builds and deployed sites run in the host engine, outside the memory limits.
     it fails, `docker compose -p <project> logs --tail 50 worker` shows why.
 
 5. Look at the site. The deployment's `hostname` is in its `get` output
-   (`hello-<10 characters>-preview.apps.localhost`), and Dokku's HTTP port is on loopback (32181 by
-   default). Send the host name yourself, which works everywhere:
+   (`hello-<10 characters>-preview.apps.localhost`), and Dokku's HTTP port is on loopback (the HTTP port `up` printed;
+   32181 by default). Send the host name yourself, which works everywhere:
 
     ```sh
     HOSTNAME_=$(launchpad deployment get "$DEPLOYMENT" | grep -m1 '"hostname"' | cut -d'"' -f4)
-    curl -H "Host: $HOSTNAME_" http://127.0.0.1:32181/
+    HTTP_PORT=32181   # the Dokku HTTP port that `up` printed
+    curl -H "Host: $HOSTNAME_" "http://127.0.0.1:$HTTP_PORT/"
     ```
 
     Current browsers and curl 7.78 or later also resolve `*.localhost` to loopback, so
-    `http://<hostname>:32181/` can work. Some resolvers send `*.localhost` to `::1` first, where nothing
+    `http://<hostname>:<http-port>/` can work. Some resolvers send `*.localhost` to `::1` first, where nothing
     listens (Docker publishes `127.0.0.1` only), or do not map it at all. Then use the `Host`
     form above, or add `127.0.0.1 <hostname>` to `/etc/hosts` (needs root).
 
@@ -132,7 +133,8 @@ Builds and deployed sites run in the host engine, outside the memory limits.
 then it becomes current and `up` records that in `.local-deploy/state.json`. The guide selects the profile
 per shell with `LAUNCHPAD_PROFILE` (or use `--profile local-deploy` on a command). `down` deletes the
 `local-deploy` profile, and resets the current profile only if `up` had set it and it still points at
-`local-deploy`; otherwise it leaves your current profile as it is.
+`local-deploy`, in which case none is current afterwards (none was before `up`); otherwise it leaves your
+current profile as it is.
 
 ## What `down` removes, and what stays
 
