@@ -151,7 +151,16 @@ omni -i run admin -p @launchpad-kit/controller -a command=migrate
 To seed a running local controller with accounts, an organization, a project and a CLI profile, use
 `omni -i run local:seed`; see [run Launchpad on your machine](docs/local-quickstart.md). To run
 the whole stack and deploy a site locally with Docker, see
-[deploy a site on your machine](docs/local-deploy.md).
+[deploy a site on your machine](docs/local-deploy.md). To run the controller, worker and CLI on the
+host against PostgreSQL, Mailpit, Dokku and the router in Docker (`docker-compose.dev.yaml`), see
+[develop against local infrastructure](docs/local-dev-infra.md):
+
+```sh
+omni -i run dev:infra:up          # start (or resume) the infrastructure, write .dev-infra/env/*.env
+omni -i run dev:infra:status      # health, ports, deployed sites
+omni -i run dev:infra:down        # stop, keep the data
+omni -i run dev:infra:destroy     # remove everything it created
+```
 
 Omni loads `.env.local` files from the repository root and from the project into task
 environments, unexpanded. Keep only values you want every task to see in the root file.

@@ -19,6 +19,15 @@ database operation stalls past the worker's deadline, the worker cancels
 dispatch, closes its PostgreSQL connections, and exits nonzero. Restarting
 does not replay an unconfirmed remote effect.
 
+## Run it on the host
+
+For development, `omni -i run dev -p @launchpad-kit/worker` runs `bun --watch src/index.ts` in
+`apps/worker` and loads `apps/worker/.env.local`. With deployments on it needs the settings listed in
+`.env.local.example`, a Docker CLI you may use, and a reachable Dokku and PostgreSQL;
+`omni -i run dev:infra:up -a "options=--preset deploy"` starts those and writes the complete file to
+`.dev-infra/env/worker.env` (see [develop against local infrastructure](../../docs/local-dev-infra.md)).
+`LAUNCHPAD_DATA_DIR` must be the same absolute directory as the controller's.
+
 ## Recover build scratch space
 
 The worker removes its own build context when it returns normally. A forced

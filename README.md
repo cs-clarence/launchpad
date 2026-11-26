@@ -20,7 +20,9 @@ To try the controller, dashboard and CLI on your own machine, follow
 and one seed command (`omni -i run local:seed`) that creates the accounts, an organization, a project
 and a saved CLI profile. To deploy `examples/hello` on your machine with Docker (controller, worker,
 Dokku and router, removed again by one command), follow [deploy a site on your machine](docs/local-deploy.md) (it mounts the host Docker socket into
-the worker and Dokku, which is root-equivalent on your machine).
+the worker and Dokku, which is root-equivalent on your machine). To develop the apps themselves on the
+host against PostgreSQL, Mailpit, Dokku and the router in Docker, follow
+[develop against local infrastructure](docs/local-dev-infra.md) (`omni -i run dev:infra:up`).
 
 ## Configuration
 

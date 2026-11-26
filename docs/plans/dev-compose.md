@@ -28,9 +28,9 @@ rootless Docker (the Dokku socket mount needs native Linux Docker, as `local:dep
   (root-equivalent) and its teardown deletes containers, images and root-owned directories by name.
   Deletion code is the High-risk part: it must reuse `local:deploy`'s ownership-checked logic, not
   reimplement it. Independent review required.
-- **Four questions.** *How much changes:* ~1 Compose file, ~1 tool (estimate ~500 lines once the shared helpers are extracted), ~4 tasks, 6 docs, 2 specs. *Unknowns:* Dokku site containers across stop/start,
+- **Four questions.** _How much changes:_ ~1 Compose file, ~1 tool (estimate ~500 lines once the shared helpers are extracted), ~4 tasks, 6 docs, 2 specs. _Unknowns:_ Dokku site containers across stop/start,
   plain-HTTP router control and healthcheck, worker `dev` task (listed below); all testable in one
-  short experiment first. *Undo:* easy (additive files; delete them). *People/time:* one agent, one
+  short experiment first. _Undo:_ easy (additive files; delete them). _People/time:_ one agent, one
   reviewer.
 - **Moves up to Large if:** the shared-helper extraction from `tooling/local-deploy.ts` has to change
   `local:deploy` behaviour, or the dashboard-over-HTTPS proxy (decision 5) is pulled in.
@@ -70,7 +70,7 @@ rootless Docker (the Dokku socket mount needs native Linux Docker, as `local:dep
    is how mail actually gets sent (invitations).
 5. **Base URL conflict.** With `LAUNCHPAD_DEPLOYMENTS=on` or an apps domain set, the controller
    requires an `https` `LAUNCHPAD_BASE_URL` (`managementOrigin`) with a different registrable domain.
-   So the host controller cannot serve a working dashboard on `http://127.0.0.1:3000` *and* deploy.
+   So the host controller cannot serve a working dashboard on `http://127.0.0.1:3000` _and_ deploy.
    Two modes follow (decision 5): **app mode** (deployments off, http base URL, dashboard and Mailpit
    invitations work) and **deploy mode** (deployments on, `https://control.localhost:8443`, CLI/API
    only, exactly as `local:deploy`).
@@ -88,12 +88,12 @@ rootless Docker (the Dokku socket mount needs native Linux Docker, as `local:dep
 
 Evaluated against `docker-compose.yaml` (production):
 
-| Option | What it would reuse | Why it does not fit well |
-| --- | --- | --- |
-| `include: docker-compose.yaml` | everything | Pulls in controller, worker and admin (not wanted); cannot remove services; every `${VAR:?}` (auth secret, socket gid, backup dir, key files) must be supplied; hardening, mem limits and networks come with it. |
-| `extends` of `postgres`/`dokku`/`router` | images, build, healthchecks | `${VAR:?}` is evaluated on load, so dev must still set `POSTGRES_PASSWORD`, `LAUNCHPAD_ROUTER_TLS_*` files etc. even where dev does not use them. `ports`, `networks` and `environment` entries merge rather than replace, so removing router TLS env/mounts, moving postgres off the internal `database` network and publishing router control needs `!reset`/`!override` on most fields. Prod's `x-` anchors and top-level networks/volumes are not inherited. Net: more override than reuse, and prod edits silently change dev. |
-| `-f docker-compose.yaml -f docker-compose.dev.yaml` | same as include | Same, plus the prod services still exist unless profiled. |
-| **Standalone `docker-compose.dev.yaml`** | Dockerfiles and digests by reference | Duplicates ~60 lines (healthchecks, pins), but each dev service reads naturally and prod's required-variable discipline is untouched. |
+| Option                                              | What it would reuse                  | Why it does not fit well                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| --------------------------------------------------- | ------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `include: docker-compose.yaml`                      | everything                           | Pulls in controller, worker and admin (not wanted); cannot remove services; every `${VAR:?}` (auth secret, socket gid, backup dir, key files) must be supplied; hardening, mem limits and networks come with it.                                                                                                                                                                                                                                                                                                                    |
+| `extends` of `postgres`/`dokku`/`router`            | images, build, healthchecks          | `${VAR:?}` is evaluated on load, so dev must still set `POSTGRES_PASSWORD`, `LAUNCHPAD_ROUTER_TLS_*` files etc. even where dev does not use them. `ports`, `networks` and `environment` entries merge rather than replace, so removing router TLS env/mounts, moving postgres off the internal `database` network and publishing router control needs `!reset`/`!override` on most fields. Prod's `x-` anchors and top-level networks/volumes are not inherited. Net: more override than reuse, and prod edits silently change dev. |
+| `-f docker-compose.yaml -f docker-compose.dev.yaml` | same as include                      | Same, plus the prod services still exist unless profiled.                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| **Standalone `docker-compose.dev.yaml`**            | Dockerfiles and digests by reference | Duplicates ~60 lines (healthchecks, pins), but each dev service reads naturally and prod's required-variable discipline is untouched.                                                                                                                                                                                                                                                                                                                                                                                               |
 
 **Recommendation: standalone**, with the genuinely shared parts kept in step mechanically:
 `build:` points at the same `containers/dokku` and `apps/router` Dockerfiles (so Dokku version, digests,
@@ -126,12 +126,12 @@ defaults (ports, `DOKKU_VERSION`) use `${VAR:-default}`.
 Ports avoid `local:deploy` (32180-32443), `test:db:up` (55432) and the quickstart's 5432.
 All are `${VAR:-default}`; the tool checks they are free before `up`.
 
-| Service | Image / build | Published | Notes |
-| --- | --- | --- | --- |
-| `postgres` | `postgres:17-alpine@sha256:526f86d9...` (same as prod) | `127.0.0.1:35432 -> 5432` | Named volume `postgres-data`; `pg_isready` healthcheck as prod; user/db `launchpad`; password from generated env. Not on an `internal` network (the host must reach it). |
-| `mailpit` | `axllent/mailpit:v1.29@sha256:757f22b5...` (digest read 2026-11-27; re-verify when written) | SMTP `127.0.0.1:31025 -> 1025`, UI `127.0.0.1:38025 -> 8025` | `MP_MAX_MESSAGES` bounded; no persistence by default (mail vanishes on `down`; optional volume is not worth it). Healthcheck `/readyz` (Mailpit image has a `healthcheck` subcommand; pick the one that exists in the pinned version). |
-| `dokku` | build `containers/dokku`, image `<project>/dokku:local` (build arg `DOKKU_VERSION`) | SSH `127.0.0.1:33222 -> 22`, HTTP `127.0.0.1:33181 -> 80` | HTTPS 443 not published (nothing uses it in dev). Bind `DOKKU_DATA_DIR` -> `/mnt/dokku`; Docker socket bind; `DOKKU_HOST_ROOT`/`DOKKU_LIB_HOST_ROOT` as prod; networks `backend` and `apps`. First start is minutes (unpinned package install, accepted for prod too). |
-| `router` | build `apps/router`, image `<project>/router:local` | data `127.0.0.1:33182 -> 3080`, control `127.0.0.1:33183 -> 3081` | Plain-HTTP control, `PRIVATE_NETWORK=1`, no TLS files; volume `router-state`; `LAUNCHPAD_APPS_PROXY_URL=http://dokku:80`; `depends_on` none (needs Dokku only at request time). Healthcheck as prod. |
+| Service    | Image / build                                                                               | Published                                                         | Notes                                                                                                                                                                                                                                                                  |
+| ---------- | ------------------------------------------------------------------------------------------- | ----------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `postgres` | `postgres:17-alpine@sha256:526f86d9...` (same as prod)                                      | `127.0.0.1:35432 -> 5432`                                         | Named volume `postgres-data`; `pg_isready` healthcheck as prod; user/db `launchpad`; password from generated env. Not on an `internal` network (the host must reach it).                                                                                               |
+| `mailpit`  | `axllent/mailpit:v1.29@sha256:757f22b5...` (digest read 2026-11-27; re-verify when written) | SMTP `127.0.0.1:31025 -> 1025`, UI `127.0.0.1:38025 -> 8025`      | `MP_MAX_MESSAGES` bounded; no persistence by default (mail vanishes on `down`; optional volume is not worth it). Healthcheck `/readyz` (Mailpit image has a `healthcheck` subcommand; pick the one that exists in the pinned version).                                 |
+| `dokku`    | build `containers/dokku`, image `<project>/dokku:local` (build arg `DOKKU_VERSION`)         | SSH `127.0.0.1:33222 -> 22`, HTTP `127.0.0.1:33181 -> 80`         | HTTPS 443 not published (nothing uses it in dev). Bind `DOKKU_DATA_DIR` -> `/mnt/dokku`; Docker socket bind; `DOKKU_HOST_ROOT`/`DOKKU_LIB_HOST_ROOT` as prod; networks `backend` and `apps`. First start is minutes (unpinned package install, accepted for prod too). |
+| `router`   | build `apps/router`, image `<project>/router:local`                                         | data `127.0.0.1:33182 -> 3080`, control `127.0.0.1:33183 -> 3081` | Plain-HTTP control, `PRIVATE_NETWORK=1`, no TLS files; volume `router-state`; `LAUNCHPAD_APPS_PROXY_URL=http://dokku:80`; `depends_on` none (needs Dokku only at request time). Healthcheck as prod.                                                                   |
 
 Networks: `backend` (Dokku, router) and `apps` with a fixed per-project name (Dokku's
 `initial-network` refers to it). Volumes: `postgres-data`, `router-state`. Project name
@@ -148,13 +148,13 @@ and a root-owned `dokku/` subtree would otherwise break `docker build`). Mode 70
 `state.json` with the tool version, project name and ports (same "refuse a foreign directory" check as
 `local:deploy`).
 
-| Path | Owner / mode | Content |
-| --- | --- | --- |
-| `compose.env` | user 0600 | `POSTGRES_PASSWORD`, `LAUNCHPAD_ALIAS_INSTANCE_ID` (uuid), `LAUNCHPAD_APPS_DOMAIN=apps.localhost`, ports, `DOKKU_DATA_DIR`, `LAUNCHPAD_APPS_NETWORK`, `DEV_PROJECT` (`launchpad-dev-<hash8>`, which fixes every image tag `<project>/<service>:local`) |
-| `dokku/` | root-owned contents, dir 0755 | Dokku state (SSH host key survives `down`, so `known_hosts` stays valid) |
-| `credentials/` | user 0700 | `id_ed25519(.pub)` (via `ssh-keygen`), `known_hosts` (written after first Dokku start: `[127.0.0.1]:33222 ssh-ed25519 ...`), `token` (64 hex), `epoch` (from `router init`), all files 0600 |
-| `data/` | user | `LAUNCHPAD_DATA_DIR` shared by host controller and worker |
-| `env/controller.env`, `env/worker.env` | user 0600 | the generated app settings, each a complete list for its app (see below) |
+| Path                                   | Owner / mode                  | Content                                                                                                                                                                                                                                                |
+| -------------------------------------- | ----------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `compose.env`                          | user 0600                     | `POSTGRES_PASSWORD`, `LAUNCHPAD_ALIAS_INSTANCE_ID` (uuid), `LAUNCHPAD_APPS_DOMAIN=apps.localhost`, ports, `DOKKU_DATA_DIR`, `LAUNCHPAD_APPS_NETWORK`, `DEV_PROJECT` (`launchpad-dev-<hash8>`, which fixes every image tag `<project>/<service>:local`) |
+| `dokku/`                               | root-owned contents, dir 0755 | Dokku state (SSH host key survives `down`, so `known_hosts` stays valid)                                                                                                                                                                               |
+| `credentials/`                         | user 0700                     | `id_ed25519(.pub)` (via `ssh-keygen`), `known_hosts` (written after first Dokku start: `[127.0.0.1]:33222 ssh-ed25519 ...`), `token` (64 hex), `epoch` (from `router init`), all files 0600                                                            |
+| `data/`                                | user                          | `LAUNCHPAD_DATA_DIR` shared by host controller and worker                                                                                                                                                                                              |
+| `env/controller.env`, `env/worker.env` | user 0600                     | the generated app settings, each a complete list for its app (see below)                                                                                                                                                                               |
 
 ### Helper extraction (slice 1), exactly
 
@@ -164,18 +164,18 @@ Verified in `tooling/local-deploy.ts`: the teardown and state code is parameteri
 turns those constants into a small **profile** object passed in, with `local:deploy`'s profile equal to
 today's values (its specs must pass unchanged):
 
-| Parameter | `local:deploy` profile (unchanged) | Dev profile |
-| --- | --- | --- |
-| state directory name | `.local-deploy` | `.dev-infra` |
-| child list (`FIXED_CHILDREN`; the helper container's `rm -rf /state/<name>` list and the "no state.json" strange-children check) | `dokku`, `backups`, `credentials`, `tls` | `dokku`, `credentials`, `data`, `env` |
-| state files (`STATE_FILES`/unlink list at the end of `down`) | `compose.env`, `override.json`, `state.json`, `inventory.json` | `compose.env`, `state.json`, `inventory.json` (no override file: tags come from `DEV_PROJECT`) |
-| project pattern and prefix | `launchpad-local-` | `launchpad-dev-` |
-| images (`projectImages`, rm and "image exists" checks) | five services under `<project>/<s>:local` | `dokku`, `router` under `<project>/<s>:local`, plus the `com.launchpad.dev-project` label check |
-| services list (health, `ps` format) | postgres, dokku, controller, worker, router | postgres, mailpit, dokku, router |
-| files chowned to uid 10001 (`OWNED_BY_SERVICE`, `ownedByServiceUser`) | six paths via the worker image | none: the host worker reads credentials as the invoking user and the router needs only its named volume |
-| root helper image (`removeStateChildren`) | the pinned PostgreSQL image from `docker-compose.yaml` | same (`--network none`, `--user 0`, `--mount type=bind,src=<dir>,dst=/state`, `--entrypoint rm`) |
-| compose argument prefix (`composePrefix`/`composeHint`) | `-f docker-compose.yaml -f .local-deploy/override.json` | `-f docker-compose.dev.yaml` |
-| ports and `portsFor` | base 32180 with offsets | the dev port block (fixed defaults, env-overridable) |
+| Parameter                                                                                                                        | `local:deploy` profile (unchanged)                             | Dev profile                                                                                             |
+| -------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------- |
+| state directory name                                                                                                             | `.local-deploy`                                                | `.dev-infra`                                                                                            |
+| child list (`FIXED_CHILDREN`; the helper container's `rm -rf /state/<name>` list and the "no state.json" strange-children check) | `dokku`, `backups`, `credentials`, `tls`                       | `dokku`, `credentials`, `data`, `env`                                                                   |
+| state files (`STATE_FILES`/unlink list at the end of `down`)                                                                     | `compose.env`, `override.json`, `state.json`, `inventory.json` | `compose.env`, `state.json`, `inventory.json` (no override file: tags come from `DEV_PROJECT`)          |
+| project pattern and prefix                                                                                                       | `launchpad-local-`                                             | `launchpad-dev-`                                                                                        |
+| images (`projectImages`, rm and "image exists" checks)                                                                           | five services under `<project>/<s>:local`                      | `dokku`, `router` under `<project>/<s>:local`, plus the `com.launchpad.dev-project` label check         |
+| services list (health, `ps` format)                                                                                              | postgres, dokku, controller, worker, router                    | postgres, mailpit, dokku, router                                                                        |
+| files chowned to uid 10001 (`OWNED_BY_SERVICE`, `ownedByServiceUser`)                                                            | six paths via the worker image                                 | none: the host worker reads credentials as the invoking user and the router needs only its named volume |
+| root helper image (`removeStateChildren`)                                                                                        | the pinned PostgreSQL image from `docker-compose.yaml`         | same (`--network none`, `--user 0`, `--mount type=bind,src=<dir>,dst=/state`, `--entrypoint rm`)        |
+| compose argument prefix (`composePrefix`/`composeHint`)                                                                          | `-f docker-compose.yaml -f .local-deploy/override.json`        | `-f docker-compose.dev.yaml`                                                                            |
+| ports and `portsFor`                                                                                                             | base 32180 with offsets                                        | the dev port block (fixed defaults, env-overridable)                                                    |
 
 **Moved to the shared module, behaviour unchanged:** `Ctx`/`Deps`/`Fs`/`RunResult` types and `spawnExec`/
 `realFs`, `compose()`/`docker()`/`must()` wrappers, labelled listing (`labeledContainers`, `labeledNames`,
@@ -233,16 +233,16 @@ Controller **deploy mode** (CLI/API only), `env/controller.env` is the app-mode 
 `LAUNCHPAD_BASE_URL=https://control.localhost:8443` and these added; the six routing names are exactly the
 ones `parseAppRoutingConfig` reads through `required(...)`, in addition to the apps domain and base URL:
 
-| Setting | Value |
-| --- | --- |
-| `LAUNCHPAD_APPS_DOMAIN` | `apps.localhost` |
-| `LAUNCHPAD_DEPLOYMENTS` / `LAUNCHPAD_ALIASES` | `on` / `on` or `off` |
-| `LAUNCHPAD_ALIAS_INSTANCE_ID` | the uuid in `compose.env` (lowercase UUID) |
-| `LAUNCHPAD_ALIAS_CONTROL_URL` | `http://127.0.0.1:33183` (not `localhost`) |
-| `LAUNCHPAD_APPS_PROXY_URL` | `http://127.0.0.1:33181` (origin, no path) |
-| `LAUNCHPAD_ALIAS_PROBE_URL` | `http://127.0.0.1:33182` |
-| `LAUNCHPAD_ALIAS_CONTROL_TOKEN_FILE` | absolute `.dev-infra/credentials/token` |
-| `LAUNCHPAD_ALIAS_ROUTER_EPOCH_FILE` | absolute `.dev-infra/credentials/epoch` |
+| Setting                                       | Value                                      |
+| --------------------------------------------- | ------------------------------------------ |
+| `LAUNCHPAD_APPS_DOMAIN`                       | `apps.localhost`                           |
+| `LAUNCHPAD_DEPLOYMENTS` / `LAUNCHPAD_ALIASES` | `on` / `on` or `off`                       |
+| `LAUNCHPAD_ALIAS_INSTANCE_ID`                 | the uuid in `compose.env` (lowercase UUID) |
+| `LAUNCHPAD_ALIAS_CONTROL_URL`                 | `http://127.0.0.1:33183` (not `localhost`) |
+| `LAUNCHPAD_APPS_PROXY_URL`                    | `http://127.0.0.1:33181` (origin, no path) |
+| `LAUNCHPAD_ALIAS_PROBE_URL`                   | `http://127.0.0.1:33182`                   |
+| `LAUNCHPAD_ALIAS_CONTROL_TOKEN_FILE`          | absolute `.dev-infra/credentials/token`    |
+| `LAUNCHPAD_ALIAS_ROUTER_EPOCH_FILE`           | absolute `.dev-infra/credentials/epoch`    |
 
 `LAUNCHPAD_ALIAS_CONTROL_CA_FILE` stays unset (rejected with an http URL). The CLI/API use
 `http://127.0.0.1:3000` as `local:deploy` does: `local:seed --controller http://127.0.0.1:3000 --origin
@@ -282,13 +282,13 @@ is `bun apps/cli/dist/index.js` after `omni -i run build -p @launchpad-kit/cli`,
 Add to `tooling/project.omni.yaml`, each `cd "$(git rev-parse --show-toplevel)" && bun tooling/dev-infra.ts ...`
 (same shape as `local:deploy`), uncached:
 
-| Task | Does |
-| --- | --- |
-| `dev:infra:up` | Preflight (Docker native, `DOCKER_HOST` unset, `.dev-infra/` ignored, ports free), create state, build router and Dokku images, start postgres + mailpit + dokku, wait healthy, bootstrap Dokku and router once (idempotent: skipped when already done), start router, print endpoints and the env blocks. Idempotent and quick when warm. |
-| `dev:infra:down` | Stop everything but **keep** data (database, Dokku state, credentials, images): fast restart path. Stops Dokku site containers by label too (finding: they live outside the project and outlive `compose down`). |
+| Task                | Does                                                                                                                                                                                                                                                                                                                                          |
+| ------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `dev:infra:up`      | Preflight (Docker native, `DOCKER_HOST` unset, `.dev-infra/` ignored, ports free), create state, build router and Dokku images, start postgres + mailpit + dokku, wait healthy, bootstrap Dokku and router once (idempotent: skipped when already done), start router, print endpoints and the env blocks. Idempotent and quick when warm.    |
+| `dev:infra:down`    | Stop everything but **keep** data (database, Dokku state, credentials, images): fast restart path. Stops Dokku site containers by label too (finding: they live outside the project and outlive `compose down`).                                                                                                                              |
 | `dev:infra:destroy` | Remove everything it created: sites (destroy Dokku apps, remove containers and `launchpad/site:*` images by exact validated name), project containers/volumes/networks, its images, root-owned `dokku/` via helper container, then `.dev-infra/`. Same safety rules as `local:deploy down` (labels and records only, no prune, no wildcards). |
-| `dev:infra:status` | Per-service health, ports, URLs, deployed sites. |
-| `dev:infra:logs` | `docker compose ... logs -f [service]` (thin wrapper so the project name and env file are right). |
+| `dev:infra:status`  | Per-service health, ports, URLs, deployed sites.                                                                                                                                                                                                                                                                                              |
+| `dev:infra:logs`    | `docker compose ... logs -f [service]` (thin wrapper so the project name and env file are right).                                                                                                                                                                                                                                             |
 
 Raw `docker compose -p <p> --env-file .dev-infra/compose.env -f docker-compose.dev.yaml up -d` works
 after the first `dev:infra:up` for ad-hoc use, and is documented as such, but the tasks are the
@@ -394,22 +394,22 @@ so the docs say to use `dev:infra:down`.
 
 0. **Experiment (no code kept):** confirm router plain-HTTP control + healthcheck, Dokku site container
    behaviour across `stop`/`start`, worker `bun src/index.ts` with `.env.local`, and:
-   - **Mailpit:** the tag/digest starts, accepts plain `smtp://127.0.0.1` from the controller's mailer, and which
-     healthcheck command the pinned image provides (record the digest and the date read).
-   - **Root-owned state vs builds:** with a root-owned `dokku/` subtree present at `<repo>/.dev-infra/`, run
-     `docker build` for the controller, worker and router contexts (repo root) with and without the
-     `.dockerignore` entries; the entries must make it succeed, and show what fails without them.
-   - **`docker compose down` and the `apps` network:** with a deployed site container attached, plain
-     `down` (with and without `--volumes`) and what it leaves; confirm the plan's claim that the label-based
-     stop is needed, and that `destroy` order (sites, project, network) works.
-   Any "no" changes the plan.
+    - **Mailpit:** the tag/digest starts, accepts plain `smtp://127.0.0.1` from the controller's mailer, and which
+      healthcheck command the pinned image provides (record the digest and the date read).
+    - **Root-owned state vs builds:** with a root-owned `dokku/` subtree present at `<repo>/.dev-infra/`, run
+      `docker build` for the controller, worker and router contexts (repo root) with and without the
+      `.dockerignore` entries; the entries must make it succeed, and show what fails without them.
+    - **`docker compose down` and the `apps` network:** with a deployed site container attached, plain
+      `down` (with and without `--volumes`) and what it leaves; confirm the plan's claim that the label-based
+      stop is needed, and that `destroy` order (sites, project, network) works.
+      Any "no" changes the plan.
 1. **Extract shared helpers** from `tooling/local-deploy.ts` into `tooling/local-docker.ts`; `local:deploy`
    specs unchanged and green.
 2. **`docker-compose.dev.yaml`** + `compose-dev.ts/spec` + `check:compose` extension + ignore entries.
 3. **`tooling/dev-infra.ts`** (`up/down/destroy/status/logs`) + specs + Omni tasks + worker `dev` task.
 4. **Docs** (new guide, edits above) + docs spec.
 5. **Manual verification** on a Linux host, recorded; independent review (Medium risk).
-Slices 2 and 4's drafts can run in parallel after 0; 1 -> 3 is sequential. One agent owns integration.
+   Slices 2 and 4's drafts can run in parallel after 0; 1 -> 3 is sequential. One agent owns integration.
 
 Undo: all changes are additive except the helper extraction (revert the commit) and doc edits; `destroy`
 removes runtime state.
