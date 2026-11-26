@@ -452,3 +452,29 @@ controller.env carries it); 2 adopted (`launchpad-dev-<hash8>` tags plus a label
 pin check reads Compose except `compose-production.ts`; the dev module needs its own); 4 specified (profile
 table); 5 specified (chain in the `exec` line); 6 stated (Mailpit is app-mode only); 7, 8 reworded; 9 added to
 slice 0 and to the checks.
+
+## Slice 0 results (2026-11-27, throwaway project `launchpad-dev-exp-1`, all removed afterwards)
+
+No result contradicts the plan.
+
+- **Mailpit:** `axllent/mailpit:v1.29@sha256:757f22b5...` (index digest, read and pulled 2026-11-27) starts and
+  its image has `/mailpit readyz`; the container reports `healthy`. The controller started with
+  `LAUNCHPAD_SMTP_URL=smtp://127.0.0.1:31025` in the same run.
+- **Plain-HTTP router control:** `router init` ran with no TLS settings, `LAUNCHPAD_ROUTER_CONTROL_LISTEN=0.0.0.0:3081`
+  and `PRIVATE_NETWORK=1`; the router is `healthy`; `curl http://127.0.0.1:33183/healthz` answers `{"status":"ok"}`.
+  The host worker with aliases on accepted the `http://127.0.0.1` control URL.
+- **Host worker:** `bun src/index.ts` in `apps/worker` reads `.env.local` and starts with workspace packages
+  resolved from source. A `hello` deployment through it (host `docker` build, SSH to `127.0.0.1:33222`, pinned
+  `[127.0.0.1]:33222` host key) reached `succeeded`, and `curl -H "Host: ..." http://127.0.0.1:33181/` answered.
+  `local:seed` against the deploy-mode controller env worked, but it issues a key with only four scopes: deploying
+  needs the deploy scopes, so `dev-infra` gets a `seed` command that passes `scopesFor(...)` (a small addition to the plan).
+- **Site containers across stop/start:** `docker compose stop` leaves the site container running; Dokku is killed
+  (exit 137, 10 s grace). After `docker compose start` a site container that had been stopped was restarted by Dokku
+  within 60 s and answered 200. So `down` stops sites by label and `up` needs no extra step (it reports them).
+- **Plain `docker compose down`** removes the services and the project network but prints "Resource is still in use"
+  for the `apps` network and leaves the site container (and, after a restore, a renamed exited twin
+  `lp-<id>.web.1.<n>`). `down --volumes` additionally removes the volumes and still leaves `apps`. The label-based
+  stop in `down` and the exact-name site removal in `destroy` are therefore needed, and `destroy` must handle the exited twin.
+- **Root-owned `dokku/` vs builds:** with `.dev-infra/dokku` root-owned in the repo, `docker build` of the router,
+  controller and worker contexts all fail with `error from sender: open .dev-infra/dokku/home/dokku: permission denied`;
+  with `.dev-infra` in the three `Dockerfile.dockerignore` files all three build.
