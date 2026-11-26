@@ -45,6 +45,21 @@ function run(args: string[], env: Record<string, string | undefined>, stdin = ""
 }
 
 describe("launchpad-router usage", () => {
+    it.each(
+        ["serve", "healthcheck", "init", "rotate"].flatMap((c) => [
+            [c, "--help"],
+            [c, "-h"],
+        ]),
+    )(
+        "%s %s prints the usage on stdout and exits 0, before reading the environment",
+        async (...args) => {
+            const result = await run(args, {});
+            expect(result.code).toBe(0);
+            expect(result.err).toBe("");
+            expect(result.out).toMatch(/^Usage: launchpad-router <command>\n/);
+        },
+    );
+
     it.each([[[]], [["-h"]], [["--help"]]] as [string[]][])(
         "prints the usage on stdout and exits 0 for %j, before reading the environment",
         async (args) => {
@@ -66,15 +81,6 @@ describe("launchpad-router usage", () => {
         [["x".repeat(60)], `unknown command "${"x".repeat(40)}"; see --help`],
         // The command is checked before the environment is read.
         [["--bogus"], 'unknown command "--bogus"; see --help', { LAUNCHPAD_APPS_DOMAIN: "" }],
-        // `-h` and `--help` after a subcommand are ordinary unknown arguments today.
-        [["serve", "--help"], "serve takes no arguments"],
-        [["serve", "-h"], "serve takes no arguments"],
-        [["healthcheck", "--help"], "healthcheck takes no arguments"],
-        [["healthcheck", "-h"], "healthcheck takes no arguments"],
-        [["init", "--help"], TOKEN_TEXT],
-        [["init", "-h"], TOKEN_TEXT],
-        [["rotate", "--help"], TOKEN_TEXT],
-        [["rotate", "-h"], TOKEN_TEXT],
         // serve/healthcheck take no arguments of any kind.
         [["serve", "x"], "serve takes no arguments"],
         [["serve", "--", "x"], "serve takes no arguments"],

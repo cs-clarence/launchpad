@@ -189,21 +189,21 @@ function program(): Command {
         .helpCommand(false);
     for (const name of ["serve", "healthcheck"] as const) {
         root.command(name)
-            .helpOption(false)
+            .helpOption("-h, --help")
             .allowExcessArguments()
             .allowUnknownOption()
             .argument("[args...]")
             .action((args, _options, command) => runNoArguments(name, [...args, ...command.args]));
     }
     root.command("init")
-        .helpOption(false)
+        .helpOption("-h, --help")
         .option("--token-file <path>")
         .option("--token-stdin")
         .option("--standalone")
         .option("--database-url-file <path>")
         .action((options) => runSecretCommand("init", options));
     root.command("rotate")
-        .helpOption(false)
+        .helpOption("-h, --help")
         .option("--token-file <path>")
         .option("--token-stdin")
         .option("--standalone")
@@ -226,6 +226,10 @@ async function main(): Promise<void> {
         await program().parseAsync(process.argv.slice(2), { from: "user" });
     } catch (error) {
         if (!(error instanceof CommanderError)) throw error;
+        if (error.code === "commander.helpDisplayed") {
+            process.stdout.write(USAGE);
+            return;
+        }
         fail(
             command === "serve" || command === "healthcheck"
                 ? `${command} takes no arguments`
