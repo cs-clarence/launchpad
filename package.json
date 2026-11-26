@@ -21,9 +21,11 @@
         "test:integration": "omni -i run test:integration"
     },
     "devDependencies": {
+        "@commander-js/extra-typings": "catalog:",
         "@types/bun": "catalog:",
         "@types/node": "catalog:",
         "@typescript/typescript6": "catalog:",
+        "commander": "catalog:",
         "oxfmt": "catalog:",
         "oxlint": "catalog:",
         "typescript": "catalog:",
