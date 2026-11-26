@@ -22,6 +22,11 @@ import {
     NAME,
     OWNED_BY_SERVICE,
     overrideFor,
+    parseArgs,
+    HELP,
+    SWITCH_FLAGS,
+    VALUE_FLAGS,
+    COMMANDS,
     parseDatabaseRows,
     parseEnv,
     parseInventory,
@@ -313,3 +318,37 @@ describe("docker preflight", () => {
 });
 
 void path;
+
+describe("command line", () => {
+    it("takes a command and the two flags", () => {
+        expect(parseArgs(["up"])).toEqual({ command: "up", help: false });
+        expect(
+            parseArgs(["up", "--port-base", "40000", "--project", "launchpad-local-x"]),
+        ).toMatchObject({
+            command: "up",
+            portBase: 40000,
+            project: "launchpad-local-x",
+        });
+        expect(parseArgs(["--help"]).help).toBe(true);
+    });
+
+    it("refuses what it does not know", () => {
+        for (const bad of [
+            [],
+            ["wipe"],
+            ["up", "--force"],
+            ["up", "--port-base"],
+            ["up", "--port-base", "x"],
+            ["up", "--port-base", "80"],
+            ["down", "--port-base", "40000"],
+            ["up", "--project", "mine"],
+        ]) {
+            expect(() => parseArgs(bad), bad.join(" ")).toThrow(DeployError);
+        }
+    });
+
+    it("lists every command and flag in --help", () => {
+        for (const word of [...COMMANDS, ...VALUE_FLAGS, ...SWITCH_FLAGS])
+            expect(HELP).toContain(word);
+    });
+});

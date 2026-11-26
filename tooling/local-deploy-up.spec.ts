@@ -40,7 +40,6 @@ const fails = async (work: Promise<unknown>) => {
     }
     throw new Error("did not fail");
 };
-const index = (needle: string) => host.commands.findIndex((c) => c.includes(needle));
 
 beforeEach(() => {
     host = new FakeHost();

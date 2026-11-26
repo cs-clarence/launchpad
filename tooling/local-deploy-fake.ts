@@ -76,6 +76,9 @@ export class FakeHost {
     seq = 0;
     helperFails = false;
     profiles = new Set<string>();
+    events: string[] = [];
+    realpaths = new Map<string, string>();
+    removedProfiles: string[] = [];
 
     constructor(public repo = "/home/dev/launchpad") {
         this.addDir("/home/dev", 0o755);
@@ -121,7 +124,7 @@ export class FakeHost {
         },
         realpath: async (p) => {
             const n = this.nodes.get(p);
-            return n?.kind === "link" ? n.target : p;
+            return this.realpaths.get(p) ?? (n?.kind === "link" ? n.target : p);
         },
         mkdir: async (p, mode) => {
             if (this.nodes.has(p)) throw new Error("EEXIST");
@@ -152,10 +155,24 @@ export class FakeHost {
             if (n && n.uid !== this.uid && p.includes("/credentials/")) {
                 // The directory is ours, so even a 10001-owned file in it can be unlinked.
             }
+            this.events.push(`unlink ${p.split("/").pop()}`);
             this.nodes.delete(p);
+        },
+        rmTree: async (p) => {
+            const inside = [...this.nodes.keys()]
+                .filter((k) => k === p || k.startsWith(`${p}/`))
+                .sort((x, y) => y.length - x.length);
+            let stuck = false;
+            for (const k of inside) {
+                const stays = [...this.nodes.keys()].some((o) => o.startsWith(`${k}/`));
+                if (this.nodes.get(k)!.uid === this.uid && !stays) this.nodes.delete(k);
+                else stuck = true;
+            }
+            if (stuck) throw new Error("EACCES");
         },
         rmdir: async (p) => {
             if (this.children(p).length > 0) throw new Error("ENOTEMPTY");
+            this.events.push("rmdir");
             this.nodes.delete(p);
         },
     };
@@ -182,7 +199,11 @@ export class FakeHost {
         return args[args.indexOf("-p") + 1]!;
     }
     // Adds a deployed site the way Dokku and the worker would leave it.
-    deploySite(project: string, d: Deployment, opts: { tags?: string[]; inDb?: boolean } = {}) {
+    deploySite(
+        project: string,
+        d: Deployment,
+        opts: { tags?: string[]; inDb?: boolean; dokku?: boolean } = {},
+    ) {
         if (opts.inDb !== false) this.deployments.push(d);
         this.dokkuApps.add(d.app);
         const c = this.add(`${d.app}.web.1`, "", "web", {
@@ -226,7 +247,7 @@ export class FakeHost {
             now: () => this.clock,
             probePort: async (port) => !this.busyPorts.has(port),
             removeProfile: async (controller) => {
-                this.profiles.delete(controller);
+                this.removedProfiles.push(controller);
             },
             uid: this.uid,
             repo: this.repo,
@@ -251,6 +272,7 @@ export class FakeHost {
     run = async (args: string[], input?: string): Promise<RunResult> => {
         this.calls.push(args);
         this.inputs.push(input);
+        this.events.push(this.describe(args));
         if (this.killAt?.match(args)) {
             if (--this.killAt.remaining < 0) {
                 this.killAt = null;
@@ -500,7 +522,7 @@ export class FakeHost {
             this.dokkuApps.delete(app);
             for (const cid of this.dokkuContainers.get(app) ?? []) this.removeContainer(cid);
             this.dokkuContainers.delete(app);
-            for (const name of [...this.images.keys()])
+            for (const name of Array.from(this.images.keys()))
                 if (name.startsWith(`dokku/${app}:`)) this.images.delete(name);
             return ok();
         }
@@ -536,7 +558,7 @@ export class FakeHost {
         if (entry === "rm") {
             for (const n of names.filter((x) => x.startsWith("/state/"))) {
                 const p = `${src}/${n.slice(7)}`;
-                for (const k of [...this.nodes.keys()])
+                for (const k of Array.from(this.nodes.keys()))
                     if (k === p || k.startsWith(`${p}/`)) this.nodes.delete(k);
             }
             return ok();
@@ -550,8 +572,9 @@ export class FakeHost {
         const envFile = all[all.indexOf("--env-file") + 1]!;
         if (!all.includes(COMPOSE_FILE)) return fail("wrong compose file", 125);
         const sub = all.slice(all.indexOf("admin") + 1);
-        const needsEnv = this.nodes.get(envFile);
-        if (!needsEnv) return fail("env file missing");
+        const overrideFile = all[all.indexOf("-f", all.indexOf("-f") + 1) + 1]!;
+        if (!this.nodes.get(envFile) || !this.nodes.get(overrideFile))
+            return fail("env file missing");
         const svc = (name: string) =>
             this.containers.find(
                 (c) =>
@@ -592,7 +615,7 @@ export class FakeHost {
                 return ok();
             }
             case "exec":
-                return this.composeExec(project, sub.slice(1), input);
+                return this.composeExec(project, sub.slice(1));
             case "run": {
                 const at = sub.findIndex((x) => x === "admin" || x === "router");
                 const service = sub[at]!;
@@ -610,8 +633,9 @@ export class FakeHost {
                 this.containers = this.containers.filter(
                     (c) => c.labels[LABEL_PROJECT] !== project,
                 );
-                for (const [n, v] of [...this.volumes]) if (v === project) this.volumes.delete(n);
-                for (const [n, v] of [...this.networks])
+                for (const [n, v] of Array.from(this.volumes))
+                    if (v === project) this.volumes.delete(n);
+                for (const [n, v] of Array.from(this.networks))
                     if (v.project === project) this.networks.delete(n);
                 return ok();
             }
@@ -625,7 +649,7 @@ export class FakeHost {
         return new RegExp(`${key}=(\\d+)`).exec(this.text(envFile) ?? "")?.[1];
     }
 
-    private composeExec(project: string, args: string[], input?: string): RunResult {
+    private composeExec(project: string, args: string[]): RunResult {
         const rest = args.filter((a) => a !== "-T");
         const service = rest[0]!;
         const c = this.containers.find(

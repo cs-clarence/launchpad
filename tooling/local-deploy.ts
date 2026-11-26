@@ -18,6 +18,7 @@ import {
     readFile,
     realpath,
     rename,
+    rm,
     rmdir,
     unlink,
     writeFile,
@@ -477,6 +478,8 @@ export interface Fs {
     rename(from: string, to: string): Promise<void>;
     unlink(file: string): Promise<void>;
     rmdir(dir: string): Promise<void>;
+    // Removes a directory tree as far as this user may; throws if something stays.
+    rmTree(dir: string): Promise<void>;
 }
 
 const missing = (error: unknown) => (error as NodeJS.ErrnoException).code === "ENOENT";
@@ -529,6 +532,7 @@ export const realFs: Fs = {
             if (!missing(error)) throw error;
         }
     },
+    rmTree: (dir) => rm(dir, { recursive: true, force: true }),
 };
 
 export interface Deps {
@@ -1356,4 +1360,531 @@ export async function status(d: Deps, options: UpOptions = {}): Promise<void> {
     const sites = mergeSites(previous, parseDatabaseRows(outOf(query).trim()));
     await writeInventory(c, sites);
     d.log(`Recorded ${sites.length} deployment${sites.length === 1 ? "" : "s"} in the inventory.`);
+}
+
+// ---- down --------------------------------------------------------------------------------
+
+// A copy of the acceptance harness's check: `docker top` shows no build or Dokku command.
+export function dokkuIdle(result: RunResult): boolean {
+    const [header, ...commands] = outOf(result).split("\n");
+    return (
+        result.code === 0 &&
+        /^PID\s+COMMAND\s+COMMAND$/.test(header ?? "") &&
+        commands.length > 0 &&
+        !commands.some((line) =>
+            /(?:^|[\s/])(?:dokku|docker|sshcommand)(?=\s|$)|sshd:\s+dokku\b/.test(line),
+        )
+    );
+}
+
+const APP_CONTAINER = /^(lp-[a-z0-9]{10})\.[a-z0-9_-]+\.[0-9]+$/;
+const CLEAN_EXTRAS = new Set([
+    "compose.env",
+    "override.json",
+    "inventory.json",
+    "inventory.json.next",
+]);
+
+function postgresImage(): string {
+    const image = interpolate(loadRaw().services.postgres.image, {});
+    if (
+        typeof image !== "string" ||
+        !/^postgres:[A-Za-z0-9._-]+@sha256:[0-9a-f]{64}$/.test(image)
+    ) {
+        throw new DeployError("Cannot read the pinned PostgreSQL image from docker-compose.yaml.");
+    }
+    return image;
+}
+
+async function discover(
+    c: Ctx,
+    dokkuId: string | null,
+): Promise<{ sites: Site[]; ignored: string[]; databaseReadable: boolean }> {
+    const ignored: string[] = [];
+    let database: Site[] = [];
+    let databaseReadable = false;
+    let fromFile: Site[] = [];
+    try {
+        const query = await compose(c, DB_QUERY);
+        if (query.code === 0) {
+            database = parseDatabaseRows(outOf(query).trim());
+            databaseReadable = true;
+        }
+        fromFile = await readInventoryFile(c);
+    } catch (error) {
+        if (error instanceof InventoryError) {
+            throw new DeployError(`${error.message} Nothing was removed.`);
+        }
+        throw error;
+    }
+    const fromDokku: Site[] = [];
+    if (dokkuId) {
+        const listed = await docker(c, ["exec", dokkuId, "dokku", "--quiet", "apps:list"]);
+        if (listed.code === 0) {
+            for (const name of lines(outOf(listed))) {
+                if (NAME.app.test(name)) fromDokku.push({ id: null, app: name, tag: null });
+                else ignored.push(name);
+            }
+        }
+    }
+    const fromNetwork: Site[] = [];
+    const network = appsNetwork(c.project);
+    if ((await networkOwner(c, network)) === "ours") {
+        const members = await docker(c, [
+            "network",
+            "inspect",
+            "-f",
+            NETWORK_MEMBERS_TEMPLATE,
+            network,
+        ]);
+        for (const name of lines(outOf(members))) {
+            const app = APP_CONTAINER.exec(name)?.[1];
+            if (app) fromNetwork.push({ id: null, app, tag: null });
+            else if (!name.startsWith(`${c.project}-`)) ignored.push(name);
+        }
+    }
+    return {
+        sites: mergeSites(database, fromFile, fromDokku, fromNetwork),
+        ignored,
+        databaseReadable,
+    };
+}
+
+async function stopWriters(c: Ctx): Promise<void> {
+    for (const service of ["controller", "worker"]) {
+        const found = await confirmed(
+            c,
+            await labeledContainers(c, ["--filter", `label=${LABEL_SERVICE}=${service}`]),
+        );
+        for (const container of found) {
+            must(
+                await docker(c, ["stop", "--time", "30", container.id]),
+                `Stopping the ${service}`,
+            );
+        }
+    }
+}
+
+async function waitForDokkuToSettle(c: Ctx, dokkuId: string): Promise<void> {
+    try {
+        await waitFor(c.d, "Dokku to finish its running commands", 60_000, async () =>
+            dokkuIdle(await docker(c, ["top", dokkuId, "-eo", "pid,comm,args"])),
+        );
+    } catch (error) {
+        if (error instanceof DeployError && /Timed out/.test(error.message)) {
+            throw new DeployError(
+                "A build or Dokku command is still running in Dokku. Nothing was removed and " +
+                    ".local-deploy/ is kept; run down again in a minute.",
+            );
+        }
+        throw error;
+    }
+}
+
+async function destroySite(c: Ctx, dokkuId: string | null, site: Site): Promise<void> {
+    checkSiteName(site);
+    if (dokkuId) {
+        const result = await docker(c, [
+            "exec",
+            dokkuId,
+            "dokku",
+            "apps:destroy",
+            site.app,
+            "--force",
+        ]);
+        if (result.code !== 0) {
+            const exists = await docker(c, ["exec", dokkuId, "dokku", "apps:exists", site.app]);
+            if (exists.code === 0)
+                throw new DeployError(`Could not destroy the Dokku app ${site.app}.`);
+        }
+    }
+    for (const id of await siteContainers(c, site)) {
+        must(await docker(c, ["rm", "-f", id]), `Removing a container of ${site.app}`);
+    }
+    await removeImages(c, await siteImages(c, site));
+}
+
+async function leftovers(c: Ctx, sites: Site[]): Promise<string[]> {
+    const left: string[] = [];
+    for (const site of sites) {
+        if ((await siteContainers(c, site)).length > 0) left.push(`containers of ${site.app}`);
+        for (const image of await siteImages(c, site)) left.push(`image ${image.ref}`);
+    }
+    return left;
+}
+
+function manualRemoval(c: Ctx): string[] {
+    return FIXED_CHILDREN.map((name) => `sudo rm -rf ${c.layout.file(name)}`);
+}
+
+async function removeStateChildren(c: Ctx): Promise<void> {
+    const present: string[] = [];
+    for (const name of FIXED_CHILDREN) {
+        if (await c.d.fs.stat(c.layout.file(name))) present.push(name);
+    }
+    if (present.length === 0) return;
+    await checkDirectory(c);
+    const image = postgresImage();
+    let failed = "";
+    const have = await docker(c, ["image", "inspect", "-f", "{{.Id}}", image]);
+    if (have.code !== 0 && (await docker(c, ["pull", image])).code !== 0) {
+        failed = "The pinned PostgreSQL image is not available and could not be pulled.";
+    }
+    if (!failed) {
+        const result = await docker(c, [
+            "run",
+            "--rm",
+            "--pull",
+            "never",
+            "--network",
+            "none",
+            "--user",
+            "0",
+            "--mount",
+            `type=bind,src=${c.layout.dir},dst=/state`,
+            "--entrypoint",
+            "rm",
+            image,
+            "-rf",
+            ...FIXED_CHILDREN.map((name) => `/state/${name}`),
+        ]);
+        if (result.code !== 0) failed = "The root helper container could not run.";
+    }
+    if (!failed) return;
+    for (const name of present) await c.d.fs.rmTree(c.layout.file(name)).catch(() => undefined);
+    const rest: string[] = [];
+    for (const name of FIXED_CHILDREN) if (await c.d.fs.stat(c.layout.file(name))) rest.push(name);
+    throw new DeployError(
+        `${failed} ${c.layout.dir} is kept. Remove what is left by hand, then run down again:\n` +
+            manualRemoval(c)
+                .filter((line) => rest.some((name) => line.endsWith(`/${name}`)))
+                .join("\n"),
+    );
+}
+
+export async function down(d: Deps, options: UpOptions = {}): Promise<void> {
+    const layout = layoutFor(d.repo);
+    const record = await readState({ d, layout, project: "" });
+    const project = checkProject(
+        options.project ?? record.state?.project ?? projectNameFor(d.repo),
+    );
+    const c: Ctx = { d, layout, project };
+    if (record.kind === "ok") checkRecord(c, record.state!);
+    if ((await docker(c, ["version", "--format", "{{.Server.Version}}"])).code !== 0) {
+        throw new DeployError("The Docker daemon did not answer. Nothing was removed.");
+    }
+    const dirStat = await checkDirectory(c);
+    const resources = await projectResources(c);
+    const hasResources =
+        resources.containers.length + resources.networks.length + resources.volumes.length > 0;
+    if (!dirStat) {
+        if (hasResources) {
+            throw new DeployError(
+                `Project ${project} has resources but ${layout.dir} does not exist, so down cannot ` +
+                    `remove them. Run it from the checkout that created them, or: docker compose -p ` +
+                    `${project} down --volumes --remove-orphans.`,
+            );
+        }
+        d.log(`Nothing to remove for ${project}.`);
+        return;
+    }
+    if (record.kind === "corrupt") {
+        throw new DeployError(`${layout.file("state.json")} is unreadable; down refuses to guess.`);
+    }
+    if (record.kind === "none") {
+        const children = await d.fs.readdir(layout.dir);
+        const strange = children.filter(
+            (name) =>
+                !(FIXED_CHILDREN as readonly string[]).includes(name) && !CLEAN_EXTRAS.has(name),
+        );
+        if (hasResources || strange.length > 0) {
+            throw new DeployError(
+                `${layout.dir} has no state.json but ${hasResources ? `project ${project} has resources` : `holds ${strange.join(", ")}`}; ` +
+                    "refusing to remove anything.",
+            );
+        }
+    }
+    const dokku = resources.containers.find((x) => x.service === "dokku");
+    if (dokku && dokku.state !== "running") {
+        throw new DeployError(
+            `The Dokku container exists but is not running. Nothing was removed; run: ` +
+                `docker compose -p ${project} start dokku postgres, then down again.`,
+        );
+    }
+
+    let sites: Site[] = [];
+    if (resources.containers.length > 0) {
+        d.log("Stopping the controller and worker...");
+        await stopWriters(c);
+        if (dokku) await waitForDokkuToSettle(c, dokku.id);
+        const found = await discover(c, dokku?.id ?? null);
+        for (const name of found.ignored) d.log(`Ignoring ${name}: not a Launchpad site name.`);
+        sites = found.sites;
+        if (!found.databaseReadable)
+            d.log("The database could not be read; using the other sources.");
+        await writeInventory(c, sites);
+        d.log(`Removing ${sites.length} deployed site${sites.length === 1 ? "" : "s"}...`);
+        for (const site of sites) await destroySite(c, dokku?.id ?? null, site);
+        for (const site of sites.filter((x) => x.tag === null)) {
+            d.log(
+                `The image launchpad/site:<id> of ${site.app} could not be derived (no deployment id is known); ` +
+                    "if one remains, find it with: docker image ls launchpad/site",
+            );
+        }
+        const again = await discover(c, dokku?.id ?? null);
+        const known = new Set(sites.map((s) => s.app));
+        const added = again.sites.filter((s) => !known.has(s.app)).map((s) => s.app);
+        const left = await leftovers(c, sites);
+        if (added.length > 0 || left.length > 0) {
+            throw new DeployError(
+                `Something appeared or remained while removing the sites: ${[...added, ...left].join(", ")}. ` +
+                    ".local-deploy/ is kept; run down again.",
+            );
+        }
+    } else {
+        try {
+            sites = await readInventoryFile(c);
+        } catch (error) {
+            if (error instanceof InventoryError)
+                throw new DeployError(`${error.message} Nothing was removed.`);
+            throw error;
+        }
+    }
+
+    if (hasResources) {
+        for (const container of await confirmed(c, await labeledContainers(c))) {
+            must(await docker(c, ["rm", "-f", container.id]), "Removing a container");
+        }
+        if ((await d.fs.stat(layout.file("compose.env"))) === null) {
+            throw new DeployError("compose.env is missing, so Compose cannot remove the project.");
+        }
+        must(
+            await compose(c, ["down", "--volumes", "--remove-orphans"]),
+            "Removing the Compose project",
+        );
+    }
+    if ((await networkOwner(c, appsNetwork(project))) === "ours") {
+        must(await docker(c, ["network", "rm", appsNetwork(project)]), "Removing the apps network");
+    }
+
+    d.log("Removing the root-owned state...");
+    await removeStateChildren(c);
+
+    for (const tag of Object.values(projectImages(project))) {
+        if (await imageExists(c, tag))
+            must(await docker(c, ["image", "rm", tag]), "Removing an image");
+    }
+    for (const site of sites) {
+        checkSiteName(site);
+        await removeImages(c, await siteImages(c, site));
+    }
+
+    const envText = await d.fs.readFile(layout.file("compose.env"));
+    if (envText !== null) {
+        try {
+            await d.removeProfile(`http://127.0.0.1:${portsFromEnv(parseEnv(envText)).controller}`);
+        } catch {
+            d.log(
+                `Could not remove the CLI profile ${PROFILE}; run: launchpad logout --profile ${PROFILE}.`,
+            );
+        }
+    }
+    const remaining: string[] = [];
+    const after = await projectResources(c);
+    remaining.push(
+        ...after.containers.map((x) => `container ${x.id.slice(0, 12)}`),
+        ...after.networks.map((x) => `network ${x}`),
+        ...after.volumes.map((x) => `volume ${x}`),
+    );
+    if ((await networkOwner(c, appsNetwork(project))) !== "absent")
+        remaining.push(`network ${appsNetwork(project)}`);
+    remaining.push(...(await leftovers(c, sites)));
+    for (const tag of Object.values(projectImages(project))) {
+        if (await imageExists(c, tag)) remaining.push(`image ${tag}`);
+    }
+    for (const name of FIXED_CHILDREN) {
+        if (await d.fs.stat(layout.file(name))) remaining.push(`directory ${layout.file(name)}`);
+    }
+    if (remaining.length > 0) {
+        throw new DeployError(
+            `Not everything was removed: ${remaining.join(", ")}. ${layout.dir} is kept so down can run again.`,
+        );
+    }
+
+    // The record goes last, so an interruption never leaves a directory that looks foreign.
+    for (const name of [
+        "compose.env",
+        "override.json",
+        "inventory.json",
+        "inventory.json.next",
+        "state.json",
+    ]) {
+        await d.fs.unlink(layout.file(name));
+    }
+    try {
+        await d.fs.rmdir(layout.dir);
+    } catch {
+        throw new DeployError(`${layout.dir} still holds other files; remove it by hand.`);
+    }
+    d.log(
+        `Removed project ${project}: its containers, volumes, network, images and ${STATE_DIR}/.`,
+    );
+    d.log(
+        "Pulled base images and the build cache stay (docker image prune, docker builder prune).",
+    );
+}
+
+// ---- command line ------------------------------------------------------------------------
+
+export const COMMANDS = ["up", "status", "down"] as const;
+export const VALUE_FLAGS = ["--project", "--port-base"] as const;
+export const SWITCH_FLAGS = ["--help"] as const;
+
+export const HELP = `Deploy examples/hello on this machine and remove it again (see docs/local-deploy.md).
+
+Usage: omni -i run local:deploy -a "options=<command> [flags]"
+
+  up        build, start and seed a Compose project, everything on 127.0.0.1
+  status    show service health, ports and the profile; refresh the recorded inventory
+  down      remove this project's containers, volumes, network, images, sites and ${STATE_DIR}/
+
+  --project <name>    project name (default launchpad-local-<8 hex of this checkout's path>;
+                      must match ${PROJECT_PATTERN.source})
+  --port-base <n>     first of the five host ports (default ${DEFAULT_PORT_BASE}; offsets 0, 1, 2, 42, 263; up only)
+  --help              show this text
+
+This mounts the host Docker socket into the worker and Dokku, which is root-equivalent on this
+machine. Secrets stay in ${STATE_DIR}/ (mode 700, git-ignored) and are never printed.
+`;
+
+export interface Parsed {
+    command: (typeof COMMANDS)[number] | null;
+    project?: string;
+    portBase?: number;
+    help: boolean;
+}
+
+export function parseArgs(argv: string[]): Parsed {
+    const parsed: Parsed = { command: null, help: false };
+    for (let i = 0; i < argv.length; i++) {
+        const arg = argv[i]!;
+        if ((COMMANDS as readonly string[]).includes(arg) && parsed.command === null) {
+            parsed.command = arg as Parsed["command"];
+        } else if (arg === "--help") {
+            parsed.help = true;
+        } else if ((VALUE_FLAGS as readonly string[]).includes(arg)) {
+            const value = argv[++i];
+            if (value === undefined || value.startsWith("--")) {
+                throw new DeployError(`${arg} needs a value.`);
+            }
+            if (arg === "--project") parsed.project = checkProject(value);
+            else {
+                if (!/^[0-9]+$/.test(value)) throw new DeployError("--port-base must be a number.");
+                parsed.portBase = checkPortBase(Number(value));
+            }
+        } else {
+            throw new DeployError(`Unknown argument ${arg}. Run with --help to list the commands.`);
+        }
+    }
+    if (!parsed.help && parsed.command === null) {
+        throw new DeployError("Say what to do: up, status or down (see --help).");
+    }
+    if (parsed.portBase !== undefined && parsed.command !== "up") {
+        throw new DeployError("--port-base only applies to up.");
+    }
+    return parsed;
+}
+
+function interruptible(): AbortController {
+    const controller = new AbortController();
+    const stop = () => controller.abort();
+    process.once("SIGINT", stop);
+    process.once("SIGTERM", stop);
+    return controller;
+}
+
+export function realDeps(repo: string, version: string, signal: AbortSignal): Deps {
+    const env = process.env;
+    const sleep = (ms: number) =>
+        new Promise<void>((resolve) => {
+            const timer = setTimeout(resolve, ms);
+            signal.addEventListener(
+                "abort",
+                () => {
+                    clearTimeout(timer);
+                    resolve();
+                },
+                { once: true },
+            );
+        });
+    return {
+        run: (args, input) =>
+            spawnExec(args, input, args.includes("build") ? 45 * 60_000 : undefined),
+        fetch,
+        fs: realFs,
+        env,
+        log: (line) => console.log(line),
+        sleep,
+        now: Date.now,
+        probePort,
+        removeProfile: async (controller) => {
+            const ctx = createContext(env, { fetch });
+            const config = await ctx.store.load();
+            if (config.profiles[PROFILE]?.controller !== controller) return;
+            await ctx.store.update((current) => {
+                delete current.profiles[PROFILE];
+                if (current.currentProfile === PROFILE) {
+                    current.currentProfile = Object.keys(current.profiles)[0] ?? null;
+                }
+            });
+        },
+        uid: process.getuid?.() ?? -1,
+        repo,
+        version,
+        signal,
+    };
+}
+
+export async function main(argv: string[]): Promise<number> {
+    try {
+        const parsed = parseArgs(argv);
+        if (parsed.help) {
+            console.log(HELP);
+            return 0;
+        }
+        if (process.platform !== "linux") {
+            throw new DeployError("Only Linux with native Docker Engine is supported.");
+        }
+        const top = Bun.spawnSync(["git", "rev-parse", "--show-toplevel"], {
+            cwd: path.resolve(import.meta.dirname, ".."),
+            stdout: "pipe",
+            stderr: "ignore",
+        });
+        if (!top.success) throw new DeployError("Run this inside the repository checkout.");
+        const repo = await realpath(top.stdout.toString().trim());
+        const { version } = await Bun.file(path.join(repo, "package.json")).json();
+        const controller = interruptible();
+        const deps = realDeps(
+            repo,
+            typeof version === "string" ? version : "unknown",
+            controller.signal,
+        );
+        if (parsed.command === "up") await up(deps, parsed);
+        else if (parsed.command === "status") await status(deps, parsed);
+        else await down(deps, parsed);
+        return 0;
+    } catch (error) {
+        console.error(
+            error instanceof DeployError ||
+                error instanceof SeedError ||
+                error instanceof ClientCoreError
+                ? error.message
+                : "The command failed unexpectedly.",
+        );
+        return 1;
+    }
+}
+
+if (import.meta.main) {
+    process.exitCode = await main(process.argv.slice(2));
 }
