@@ -14,7 +14,7 @@ The backup verifies.
 real	0m0.933s
 user	0m0.139s
 sys	0m0.041s
-ls: cannot open directory '/tmp/opencode/wt-evidence/.local-deploy/backups': Permission denied
+ls: cannot open directory '<checkout>/.local-deploy/backups': Permission denied
 
 real	0m1.422s
 user	0m0.009s
@@ -82,8 +82,8 @@ user	0m1.175s
 sys	0m0.702s
 rc=0
 total 16
-drwx------.  6 rencedm112 rencedm112  200 Nov 26 14:30 .
-drwxr-xr-x. 14 rencedm112 rencedm112  560 Nov 26 14:27 ..
+drwx------.  6 <user> <user>  200 Nov 26 14:30 .
+drwxr-xr-x. 14 <user> <user>  560 Nov 26 14:27 ..
  Container launchpad-local-3853718e-admin-run-47c7d89ef586 Creating 
  Container launchpad-local-3853718e-admin-run-47c7d89ef586 Created 
 0
@@ -151,7 +151,7 @@ Logged out of profile "local-deploy".
   router (data)  127.0.0.1:32182
 CLI profile: local-deploy; organization local, project demo.
 Next: deploy examples/hello with the launchpad CLI (docs/local-deploy.md).
-To stop without deleting: docker compose -p launchpad-local-3853718e --env-file /tmp/opencode/wt-evidence/.local-deploy/compose.env -f /tmp/opencode/wt-evidence/docker-compose.yaml -f /tmp/opencode/wt-evidence/.local-deploy/override.json stop. To remove everything: down.
+To stop without deleting: docker compose -p launchpad-local-3853718e --env-file <checkout>/.local-deploy/compose.env -f <checkout>/docker-compose.yaml -f <checkout>/.local-deploy/override.json stop. To remove everything: down.
 Executed task '@launchpad-kit/tooling#local:deploy'
 
 real	0m7.467s

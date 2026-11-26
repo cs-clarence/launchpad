@@ -149,7 +149,7 @@ All rows: database counts, `maintenance/`, schemas, Dokku apps and process count
 - After: no container, volume or network carries the project label; no `launchpad-local-*`, `launchpad/site` or
   `dokku/lp-*` image remains; `.local-deploy/` is gone. The before/after Docker snapshot (containers, volumes,
   networks and images) is **identical** to the baseline taken before the first stack was started
-  (`snap-S0.txt` vs `snap-S9-after.txt`, not copied here).
+  (`snap-S0.txt` vs `snap-S9-after.txt`, kept only on the rehearsal host, so not verifiable from this branch).
 - `cloudflare-connector` (id `6a33f7899b93...`, started 2026-11-26T01:13:31Z) and `playit-connector`
   (id `de1d2ee43a3f...`, started 2026-11-26T01:13:31Z) are unchanged from the baseline; `launchpad-test-db` did not
   exist at the baseline or afterwards.
