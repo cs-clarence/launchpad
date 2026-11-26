@@ -58,12 +58,10 @@ function loadConfig(): ReturnType<typeof parseRouterHostConfig> {
 // Commander takes `--token-file --token-stdin` as a path; Node's strict parser refused it, so a
 // missing value or one that starts with "-" is refused here. `--token-file=-x` stays accepted.
 function refuseDashValues(args: string[]): void {
-    const end = args.indexOf("--");
-    const options = end === -1 ? args : args.slice(0, end);
-    options.forEach((arg, index) => {
+    args.forEach((arg, index) => {
         if (arg !== "--token-file" && arg !== "--database-url-file") return;
-        const value = options[index + 1];
-        if (value === undefined || value.startsWith("-")) fail(TOKEN_USAGE);
+        const value = args[index + 1];
+        if (value === undefined || (value.length > 1 && value.startsWith("-"))) fail(TOKEN_USAGE);
     });
 }
 
