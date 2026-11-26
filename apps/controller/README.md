@@ -272,8 +272,8 @@ in this release. A restore killed halfway can leave `*.restore-*` temporary file
 (delete them).
 If it was killed after the old schema was moved aside, the database may have an empty, partly
 restored or missing `public` schema, with the old data in a `launchpad_replaced_*` schema: list
-them with `select nspname from pg_namespace where nspname like 'launchpad_replaced_%'`, then either
-restore the pre-restore backup, or, after `recovery-ack-import --i-have-stopped-the-importer` has succeeded, put the old data back, whatever state `public` is in, with
+them with `select nspname from pg_namespace where nspname like 'launchpad_replaced_%'`. If the interrupted import's record remains, another restore refuses until `recovery-ack-import --i-have-stopped-the-importer` has succeeded, so run it first. Then either
+restore the pre-restore backup, or put the old data back, whatever state `public` is in, with
 `drop schema if exists public cascade; alter schema launchpad_replaced_<timestamp> rename to public;`
 (what was restored into `public` had not been checked yet). First confirm no `pg_restore` is
 still running (a killed `restore` does not stop it, and it could commit after your recovery) and

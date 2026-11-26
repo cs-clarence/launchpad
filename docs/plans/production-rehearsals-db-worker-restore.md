@@ -2,7 +2,7 @@
 
 Written 2026-11-26 and revised after independent review; **run on 2026-11-26, results in
 [the evidence](evidence/rehearsal-db-worker-restore-20261126/README.md)** (this text keeps the plan as written, with
-the corrections the run made marked). It closes the last open items of the
+the corrections the run made marked). It closes only the rehearsed portions of the last open items of the
 [production Compose follow-up](production-compose-follow-up.md#outstanding-follow-ups-after-the-bundled-p7-pr):
 the capacity gate ("database loss and worker liveness are not rehearsed") and the recovery gate ("a failed
 restore is not rehearsed on the Compose topology and schema rollback is untested").
@@ -734,7 +734,10 @@ Then the recovery: check Dokku **by exact name**, record the outcome the observa
 Check the deployment settled, that the app accepts a new deployment, and that deleting the held one works.
 
 ```sh
-undo "kill worker (W1)" "$W" worker; snap > "$EV/w1-after.txt"; protected > "$EV/w1-protected-after.txt"
+undo "kill worker (W1)" "$W" worker
+# docker kill is not restarted by unless-stopped: start the guarded worker so it claims the expired lease,
+# then wait for reconciliation-needed (see the observation above) before reconciling.
+snap > "$EV/w1-after.txt"; protected > "$EV/w1-protected-after.txt"
 diff "$EV/w1-protected-before.txt" "$EV/w1-protected-after.txt" && note "protected unchanged"
 diff "$EV/w1-before.txt" "$EV/w1-after.txt" | tee -a "$EV/w1.txt"      # only project resources may differ
 note "W1 done"
