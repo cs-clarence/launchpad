@@ -23,7 +23,8 @@ type WorkerState = "ok" | "stale" | "stopped";
 
 // How the instance is doing, for the operator: that the database answers, what is stored, whether
 // a worker is alive and how many operations hold a lease about to lapse. Counts and durations
-// only: no ids, hostnames or text that came from a remote system. Every time comes from the
+// only: no ids or text that came from a remote system. Worker names are operator-chosen or derived
+// from the hostname (this is operator-only). Every time comes from the
 // database clock.
 export async function getStatus(
     db: Db,

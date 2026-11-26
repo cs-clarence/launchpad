@@ -67,6 +67,8 @@ export function createSchemaGate(options: SchemaGateOptions & { now?: () => numb
     let directory: Stage | undefined;
     let directoryPassed = false;
     let task: Task | undefined;
+    // invalidate() bumps it: a check that started earlier may finish, but its result is dropped.
+    let generation = 0;
 
     function classifySchema(error: unknown): GateFailure {
         const kind = classifyDatabaseError(error);
@@ -75,19 +77,24 @@ export function createSchemaGate(options: SchemaGateOptions & { now?: () => numb
         return { kind: "failed", error };
     }
 
-    function record(stage: "database" | "directory", value: Stage) {
+    function record(stage: "database" | "directory", value: Stage, started: number) {
+        if (started !== generation) return;
         if (stage === "database") database = value;
         else directory = value;
         if (!value.ok) options.onFailure?.(value.failure);
     }
 
-    async function run(needDatabase: boolean, needDirectory: boolean) {
+    async function run(needDatabase: boolean, needDirectory: boolean, started: number) {
         if (needDatabase) {
             try {
                 await options.checkSchema();
-                record("database", { ok: true, at: now() });
+                record("database", { ok: true, at: now() }, started);
             } catch (error) {
-                record("database", { ok: false, at: now(), failure: classifySchema(error) });
+                record(
+                    "database",
+                    { ok: false, at: now(), failure: classifySchema(error) },
+                    started,
+                );
                 return;
             }
         }
@@ -95,13 +102,13 @@ export function createSchemaGate(options: SchemaGateOptions & { now?: () => numb
             try {
                 await options.checkDataDirectory();
                 directoryPassed = true;
-                record("directory", { ok: true, at: now() });
+                record("directory", { ok: true, at: now() }, started);
             } catch (error) {
                 const known = options.isDataDirectoryProblem?.(error) ?? true;
                 const failure: GateFailure = known
                     ? { kind: "unavailable", error }
                     : { kind: "failed", error };
-                record("directory", { ok: false, at: now(), failure });
+                record("directory", { ok: false, at: now(), failure }, started);
             }
         }
     }
@@ -134,7 +141,7 @@ export function createSchemaGate(options: SchemaGateOptions & { now?: () => numb
     function start(needs: { database: boolean; directory: boolean }): Task {
         const started = now();
         const current: Task = { startedAt: started, done: Promise.resolve() };
-        current.done = run(needs.database, needs.directory)
+        current.done = run(needs.database, needs.directory, generation)
             .catch(() => {})
             .finally(() => {
                 if (task === current) task = undefined;
@@ -183,6 +190,7 @@ export function createSchemaGate(options: SchemaGateOptions & { now?: () => numb
         check,
         // The next check runs the database stage again; the data directory result is kept.
         invalidate() {
+            generation++;
             database = undefined;
         },
     };

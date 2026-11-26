@@ -90,6 +90,19 @@ describe("schema gate", () => {
         expect(schema).toHaveBeenCalledTimes(2);
     });
 
+    it("drops the result of a check that was in flight when invalidate() ran", async () => {
+        const { gate, schema } = setup();
+        let finish: () => void = () => {};
+        schema.mockImplementationOnce(() => new Promise<void>((resolve) => (finish = resolve)));
+        const first = gate.check();
+        await vi.advanceTimersByTimeAsync(0);
+        gate.invalidate();
+        finish();
+        await first;
+        await gate.check();
+        expect(schema).toHaveBeenCalledTimes(2);
+    });
+
     describe("data directory", () => {
         it("is checked on the first check, not on later traffic re-checks", async () => {
             const { gate, schema, directory } = setup();

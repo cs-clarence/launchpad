@@ -252,7 +252,10 @@ Two endpoints answer different questions, and neither needs a sign-in:
   warnings, in plain words and without ids: no worker has reported (also with nothing in flight); leases about
   to lapse or lapsed with no worker running; leases more than a minute past while a worker reports in. The
   settings are bounded so a killed worker is reported at least 60 s before its 300 s lease can expire.
-  `LAUNCHPAD_WORKER_STALE_AFTER` must be the same on the controller and the worker (Compose passes one value).
+  `LAUNCHPAD_WORKER_STALE_AFTER` must be the same on the controller and the worker (Compose passes one value to
+  both). The "at least three beats" rule is applied per worker row by the controller (the limit used is the larger
+  of this setting and three of that row's own recorded beats), so a worker with a slower beat is never mislabelled
+  whatever the controller's value.
 - **Worker identity.** A worker has a stable **name**: `LAUNCHPAD_WORKER_NAME`, else the deprecated
   `LAUNCHPAD_WORKER_ID` (same rules, so existing installs keep their name; a one-time log line notes it), else the
   container hostname, which Compose fixes at `launchpad-worker`, so the name survives recreating the container.

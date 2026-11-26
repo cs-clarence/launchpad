@@ -46,6 +46,8 @@ export function createHeartbeat(options: HeartbeatOptions) {
     let stopping = false;
     let started = false;
     let failing = false;
+    let nameInUse = false;
+    let okBeats = 0;
     let loop: Promise<void> | undefined;
     let wake: (() => void) | undefined;
 
@@ -78,6 +80,8 @@ export function createHeartbeat(options: HeartbeatOptions) {
         if (result.takenOver) log({ event: "worker-name-in-use" });
     }
 
+    // The statement behind a deadline is abandoned, not cancelled: it is bounded by the pool's
+    // statement_timeout and the small pool, and the loop never starts the next beat before this one ends.
     async function once() {
         try {
             if (!started) {
@@ -87,10 +91,14 @@ export function createHeartbeat(options: HeartbeatOptions) {
             if (!(await within(() => store.beat(), statementMs))) {
                 // Taken over by another run of the same name, or pruned: claim the row again.
                 started = false;
+                okBeats = 0;
                 await begin();
-                log({ event: "worker-name-in-use" });
+                if (!nameInUse) log({ event: "worker-name-in-use" });
+                nameInUse = true;
                 return;
             }
+            // A takeover episode ends after a few clean beats in a row.
+            if (nameInUse && ++okBeats >= 3) nameInUse = false;
             recovered();
         } catch {
             failed("worker-heartbeat-error");
