@@ -71,6 +71,23 @@ Open the dashboard at `http://127.0.0.1:3000` and Mailpit at `http://127.0.0.1:3
 sent from the dashboard (the controller runs with `LAUNCHPAD_ENROLLMENT=invitation`) shows up in
 Mailpit.
 
+## What it costs
+
+Measured once on a Linux workstation with warm Docker layer and base-image caches (a cold first run was
+not measured; Dokku's first start alone took 4.5 minutes in an earlier rehearsal):
+
+| What                                              | Measured                                            |
+| ------------------------------------------------- | --------------------------------------------------- |
+| First `dev:infra:up` (warm caches)                | 131 s, most of it Dokku's first start               |
+| `dev:infra:up` again after `down`                 | 19 s; a stopped site answers again about 30 s later |
+| `dev:infra:down`                                  | 12 s                                                |
+| `dev:infra:destroy` with one deployed site        | 8 s                                                 |
+| One deployment of `hello` through the host worker | 72 s from `app deploy` to `succeeded`               |
+| Memory limits in Compose                          | PostgreSQL 512 MiB, Dokku 1 GiB, router 128 MiB     |
+
+Builds and deployed sites run in the host engine, outside the memory limits. Pulled base images (Mailpit,
+PostgreSQL, Dokku) and the build cache stay after `destroy`.
+
 ## Two presets
 
 The controller requires an `https` `LAUNCHPAD_BASE_URL` on a different registrable domain from the apps
