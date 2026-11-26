@@ -18,6 +18,7 @@ import {
     writeFileSync,
 } from "node:fs";
 import path from "node:path";
+import { Command } from "commander";
 import { build, checkListing, checkManifest, pack, stage, TARGETS } from "./package-clients";
 import { checkVersions, sharedWorkspaces } from "./versions";
 
@@ -86,11 +87,17 @@ async function exec(command: string[], cwd = root) {
 }
 
 async function main() {
-    const args = process.argv.slice(2);
-    const skipImages = args.includes("--skip-images");
-    const out = path.resolve(
-        args.find((a) => !a.startsWith("--")) ?? path.join(root, ".release-dry-run"),
-    );
+    const program = new Command("release-dry-run")
+        .exitOverride()
+        .helpOption(false)
+        .argument("[outDir]")
+        .option("--skip-images")
+        .allowExcessArguments()
+        .allowUnknownOption()
+        .configureOutput({ writeOut: () => {}, writeErr: () => {}, outputError: () => {} })
+        .parse(process.argv.slice(2), { from: "user" });
+    const skipImages = program.opts().skipImages === true;
+    const out = path.resolve(program.args[0] ?? path.join(root, ".release-dry-run"));
     const problems = checkVersions(root);
     if (problems.length > 0) throw new Error(`Versions disagree:\n${problems.join("\n")}`);
     const version = sharedWorkspaces(root)[0]!.version;
