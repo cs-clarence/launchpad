@@ -3,6 +3,7 @@ import { assertSchemaCurrent, createDatabase } from "@launchpad-kit/database";
 import {
     parseAliasConfig,
     parseDeploymentConfig,
+    DeploymentRecoveryError,
     requireModelDataDirectory,
     sweepStaleUploads,
     type InvitationDeps,
@@ -10,6 +11,7 @@ import {
 import path from "node:path";
 import { createApi } from "./api";
 import { artifactLimitsFromEnv } from "./artifact-config";
+import { createSchemaGate, type SchemaGate } from "./schema-gate";
 
 function requireEnv(name: string): string {
     const value = process.env[name];
@@ -69,30 +71,40 @@ export function getRuntime() {
     return runtime;
 }
 
-// A schema check that passed is final. One that failed is repeated, at most every few seconds
-// and shared by concurrent requests, so a database that was briefly unreachable, or one the
-// operator has since migrated, recovers without a restart.
 const RECHECK_AFTER_MS = 3000;
-let schemaCheck: Promise<void> | undefined;
-let schemaFailedAt = 0;
+
+function dataDirectory() {
+    return path.resolve(process.env.LAUNCHPAD_DATA_DIR ?? ".data/controller");
+}
+
+// The one check behind every request, readiness and the dashboard. For now a pass is final and
+// a failure is repeated at most every few seconds, shared by concurrent callers, so a database
+// that was briefly unreachable, or one the operator has since migrated, recovers without a restart.
+let gate: SchemaGate | undefined;
+export function getSchemaGate(): SchemaGate {
+    gate ??= createSchemaGate({
+        checkSchema: () => assertSchemaCurrent(getRuntime().db),
+        checkDataDirectory: async () => {
+            await requireModelDataDirectory(dataDirectory());
+        },
+        isDataDirectoryProblem: (error) =>
+            error instanceof DeploymentRecoveryError ||
+            typeof (error as NodeJS.ErrnoException)?.code === "string",
+        intervalMs: null,
+        retryMs: RECHECK_AFTER_MS,
+        onFailure: (failure) =>
+            console.error(failure.error instanceof Error ? failure.error.message : failure.error),
+    });
+    return gate;
+}
 
 // The runtime once the schema is known to match. Rejects with SchemaMismatchError when it
 // does not; any other rejection is a failure to check (and surfaces as an error).
 export async function getReadyRuntime() {
     const ready = getRuntime();
-    if (!schemaCheck || (schemaFailedAt > 0 && Date.now() - schemaFailedAt > RECHECK_AFTER_MS)) {
-        const check = assertSchemaCurrent(ready.db).then(async () => {
-            await requireModelDataDirectory(
-                path.resolve(process.env.LAUNCHPAD_DATA_DIR ?? ".data/controller"),
-            );
-        });
-        schemaCheck = check;
-        schemaFailedAt = 0;
-        check.catch((error) => {
-            schemaFailedAt = Date.now();
-            console.error(error instanceof Error ? error.message : error);
-        });
+    const outcome = await getSchemaGate().check();
+    if (outcome.kind !== "ok") {
+        throw outcome.error;
     }
-    await schemaCheck;
     return ready;
 }

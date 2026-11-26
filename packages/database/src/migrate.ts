@@ -3,6 +3,7 @@ import path from "node:path";
 import type { Kysely } from "kysely";
 import { sql } from "kysely";
 import { FileMigrationProvider, Migrator } from "kysely/migration";
+import { SchemaMismatchError } from "./errors";
 
 export const INITIAL_SCHEMA_MIGRATION = "20261124_001_initial_schema";
 
@@ -57,12 +58,6 @@ export function createMigrator(db: Kysely<any>, folder: string) {
         migrationTableName: "launchpad_migration",
         migrationLockTableName: "launchpad_migration_lock",
     });
-}
-
-// Raised when the database and this build disagree about the schema (as opposed to the
-// database being unreachable): the one failure an operator fixes with `migrate` or a restore.
-export class SchemaMismatchError extends Error {
-    override name = "SchemaMismatchError";
 }
 
 async function knownMigrations(migrator: Migrator, folder: string) {

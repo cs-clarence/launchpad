@@ -6,9 +6,9 @@ export {
     INITIAL_SCHEMA_MIGRATION,
     migrateToLatest,
     migrationStatus,
-    SchemaMismatchError,
     type MigrationStatus,
 } from "./migrate";
+export { classifyDatabaseError, SchemaMismatchError, type DatabaseErrorKind } from "./errors";
 
 // Auth tables are owned by Better Auth; only columns Launchpad reads or writes
 // directly are described. Their column names are camelCase, ours are snake_case.
