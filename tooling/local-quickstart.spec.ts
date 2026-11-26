@@ -1,72 +1,22 @@
 import { describe, expect, it } from "bun:test";
-import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { existsSync } from "node:fs";
 import path from "node:path";
+import {
+    adminCommands,
+    adminSource,
+    cliCommands,
+    commandLines as commandLinesOf,
+    projects,
+    read,
+    root,
+    tasks,
+    words,
+} from "./docs-check";
 import { SWITCH_FLAGS, VALUE_FLAGS } from "./local-seed";
 
-// The guide cannot drift from the repository: every Omni task, project, script flag, admin
-// command, CLI command, setting and link it names must exist.
-const root = path.resolve(import.meta.dirname, "..");
-const read = (file: string) => readFileSync(path.join(root, file), "utf8");
 const guide = read("docs/local-quickstart.md");
-
-function yamlFiles(dir: string): string[] {
-    return readdirSync(path.join(root, dir), { withFileTypes: true }).flatMap((entry) => {
-        const rel = path.join(dir, entry.name);
-        if (entry.isDirectory()) {
-            return entry.name === "node_modules" || entry.name.startsWith(".")
-                ? []
-                : yamlFiles(rel);
-        }
-        return entry.name.endsWith(".omni.yaml") ? [rel] : [];
-    });
-}
-
-const tasks = new Set<string>();
-const projects = new Set<string>();
-for (const file of [
-    ...yamlFiles("apps"),
-    ...yamlFiles("packages"),
-    ...yamlFiles("tooling"),
-    ...yamlFiles("omni"),
-]) {
-    const parsed = Bun.YAML.parse(read(file)) as {
-        name?: string;
-        tasks?: Record<string, unknown>;
-    } | null;
-    if (parsed?.name?.startsWith("@launchpad-kit/")) projects.add(parsed.name);
-    for (const task of Object.keys(parsed?.tasks ?? {})) tasks.add(task);
-}
-
-const adminSource = read("apps/controller/src/admin/main.ts");
-const adminCommands = new Set(
-    [...adminSource.matchAll(/\.command\("([a-z-]+)"\)/g)].map((m) => m[1]!),
-);
-const cliSource = [
-    "program.ts",
-    "api-command.ts",
-    "app-commands.ts",
-    "key-commands.ts",
-    "org-commands.ts",
-    "invite-commands.ts",
-]
-    .map((file) => read(`apps/cli/src/${file}`))
-    .join("\n");
-const cliCommands = new Set([...cliSource.matchAll(/\.command\("([a-z-]+)/g)].map((m) => m[1]!));
 const scriptFlags = new Set<string>([...VALUE_FLAGS, ...SWITCH_FLAGS]);
-
-function commandLines(): string[] {
-    const lines: string[] = [];
-    for (const block of guide.matchAll(/```sh\n([\s\S]*?)```/g)) {
-        for (const line of block[1]!.replace(/\\\n\s*/g, " ").split("\n")) {
-            lines.push(...line.split("&&").map((part) => part.trim()));
-        }
-    }
-    return lines.filter(Boolean);
-}
-
-function words(line: string): string[] {
-    return [...line.matchAll(/"([^"]*)"|(\S+)/g)].map((m) => m[1] ?? m[2]!);
-}
+const commandLines = () => commandLinesOf(guide);
 
 const omniLines = commandLines().filter((line) => line.startsWith("omni "));
 

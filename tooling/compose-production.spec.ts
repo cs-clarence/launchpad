@@ -67,6 +67,7 @@ describe("docker-compose.yaml", () => {
         for (const app of ["controller", "worker", "router"]) {
             const ignore = new URL(`../apps/${app}/Dockerfile.dockerignore`, import.meta.url);
             expect(readFileSync(ignore, "utf8").split(/\r?\n/)).toContain("docker-compose.env");
+            expect(readFileSync(ignore, "utf8").split(/\r?\n/)).toContain(".local-deploy");
         }
     });
 

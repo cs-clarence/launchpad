@@ -128,6 +128,14 @@ Rules that keep the graph correct:
   tests use a fake `fetch` and a fake command runner; `tooling/local-quickstart.spec.ts` fails when
   the guide ([run Launchpad on your machine](local-quickstart.md)) names an Omni task, script flag,
   admin or CLI command, setting or link that no longer exists. Update the guide with the script.
+- **Local deploy.** `omni -i run local:deploy -a options=up|status|down` (`tooling/local-deploy.ts`)
+  runs the production Compose stack on this machine (Linux, native Docker) under a project named
+  `launchpad-local-<8 hex>`, deploys nothing itself, seeds an organization, project and a six-scope key
+  through the seed's Compose mode, and `down` removes everything the run created by exact name, never
+  with a wildcard or `prune`. It mounts the Docker socket into the worker and Dokku (root-equivalent).
+  Its tests use a fake runner, file system and `fetch` (`tooling/local-deploy-fake.ts`); the guide
+  ([deploy a site on your machine](local-deploy.md)) is guarded by `tooling/local-deploy-docs.spec.ts`.
+  The real-Docker proof is recorded in [the plan](plans/local-deploy-quickstart.md#status).
 - **Omni loads `.env.local`** from the repository root and the project into task
   environments without expanding variables, and task `env.vars` override the shell. For
   a default that the shell may override, apply it in the command

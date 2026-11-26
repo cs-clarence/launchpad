@@ -25,6 +25,15 @@ tasks:
       options: ""
     interactive: true
 
+  # Builds, starts and seeds a Compose project on this machine and removes it again; runs
+  # Docker (the host socket is mounted into the worker and Dokku). See docs/local-deploy.md.
+  local:deploy:
+    description: Deploy examples/hello on this machine with the Compose stack; options up, status or down (needs Docker, openssl, ssh-keygen)
+    exec: sh -c 'cd "$(git rev-parse --show-toplevel)" && bun tooling/local-deploy.ts {{ args.options }}'
+    args:
+      options: ""
+    interactive: true
+
   check:format:
     description: Format check of the whole repository, including docs and root files
     exec: sh -c 'cd "$(git rev-parse --show-toplevel)" && bun x oxfmt --check'
