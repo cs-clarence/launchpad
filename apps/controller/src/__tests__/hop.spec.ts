@@ -1464,11 +1464,12 @@ describe("a controller whose database changes underneath it", () => {
     it("answers database-unavailable while liveness stays 200, and recovers", async () => {
         const live = await createTestDatabase();
         const upstream = new URL(live.url);
-        const proxy = await startTcpProxy(Number(upstream.port), upstream.hostname);
+        const proxy = await startTcpProxy(Number(upstream.port || 5432), upstream.hostname);
         let instance: Instance | undefined;
         try {
             await live.migrate();
             const through = new URL(live.url);
+            through.hostname = "127.0.0.1";
             through.port = String(proxy.port);
             instance = await start(false, { DATABASE_URL: through.toString(), ...SETTINGS });
             expect((await fetch(`${instance.base}/api/ready`)).status).toBe(200);

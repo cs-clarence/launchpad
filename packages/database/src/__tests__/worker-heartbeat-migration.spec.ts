@@ -2,7 +2,7 @@ import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { sql } from "kysely";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
     assertSchemaCurrent,
     migrateToLatest,
@@ -14,11 +14,12 @@ import { createTestDatabase } from "../testing";
 const FIRST = "20261124_001_initial_schema";
 const SECOND = "20261126_002_worker_heartbeat";
 
+// Every case gets its own database, so a focused run does not depend on an earlier case.
 let testDb: Awaited<ReturnType<typeof createTestDatabase>>;
-beforeAll(async () => {
+beforeEach(async () => {
     testDb = await createTestDatabase();
 });
-afterAll(async () => {
+afterEach(async () => {
     await testDb?.destroy();
 });
 
@@ -38,6 +39,7 @@ describe("the worker_heartbeat migration", () => {
     });
 
     it("applies on a database at the baseline and leaves its rows alone", async () => {
+        await testDb.migrate();
         await sql`drop table worker_heartbeat`.execute(testDb.db);
         await sql`delete from launchpad_migration where name = ${SECOND}`.execute(testDb.db);
         await sql`insert into audit_event (actor, action, target_type, target_id) values ('t', 'a', 'x', '1')`.execute(
@@ -55,6 +57,7 @@ describe("the worker_heartbeat migration", () => {
     });
 
     it("constrains the name and the beat", async () => {
+        await testDb.migrate();
         const insert = (name: string, beat: number) =>
             sql`insert into worker_heartbeat (name, run_id, started_at, seen_at, beat_seconds)
                 values (${name}, gen_random_uuid(), now(), now(), ${beat})`.execute(testDb.db);
@@ -67,6 +70,7 @@ describe("the worker_heartbeat migration", () => {
     });
 
     it("makes a build that does not know it refuse the database (the rollback gate)", async () => {
+        await testDb.migrate();
         const folder = await fs.mkdtemp(path.join(os.tmpdir(), "lp-older-build-"));
         try {
             await fs.writeFile(path.join(folder, `${FIRST}.mjs`), "export async function up() {}");

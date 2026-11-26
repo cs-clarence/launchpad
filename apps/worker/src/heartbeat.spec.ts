@@ -146,6 +146,15 @@ describe("worker heartbeat", () => {
         await heartbeat.stop();
     });
 
+    it("logs once per episode when repeated starts report a takeover", async () => {
+        const beat = vi.fn<HeartbeatStore["beat"]>().mockResolvedValue(false);
+        const { heartbeat, log } = setup({ beat, start: async () => ({ takenOver: true }) });
+        heartbeat.start();
+        await vi.advanceTimersByTimeAsync(15_000 * 5);
+        expect(log.mock.calls.filter(([l]) => l.event === "worker-name-in-use")).toHaveLength(1);
+        await heartbeat.stop();
+    });
+
     it("logs worker-name-in-use when the start finds another live run of the name", async () => {
         const { heartbeat, log } = setup({ start: async () => ({ takenOver: true }) });
         heartbeat.start();

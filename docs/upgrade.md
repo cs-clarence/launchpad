@@ -36,7 +36,7 @@ down migration. v1 starts with an empty database. Rehearse later upgrades on dis
    a different set.
 5. Verify the shared `LAUNCHPAD_DATA_DIR` directory is mounted and available
    (missing storage is a startup error). Start the new controller, then the worker. Check the operator-only
-   `GET /api/v1/status` for database readiness and that the worker reports `ok`. `/api/health` is liveness and
+   `GET /api/v1/status` for database readiness and, if `LAUNCHPAD_DEPLOYMENTS` is on, that `workers.state` is `ok` (with deployments off it is `off`). `/api/health` is liveness and
    does not check PostgreSQL; `/api/ready` does (see [production Compose](production-compose.md#health-readiness-and-worker-status)).
 
 ### This release adds a migration

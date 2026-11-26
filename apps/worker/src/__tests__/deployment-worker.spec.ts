@@ -351,8 +351,8 @@ it("keeps working, healthy and within its deadlines while the heartbeat fails, o
             log,
             shutdown: shutdown.signal,
         });
-        await heartbeat.stop();
     } finally {
+        await heartbeat.stop();
         await db.destroy();
     }
     expect(lines).toContainEqual({

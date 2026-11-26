@@ -31,4 +31,17 @@ describe("classifyDatabaseError", () => {
     ])("%s", (_name, error, expected) => {
         expect(classifyDatabaseError(error)).toBe(expected);
     });
+
+    it("follows the cause of a wrapping error, and leaves unrelated wrappers alone", () => {
+        const wrap = (cause: unknown) =>
+            Object.assign(new Error("FAILED_TO_GET_SESSION"), { cause });
+        expect(classifyDatabaseError(wrap(driver("ERR_POSTGRES_CONNECTION_REFUSED")))).toBe(
+            "unreachable",
+        );
+        expect(classifyDatabaseError(wrap(wrap(server("42P01"))))).toBe("schema");
+        expect(classifyDatabaseError(wrap(new Error("boom")))).toBeNull();
+        const loop: { cause?: unknown } = new Error("loop");
+        loop.cause = loop;
+        expect(classifyDatabaseError(loop)).toBeNull();
+    });
 });

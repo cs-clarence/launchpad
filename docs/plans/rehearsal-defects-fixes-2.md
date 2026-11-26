@@ -142,7 +142,7 @@ Source: the "Defects and follow-ups" table in `docs/plans/evidence/rehearsal-db-
     with a `Promise.race` against a timer so it holds even if the driver never returns; the outcome is `database-unavailable`; (b) **pool defaults on the
     controller**: `connectionTimeout: 5` (seconds; bounds how long any request waits for a connection) and **no global `statement_timeout`** (it would
     cut legitimate long statements; the gate's deadline covers the check). The gate is **single-flight with at most one outstanding check**: after a
-    deadline the abandoned check stays in flight until it settles (the pool's `connectionTimeout` bounds it), no new check starts meanwhile, callers get the
+    deadline the abandoned check stays in flight until it settles (`connectionTimeout` bounds only connecting, not a running query), no new check starts during a grace period equal to the deadline, then it is given up on (its late result dropped) and a fresh check may start, at most one given-up check outstanding, callers get the
     `database-unavailable` outcome, and a late settle updates the state only if it is still the newest. Tests in `schema-gate.spec.ts`: a check that never
     resolves yields `database-unavailable` at the deadline (fake timers), later calls do not start a second check, a late success after the deadline
     becomes `ok` on the next evaluation, a late failure does not overwrite a newer result.
@@ -468,7 +468,7 @@ turned off...") is updated to also say "or the database or data directory is una
 Unit (no infrastructure, `omni run test`):
 
 - `errors.spec.ts`: classifier table from the spike's real shapes plus `Error("boom")` and non-Errors.
-- `schema-gate.spec.ts` (fake clock): **hanging check** (a `check` that never settles gives `database-unavailable` at `LAUNCHPAD_SCHEMA_CHECK_TIMEOUT`, no second check is started while it is outstanding, a late settle is applied only if newest); stage 2 runs on the first check and for readiness but not on periodic traffic re-checks; pass cached for the interval and rechecked after; failure retried after 3 s; single flight;
+- `schema-gate.spec.ts` (fake clock): **hanging check** (a `check` that never settles gives `database-unavailable` at `LAUNCHPAD_SCHEMA_CHECK_TIMEOUT`, no second check starts within the grace period, a fresh one starts after it with at most one given-up check kept, a hanging query recovers once the database answers); stage 2 runs on the first check and for readiness but not on periodic traffic re-checks; pass cached for the interval and rechecked after; failure retried after 3 s; single flight;
   `invalidate`; interval `off` means a pass is final; the failure code distinguishes `schema-mismatch` from `database-unavailable`.
 - `controller-config.spec.ts`: `LAUNCHPAD_SCHEMA_CHECK_TIMEOUT` default 4 s, bounds 1 s and 30 s (0 s and 31 s refused), and the relation with the interval (timeout < interval, boundary at equal and one step either side, ignored when the interval is `off`); each setting's default, bounds, `off`/`0`, units, unparsable values, with the error text; and **boundary tests for every
   relation and bound in the arithmetic table, each at the limit and one step either side**: beat 4 s (refused), 5 s, 60 s, 61 s (refused); stale 14 s (refused), 15 s,

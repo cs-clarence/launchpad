@@ -159,15 +159,35 @@ describe("schema gate", () => {
             expect((outcome as { error: unknown }).error).toBeInstanceOf(SchemaCheckTimeoutError);
         });
 
-        it("starts no second check while one is outstanding", async () => {
+        it("starts no second check within the grace period, and keeps at most one given up", async () => {
             const { gate, schema } = setup({ timeoutMs: 4000 });
             schema.mockImplementation(() => new Promise(() => {}));
             const first = gate.check();
             await vi.advanceTimersByTimeAsync(4000);
             await first;
-            await vi.advanceTimersByTimeAsync(60_000);
+            await vi.advanceTimersByTimeAsync(3000);
             expect((await gate.check()).kind).toBe("database-unavailable");
             expect(schema).toHaveBeenCalledTimes(1);
+            // Past deadline plus grace the hung check is given up on and one fresh check starts;
+            // when that hangs too, no third one is started however long it takes.
+            await vi.advanceTimersByTimeAsync(2000);
+            const second = gate.check();
+            await vi.advanceTimersByTimeAsync(4000);
+            await second;
+            await vi.advanceTimersByTimeAsync(600_000);
+            expect((await gate.check()).kind).toBe("database-unavailable");
+            expect(schema).toHaveBeenCalledTimes(2);
+        });
+
+        it("recovers after a query that never settles once the database answers again", async () => {
+            const { gate, schema } = setup({ timeoutMs: 4000 });
+            schema.mockImplementationOnce(() => new Promise(() => {}));
+            const first = gate.check();
+            await vi.advanceTimersByTimeAsync(4000);
+            expect((await first).kind).toBe("database-unavailable");
+            await vi.advanceTimersByTimeAsync(5000);
+            expect((await gate.check({ includeDataDirectory: true })).kind).toBe("ok");
+            expect(schema).toHaveBeenCalledTimes(2);
         });
 
         it("accepts a late success as the next pass", async () => {

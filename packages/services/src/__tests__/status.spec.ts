@@ -167,6 +167,16 @@ describe("worker heartbeats and leases in the status", () => {
         expect((await getStatus(testDb.db, operator, on)).workers.state).toBe("stale");
     });
 
+    it("judges the overall state from every row, not the 20 listed", async () => {
+        for (let i = 0; i < 25; i++) await worker(`stopped${i}`, 1, { stopped: true });
+        await worker("live", 30);
+        const status = await getStatus(testDb.db, operator, on);
+        expect(status.workers.items).toHaveLength(20);
+        expect(status.workers.items.some((item) => item.name === "live")).toBe(false);
+        expect(status.workers.state).toBe("ok");
+        expect(status.warnings).toEqual([]);
+    });
+
     it("lists at most 20 workers", async () => {
         for (let i = 0; i < 25; i++) await worker(`w${i}`, i + 1);
         const status = await getStatus(testDb.db, operator, on);

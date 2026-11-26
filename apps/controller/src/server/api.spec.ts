@@ -279,6 +279,50 @@ describe("database problems", () => {
         expect(errorSchema.parse(await response.json()).code).toBe("database-unavailable");
     });
 
+    it("maps a database failure behind a cookie session lookup (Better Auth wraps it)", async () => {
+        let invalidated = 0;
+        const wrapped = Object.assign(new Error("FAILED_TO_GET_SESSION"), { cause: refused });
+        const brokenAuth = {
+            ...auth,
+            api: {
+                getSession: async () => {
+                    throw wrapped;
+                },
+            },
+        } as unknown as typeof auth;
+        const response = await createApi({
+            auth: brokenAuth,
+            db,
+            origin: config.origin,
+            invitations,
+            onSchemaError: () => invalidated++,
+        }).fetch(
+            new Request("http://localhost:3000/api/v1/organizations", {
+                headers: { cookie: "better-auth.session_token=x" },
+            }),
+        );
+        expect(response.status).toBe(503);
+        expect(errorSchema.parse(await response.json()).code).toBe("database-unavailable");
+        expect(invalidated).toBe(0);
+        const missing = Object.assign(new Error("FAILED_TO_GET_SESSION"), { cause: missingTable });
+        brokenAuth.api.getSession = (async () => {
+            throw missing;
+        }) as never;
+        const again = await createApi({
+            auth: brokenAuth,
+            db,
+            origin: config.origin,
+            invitations,
+            onSchemaError: () => invalidated++,
+        }).fetch(
+            new Request("http://localhost:3000/api/v1/organizations", {
+                headers: { cookie: "better-auth.session_token=x" },
+            }),
+        );
+        expect(errorSchema.parse(await again.json()).code).toBe("schema-mismatch");
+        expect(invalidated).toBe(1);
+    });
+
     it("uses the real driver's refused-connection error", async () => {
         const unreachable = createDatabase("postgres://postgres:x@127.0.0.1:1/x", {
             connectionTimeout: 1,

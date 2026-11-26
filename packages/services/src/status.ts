@@ -25,7 +25,7 @@ type WorkerState = "ok" | "stale" | "stopped";
 // a worker is alive and how many operations hold a lease about to lapse. Counts and durations
 // only: no ids or text that came from a remote system. Worker names are operator-chosen or derived
 // from the hostname (this is operator-only). Every time comes from the
-// database clock.
+// database clock; the lease counts use one timestamp, so expiring and expired never overlap.
 export async function getStatus(
     db: Db,
     principal: Principal,
@@ -83,12 +83,12 @@ export async function getStatus(
         await sql<{ inFlight: number; expiring: number; expired: number; wedged: number }>`
             select count(*)::int as "inFlight",
                 count(*) filter (
-                    where lease_expires_at > clock_timestamp()
-                    and lease_expires_at <= clock_timestamp() + make_interval(secs => ${thresholds.warnBeforeSeconds})
+                    where lease_expires_at > statement_timestamp()
+                    and lease_expires_at <= statement_timestamp() + make_interval(secs => ${thresholds.warnBeforeSeconds})
                 )::int as expiring,
-                count(*) filter (where lease_expires_at <= clock_timestamp())::int as expired,
+                count(*) filter (where lease_expires_at <= statement_timestamp())::int as expired,
                 count(*) filter (
-                    where lease_expires_at <= clock_timestamp() - make_interval(secs => ${WEDGED_AFTER_SECONDS})
+                    where lease_expires_at <= statement_timestamp() - make_interval(secs => ${WEDGED_AFTER_SECONDS})
                 )::int as wedged
             from (
                 select lease_expires_at from deployment

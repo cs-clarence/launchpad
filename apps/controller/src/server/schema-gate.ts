@@ -54,12 +54,14 @@ export interface CheckOptions {
 type Stage = { ok: true; at: number } | { ok: false; at: number; failure: GateFailure };
 interface Task {
     startedAt: number;
+    detached?: boolean;
     done: Promise<void>;
 }
 
-// One shared, single-flight check with at most one outstanding query. A deadline abandons the
-// wait, not the check: it stays in flight until it settles (the pool's connection timeout bounds
-// it) and no second one starts meanwhile, so a hung database cannot pile up connections.
+// One shared, single-flight check. A deadline abandons the wait, not the check: it stays in
+// flight and no second one starts meanwhile. After a further grace period (the deadline again)
+// it is given up on, its result dropped, and a fresh check may start; at most one given-up check
+// is kept outstanding, so a hung database cannot pile up connections.
 export function createSchemaGate(options: SchemaGateOptions & { now?: () => number }) {
     const now = options.now ?? Date.now;
     const directoryIntervalMs = options.directoryIntervalMs ?? 10_000;
@@ -67,6 +69,9 @@ export function createSchemaGate(options: SchemaGateOptions & { now?: () => numb
     let directory: Stage | undefined;
     let directoryPassed = false;
     let task: Task | undefined;
+    // Checks given up on after deadline plus grace that have still not settled. At most one is
+    // kept, so a database that swallows queries cannot pile connections up.
+    let strays = 0;
     // invalidate() bumps it: a check that started earlier may finish, but its result is dropped.
     let generation = 0;
 
@@ -144,7 +149,8 @@ export function createSchemaGate(options: SchemaGateOptions & { now?: () => numb
         current.done = run(needs.database, needs.directory, generation)
             .catch(() => {})
             .finally(() => {
-                if (task === current) task = undefined;
+                if (current.detached) strays--;
+                else if (task === current) task = undefined;
             });
         task = current;
         return current;
@@ -156,6 +162,20 @@ export function createSchemaGate(options: SchemaGateOptions & { now?: () => numb
         for (let attempt = 0; attempt < 3; attempt++) {
             const result = evaluate(wantDirectory);
             if ("kind" in result) return result;
+            // A check still hanging after deadline plus grace is given up on, so a query that never
+            // settles cannot keep readiness down after the database is back. Its late result is
+            // dropped (the generation moves on) and at most one such check is kept.
+            if (
+                task &&
+                options.timeoutMs !== undefined &&
+                strays === 0 &&
+                now() - task.startedAt >= 2 * options.timeoutMs
+            ) {
+                task.detached = true;
+                strays++;
+                generation++;
+                task = undefined;
+            }
             const running = task ?? start(result);
             const limits = [
                 options.timeoutMs === undefined

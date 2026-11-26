@@ -73,11 +73,18 @@ export function createHeartbeat(options: HeartbeatOptions) {
         wake = undefined;
     }
 
-    async function begin() {
+    // One path for every takeover signal, so an episode logs once.
+    function noteInUse() {
+        okBeats = 0;
+        if (!nameInUse) log({ event: "worker-name-in-use" });
+        nameInUse = true;
+    }
+
+    async function begin(reclaim = false) {
         const result = await within(() => store.start(), statementMs);
         started = true;
         recovered();
-        if (result.takenOver) log({ event: "worker-name-in-use" });
+        if (result.takenOver || reclaim) noteInUse();
     }
 
     // The statement behind a deadline is abandoned, not cancelled: it is bounded by the pool's
@@ -91,10 +98,7 @@ export function createHeartbeat(options: HeartbeatOptions) {
             if (!(await within(() => store.beat(), statementMs))) {
                 // Taken over by another run of the same name, or pruned: claim the row again.
                 started = false;
-                okBeats = 0;
-                await begin();
-                if (!nameInUse) log({ event: "worker-name-in-use" });
-                nameInUse = true;
+                await begin(true);
                 return;
             }
             // A takeover episode ends after a few clean beats in a row.

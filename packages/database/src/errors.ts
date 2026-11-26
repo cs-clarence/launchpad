@@ -17,7 +17,15 @@ const UNREACHABLE_LABELS = new Set([
 const UNREACHABLE_SQLSTATES = new Set(["57P01", "57P03", "53300"]);
 const SCHEMA_SQLSTATES = new Set(["42P01", "42703"]);
 
-export function classifyDatabaseError(error: unknown): DatabaseErrorKind | null {
+// Libraries such as Better Auth wrap a database failure in their own error and keep the original
+// as `cause`, so the chain is followed (a few levels, in case it loops).
+export function classifyDatabaseError(error: unknown, depth = 0): DatabaseErrorKind | null {
+    const own = classifyOwn(error);
+    if (own || depth >= 4 || typeof error !== "object" || error === null) return own;
+    return classifyDatabaseError((error as { cause?: unknown }).cause, depth + 1);
+}
+
+function classifyOwn(error: unknown): DatabaseErrorKind | null {
     if (error instanceof SchemaMismatchError) {
         return "schema";
     }
