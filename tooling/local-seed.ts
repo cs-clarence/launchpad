@@ -408,6 +408,24 @@ export async function checkHealth(api: Api, options: { pending?: boolean } = {})
     );
 }
 
+// The controller remembers a failed schema check and tries again only after a few seconds, so
+// right after migrating it can still answer 503 `schema-mismatch`. Wait for it to notice.
+export async function waitUntilReady(
+    api: Api,
+    sleep: (ms: number) => Promise<void>,
+    attempts = 15,
+): Promise<void> {
+    for (let attempt = 1; ; attempt++) {
+        try {
+            return await checkHealth(api);
+        } catch (error) {
+            const stale = error instanceof SeedError && /answered 503/.test(error.message);
+            if (!stale || attempt >= attempts) throw error;
+        }
+        await sleep(1000);
+    }
+}
+
 function failure(api: Api, what: string, status: number): SeedError {
     if (status === 403) {
         return new SeedError(
@@ -604,6 +622,7 @@ export interface Deps {
     run: Run;
     env: Record<string, string | undefined>;
     log: (line: string) => void;
+    sleep?: (ms: number) => Promise<void>;
 }
 
 export interface Summary {
@@ -712,7 +731,7 @@ async function seedWith(deps: Deps, options: Options, secrets: string[]): Promis
     await checkHealth(api, { pending: true });
     classifyAdmin("migrate", await deps.run(adminArgs("migrate", [])));
     deps.log("Database is migrated.");
-    await checkHealth(api);
+    await waitUntilReady(api, deps.sleep ?? ((ms) => new Promise((done) => setTimeout(done, ms))));
 
     const operatorPassword = await ensureAccount(
         deps,
