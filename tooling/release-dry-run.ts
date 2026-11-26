@@ -92,6 +92,7 @@ async function main() {
         .helpOption(false)
         .argument("[outDir]")
         .option("--skip-images")
+        .option("--help")
         .allowExcessArguments()
         .configureOutput({ writeOut: () => {}, writeErr: () => {}, outputError: () => {} });
     try {
@@ -104,6 +105,10 @@ async function main() {
                 ? `Unknown option ${token}. Usage: bun tooling/release-dry-run.ts [outDir] [--skip-images]`
                 : error.message.replace(/^error: /, ""),
         );
+    }
+    if (program.opts().help === true) {
+        console.log("Usage: bun tooling/release-dry-run.ts [outDir] [--skip-images]");
+        return;
     }
     const skipImages = program.opts().skipImages === true;
     const out = path.resolve(program.args[0] ?? path.join(root, ".release-dry-run"));

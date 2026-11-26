@@ -41,6 +41,20 @@ describe("versions.ts", () => {
         });
     }
 
+    // Stricter than the hand parser, which ignored extra options after `check` and took
+    // `--foo` as the version of `sync a`.
+    for (const args of [
+        ["check", "--foo"],
+        ["check", "-x"],
+        ["sync", "a", "--foo"],
+    ]) {
+        it(`exits 2 with the usage line for ${JSON.stringify(args)}`, () => {
+            const result = run("versions.ts", ...args);
+            expect(result.code).toBe(2);
+            expect(result.err.trim()).toBe(usage);
+        });
+    }
+
     it("exits 0 for check on the repository", () => {
         const result = run("versions.ts", "check");
         expect(result.code).toBe(0);
@@ -80,6 +94,10 @@ describe("versions.ts", () => {
     });
 });
 
+// Every case below is refused while the arguments are parsed or checked, before any package is
+// built or any folder is written. An unknown option is always paired with an output name the
+// script refuses, so even if the rejection regressed the run would still stop at that refusal
+// instead of starting a rehearsal; the assertion on the message tells the two apart.
 describe("release-dry-run.ts", () => {
     it("refuses an output folder with the wrong name and exits 1", () => {
         const result = run("release-dry-run.ts", "not-the-right-name");
@@ -88,13 +106,21 @@ describe("release-dry-run.ts", () => {
         expect(result.out).toBe("");
     });
 
-    it("rejects an unknown option before doing any work and exits 1", () => {
-        const result = run("release-dry-run.ts", "--bogus");
-        expect(result.code).toBe(1);
-        expect(result.err).toContain("Unknown option --bogus.");
-        expect(result.out).toBe("");
-        const mixed = run("release-dry-run.ts", "out-release-dry-run", "--skip-images", "--bogus");
-        expect(mixed.code).toBe(1);
-        expect(mixed.err).toContain("Unknown option --bogus.");
+    it("rejects an unknown option and exits 1", () => {
+        for (const flag of ["--bogus", "-x", "-h"]) {
+            const result = run("release-dry-run.ts", "not-the-right-name", flag);
+            expect(result.code).toBe(1);
+            expect(result.err).toContain(`Unknown option ${flag}.`);
+            expect(result.out).toBe("");
+        }
+    });
+
+    it("prints the usage and exits 0 for --help", () => {
+        const result = run("release-dry-run.ts", "--help");
+        expect(result.code).toBe(0);
+        expect(result.out).toContain(
+            "Usage: bun tooling/release-dry-run.ts [outDir] [--skip-images]",
+        );
+        expect(result.err).toBe("");
     });
 });

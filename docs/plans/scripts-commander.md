@@ -244,7 +244,16 @@ Intended, harmless, and listed so review can accept or reject each:
   wins (`--org --project --nope` → `--org needs a value.`); commander raises an unknown option
   before the missing-value/validation checks (→ `Unknown option --nope...`). Each message is
   still one of the existing ones, exit code unchanged. Not preserved on purpose.
-- `release-dry-run.ts`: an unknown `--flag` is now an error (exit 1) instead of silently ignored.
+- `release-dry-run.ts`: an unknown option is now an error (exit 1) instead of silently ignored. That
+  includes `-x` and `-h`, which were taken as the output folder name or ignored; `--help` now prints
+  the usage line and exits 0 (it used to be ignored and start a rehearsal).
+- `versions.ts` (stricter than planned, kept): `check --foo` and `check -x` print the usage line and
+  exit 2 (they ran the check and exited 0); `sync <package> --foo` exits 2 with the usage line (it
+  took `--foo` as the version and failed on it). The cog hook's `sync <package> <version>` and
+  `check` are unaffected. Pinned in `tooling/exit-codes.spec.ts`.
+- **Wording when `--` appears anywhere in argv:** `local-seed --org --` reports `Unknown option --.`
+  (was `--org needs a value.`) and `local-deploy` reports `Unknown argument --.` (was, for a `--`
+  that followed a value flag, `<flag> needs a value.`), because the terminator is refused before parsing.
 - Router (the separate commit in PR 2 only): `serve --help`, `init --help`, `rotate --help`,
   `healthcheck --help` print help and exit 0 instead of a usage error. In the parser-swap commit
   itself a usage error and a bad environment together report the usage error first (the
@@ -390,7 +399,7 @@ experiment drivers alone.
 ## Status
 
 PR 1 (steps 1 to 8) built locally; PR 2 (router, steps 9 to 12) not started. Deviations: none from the
-decisions. Notes: `test-db.ts`, `versions.ts` and `release-dry-run.ts` use commander directly (no option
+decisions beyond the behavior changes listed above. Notes: `test-db.ts`, `versions.ts` and `release-dry-run.ts` use commander directly (no option
 table: they have no table-worthy options, so `tooling/cli.ts` serves `local-seed` and `local-deploy`);
 the unknown-option wording of `release-dry-run.ts` is `Unknown option <x>. Usage: ...`. Independent
 review (High tier) is still pending.

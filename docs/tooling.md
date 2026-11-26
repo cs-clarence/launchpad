@@ -136,7 +136,9 @@ Rules that keep the graph correct:
   `--flag=value` both work; `--` and a value starting with `--` are still refused. `commander` and
   `@commander-js/extra-typings` are root `devDependencies` because `tooling/` has no manifest of its
   own; `tooling/declared-deps.spec.ts` fails when a file imports commander from a manifest that does
-  not declare it.
+  not declare it. `versions.ts` and `release-dry-run.ts` refuse options they do not know (including
+  `-x` and `-h`); `release-dry-run.ts --help` prints its usage line, and `versions.ts` prints its
+  usage line and exits 2 for `check --foo` or `sync <package> --foo`.
 - **Local deploy.** `omni -i run local:deploy -a options=up` (`tooling/local-deploy.ts`; `options=status` and `options=down` are the other
   actions)
   runs the production Compose stack on this machine (Linux, native Docker) under a project named

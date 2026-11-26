@@ -4,20 +4,21 @@ import path from "node:path";
 
 const ROOT = path.resolve(import.meta.dirname, "..");
 const PACKAGES = ["commander", "@commander-js/extra-typings"];
-const SKIPPED = ["node_modules/", ".agents/", "/dist/", ".output/", ".tanstack/", "routeTree.gen"];
 const IMPORT =
     /(?:from\s+|import\s*\(\s*|import\s+|require\(\s*)["'](commander|@commander-js\/extra-typings)["']/g;
 
+// Tracked sources only: node_modules and generated output are never in the index.
 function sourceFiles(): string[] {
-    const files: string[] = [];
-    for (const file of new Bun.Glob("**/*.{ts,tsx,mjs}").scanSync({ cwd: ROOT, dot: false })) {
-        if (
-            !SKIPPED.some((part) => `/${file}`.includes(part.startsWith("/") ? part : `/${part}`))
-        ) {
-            files.push(file);
-        }
-    }
-    return files;
+    const listed = Bun.spawnSync(["git", "ls-files", "-z", "--", "*.ts", "*.tsx", "*.mjs"], {
+        cwd: ROOT,
+        stdout: "pipe",
+    }).stdout.toString();
+    return listed
+        .split("\0")
+        .filter(
+            (file) =>
+                file !== "" && !file.startsWith(".agents/") && existsSync(path.join(ROOT, file)),
+        );
 }
 
 function nearestManifest(file: string): string {
