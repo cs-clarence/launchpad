@@ -252,8 +252,9 @@ Intended, harmless, and listed so review can accept or reject each:
   took `--foo` as the version and failed on it). The cog hook's `sync <package> <version>` and
   `check` are unaffected. Pinned in `tooling/exit-codes.spec.ts`.
 - **Wording when `--` appears anywhere in argv:** `local-seed --org --` reports `Unknown option --.`
-  (was `--org needs a value.`) and `local-deploy` reports `Unknown argument --.` (was, for a `--`
-  that followed a value flag, `<flag> needs a value.`), because the terminator is refused before parsing.
+  (was `--org needs a value.`) and `local-deploy` reports `Unknown argument --.` (was `Unknown argument --org.`
+  when `--` followed a flag it does not know, and `--project needs a value.` when it followed
+  `--project`; checked against the old parser), because the terminator is refused before parsing.
 - Router (the separate commit in PR 2 only): `serve --help`, `init --help`, `rotate --help`,
   `healthcheck --help` print help and exit 0 instead of a usage error. In the parser-swap commit
   itself a usage error and a bad environment together report the usage error first (the
