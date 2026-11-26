@@ -601,6 +601,8 @@ async function siteContainers(c: Ctx, site: Site): Promise<string[]> {
     const mine: string[] = [];
     for (const id of ids) {
         const owner = await inspectLabel(c, id, LABEL_PROJECT);
+        // Dokku creates site containers itself, so they carry no Compose project label: an empty
+        // label is accepted, another project's label is not.
         if (owner === "" || owner === c.project) mine.push(id);
     }
     return mine;

@@ -138,6 +138,9 @@ Every port is published on `127.0.0.1` only and avoids the ports of `local:deplo
 | Router data    | 33182   | `DEV_ROUTER_DATA_PORT`                  |
 | Router control | 33183   | `DEV_ROUTER_CONTROL_PORT`               |
 
+Ports 3000 (the controller), 5432 and 55432 (the quickstart and test databases) and 32180 to 32443
+(`local:deploy`) are refused as overrides.
+
 The ports are fixed by the first `up` and recorded in `.dev-infra/compose.env`. Dokku's HTTPS port is
 not published.
 
@@ -174,6 +177,11 @@ It can sit next to `local:deploy` (different project, directory, images, network
 runs its own Dokku, so run one at a time.
 
 ## What is in `.dev-infra/`
+
+A `.dev-infra/` directory without a `state.json` that holds only the fixed children (`dokku`,
+`credentials`, `data`, `env`) is treated as an interrupted run and wiped by `destroy`, so do not keep
+your own files in those directories. The root helper that removes the root-owned `dokku/` runs as root
+with no network and a bind of `.dev-infra/` only; it has no further hardening.
 
 | Path                                   | What                                                                                                  |
 | -------------------------------------- | ----------------------------------------------------------------------------------------------------- |

@@ -102,6 +102,10 @@ describe("planning", () => {
         expect(() => portsFrom({ DEV_POSTGRES_PORT: "80" })).toThrow(/DEV_POSTGRES_PORT/);
         expect(() => portsFrom({ DEV_POSTGRES_PORT: "x" })).toThrow(/whole number/);
         expect(() => portsFrom({ DEV_POSTGRES_PORT: "33181" })).toThrow(/different/);
+        for (const reserved of ["3000", "5432", "55432", "32180", "32443"]) {
+            expect(() => portsFrom({ DEV_POSTGRES_PORT: reserved })).toThrow(/reserved/);
+        }
+        expect(portsFrom({ DEV_POSTGRES_PORT: "32444" }).postgres).toBe(32444);
     });
 
     it("names the project and images by the checkout path, away from local:deploy", () => {
@@ -495,6 +499,46 @@ describe("destroy", () => {
         expect(message).toContain("is kept");
         expect(message).toContain("then run destroy again");
         expect(host.nodes.has(`${host.dir}/state.json`)).toBe(true);
+    });
+});
+
+describe("refusals remove nothing", () => {
+    const corrupt = async () => {
+        await up(deps());
+        host.addFile(`${host.dir}/state.json`, "{not json");
+        return host.snapshot();
+    };
+
+    it("refuses a corrupt state.json in down and destroy", async () => {
+        const before = await corrupt();
+        expect(await fails(down(deps()))).toBeTruthy();
+        expect(await fails(destroy(deps()))).toContain("unreadable");
+        expect(host.snapshot()).toEqual(before);
+        expect(host.nodes.has(`${host.dir}/credentials/token`)).toBe(true);
+        expect(has("compose stop")).toEqual([]);
+    });
+
+    it("starts a stopped Dokku through the hook before destroying", async () => {
+        await up(deps());
+        host.deploySite(project, site);
+        await down(deps());
+        host.events.length = 0;
+        await destroy(deps());
+        const start = host.events.findIndex((e) => e.includes("up -d --no-build postgres dokku"));
+        expect(start).toBeGreaterThan(-1);
+        expect(start).toBeLessThan(host.events.findIndex((e) => e.includes("apps:destroy")));
+        expect(start).toBeLessThan(host.events.findIndex((e) => e.includes("compose down")));
+        expect(host.nodes.has(host.dir)).toBe(false);
+    });
+
+    it("refuses down with a missing compose.env and removes nothing", async () => {
+        await up(deps());
+        host.nodes.delete(`${host.dir}/compose.env`);
+        const before = host.snapshot();
+        expect(await fails(down(deps()))).toContain("compose.env is missing");
+        expect(host.snapshot()).toEqual(before);
+        expect(has("compose stop")).toEqual([]);
+        expect(host.nodes.has(`${host.dir}/credentials/token`)).toBe(true);
     });
 });
 

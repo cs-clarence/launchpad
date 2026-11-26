@@ -131,6 +131,12 @@ function checkPort(key: string, value: string | undefined, fallback: number): nu
     if (!/^[0-9]+$/.test(value) || port < 1024 || port > 65535) {
         throw new DeployError(`${key} must be a whole number from 1024 to 65535.`);
     }
+    if (port === 3000 || port === 5432 || port === 55432 || (port >= 32180 && port <= 32443)) {
+        throw new DeployError(
+            `${key}=${port} is reserved (3000 is the controller, 5432 and 55432 are the quickstart and ` +
+                "test databases, 32180 to 32443 belong to local:deploy). Choose another port.",
+        );
+    }
     return port;
 }
 
@@ -609,6 +615,9 @@ function printSummary(d: BaseDeps, s: Summary): void {
 async function loadContext(d: BaseDeps, options: { project?: string }) {
     const layout = layoutFor(d.repo);
     const record = await readState({ d, layout, project: "", profile: DEV_PROFILE });
+    if (record.kind === "corrupt") {
+        throw new DeployError(`${layout.file("state.json")} is unreadable; run destroy.`);
+    }
     const project = checkProject(
         options.project ?? record.state?.project ?? projectNameFor(d.repo),
     );
