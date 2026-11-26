@@ -18,6 +18,7 @@ import {
     writeFileSync,
 } from "node:fs";
 import path from "node:path";
+import { Command, CommanderError } from "commander";
 import { build, checkListing, checkManifest, pack, stage, TARGETS } from "./package-clients";
 import { checkVersions, sharedWorkspaces } from "./versions";
 
@@ -86,11 +87,31 @@ async function exec(command: string[], cwd = root) {
 }
 
 async function main() {
-    const args = process.argv.slice(2);
-    const skipImages = args.includes("--skip-images");
-    const out = path.resolve(
-        args.find((a) => !a.startsWith("--")) ?? path.join(root, ".release-dry-run"),
-    );
+    const program = new Command("release-dry-run")
+        .exitOverride()
+        .helpOption(false)
+        .argument("[outDir]")
+        .option("--skip-images")
+        .option("--help")
+        .allowExcessArguments()
+        .configureOutput({ writeOut: () => {}, writeErr: () => {}, outputError: () => {} });
+    try {
+        program.parse(process.argv.slice(2), { from: "user" });
+    } catch (error) {
+        if (!(error instanceof CommanderError)) throw error;
+        const token = /unknown option '([^']+)'/.exec(error.message)?.[1];
+        throw new Error(
+            token
+                ? `Unknown option ${token}. Usage: bun tooling/release-dry-run.ts [outDir] [--skip-images]`
+                : error.message.replace(/^error: /, ""),
+        );
+    }
+    if (program.opts().help === true) {
+        console.log("Usage: bun tooling/release-dry-run.ts [outDir] [--skip-images]");
+        return;
+    }
+    const skipImages = program.opts().skipImages === true;
+    const out = path.resolve(program.args[0] ?? path.join(root, ".release-dry-run"));
     const problems = checkVersions(root);
     if (problems.length > 0) throw new Error(`Versions disagree:\n${problems.join("\n")}`);
     const version = sharedWorkspaces(root)[0]!.version;

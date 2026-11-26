@@ -10,6 +10,7 @@
 import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
+import { Command, CommanderError } from "commander";
 
 export const CORE = "core";
 // Version strings written in source, which no manifest feeds: each is rewritten by `sync core`
@@ -179,22 +180,39 @@ export function syncVersions(root: string, pkg: string, version: string): string
 
 if (import.meta.main) {
     const root = path.resolve(import.meta.dirname, "..");
-    const [command, pkg, version] = process.argv.slice(2);
-    if (command === "check") {
-        const problems = checkVersions(root);
-        for (const problem of problems) console.error(problem);
-        if (problems.length > 0) process.exit(1);
-        console.log("Versions agree.");
-    } else if (command === "sync" && pkg && version) {
-        const dirs = syncVersions(root, pkg, version);
-        console.log(`${pkg} ${version}: ${dirs.join(", ")}`);
-        // Workspace versions are recorded in the lockfile; the bump commit must hold both.
-        const lock = spawnSync("bun", ["install", "--lockfile-only"], {
-            cwd: root,
-            stdio: "inherit",
+    const program = new Command("versions")
+        .exitOverride()
+        .helpOption(false)
+        .helpCommand(false)
+        .configureOutput({ writeOut: () => {}, writeErr: () => {}, outputError: () => {} });
+    program
+        .command("check")
+        .allowExcessArguments()
+        .action(() => {
+            const problems = checkVersions(root);
+            for (const problem of problems) console.error(problem);
+            if (problems.length > 0) process.exit(1);
+            console.log("Versions agree.");
         });
-        if (lock.status !== 0) process.exit(lock.status ?? 1);
-    } else {
+    program
+        .command("sync")
+        .argument("<package>")
+        .argument("<version>")
+        .allowExcessArguments()
+        .action((pkg: string, version: string) => {
+            const dirs = syncVersions(root, pkg, version);
+            console.log(`${pkg} ${version}: ${dirs.join(", ")}`);
+            // Workspace versions are recorded in the lockfile; the bump commit must hold both.
+            const lock = spawnSync("bun", ["install", "--lockfile-only"], {
+                cwd: root,
+                stdio: "inherit",
+            });
+            if (lock.status !== 0) process.exit(lock.status ?? 1);
+        });
+    try {
+        program.parse(process.argv.slice(2), { from: "user" });
+    } catch (error) {
+        if (!(error instanceof CommanderError)) throw error;
         console.error("usage: bun tooling/versions.ts sync <package|core> <version> | check");
         process.exit(2);
     }

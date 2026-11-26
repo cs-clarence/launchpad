@@ -26,6 +26,7 @@ import {
 import { createServer } from "node:net";
 import path from "node:path";
 import { ClientCoreError, configDirectory, createContext } from "../packages/client-core/src/index";
+import { flagsOf, keyOf, optionHelp, parseOrFail, toolCommand, type Opt } from "./cli";
 import { COMPOSE_FILE, interpolate, loadRaw, requiredVariables } from "./compose-production";
 import {
     DEPLOY_KEY_SCOPES,
@@ -1943,8 +1944,27 @@ export async function down(d: Deps, options: UpOptions = {}): Promise<void> {
 // ---- command line ------------------------------------------------------------------------
 
 export const COMMANDS = ["up", "status", "down"] as const;
-export const VALUE_FLAGS = ["--project", "--port-base"] as const;
-export const SWITCH_FLAGS = ["--new-key", "--help"] as const;
+// The single source of options: commander, the two flag lists below (the documentation tests
+// read them) and the option list of HELP.
+export const OPTIONS: Opt[] = [
+    {
+        flag: "--project",
+        arg: "name",
+        help: `project name (default launchpad-local-<8 hex of this checkout's path>;\nmust match ${PROJECT_PATTERN.source})`,
+    },
+    {
+        flag: "--port-base",
+        arg: "n",
+        help: `first of the five host ports (default ${DEFAULT_PORT_BASE}; offsets 0, 1, 2, 42, 263; up only)`,
+    },
+    {
+        flag: "--new-key",
+        help: "up only: issue a replacement key for the local-deploy profile (needed if its\nsaved key lacks the scopes deploying needs)",
+    },
+    { flag: "--help", help: "show this text" },
+];
+export const VALUE_FLAGS: readonly string[] = flagsOf(OPTIONS).value;
+export const SWITCH_FLAGS: readonly string[] = flagsOf(OPTIONS).switch;
 
 export const HELP = `Deploy examples/hello on this machine and remove it again (see docs/local-deploy.md).
 
@@ -1954,12 +1974,7 @@ Usage: omni -i run local:deploy -a "options=<command> [flags]"
   status    show service health, ports and the profile; refresh the recorded inventory
   down      remove this project's containers, volumes, network, images, sites and ${STATE_DIR}/
 
-  --project <name>    project name (default launchpad-local-<8 hex of this checkout's path>;
-                      must match ${PROJECT_PATTERN.source})
-  --port-base <n>     first of the five host ports (default ${DEFAULT_PORT_BASE}; offsets 0, 1, 2, 42, 263; up only)
-  --new-key           up only: issue a replacement key for the local-deploy profile (needed if its
-                      saved key lacks the scopes deploying needs)
-  --help              show this text
+${optionHelp(OPTIONS, 20)}
 
 This mounts the host Docker socket into the worker and Dokku, which is root-equivalent on this
 machine. Secrets stay in ${STATE_DIR}/ (mode 700, git-ignored) and are never printed.
@@ -1974,28 +1989,27 @@ export interface Parsed {
 }
 
 export function parseArgs(argv: string[]): Parsed {
-    const parsed: Parsed = { command: null, help: false };
-    for (let i = 0; i < argv.length; i++) {
-        const arg = argv[i]!;
-        if ((COMMANDS as readonly string[]).includes(arg) && parsed.command === null) {
-            parsed.command = arg as Parsed["command"];
-        } else if (arg === "--new-key") {
-            parsed.newKey = true;
-        } else if (arg === "--help") {
-            parsed.help = true;
-        } else if ((VALUE_FLAGS as readonly string[]).includes(arg)) {
-            const value = argv[++i];
-            if (value === undefined || value.startsWith("--")) {
-                throw new DeployError(`${arg} needs a value.`);
-            }
-            if (arg === "--project") parsed.project = checkProject(value);
-            else {
-                if (!/^[0-9]+$/.test(value)) throw new DeployError("--port-base must be a number.");
-                parsed.portBase = checkPortBase(Number(value));
-            }
-        } else {
-            throw new DeployError(`Unknown argument ${arg}. Run with --help to list the commands.`);
-        }
+    const unknownArgument = (token: string) =>
+        `Unknown argument ${token}. Run with --help to list the commands.`;
+    const program = toolCommand("local-deploy", OPTIONS).argument("[command]");
+    const opts = parseOrFail(program, argv, (message) => new DeployError(message), {
+        unknownOption: unknownArgument,
+        rejectDashValues: "--",
+    });
+    const [word, ...rest] = program.args;
+    if (word !== undefined && !(COMMANDS as readonly string[]).includes(word)) {
+        throw new DeployError(unknownArgument(word));
+    }
+    if (rest.length > 0) throw new DeployError(unknownArgument(rest[0]!));
+    const parsed: Parsed = { command: (word as Parsed["command"]) ?? null, help: false };
+    if (opts.newKey === true) parsed.newKey = true;
+    if (opts.help === true) parsed.help = true;
+    const project = opts[keyOf("--project")] as string | undefined;
+    if (project !== undefined) parsed.project = checkProject(project);
+    const portBase = opts[keyOf("--port-base")] as string | undefined;
+    if (portBase !== undefined) {
+        if (!/^[0-9]+$/.test(portBase)) throw new DeployError("--port-base must be a number.");
+        parsed.portBase = checkPortBase(Number(portBase));
     }
     if (!parsed.help && parsed.command === null) {
         throw new DeployError("Say what to do: up, status or down (see --help).");
