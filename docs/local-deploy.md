@@ -140,7 +140,7 @@ another profile is current it is left alone.
 
 ## What `down` removes, and what stays
 
-`down` can be interrupted and run again. It stops the controller and worker, waits for Dokku to be idle,
+`down` can be interrupted and run again (an interrupt is honoured between sites and between phases; the operation in progress finishes). It stops the controller and worker, waits for Dokku to be idle,
 finds the deployed sites (from the database, the recorded list, Dokku and the project's apps network),
 destroys their Dokku apps and removes their containers and images directly (it never calls the API),
 removes the project's containers, volumes and networks, clears the root-owned Dokku state with a

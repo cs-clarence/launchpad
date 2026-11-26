@@ -366,6 +366,22 @@ describe("discovery", () => {
         expect(host.calls.some((a) => a.includes("apps:destroy") || a.includes("rm"))).toBe(false);
     });
 
+    it("says how to recover from a foreign inventory, and deleting it is safe", async () => {
+        await ready();
+        host.deploySite(project, site(1));
+        host.addFile(
+            `${host.dir}/inventory.json`,
+            JSON.stringify({ project: "launchpad-local-00000000", sites: [] }),
+        );
+        const message = await fails(down(deps()));
+        expect(message).toContain(
+            "Run status to rewrite it, or delete .local-deploy/inventory.json",
+        );
+        host.nodes.delete(`${host.dir}/inventory.json`);
+        await down(deps());
+        gone();
+    });
+
     it("still accepts a matching inventory when the database is down", async () => {
         await ready();
         host.deploySite(project, site(1));
@@ -393,6 +409,24 @@ describe("a project whose containers are already gone", () => {
 });
 
 describe("interruption between removals", () => {
+    it("stops before clearing the root-owned state once the project is removed, then resumes", async () => {
+        await ready();
+        host.deploySite(project, site(1));
+        const abort = new AbortController();
+        host.failures.push((args) => {
+            if (args.includes("down") && args.includes("--volumes")) abort.abort();
+            return undefined;
+        });
+        expect(await fails(down(deps({ signal: abort.signal })))).toContain("Interrupted");
+        expect(host.projectContainers(project)).toHaveLength(0);
+        expect(host.calls.some((a) => a.includes("--entrypoint") && a.includes("rm"))).toBe(false);
+        expect(host.nodes.has(`${host.dir}/state.json`)).toBe(true);
+        expect(host.nodes.has(`${host.dir}/inventory.json`)).toBe(true);
+        host.failures.length = 0;
+        await down(deps());
+        gone();
+    });
+
     it("stops before the next site and keeps the state and the inventory, then resumes", async () => {
         await ready();
         host.deploySite(project, site(1));

@@ -1572,6 +1572,14 @@ function postgresImage(): string {
     return image;
 }
 
+// Deleting inventory.json is safe: it only records sites for a resumed down, which rediscovers
+// them from the database, Dokku and the apps network.
+function inventoryHint(error: Error): string {
+    return /belongs to another project/.test(error.message)
+        ? " Run status to rewrite it, or delete .local-deploy/inventory.json."
+        : "";
+}
+
 async function discover(
     c: Ctx,
     dokkuId: string | null,
@@ -1589,7 +1597,7 @@ async function discover(
         fromFile = await readInventoryFile(c);
     } catch (error) {
         if (error instanceof InventoryError) {
-            throw new DeployError(`${error.message} Nothing was removed.`);
+            throw new DeployError(`${error.message} Nothing was removed.${inventoryHint(error)}`);
         }
         throw error;
     }
@@ -1826,7 +1834,9 @@ export async function down(d: Deps, options: UpOptions = {}): Promise<void> {
             sites = await readInventoryFile(c);
         } catch (error) {
             if (error instanceof InventoryError)
-                throw new DeployError(`${error.message} Nothing was removed.`);
+                throw new DeployError(
+                    `${error.message} Nothing was removed.${inventoryHint(error)}`,
+                );
             throw error;
         }
     }

@@ -292,7 +292,17 @@ export class FakeHost {
         const [cmd, ...rest] = args;
         switch (cmd) {
             case "git":
-                if (rest.includes("ls-files")) return ok(this.trackedFiles.join("\n"));
+                if (rest.includes("ls-files")) {
+                    // Only paths under the pathspec after `--`; no pathspec lists every tracked file.
+                    const spec = rest.includes("--") ? rest[rest.indexOf("--") + 1] : undefined;
+                    return ok(
+                        this.trackedFiles
+                            .filter(
+                                (f) => spec === undefined || f === spec || f.startsWith(`${spec}/`),
+                            )
+                            .join("\n"),
+                    );
+                }
                 return this.ignored ? ok() : fail("", 1);
             case "stat":
                 return ok("988\n");

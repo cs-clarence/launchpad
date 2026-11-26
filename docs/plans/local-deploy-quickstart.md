@@ -283,14 +283,14 @@ Complexities and edge cases, each one message and a nonzero exit:
   router, SSH and HTTPS ports, so the default base 32180 reproduces the five defaults. The base must satisfy `1024 <= n` and
   `n + 263 <= 65535`, or `up` refuses before touching anything. Never stops what owns a port.
 - **Ports on re-run:** chosen once and persisted in `compose.env`; `up` never changes them. A persisted
-  port that is busy is checked against this project first: `docker compose ps` names the project's
+  port that is busy is checked against this project first: `docker compose -p <project> --env-file <repo>/.local-deploy/compose.env -f <repo>/docker-compose.yaml -f <repo>/.local-deploy/override.json ps` names the project's
   published ports and a port published by its own container is not "busy". A port busy for another reason
   stops `up`; to move, run `down` and `up --port-base` again.
 - **Dokku slow to start:** waits up to 11 minutes (the runner's budget) with progress lines; on timeout
   prints `docker compose -p <project> --env-file <repo>/.local-deploy/compose.env -f <repo>/docker-compose.yaml -f <repo>/.local-deploy/override.json logs --tail 50 dokku` and keeps everything for inspection.
 - **Compose/Buildx version problems:** no checks are loosened; the message points at the observed
   combinations in [the recovery record](production-fresh-host-recovery.md#repeat-the-rehearsal).
-- **Deploy fails:** the guide's loop prints the failing status and the events and points at `docker compose
+- **Deploy fails:** the guide's loop prints the failing status and the events and points at `docker compose -p <project> --env-file <repo>/.local-deploy/compose.env -f <repo>/docker-compose.yaml -f <repo>/.local-deploy/override.json
   logs --tail 50 worker`. A `reconciliation-needed` deployment is explained with a link to
   [deployments](../deployments.md#when-the-worker-cannot-confirm-something); `down` still removes it
   (Teardown step 4).
@@ -307,8 +307,9 @@ Complexities and edge cases, each one message and a nonzero exit:
   `label=com.docker.compose.project=<project>`; if any exist and this checkout has no matching `state.json`
   (project name, repository path, tool version), `up` refuses. A mismatching `state.json` makes `up` and
   `down` refuse too. A directory refused this way is cleaned manually: run `down` from the checkout that
-  created it, or, if that is gone, `docker compose -p <project> down --volumes --remove-orphans`, remove the
-  containers and images in its `inventory.json` by exact name, and `sudo rm -rf` the directory. `down`
+  created it, or, if that is gone, remove its labelled resources by exact name (`docker ps -a --filter
+  label=com.docker.compose.project=<project>`, then `docker rm -f`, `docker volume rm` and `docker network rm` on what it
+  lists), remove the images in its `inventory.json` by exact name, and `sudo rm -rf` the directory. `down`
   cannot clean a refused directory itself. A **missing or corrupt `state.json`** is refused by name unless
   the project has no labeled resources and the directory holds only the four fixed children and ignored
   files (Teardown step 1), which is what an interrupted `down` leaves. `--project <name>` is allowed only if it matches `^launchpad-local-[a-z0-9-]{1,40}$`, so its image tags
@@ -562,7 +563,7 @@ author reviewed the script against real Docker behaviour (and the real run then 
   deliberately failed deployment, the database-stopped fallback, an interrupted `down`, and `down`.
 - A deployment cannot be failed with an archive lacking `index.html`: the upload itself is refused. A deploy
   with Dokku stopped mid-way ended `failed`; `down` then refused by name ("Dokku container exists but is not
-  running") and removed nothing; after `docker compose -p <project> start dokku` it removed both sites.
+  running") and removed nothing; after `docker compose -p <project> --env-file <repo>/.local-deploy/compose.env -f <repo>/docker-compose.yaml -f <repo>/.local-deploy/override.json start dokku` it removed both sites.
 - Database stopped (after a `status` had recorded the site): `down` completed from `inventory.json`, Dokku and
   the apps network.
 - `down` killed right after the project's containers were gone (volumes still being removed): the state
@@ -619,7 +620,7 @@ author reviewed the script against real Docker behaviour (and the real run then 
 - `up` refuses when git tracks any file under `.local-deploy/` (`git ls-files`), as well as when it is not ignored.
 - `inventory.json` must carry this checkout's project, or `down` aborts before any removal.
 - `status` prints `unknown` when a state could not be read, never `running` or `exited` by default.
-- `down` checks for an interrupt before every destructive operation and keeps the state and inventory.
+- `down` checks for an interrupt between sites and between phases (not between individual image or container removals; the one in progress settles) and keeps the state and inventory.
 - A `down` with no project containers left still removes site containers by app label (no Dokku needed) before
   removing the apps network; a foreign-labelled apps network is not counted as a leftover.
 - `down` never leaves the current CLI profile pointing at the deleted one: none if `up` set it, otherwise the first

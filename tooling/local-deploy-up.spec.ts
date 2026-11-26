@@ -608,6 +608,13 @@ describe("tracked state directory", () => {
         expect(host.calls.some((a) => a.includes("build"))).toBe(false);
     });
 
+    it("is not blocked by tracked files elsewhere in the repository", async () => {
+        host.trackedFiles = ["README.md", "tooling/local-deploy.ts", ".local-deploy-notes.md"];
+        await up(deps());
+        const argv = host.calls.find((a) => a.includes("ls-files"))!;
+        expect(argv.slice(argv.indexOf("ls-files"))).toEqual(["ls-files", "--", ".local-deploy"]);
+    });
+
     it("refuses when git cannot say", async () => {
         host.failures.push((args) =>
             args.includes("ls-files") ? { code: 128, output: "fatal", stdout: "" } : undefined,
