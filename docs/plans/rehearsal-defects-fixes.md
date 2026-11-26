@@ -1,6 +1,6 @@
 # Fixes for the defects found in the DB, worker and restore rehearsals
 
-Status: **first PR (#2, #4, #6, #7) implemented on `fix/rehearsal-defects-first`; second PR is still sketches.**
+Status: **first PR (#2, #4, #6, #7) merged as #105; the second PR (#1, #3, #5, #8) is planned and implemented in `rehearsal-defects-fixes-2.md`, which replaces the "Second PR" sketches below.**
 The independent review's findings and the user's decisions are folded into "Decisions and review findings" below; where they
 differ from the sections after it, they win. Source: the "Defects and follow-ups" table in
 `docs/plans/evidence/rehearsal-db-worker-restore-20261126/README.md` (on the rehearsal branch, not yet

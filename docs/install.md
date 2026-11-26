@@ -49,15 +49,16 @@ to deploy to an immutable preview URL and separately choose whether to promote.
    Keep the database and admin command private. Use
    [the controller settings reference](../apps/controller/README.md#configuration)
    for remaining values. The worker does not read database or Dokku settings while deployments are off.
-   An enabled worker may be given a name with `LAUNCHPAD_WORKER_ID`; it identifies the worker in logs
-   and the database and is optional (see [production Compose](production-compose.md)).
+   An enabled worker may be given a name with `LAUNCHPAD_WORKER_NAME` (the deprecated `LAUNCHPAD_WORKER_ID` still
+   works); it is the worker's lease owner, its heartbeat key and what logs show. It is optional: the default is
+   the hostname. Give each worker its own (see [production Compose](production-compose.md#health-readiness-and-worker-status)).
 4. Run `bun .output/admin.mjs migrate --status` in the controller image with
    `DATABASE_URL` set. On a fresh database, a nonzero exit with pending migrations
    is expected. Run `bun .output/admin.mjs migrate` explicitly, then run
    `migrate --status` again; it must report `pending: 0` and exit 0. Neither process
    migrates on startup. The controller refuses an incompatible schema.
 5. Start the controller with its private listener connected to the database and
-   shared volume. Verify `/api/health`, then sign in after running
+   shared volume. Verify `/api/health` (liveness) and `/api/ready` (readiness: database and data directory), then sign in after running
    `bun .output/admin.mjs setup --email <operator-address> --password-file <mode-600-file>`
    in the controller image with the auth settings. The mode-`0600` password
    file must be readable by the admin process (the stock image runs as UID

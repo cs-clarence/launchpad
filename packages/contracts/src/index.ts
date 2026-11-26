@@ -84,34 +84,73 @@ export const createApiKeySchema = z
         message: "A project-limited API key cannot create projects.",
     });
 
-// How the instance is doing, for the operator. Counts only: no ids, names or text that came
-// from a remote system. Deployments and workers report nothing here yet.
+const timestampSchema = z.string().meta({ format: "date-time" });
+
+// How the instance is doing, for the operator. Counts, durations and operator-chosen worker
+// names only: no ids, hostnames or text that came from a remote system.
+export const WORKER_STATES = ["ok", "stale", "stopped"] as const;
 export const statusSchema = z.strictObject({
     generatedAt: z.string().meta({ format: "date-time" }),
     dependencies: z.strictObject({ database: z.literal("ok") }),
     artifacts: z.strictObject({ stored: z.number().int(), bytes: z.number() }),
+    workers: z
+        .strictObject({
+            state: z.enum(["off", "ok", "stale", "missing"]).meta({
+                description:
+                    "`off`: deployments are off. `ok`: at least one worker is beating. `stale`: workers have reported, none recently. `missing`: none ever has.",
+            }),
+            items: z
+                .array(
+                    z.strictObject({
+                        name: z.string(),
+                        state: z.enum(WORKER_STATES).meta({
+                            description:
+                                "`ok`: beating. `stopped`: stopped on purpose (a clean shutdown). `stale`: no beat for too long and no clean stop: a crash, kill, pause or lost database.",
+                        }),
+                        lastSeenSecondsAgo: z.number().int(),
+                        runStartedAt: timestampSchema,
+                    }),
+                )
+                .meta({ description: "Newest first, at most 20." }),
+        })
+        .meta({ description: "The deployment workers, from their heartbeats." }),
+    leases: z
+        .strictObject({
+            inFlight: z.number().int(),
+            expiring: z.number().int(),
+            expired: z.number().int(),
+        })
+        .meta({
+            description:
+                "Deployment, deletion and promotion operations that hold a lease (counts only). `expiring` expire within the warning window; `expired` have passed their lease and are waiting for reconciliation.",
+        }),
     warnings: z.array(z.string()).meta({ description: "What looks wrong, in plain words." }),
 });
 
 const role = z.enum(ORGANIZATION_ROLES);
-const timestamp = z.string().meta({ format: "date-time" });
+const timestamp = timestampSchema;
+
+// Every `code` the API can answer with. A test scans the controller for emitted codes.
+export const ERROR_CODES = [
+    "unauthenticated",
+    "forbidden-origin",
+    "too-many-requests",
+    "client-address-unavailable",
+    "not-found",
+    "forbidden",
+    "conflict",
+    "invalid",
+    "delivery-failed",
+    "too-large",
+    "timeout",
+    "unavailable",
+    "schema-mismatch",
+    "database-unavailable",
+    "internal",
+] as const;
 
 export const errorSchema = z.strictObject({
-    code: z.enum([
-        "unauthenticated",
-        "forbidden-origin",
-        "too-many-requests",
-        "client-address-unavailable",
-        "not-found",
-        "forbidden",
-        "conflict",
-        "invalid",
-        "delivery-failed",
-        "too-large",
-        "timeout",
-        "unavailable",
-        "internal",
-    ]),
+    code: z.enum(ERROR_CODES),
     status: z.number().int(),
     title: z.string(),
 });

@@ -10,6 +10,7 @@ import {
     addMember,
     beginPromotionStep,
     claimPromotion,
+    getStatus,
     createAlias,
     createApp,
     createDeployment,
@@ -572,6 +573,28 @@ describe("promotion claims and finalization", () => {
         expect(await operations(alias.id)).toEqual(before);
         expect(await aliasRow(alias.id)).toMatchObject({ committed_generation: "0" });
         expect(await finish(current)).toEqual({ id: current.token.id });
+    });
+
+    it("counts a promotion's lease in the operator status", async () => {
+        const read = async () =>
+            (
+                await getStatus(testDb.db, people.root!, {
+                    deploymentsEnabled: true,
+                    thresholds: { staleAfterSeconds: 60, warnBeforeSeconds: 90 },
+                })
+            ).leases;
+        const before = await read();
+        const { alias, ready } = await fixture();
+        await promote(alias.id, await ready(), "0");
+        expect(await read()).toEqual(before);
+        const job = await claim(alias.id);
+        expect(await read()).toEqual({ ...before, inFlight: before.inFlight + 1 });
+        await expire(job.token.id);
+        expect(await read()).toEqual({
+            ...before,
+            inFlight: before.inFlight + 1,
+            expired: before.expired + 1,
+        });
     });
 
     it("refuses the current token after expiry, without needing a replacement claim", async () => {

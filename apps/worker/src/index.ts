@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import path from "node:path";
 import { createDatabase } from "@launchpad-kit/database";
 import { createDokkuClient } from "@launchpad-kit/dokku";
@@ -5,10 +6,16 @@ import {
     artifactLimitsFromEnv,
     parseAliasConfig,
     parseAppRoutingConfig,
+    beatHeartbeat,
     parseDeploymentConfig,
+    parseHeartbeatConfig,
+    pruneHeartbeats,
     resolveLimits,
+    startHeartbeat,
+    stopHeartbeat,
 } from "@launchpad-kit/services";
 import { workDeployments } from "./deployment-worker";
+import { createHeartbeat } from "./heartbeat";
 import { createDocker } from "./docker";
 import { DEFAULT_HEALTH_TOUCH_MS, createHealthMarker, healthFileFromEnv } from "./health";
 import { createLifecyclePorts } from "./lifecycle-ports";
@@ -16,7 +23,7 @@ import { createPromotionPorts } from "./promotion-ports";
 import { createDeployPorts } from "./ports";
 import { DEFAULT_BASE_IMAGE, checkBaseImage } from "./template";
 import { parseProxyUrl } from "./verify";
-import { workerIdFromEnv } from "./worker-id";
+import { workerNameFromEnv } from "./worker-id";
 
 const log = (line: Record<string, unknown>) => console.log(JSON.stringify(line));
 
@@ -34,7 +41,10 @@ async function main() {
         process.on(name, () => shutdown.abort());
     }
     if (config.enabled) {
-        const owner = workerIdFromEnv(process.env);
+        // The stable name is the lease owner and the heartbeat's key; the run id tells restarts apart.
+        const { name: owner, deprecatedAlias } = workerNameFromEnv(process.env);
+        const runId = randomUUID();
+        const heartbeatConfig = parseHeartbeatConfig(process.env, "worker");
         const databaseUrl = required("DATABASE_URL");
         const dataDir = path.resolve(required("LAUNCHPAD_DATA_DIR"));
         const baseImage = checkBaseImage(process.env.LAUNCHPAD_BASE_IMAGE || DEFAULT_BASE_IMAGE);
@@ -74,8 +84,28 @@ async function main() {
             closeTimeout: 0,
             connection: { statement_timeout: "5s", idle_in_transaction_session_timeout: "10s" },
         });
+        const identity = { name: owner, runId, beatSeconds: heartbeatConfig.beatSeconds };
+        const heartbeat = createHeartbeat({
+            intervalMs: heartbeatConfig.beatSeconds * 1000,
+            log,
+            store: {
+                start: () => startHeartbeat(db, identity, heartbeatConfig.staleAfterSeconds),
+                beat: () => beatHeartbeat(db, identity),
+                stop: () => stopHeartbeat(db, identity),
+                cleanup: async () => {
+                    await pruneHeartbeats(db, heartbeatConfig.pruneAfterSeconds);
+                },
+            },
+        });
         try {
-            log({ event: "deployment-worker-started", worker: owner });
+            log({ event: "deployment-worker-started", worker: owner, runId });
+            if (deprecatedAlias) {
+                log({
+                    event: "worker-name-deprecated",
+                    message: "LAUNCHPAD_WORKER_ID is deprecated; use LAUNCHPAD_WORKER_NAME.",
+                });
+            }
+            heartbeat.start();
             await workDeployments({
                 db,
                 dataDir,
@@ -88,6 +118,9 @@ async function main() {
                 log,
             });
         } finally {
+            // After the work loop returns or throws, before the pool closes: a clean stop is
+            // marked, and a hung database costs at most the heartbeat's own short budget.
+            await heartbeat.stop();
             await db.destroy();
         }
         log({ event: "stopped" });

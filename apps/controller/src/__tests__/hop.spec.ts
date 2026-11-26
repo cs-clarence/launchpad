@@ -976,6 +976,10 @@ describe("operator status over HTTP", () => {
         const report = statusSchema.parse(await read.json());
         expect(report.dependencies).toEqual({ database: "ok" });
         expect(report.artifacts.stored).toBeGreaterThanOrEqual(0);
+        // Deployments are off on this instance: no worker is expected, nothing is in flight.
+        expect(report.workers).toEqual({ state: "off", items: [] });
+        expect(report.leases).toEqual({ inFlight: 0, expiring: 0, expired: 0 });
+        expect(report.warnings).toEqual([]);
         // An ordinary member, even an owner, is refused, and so is no one at all.
         expect((await api(ownerCookie, "/status")).status).toBe(403);
         expect((await fetch(`${proxied.base}/api/v1/status`)).status).toBe(401);
@@ -1046,6 +1050,7 @@ describe("OpenAPI reference", () => {
         "get /api/v1/organizations/{orgId}/deployments/{deploymentId}/events",
         "post /api/v1/organizations/{orgId}/deployments/{deploymentId}/reconciliation-requests",
         "post /api/v1/organizations/{orgId}/promotion-operations/{operationId}/reconciliation-requests",
+        "get /api/ready",
     ];
 
     it("documents exactly the public v1 operations, without internals", async () => {
@@ -1396,3 +1401,188 @@ describe("a controller on a schema it was not built for", () => {
         }
     });
 });
+
+async function until(check: () => Promise<boolean>, what: string, seconds = 30) {
+    for (let i = 0; i < seconds * 2; i++) {
+        if (await check()) return;
+        await new Promise((r) => setTimeout(r, 500));
+    }
+    throw new Error(`timed out waiting for ${what}`);
+}
+
+describe("a controller whose database changes underneath it", () => {
+    // The re-check window is 5 s here (the default is 10 s) to keep the test short.
+    const SETTINGS = { LAUNCHPAD_SCHEMA_CHECK_INTERVAL: "5s" };
+
+    it("notices a replaced, empty database without a restart, and recovers after migrate", async () => {
+        const live = await createTestDatabase();
+        let instance: Instance | undefined;
+        try {
+            await live.migrate();
+            instance = await start(false, { DATABASE_URL: live.url, ...SETTINGS });
+            expect((await fetch(`${instance.base}/api/ready`)).status).toBe(200);
+            expect((await fetch(`${instance.base}/api/v1/me`)).status).toBe(401);
+
+            // D1c: the database is replaced by an empty one.
+            await sql_drop_public(live.db);
+            const me = () => fetch(`${instance!.base}/api/v1/me`);
+            await until(async () => (await me()).status === 503, "the 503 after the drop");
+            const body = errorSchema.parse(await (await me()).json());
+            expect(body).toEqual({
+                code: "schema-mismatch",
+                status: 503,
+                title: "Service Unavailable",
+            });
+            const ready = await fetch(`${instance.base}/api/ready`);
+            expect(ready.status).toBe(503);
+            expect(errorSchema.parse(await ready.json()).code).toBe("schema-mismatch");
+            // Liveness keeps today's answer for a proven mismatch.
+            const health = await fetch(`${instance.base}/api/health`);
+            expect(health.status).toBe(503);
+            expect(errorSchema.parse(await health.json()).code).toBe("schema-mismatch");
+
+            // The dashboard shows a clear state with a 503, not a raw error.
+            const page = await fetch(`${instance.base}/login`);
+            expect(page.status).toBe(503);
+            const html = await page.text();
+            expect(html).toContain("Launchpad&#x27;s database needs attention");
+            expect(html).not.toContain("migration(s) pending");
+            expect(html).not.toContain("kysely");
+
+            await live.migrate();
+            await until(
+                async () => (await fetch(`${instance!.base}/api/ready`)).status === 200,
+                "recovery",
+            );
+            expect((await fetch(`${instance.base}/api/health`)).status).toBe(200);
+        } finally {
+            instance?.proc.kill("SIGTERM");
+            await live.destroy();
+        }
+    });
+
+    it("answers database-unavailable while liveness stays 200, and recovers", async () => {
+        const live = await createTestDatabase();
+        const upstream = new URL(live.url);
+        const proxy = await startTcpProxy(Number(upstream.port || 5432), upstream.hostname);
+        let instance: Instance | undefined;
+        try {
+            await live.migrate();
+            const through = new URL(live.url);
+            through.hostname = "127.0.0.1";
+            through.port = String(proxy.port);
+            instance = await start(false, { DATABASE_URL: through.toString(), ...SETTINGS });
+            expect((await fetch(`${instance.base}/api/ready`)).status).toBe(200);
+
+            // The database becomes unreachable: connections drop and new ones are refused.
+            await proxy.stop();
+            const ready = () => fetch(`${instance!.base}/api/ready`);
+            await until(async () => {
+                const response = await ready();
+                return (
+                    response.status === 503 &&
+                    (await response.json()).code === "database-unavailable"
+                );
+            }, "readiness to report database-unavailable");
+            const response = await ready();
+            expect(response.headers.get("retry-after")).toBe("5");
+            expect(errorSchema.parse(await response.json())).toEqual({
+                code: "database-unavailable",
+                status: 503,
+                title: "The database is unavailable.",
+            });
+            const me = await fetch(`${instance.base}/api/v1/me`);
+            expect(me.status).toBe(503);
+            expect(errorSchema.parse(await me.json()).code).toBe("database-unavailable");
+            // The dashboard shows a clear, retryable state with a 503, and no raw error text.
+            const page = await fetch(`${instance.base}/login`);
+            expect(page.status).toBe(503);
+            expect(page.headers.get("retry-after")).toBe("5");
+            const html = await page.text();
+            expect(html).toContain("can&#x27;t reach its database right now");
+            expect(html).toContain("Retry");
+            expect(html).not.toContain("Failed to connect");
+            expect(html).not.toContain(String(proxy.port));
+            // So does a server function call: the classified problem, with the same status.
+            const outputs = path.resolve(import.meta.dirname, "../../.output/public/assets");
+            const ids = new Set<string>();
+            for (const file of await fs.readdir(outputs)) {
+                if (!file.endsWith(".js")) continue;
+                const code = await fs.readFile(path.join(outputs, file), "utf8");
+                for (const match of code.matchAll(/[0-9a-f]{64}/g)) ids.add(match[0]);
+            }
+            const answers = await Promise.all(
+                [...ids].map((id) =>
+                    fetch(`${instance!.base}/_serverFn/${id}`, {
+                        headers: {
+                            "x-tsr-serverFn": "true",
+                            accept: "application/json",
+                            origin: instance!.base,
+                            "sec-fetch-site": "same-origin",
+                        },
+                    }).then(async (response) => ({
+                        status: response.status,
+                        body: await response.text(),
+                    })),
+                ),
+            );
+            const classified = answers.filter((answer) =>
+                answer.body.includes("launchpad:database-unavailable"),
+            );
+            expect(classified.length).toBeGreaterThan(0);
+            for (const answer of classified) expect(answer.status).toBe(503);
+            for (const answer of answers) {
+                expect(answer.body).not.toContain("Failed to connect");
+                expect(answer.body).not.toContain(String(proxy.port));
+            }
+            // Liveness never depends on the database.
+            const started = Date.now();
+            expect((await fetch(`${instance.base}/api/health`)).status).toBe(200);
+            expect(Date.now() - started).toBeLessThan(2500);
+            // Neither the address nor the driver's message reaches a client.
+            expect(JSON.stringify(await (await ready()).json())).not.toContain(String(proxy.port));
+
+            await proxy.start();
+            await until(async () => (await ready()).status === 200, "recovery");
+        } finally {
+            instance?.proc.kill("SIGTERM");
+            await proxy.stop();
+            await live.destroy();
+        }
+    });
+});
+
+// A TCP forwarder in front of PostgreSQL that can be taken away and brought back on the same
+// port: the controller sees what a stopped or unreachable database looks like (reset
+// connections, then refused ones).
+async function startTcpProxy(targetPort: number, targetHost: string) {
+    const sockets = new Set<net.Socket>();
+    const server = net.createServer((client) => {
+        const upstream = net.connect(targetPort, targetHost);
+        sockets.add(client).add(upstream);
+        client.on("error", () => upstream.destroy());
+        upstream.on("error", () => client.destroy());
+        client.pipe(upstream);
+        upstream.pipe(client);
+    });
+    const listen = (port: number) =>
+        new Promise<void>((resolve) => server.listen(port, "127.0.0.1", resolve));
+    await listen(0);
+    const port = (server.address() as net.AddressInfo).port;
+    return {
+        port,
+        start: () => listen(port),
+        async stop() {
+            for (const socket of sockets) socket.destroy();
+            sockets.clear();
+            if (server.listening)
+                await new Promise<void>((resolve) => server.close(() => resolve()));
+        },
+    };
+}
+
+async function sql_drop_public(db: Awaited<ReturnType<typeof createTestDatabase>>["db"]) {
+    const { sql } = await import("kysely");
+    await sql`drop schema public cascade`.execute(db);
+    await sql`create schema public`.execute(db);
+}

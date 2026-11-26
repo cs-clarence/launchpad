@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { apiCall } from "./api";
+import { apiCall, apiRequest } from "./api";
 
 const respond = (body: unknown, status = 200) =>
     new Response(typeof body === "string" ? body : JSON.stringify(body), { status });
@@ -25,6 +25,28 @@ describe("apiCall", () => {
         expect(second[1]).toMatchObject({
             body: blob,
             headers: { "content-type": "application/gzip" },
+        });
+    });
+
+    it("says the database is unreachable in the page's words", async () => {
+        vi.stubGlobal("fetch", async () =>
+            respond(
+                {
+                    code: "database-unavailable",
+                    status: 503,
+                    title: "The database is unavailable.",
+                },
+                503,
+            ),
+        );
+        expect(await apiCall("POST", "/a")).toEqual({
+            ok: false,
+            status: 503,
+            message: "Launchpad can't reach its database. Try again in a moment.",
+        });
+        expect(await apiRequest("POST", "/a")).toEqual({
+            ok: false,
+            message: "Launchpad can't reach its database. Try again in a moment.",
         });
     });
 

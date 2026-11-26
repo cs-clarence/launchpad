@@ -2,7 +2,9 @@ import { createFileRoute, Link, redirect, useRouter } from "@tanstack/react-rout
 import { useState } from "react";
 import { ApiKeys } from "../components/api-keys";
 import { DeploymentApps } from "../components/deployment-apps";
+import { ErrorPage } from "../components/service-unavailable";
 import { apiRequest } from "../lib/api";
+import { describeProblem } from "../lib/problem";
 import { getOrganizationViewFn } from "../server/data";
 import { getCurrentUser } from "../server/session";
 
@@ -13,14 +15,19 @@ export const Route = createFileRoute("/orgs/$orgId")({
         }
     },
     loader: ({ params }) => getOrganizationViewFn({ data: { orgId: params.orgId } }),
-    errorComponent: () => (
-        <main className="mx-auto max-w-4xl px-6 py-12">
-            <p role="alert">Organization not found.</p>
-            <Link className="anchor" to="/">
-                Back to organizations
-            </Link>
-        </main>
-    ),
+    // "Organization not found." only for a real not-found; a database problem or anything else
+    // gets the shared state, with a retry and no raw text.
+    errorComponent: ({ error }) =>
+        describeProblem(error)?.code === "not-found" ? (
+            <main className="mx-auto max-w-4xl px-6 py-12">
+                <p role="alert">Organization not found.</p>
+                <Link className="anchor" to="/">
+                    Back to organizations
+                </Link>
+            </main>
+        ) : (
+            <ErrorPage error={error} />
+        ),
     component: Organization,
 });
 

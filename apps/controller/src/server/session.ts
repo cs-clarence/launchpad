@@ -11,13 +11,16 @@ export interface CurrentUser {
 // the client bundle.
 export const getCurrentUser = createServerFn({ method: "GET" }).handler(
     async (): Promise<CurrentUser | null> => {
-        const { getReadyRuntime } = await import("./runtime");
-        const { readSession } = await import("./auth-session");
-        const session = await readSession((await getReadyRuntime()).auth);
-        if (!session) {
-            return null;
-        }
-        const { id, email, name } = session.user;
-        return { id, email, name, role: (session.user as { role?: string }).role ?? "user" };
+        const { withDatabaseProblems } = await import("./database-problem");
+        return withDatabaseProblems(async () => {
+            const { getReadyRuntime } = await import("./runtime");
+            const { readSession } = await import("./auth-session");
+            const session = await readSession((await getReadyRuntime()).auth);
+            if (!session) {
+                return null;
+            }
+            const { id, email, name } = session.user;
+            return { id, email, name, role: (session.user as { role?: string }).role ?? "user" };
+        });
     },
 );

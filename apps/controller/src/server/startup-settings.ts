@@ -1,4 +1,8 @@
-import { parseAliasConfig } from "@launchpad-kit/services";
+import {
+    parseAliasConfig,
+    parseHeartbeatConfig,
+    parseSchemaCheckConfig,
+} from "@launchpad-kit/services";
 import { definePlugin } from "nitro";
 
 // Runs when the server initializes, before it accepts a request: a removed setting stops the
@@ -6,4 +10,6 @@ import { definePlugin } from "nitro";
 export default definePlugin(() => {
     // Also refuses the removed names. A bad deployment or alias setting stops the process here.
     parseAliasConfig(process.env);
+    parseSchemaCheckConfig(process.env);
+    parseHeartbeatConfig(process.env, "controller");
 });

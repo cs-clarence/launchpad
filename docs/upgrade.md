@@ -36,7 +36,23 @@ down migration. v1 starts with an empty database. Rehearse later upgrades on dis
    a different set.
 5. Verify the shared `LAUNCHPAD_DATA_DIR` directory is mounted and available
    (missing storage is a startup error). Start the new controller, then the worker. Check the operator-only
-   `GET /api/v1/status` for database readiness. `/api/health` alone does not check PostgreSQL.
+   `GET /api/v1/status` for database readiness and, if `LAUNCHPAD_DEPLOYMENTS` is on, that `workers.state` is `ok` (with deployments off it is `off`). `/api/health` is liveness and
+   does not check PostgreSQL; `/api/ready` does (see [production Compose](production-compose.md#health-readiness-and-worker-status)).
+
+### This release adds a migration
+
+`20261126_002_worker_heartbeat` creates one table, `worker_heartbeat`. It is additive (nothing existing changes)
+and forward-only: **rolling back means restoring the pre-upgrade backup** with a compatible build, as below. An
+older build refuses the migrated database (`503 schema-mismatch`, and `restore` refuses a backup taken after the
+migration), so nothing runs half-rolled-back. Recreate the controller and worker **together**: an old worker
+beside the new controller never beats, so status reports no worker and warns; a new worker started before
+`migrate` logs one heartbeat error and keeps claiming.
+
+Behavior changes to expect: a failing database re-check now answers `503` until it passes again
+(`LAUNCHPAD_SCHEMA_CHECK_INTERVAL=off` restores the old check-once behavior); `GET /api/ready` and the
+`schema-mismatch` and `database-unavailable` error codes are new; the controller's database pool waits at most 5 s
+for a connection; and `lease_owner` is now the worker's name (hostname-derived by default) instead of a random
+uuid per process. `LAUNCHPAD_WORKER_ID` still works but is deprecated: use `LAUNCHPAD_WORKER_NAME`.
 
 If migration fails, do not start the old version against the migrated database.
 Restore its matched backup into a fresh empty database using a compatible build

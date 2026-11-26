@@ -1,4 +1,5 @@
 import { createRootRoute, HeadContent, Outlet, Scripts } from "@tanstack/react-router";
+import { ErrorPage } from "../components/service-unavailable";
 import stylesheet from "../styles.css?url";
 
 export const Route = createRootRoute({
@@ -12,6 +13,7 @@ export const Route = createRootRoute({
     }),
     shellComponent: RootDocument,
     component: Outlet,
+    errorComponent: ({ error }) => <ErrorPage error={error} />,
 });
 
 function RootDocument({ children }: { children: React.ReactNode }) {

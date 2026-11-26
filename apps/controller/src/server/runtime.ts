@@ -3,6 +3,9 @@ import { assertSchemaCurrent, createDatabase } from "@launchpad-kit/database";
 import {
     parseAliasConfig,
     parseDeploymentConfig,
+    parseHeartbeatConfig,
+    parseSchemaCheckConfig,
+    DeploymentRecoveryError,
     requireModelDataDirectory,
     sweepStaleUploads,
     type InvitationDeps,
@@ -10,6 +13,7 @@ import {
 import path from "node:path";
 import { createApi } from "./api";
 import { artifactLimitsFromEnv } from "./artifact-config";
+import { createSchemaGate, GateRejectedError, type SchemaGate } from "./schema-gate";
 
 function requireEnv(name: string): string {
     const value = process.env[name];
@@ -23,7 +27,8 @@ function requireEnv(name: string): string {
 // generation) never reads configuration or opens a connection.
 function compose() {
     const config = loadAuthConfig(process.env);
-    const db = createDatabase(requireEnv("DATABASE_URL"));
+    // A request never waits more than a few seconds for a connection to an unreachable database.
+    const db = createDatabase(requireEnv("DATABASE_URL"), { connectionTimeout: 5 });
     const mailer = createMailer(config);
     const auth = createAuth({ db, config, mailer });
     // Email settings never enable invitations on their own: enrollment must also
@@ -58,6 +63,9 @@ function compose() {
         aliases,
         // Serves the OpenAPI document and Scalar reference; set to "false" to remove them.
         docs: process.env.LAUNCHPAD_API_DOCS !== "false",
+        readiness: () => getSchemaGate().check({ includeDataDirectory: true }),
+        onSchemaError: () => getSchemaGate().invalidate(),
+        heartbeat: parseHeartbeatConfig(process.env, "controller"),
     });
     return { config, db, auth, api, invitations, features, artifacts, deployments, aliases };
 }
@@ -69,30 +77,49 @@ export function getRuntime() {
     return runtime;
 }
 
-// A schema check that passed is final. One that failed is repeated, at most every few seconds
-// and shared by concurrent requests, so a database that was briefly unreachable, or one the
-// operator has since migrated, recovers without a restart.
 const RECHECK_AFTER_MS = 3000;
-let schemaCheck: Promise<void> | undefined;
-let schemaFailedAt = 0;
 
-// The runtime once the schema is known to match. Rejects with SchemaMismatchError when it
-// does not; any other rejection is a failure to check (and surfaces as an error).
+function dataDirectory() {
+    return path.resolve(process.env.LAUNCHPAD_DATA_DIR ?? ".data/controller");
+}
+
+// The one check behind every request, readiness and the dashboard. A pass is trusted for
+// LAUNCHPAD_SCHEMA_CHECK_INTERVAL (10 s by default) and then checked again, so a database
+// replaced or dropped under a running controller is noticed without a restart; a failed re-check
+// answers 503 until a check passes. A failure is repeated at most every few seconds, shared by
+// concurrent callers, so a database that was briefly unreachable, or one the operator has since
+// migrated, recovers by itself. `off` makes a pass final. A replaced database with the same
+// schema is not detected: restore stops the controller first (docs/restore.md).
+let gate: SchemaGate | undefined;
+export function getSchemaGate(): SchemaGate {
+    if (gate) {
+        return gate;
+    }
+    const { intervalMs, timeoutMs } = parseSchemaCheckConfig(process.env);
+    gate = createSchemaGate({
+        checkSchema: () => assertSchemaCurrent(getRuntime().db),
+        checkDataDirectory: async () => {
+            await requireModelDataDirectory(dataDirectory());
+        },
+        isDataDirectoryProblem: (error) =>
+            error instanceof DeploymentRecoveryError ||
+            typeof (error as NodeJS.ErrnoException)?.code === "string",
+        intervalMs,
+        retryMs: RECHECK_AFTER_MS,
+        timeoutMs,
+        onFailure: (failure) =>
+            console.error(failure.error instanceof Error ? failure.error.message : failure.error),
+    });
+    return gate;
+}
+
+// The runtime once the schema is known to match. Rejects with GateRejectedError carrying the
+// outcome, which `databaseProblem` maps to a response.
 export async function getReadyRuntime() {
     const ready = getRuntime();
-    if (!schemaCheck || (schemaFailedAt > 0 && Date.now() - schemaFailedAt > RECHECK_AFTER_MS)) {
-        const check = assertSchemaCurrent(ready.db).then(async () => {
-            await requireModelDataDirectory(
-                path.resolve(process.env.LAUNCHPAD_DATA_DIR ?? ".data/controller"),
-            );
-        });
-        schemaCheck = check;
-        schemaFailedAt = 0;
-        check.catch((error) => {
-            schemaFailedAt = Date.now();
-            console.error(error instanceof Error ? error.message : error);
-        });
+    const outcome = await getSchemaGate().check();
+    if (outcome.kind !== "ok") {
+        throw new GateRejectedError(outcome);
     }
-    await schemaCheck;
     return ready;
 }

@@ -11,7 +11,10 @@ import {
     requestDeploymentDeletion,
     lockDeploymentRecovery,
     markDeploymentRecoveryBlocked,
+    beatHeartbeat,
     parseDeploymentConfig,
+    startHeartbeat,
+    stopHeartbeat,
     uploadArtifact,
 } from "@launchpad-kit/services";
 import { SITE, tarGz } from "@launchpad-kit/services/testing";
@@ -19,6 +22,7 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type { DeletionRunnerPorts } from "../deletion-runner";
 import type { DeploymentRunnerPorts } from "../deployment-runner";
 import { workDeployments } from "../deployment-worker";
+import { createHeartbeat } from "../heartbeat";
 import { imageTagFor } from "../template";
 import { tempDir } from "../testing";
 
@@ -307,3 +311,56 @@ it("deletes a finished deployment through the real store and keeps its names res
             .executeTakeFirstOrThrow(),
     ).toEqual({ released_at: null });
 });
+
+it("keeps working, healthy and within its deadlines while the heartbeat fails, on a pool of two", async () => {
+    const job = await enqueue();
+    // The heartbeat's table is gone: every heartbeat statement fails, as with a lost table.
+    await source.db.schema.dropTable("worker_heartbeat").execute();
+    const db = createDatabase(source.url, {
+        max: 2,
+        connectionTimeout: 5,
+        closeTimeout: 0,
+        connection: { statement_timeout: "5s" },
+    });
+    const { shutdown, ports, deletionPorts, markHealthy } = fixture();
+    const lines: Record<string, unknown>[] = [];
+    const log = (entry: Record<string, unknown>) => {
+        lines.push(entry);
+        if (entry.event === "deployment-run-ended") shutdown.abort();
+    };
+    const identity = { name: "w", runId: randomUUID(), beatSeconds: 5 };
+    const heartbeat = createHeartbeat({
+        intervalMs: 50,
+        log,
+        store: {
+            start: () => startHeartbeat(db, identity, 60),
+            beat: () => beatHeartbeat(db, identity),
+            stop: () => stopHeartbeat(db, identity),
+            cleanup: async () => {},
+        },
+    });
+    try {
+        heartbeat.start();
+        await workDeployments({
+            db,
+            dataDir: tmp.dir,
+            owner: "w",
+            ports,
+            deletionPorts,
+            markHealthy,
+            log,
+            shutdown: shutdown.signal,
+        });
+    } finally {
+        await heartbeat.stop();
+        await db.destroy();
+    }
+    expect(lines).toContainEqual({
+        event: "deployment-run-ended",
+        deploymentId: job.id,
+        status: "succeeded",
+    });
+    expect(lines.filter((line) => line.event === "worker-heartbeat-error")).toHaveLength(1);
+    expect(lines.some((line) => line.event === "deployment-worker-error")).toBe(false);
+    expect(markHealthy).toHaveBeenCalled();
+}, 15_000);

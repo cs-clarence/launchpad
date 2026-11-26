@@ -9,7 +9,9 @@ import type { Kysely } from "kysely";
 import {
     acceptInvitation,
     addMember,
+    DEFAULT_HEARTBEAT,
     getStatus,
+    type HeartbeatConfig,
     type ApiKeyPrincipal,
     type ApiKeyScope,
     authenticateApiKey,
@@ -72,6 +74,9 @@ import {
 import { Elysia } from "elysia";
 import { framingProblem, framingResponse, SAFE_METHODS } from "./body-framing";
 import { MAX_BODY_BYTES } from "./limits";
+import { classifyDatabaseError } from "@launchpad-kit/database";
+import { databaseProblem, problemBody, problemHeaders, problemOfFailure } from "./database-problem";
+import type { GateOutcome } from "./schema-gate";
 import { docs, eventsQuery, openApiPlugin, pageQuery } from "./openapi";
 
 // Anything larger than the limit is refused before it is read.
@@ -138,6 +143,13 @@ export function createApi(deps: {
     artifacts?: ArtifactDeps;
     deployments?: AppDeps;
     aliases?: AliasSettings;
+    // Readiness (`GET /api/ready`): the shared database and data-directory check. Absent (as in
+    // the adapter's unit tests) there is nothing to check.
+    readiness?: () => Promise<GateOutcome>;
+    // Called when a request found the schema missing something, so the next check runs at once.
+    onSchemaError?: () => void;
+    // Worker liveness limits for the operator status; defaults when absent.
+    heartbeat?: HeartbeatConfig;
 }) {
     const { auth, db, origin, invitations } = deps;
     const artifacts = deps.artifacts ?? { dataDir: "", limits: {} };
@@ -229,6 +241,20 @@ export function createApi(deps: {
         unavailable: 503,
     } as const;
 
+    // A known database problem becomes a stable 503 (never the error's text); null otherwise.
+    function databaseProblemBody(set: ResponseSet, error: unknown) {
+        const problem = databaseProblem(error);
+        if (!problem) {
+            return null;
+        }
+        if (classifyDatabaseError(error) === "schema") {
+            deps.onSchemaError?.();
+        }
+        set.status = problem.status;
+        Object.assign(set.headers, problemHeaders(problem));
+        return problemBody(problem);
+    }
+
     async function execute(set: ResponseSet, run: () => Promise<unknown>, successStatus: number) {
         try {
             const result = await run();
@@ -247,6 +273,11 @@ export function createApi(deps: {
                     status: STATUS.unavailable,
                     title: "Deployments are unavailable while recovery is in progress.",
                 };
+            }
+            const unavailable = databaseProblemBody(set, error);
+            if (unavailable) {
+                console.error("Database problem", error instanceof Error ? error.message : error);
+                return unavailable;
             }
             console.error("Unexpected API failure", error);
             set.status = 500;
@@ -377,6 +408,19 @@ export function createApi(deps: {
 
     return (
         new Elysia({ prefix: "/api" })
+            // Database problems outside `execute` (key and session lookups, sign-in throttling,
+            // Better Auth): a stable 503. Anything else keeps Elysia's own response.
+            .onError(({ error, set }) => {
+                const unavailable = databaseProblemBody(set as ResponseSet, error);
+                if (!unavailable) {
+                    return;
+                }
+                console.error("Database problem", error instanceof Error ? error.message : error);
+                return Response.json(unavailable, {
+                    status: 503,
+                    headers: set.headers as Record<string, string>,
+                });
+            })
             // Cookie-authenticated mutations must come from the controller's own
             // origin: SameSite alone does not stop a sibling host of the same site.
             .onRequest(async ({ request }) => {
@@ -429,6 +473,16 @@ export function createApi(deps: {
                 }
             })
             .get("/health", { detail: { hide: true } }, getControllerInfo)
+            .get("/ready", { detail: docs.ready }, async ({ set }) => {
+                const outcome = (await deps.readiness?.()) ?? { kind: "ok" as const };
+                if (outcome.kind === "ok") {
+                    return { status: "ready" as const };
+                }
+                const problem = problemOfFailure(outcome, true)!;
+                set.status = problem.status;
+                Object.assign(set.headers, problemHeaders(problem));
+                return problemBody(problem);
+            })
             .all("/auth/*", { detail: { hide: true } }, ({ request }) => auth.handler(request))
             .get("/v1/me", { detail: docs.me }, async ({ request, set }) => {
                 const caller = await callerOf(request);
@@ -1126,7 +1180,12 @@ export function createApi(deps: {
                     ),
             )
             .get("/v1/status", { detail: docs.getStatus }, ({ request, set }) =>
-                respond(request, set, null, (p) => getStatus(db, p)),
+                respond(request, set, null, (p) =>
+                    getStatus(db, p, {
+                        deploymentsEnabled: deployments.settings.enabled,
+                        thresholds: deps.heartbeat ?? DEFAULT_HEARTBEAT,
+                    }),
+                ),
             )
 
             .use(openApiPlugin(withDocs))
