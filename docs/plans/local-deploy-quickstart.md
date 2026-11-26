@@ -178,7 +178,7 @@ again.
       anything): skip steps 2 to 5 and **resume at step 6**, using `inventory.json` for the image tags and
       apps still to remove (it was written before the first destroy, see step 3).
     - **The Dokku container exists but is not running:** fail by name, delete nothing, keep `.local-deploy/`;
-      the message says to run `docker compose -p <project> start dokku postgres` and `down` again.
+      the message says to run `docker compose -p <project> --env-file <repo>/.local-deploy/compose.env -f <repo>/docker-compose.yaml -f <repo>/.local-deploy/override.json start dokku postgres` and `down` again.
     - Otherwise continue. If `state.json` is missing or corrupt: when the project has no labeled resources
       (no container, network or volume), the directory holds only the four fixed children plus ignored files,
       and `state.json` is absent, treat the directory as clean and proceed (so a `down` interrupted in step 9
@@ -206,7 +206,7 @@ again.
     reported by name, and never destroyed. If the database cannot be read, the other three sources still
     run. **The validated union is written to `inventory.json` before the first destroy**, so a rerun after
     step 5 still knows which apps and image tags to remove. The manual fallback printed if `down` cannot
-    proceed is still valid: `docker compose -p <project> exec dokku dokku apps:list`, then `dokku
+    proceed is still valid: `docker compose -p <project> --env-file <repo>/.local-deploy/compose.env -f <repo>/docker-compose.yaml -f <repo>/.local-deploy/override.json exec dokku dokku apps:list`, then `dokku
    apps:destroy <name> --force` and `docker image rm launchpad/site:<id>` for each `lp-` app the user
     recognizes.
 
@@ -287,7 +287,7 @@ Complexities and edge cases, each one message and a nonzero exit:
   published ports and a port published by its own container is not "busy". A port busy for another reason
   stops `up`; to move, run `down` and `up --port-base` again.
 - **Dokku slow to start:** waits up to 11 minutes (the runner's budget) with progress lines; on timeout
-  prints `docker compose logs --tail 50 dokku` and keeps everything for inspection.
+  prints `docker compose -p <project> --env-file <repo>/.local-deploy/compose.env -f <repo>/docker-compose.yaml -f <repo>/.local-deploy/override.json logs --tail 50 dokku` and keeps everything for inspection.
 - **Compose/Buildx version problems:** no checks are loosened; the message points at the observed
   combinations in [the recovery record](production-fresh-host-recovery.md#repeat-the-rehearsal).
 - **Deploy fails:** the guide's loop prints the failing status and the events and points at `docker compose
@@ -318,7 +318,7 @@ Complexities and edge cases, each one message and a nonzero exit:
 - **Docker stopped or Dokku stopped during `down`:** fails by name, deletes nothing, keeps `.local-deploy/`
   (Teardown step 1).
 - **Stopped machine / reboot:** `up` again starts what exists (the services restart `unless-stopped`). To
-  stop without deleting use `docker compose -p <project> stop` (the guide prints it); `down` always
+  stop without deleting use `docker compose -p <project> --env-file <repo>/.local-deploy/compose.env -f <repo>/docker-compose.yaml -f <repo>/.local-deploy/override.json stop` (the guide prints it); `down` always
   deletes.
 - **Controller not ready right after migrate:** it caches a failed schema check for a few seconds; the seed
   already waits (#97). The tool migrates before starting the controller.
@@ -609,3 +609,20 @@ author reviewed the script against real Docker behaviour (and the real run then 
   layers or build cache; those were reported separately (+2 untagged images, cache 627 MB to 1.82 GB).
 - A cold first run (empty Docker cache) was not measured, because that needs pruning Docker state the build
   task must not touch; the guide gives the warm time and labels the cold figure as a guess.
+
+### Review fixes after merge (CodeRabbit, PR #98)
+
+- Every printed Compose command is built by one helper (`composeHint`) from the tool's own arguments, so it
+  carries `-p`, `--env-file` and both `-f` files; the seed's hint uses the same string. The guide and this plan's
+  fallbacks name the generated env file, and the Dokku fallback (`apps:list`, `apps:destroy`) runs through
+  `compose exec dokku dokku ...`, never on the host.
+- `up` refuses when git tracks any file under `.local-deploy/` (`git ls-files`), as well as when it is not ignored.
+- `inventory.json` must carry this checkout's project, or `down` aborts before any removal.
+- `status` prints `unknown` when a state could not be read, never `running` or `exited` by default.
+- `down` checks for an interrupt before every destructive operation and keeps the state and inventory.
+- A `down` with no project containers left still removes site containers by app label (no Dokku needed) before
+  removing the apps network; a foreign-labelled apps network is not counted as a leftover.
+- `down` never leaves the current CLI profile pointing at the deleted one: none if `up` set it, otherwise the first
+  remaining profile.
+- The seed refuses to reuse a saved key lacking the scopes of this run; `--new-key` (or `--force`) replaces it, and
+  `up --new-key` passes it through.

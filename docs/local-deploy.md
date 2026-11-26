@@ -60,7 +60,8 @@ Builds and deployed sites run in the host engine, outside the memory limits.
     CLI profile `local-deploy`. It prints the ports and the next step, never a secret. It is safe to
     run again: it keeps what exists. If a default port (32180 to 32443) is busy it stops and names
     it; choose another range with `--port-base <n>`. `omni -i run local:deploy -a options=--help`
-    lists everything.
+    lists everything. If a saved `local-deploy` key lacks the scopes deploying needs, `up` refuses and
+    names them; run `up --new-key` to issue a replacement.
 
 3. Build the CLI once and deploy the example. The profile is on loopback `http`, so no certificate is
    needed:
@@ -92,7 +93,7 @@ Builds and deployed sites run in the host engine, outside the memory limits.
 
     A deployment that ends `reconciliation-needed` is explained in
     [deployments](deployments.md#when-the-worker-cannot-confirm-something); `down` removes it anyway. If
-    it fails, `docker compose -p <project> logs --tail 50 worker` shows why.
+    it fails, `docker compose -p <project> --env-file .local-deploy/compose.env -f docker-compose.yaml -f .local-deploy/override.json logs --tail 50 worker` shows why.
 
 5. Look at the site. The deployment's `hostname` is in its `get` output
    (`hello-<10 characters>-preview.apps.localhost`), and Dokku's HTTP port is on loopback (the HTTP port `up` printed;
@@ -113,13 +114,13 @@ Builds and deployed sites run in the host engine, outside the memory limits.
 
     ```sh
     omni -i run local:deploy -a options=status
-    docker compose -p <project> stop
+    docker compose -p <project> --env-file .local-deploy/compose.env -f docker-compose.yaml -f .local-deploy/override.json stop
     ```
 
     `status` prints each service's health, the ports and the profile, and refreshes the recorded
     list of deployments. `stop` keeps everything; `up` starts it again. `<project>` is the name `up`
     printed (`launchpad-local-` and eight hex characters taken from the checkout's path, so two
-    checkouts never collide).
+    checkouts never collide); run the command from the repository root, because the paths are relative to it.
 
 7. Remove everything:
 
@@ -133,8 +134,9 @@ Builds and deployed sites run in the host engine, outside the memory limits.
 then it becomes current and `up` records that in `.local-deploy/state.json`. The guide selects the profile
 per shell with `LAUNCHPAD_PROFILE` (or use `--profile local-deploy` on a command). `down` deletes the
 `local-deploy` profile, and resets the current profile only if `up` had set it and it still points at
-`local-deploy`, in which case none is current afterwards (none was before `up`); otherwise it leaves your
-current profile as it is.
+`local-deploy`, in which case none is current afterwards (none was before `up`). If you made `local-deploy`
+current yourself, `down` makes the first remaining profile current instead of leaving a deleted name; if
+another profile is current it is left alone.
 
 ## What `down` removes, and what stays
 
@@ -152,26 +154,25 @@ password files in your CLI configuration directory (`local-deploy-operator.passw
 `local-deploy-owner.password`) also stay; they hold the passwords of accounts that no longer exist.
 
 If it cannot proceed it says why and keeps `.local-deploy/`. If the Docker daemon is stopped, start it. If
-Dokku is stopped, run `docker compose -p <project> start dokku postgres`. If the helper cannot run it
+Dokku is stopped, run `docker compose -p <project> --env-file .local-deploy/compose.env -f docker-compose.yaml -f .local-deploy/override.json start dokku postgres`. If the helper cannot run it
 prints the exact `sudo rm -rf` command for each root-owned directory. If an image tag could not be worked out
 (the database was unreachable and no `status` had recorded the deployment), it says so and names
-`docker image ls launchpad/site`. The by-hand fallback is `docker compose -p <project> exec dokku dokku
-apps:list`, then `dokku apps:destroy <name> --force` and `docker image rm launchpad/site:<id>` for each
+`docker image ls launchpad/site`. The by-hand fallback is `docker compose -p <project> --env-file .local-deploy/compose.env -f docker-compose.yaml -f .local-deploy/override.json exec dokku dokku apps:list`, then the same command with `exec dokku dokku apps:destroy <name> --force`, and `docker image rm launchpad/site:<id>` for each
 `lp-` app you recognise.
 
 ## If it fails
 
 Each failure prints one message and exits nonzero; nothing is rolled back and `down` removes whatever exists.
 
-| Message starts with                | What to do                                                                                     |
-| ---------------------------------- | ---------------------------------------------------------------------------------------------- |
-| `The Docker daemon did not answer` | Start Docker, or check that you may use it.                                                    |
-| `DOCKER_HOST is set`               | Unset it: only the local engine at `/var/run/docker.sock` works.                               |
-| `... is in use on 127.0.0.1`       | Free the port, or run `up` with `--port-base <n>`.                                             |
-| `... is not ignored by git`        | `.local-deploy/` must be in `.gitignore`.                                                      |
-| `Timed out waiting for dokku`      | Look at `docker compose -p <project> logs --tail 50 dokku`; Dokku's first start takes minutes. |
-| `... has no matching state.json`   | Another checkout or an earlier run owns those resources; run `down` from there.                |
-| `Compose ... Buildx`               | See the [recovery record](plans/production-fresh-host-recovery.md#repeat-the-rehearsal).       |
+| Message starts with                | What to do                                                                                                                                                                                |
+| ---------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `The Docker daemon did not answer` | Start Docker, or check that you may use it.                                                                                                                                               |
+| `DOCKER_HOST is set`               | Unset it: only the local engine at `/var/run/docker.sock` works.                                                                                                                          |
+| `... is in use on 127.0.0.1`       | Free the port, or run `up` with `--port-base <n>`.                                                                                                                                        |
+| `... is not ignored by git`        | `.local-deploy/` must be in `.gitignore`.                                                                                                                                                 |
+| `Timed out waiting for dokku`      | Look at `docker compose -p <project> --env-file .local-deploy/compose.env -f docker-compose.yaml -f .local-deploy/override.json logs --tail 50 dokku`; Dokku's first start takes minutes. |
+| `... has no matching state.json`   | Another checkout or an earlier run owns those resources; run `down` from there.                                                                                                           |
+| `Compose ... Buildx`               | See the [recovery record](plans/production-fresh-host-recovery.md#repeat-the-rehearsal).                                                                                                  |
 
 ## Limits
 

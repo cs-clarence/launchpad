@@ -350,12 +350,16 @@ export function siteFromRow(id: unknown, app: unknown): Site {
     return { id, app, tag: imageTagFor(id) };
 }
 
-export function parseInventory(text: string): Site[] {
+export function parseInventory(text: string, project?: string): Site[] {
     let parsed: unknown;
     try {
         parsed = JSON.parse(text);
     } catch {
         throw new InventoryError("inventory.json is not valid JSON.");
+    }
+    const owner = (parsed as { project?: unknown } | null)?.project;
+    if (project !== undefined && owner !== project) {
+        throw new InventoryError("inventory.json belongs to another project.");
     }
     const rows = (parsed as { sites?: unknown } | null)?.sites;
     if (!Array.isArray(rows)) throw new InventoryError("inventory.json has an unexpected shape.");
@@ -636,6 +640,14 @@ export function composePrefix(layout: Layout, project: string): string[] {
     ];
 }
 
+// The command a person can paste: the same arguments the tool uses (generated env file and
+// override), without the engine flag. Every hint is built here so none can drift from them.
+export function composeHint(layout: Layout, project: string, args: string): string {
+    const prefix = composePrefix(layout, project);
+    const shown = [...prefix.slice(0, 1), ...prefix.slice(3)];
+    return `${shown.join(" ")} ${args}`.trimEnd();
+}
+
 const compose = (c: Ctx, args: string[], input?: string) =>
     c.d.run([...composePrefix(c.layout, c.project), ...args], input);
 
@@ -797,10 +809,12 @@ async function siteContainers(c: Ctx, site: Site): Promise<string[]> {
     return mine;
 }
 
-function aborted(d: Deps) {
+function aborted(d: Deps, tearingDown = false) {
     if (d.signal?.aborted) {
         throw new DeployError(
-            "Interrupted. Nothing was rolled back: run `up` again to continue, or `down` to remove it.",
+            tearingDown
+                ? "Interrupted. Nothing further was removed and .local-deploy/ is kept; run down again to continue."
+                : "Interrupted. Nothing was rolled back: run `up` again to continue, or `down` to remove it.",
         );
     }
 }
@@ -825,23 +839,30 @@ async function waitFor(
     }
 }
 
+// "unknown" means the state could not be read; it is never reported as running or exited.
 async function serviceHealth(c: Ctx, service: string): Promise<string> {
-    const found = await labeledContainers(c, [
-        "--filter",
-        `label=${LABEL_SERVICE}=${service}`,
-        "--filter",
-        `label=${LABEL_ONEOFF}=False`,
-    ]);
+    let found: Labeled[];
+    try {
+        found = await labeledContainers(c, [
+            "--filter",
+            `label=${LABEL_SERVICE}=${service}`,
+            "--filter",
+            `label=${LABEL_ONEOFF}=False`,
+        ]);
+    } catch {
+        return "unknown";
+    }
     if (found.length === 0) return "absent";
     if (found.length > 1) throw new DeployError(`More than one ${service} container.`);
     const out = await docker(c, ["inspect", "-f", STATE_FORMAT, found[0]!.id]);
     const state = outOf(out).trim();
+    if (out.code !== 0 || state === "") return "unknown";
     if (/^(exited|dead|restarting)\b/.test(state)) {
         throw new DeployError(
-            `${service} exited or keeps restarting. See: docker compose -p ${c.project} logs --tail 50 ${service}`,
+            `${service} exited or keeps restarting. See: ${composeHint(c.layout, c.project, `logs --tail 50 ${service}`)}`,
         );
     }
-    return state;
+    return state.trim();
 }
 
 async function waitHealthy(c: Ctx, service: string, budgetMs: number) {
@@ -852,7 +873,7 @@ async function waitHealthy(c: Ctx, service: string, budgetMs: number) {
     } catch (error) {
         if (error instanceof DeployError && /Timed out/.test(error.message)) {
             throw new DeployError(
-                `${error.message} Everything is kept; look at: docker compose -p ${c.project} logs --tail 50 ${service}`,
+                `${error.message} Everything is kept; look at: ${composeHint(c.layout, c.project, `logs --tail 50 ${service}`)}`,
             );
         }
         throw error;
@@ -940,6 +961,7 @@ async function checkDocker(d: Deps): Promise<void> {
 export interface UpOptions {
     project?: string;
     portBase?: number;
+    newKey?: boolean;
 }
 
 const PORT_KEYS = {
@@ -1220,10 +1242,12 @@ export function adminMode(layout: Layout, project: string): AdminMode {
         prefix: composePrefix(layout, project),
         project,
         stateDir: layout.dir,
+        composeCommand: composeHint(layout, project, ""),
     };
 }
 
 export interface Summary {
+    stopHint: string;
     project: string;
     ports: Ports;
     profile: string;
@@ -1248,6 +1272,15 @@ export async function up(d: Deps, options: UpOptions = {}): Promise<Summary> {
     if (ignored.code !== 0) {
         throw new DeployError(
             `${STATE_DIR}/ is not ignored by git; add it to .gitignore before secrets are written there.`,
+        );
+    }
+
+    // check-ignore does not see tracked files: a tracked path would be committed with its secrets.
+    const tracked = await d.run(["git", "-C", layout.repo, "ls-files", "--", STATE_DIR]);
+    if (tracked.code !== 0 || outOf(tracked).trim() !== "") {
+        throw new DeployError(
+            `Files under ${STATE_DIR}/ are tracked by git (or git could not say); secrets would be ` +
+                `committed. Run git rm -r --cached ${STATE_DIR} first. Nothing was written.`,
         );
     }
 
@@ -1325,7 +1358,7 @@ export async function up(d: Deps, options: UpOptions = {}): Promise<Summary> {
             "default",
         ]),
         "Building the images",
-        `See: docker compose -p ${project} build`,
+        `See: ${composeHint(layout, project, "--profile admin build")}`,
     );
     d.log("Starting PostgreSQL and Dokku (Dokku's first start takes minutes)...");
     must(
@@ -1370,6 +1403,7 @@ export async function up(d: Deps, options: UpOptions = {}): Promise<Summary> {
         path.join(config, "local-deploy-operator.password"),
         "--owner-password-file",
         path.join(config, "local-deploy-owner.password"),
+        ...(options.newKey ? ["--new-key"] : []),
     ]);
     const profileBefore = await d.currentProfile();
     // Recorded before the seed's login can make the profile current, so a kill in between
@@ -1394,6 +1428,7 @@ export async function up(d: Deps, options: UpOptions = {}): Promise<Summary> {
         await writeState(c, false);
     }
     const result: Summary = {
+        stopHint: composeHint(layout, project, "stop"),
         project,
         ports,
         profile: summary.profile,
@@ -1414,9 +1449,7 @@ function printSummary(d: Deps, s: Summary): void {
     d.log(`  router (data)  127.0.0.1:${s.ports.router}`);
     d.log(`CLI profile: ${s.profile}; organization ${s.organization}, project ${s.projectSlug}.`);
     d.log("Next: deploy examples/hello with the launchpad CLI (docs/local-deploy.md).");
-    d.log(
-        `To stop without deleting: docker compose -p ${s.project} stop. To remove everything: down.`,
-    );
+    d.log(`To stop without deleting: ${s.stopHint}. To remove everything: down.`);
 }
 
 // ---- status ------------------------------------------------------------------------------
@@ -1454,7 +1487,7 @@ const DB_QUERY = [
 
 async function readInventoryFile(c: Ctx): Promise<Site[]> {
     const text = await c.d.fs.readFile(c.layout.file("inventory.json"));
-    return text === null ? [] : parseInventory(text);
+    return text === null ? [] : parseInventory(text, c.project);
 }
 
 async function writeInventory(c: Ctx, sites: Site[]): Promise<void> {
@@ -1477,9 +1510,12 @@ export async function status(d: Deps, options: UpOptions = {}): Promise<void> {
         try {
             health = await serviceHealth(c, service);
         } catch (error) {
-            health = error instanceof DeployError ? "exited" : "unknown";
+            health =
+                error instanceof DeployError && /exited or keeps restarting/.test(error.message)
+                    ? "exited"
+                    : "unknown";
         }
-        d.log(`  ${service.padEnd(11)} ${health || "running"}`);
+        d.log(`  ${service.padEnd(11)} ${health}`);
     }
     d.log(
         `Ports (127.0.0.1): controller ${ports.controller}, Dokku HTTP ${ports.http}, SSH ${ports.ssh}`,
@@ -1721,8 +1757,9 @@ export async function down(d: Deps, options: UpOptions = {}): Promise<void> {
         if (hasResources) {
             throw new DeployError(
                 `Project ${project} has resources but ${layout.dir} does not exist, so down cannot ` +
-                    `remove them. Run it from the checkout that created them, or: docker compose -p ` +
-                    `${project} down --volumes --remove-orphans.`,
+                    `remove them. Run it from the checkout that created them, or remove them by exact name ` +
+                    `(docker ps -a --filter label=${LABEL_PROJECT}=${project}, then docker rm -f, ` +
+                    "docker volume rm and docker network rm on what it lists).",
             );
         }
         d.log(`Nothing to remove for ${project}.`);
@@ -1748,7 +1785,7 @@ export async function down(d: Deps, options: UpOptions = {}): Promise<void> {
     if (dokku && dokku.state !== "running") {
         throw new DeployError(
             `The Dokku container exists but is not running. Nothing was removed; run: ` +
-                `docker compose -p ${project} start dokku postgres, then down again.`,
+                `${composeHint(layout, project, "start dokku postgres")}, then down again.`,
         );
     }
 
@@ -1764,7 +1801,10 @@ export async function down(d: Deps, options: UpOptions = {}): Promise<void> {
             d.log("The database could not be read; using the other sources.");
         await writeInventory(c, sites);
         d.log(`Removing ${sites.length} deployed site${sites.length === 1 ? "" : "s"}...`);
-        for (const site of sites) await destroySite(c, dokku?.id ?? null, site);
+        for (const site of sites) {
+            aborted(d, true);
+            await destroySite(c, dokku?.id ?? null, site);
+        }
         for (const site of sites.filter((x) => x.tag === null)) {
             d.log(
                 `The image launchpad/site:<id> of ${site.app} could not be derived (no deployment id is known); ` +
@@ -1791,6 +1831,15 @@ export async function down(d: Deps, options: UpOptions = {}): Promise<void> {
         }
     }
 
+    if (resources.containers.length === 0) {
+        // The project's containers are gone, but a site container may still sit on the apps
+        // network: the same ownership-checked cleanup, without a Dokku to ask.
+        for (const site of sites) {
+            aborted(d, true);
+            await destroySite(c, null, site);
+        }
+    }
+    aborted(d, true);
     if (hasResources) {
         for (const container of await confirmed(c, await labeledContainers(c))) {
             must(await docker(c, ["rm", "-f", container.id]), "Removing a container");
@@ -1807,8 +1856,10 @@ export async function down(d: Deps, options: UpOptions = {}): Promise<void> {
         must(await docker(c, ["network", "rm", appsNetwork(project)]), "Removing the apps network");
     }
 
+    aborted(d, true);
     d.log("Removing the root-owned state...");
     await removeStateChildren(c);
+    aborted(d, true);
 
     for (const tag of Object.values(projectImages(project))) {
         if (await imageExists(c, tag))
@@ -1819,6 +1870,7 @@ export async function down(d: Deps, options: UpOptions = {}): Promise<void> {
         await removeImages(c, await siteImages(c, site));
     }
 
+    aborted(d, true);
     const envText = await d.fs.readFile(layout.file("compose.env"));
     if (envText !== null) {
         try {
@@ -1839,7 +1891,7 @@ export async function down(d: Deps, options: UpOptions = {}): Promise<void> {
         ...after.networks.map((x) => `network ${x}`),
         ...after.volumes.map((x) => `volume ${x}`),
     );
-    if ((await networkOwner(c, appsNetwork(project))) !== "absent")
+    if ((await networkOwner(c, appsNetwork(project))) === "ours")
         remaining.push(`network ${appsNetwork(project)}`);
     remaining.push(...(await leftovers(c, sites)));
     for (const tag of Object.values(projectImages(project))) {
@@ -1882,7 +1934,7 @@ export async function down(d: Deps, options: UpOptions = {}): Promise<void> {
 
 export const COMMANDS = ["up", "status", "down"] as const;
 export const VALUE_FLAGS = ["--project", "--port-base"] as const;
-export const SWITCH_FLAGS = ["--help"] as const;
+export const SWITCH_FLAGS = ["--new-key", "--help"] as const;
 
 export const HELP = `Deploy examples/hello on this machine and remove it again (see docs/local-deploy.md).
 
@@ -1895,6 +1947,8 @@ Usage: omni -i run local:deploy -a "options=<command> [flags]"
   --project <name>    project name (default launchpad-local-<8 hex of this checkout's path>;
                       must match ${PROJECT_PATTERN.source})
   --port-base <n>     first of the five host ports (default ${DEFAULT_PORT_BASE}; offsets 0, 1, 2, 42, 263; up only)
+  --new-key           up only: issue a replacement key for the local-deploy profile (needed if its
+                      saved key lacks the scopes deploying needs)
   --help              show this text
 
 This mounts the host Docker socket into the worker and Dokku, which is root-equivalent on this
@@ -1902,6 +1956,7 @@ machine. Secrets stay in ${STATE_DIR}/ (mode 700, git-ignored) and are never pri
 `;
 
 export interface Parsed {
+    newKey?: boolean;
     command: (typeof COMMANDS)[number] | null;
     project?: string;
     portBase?: number;
@@ -1914,6 +1969,8 @@ export function parseArgs(argv: string[]): Parsed {
         const arg = argv[i]!;
         if ((COMMANDS as readonly string[]).includes(arg) && parsed.command === null) {
             parsed.command = arg as Parsed["command"];
+        } else if (arg === "--new-key") {
+            parsed.newKey = true;
         } else if (arg === "--help") {
             parsed.help = true;
         } else if ((VALUE_FLAGS as readonly string[]).includes(arg)) {
@@ -1933,8 +1990,8 @@ export function parseArgs(argv: string[]): Parsed {
     if (!parsed.help && parsed.command === null) {
         throw new DeployError("Say what to do: up, status or down (see --help).");
     }
-    if (parsed.portBase !== undefined && parsed.command !== "up") {
-        throw new DeployError("--port-base only applies to up.");
+    if ((parsed.portBase !== undefined || parsed.newKey) && parsed.command !== "up") {
+        throw new DeployError("--port-base and --new-key only apply to up.");
     }
     return parsed;
 }
@@ -1983,9 +2040,13 @@ export function realDeps(
             if (config.profiles[PROFILE]?.controller !== controller) return;
             await ctx.store.update((current) => {
                 delete current.profiles[PROFILE];
-                if (resetCurrent && current.currentProfile === PROFILE) {
-                    // `up` made it current because none existed, so none is current again.
-                    current.currentProfile = null;
+                if (current.currentProfile === PROFILE) {
+                    // `up` made it current because none existed: none is current again. If the
+                    // user chose it themselves, the first remaining profile takes over instead of
+                    // a dangling name.
+                    current.currentProfile = resetCurrent
+                        ? null
+                        : (Object.keys(current.profiles)[0] ?? null);
                 }
             });
         },

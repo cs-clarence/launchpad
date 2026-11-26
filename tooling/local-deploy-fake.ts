@@ -54,6 +54,7 @@ export class FakeHost {
     clock = 0;
     uid = 1000;
     ignored = true;
+    trackedFiles: string[] = [];
     dockerUp = true;
     dockerEnv: Record<string, string | undefined> = {};
     busyPorts = new Set<number>();
@@ -291,6 +292,7 @@ export class FakeHost {
         const [cmd, ...rest] = args;
         switch (cmd) {
             case "git":
+                if (rest.includes("ls-files")) return ok(this.trackedFiles.join("\n"));
                 return this.ignored ? ok() : fail("", 1);
             case "stat":
                 return ok("988\n");
@@ -602,7 +604,12 @@ export class FakeHost {
                         ? wanted
                         : ["postgres", "dokku", "controller", "worker", "router"];
                 for (const name of services) {
-                    if (svc(name)) continue;
+                    const existing = svc(name);
+                    if (existing) {
+                        // `up -d` starts a stopped container again and leaves a running one alone.
+                        if (existing.state !== "running") existing.state = "running";
+                        continue;
+                    }
                     const c = this.add(`${project}-${name}-1`, project, name, {
                         health: this.unhealthy.has(name) ? "starting" : "healthy",
                         ports:
@@ -637,6 +644,15 @@ export class FakeHost {
             case "down": {
                 if (!sub.includes("--volumes") || !sub.includes("--remove-orphans"))
                     return fail("flags", 125);
+                // A real engine refuses to remove a network that still has an endpoint.
+                for (const n of this.networks.values()) {
+                    if (
+                        n.project === project &&
+                        n.members.some((m) => this.containers.some((c) => c.name === m))
+                    ) {
+                        return fail("network has active endpoints");
+                    }
+                }
                 this.containers = this.containers.filter(
                     (c) => c.labels[LABEL_PROJECT] !== project,
                 );
