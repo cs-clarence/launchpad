@@ -399,8 +399,14 @@ experiment drivers alone.
 
 ## Status
 
-PR 1 (steps 1 to 8) built locally; PR 2 (router, steps 9 to 12) not started. Deviations: none from the
-decisions beyond the behavior changes listed above. Notes: `test-db.ts`, `versions.ts` and `release-dry-run.ts` use commander directly (no option
-table: they have no table-worthy options, so `tooling/cli.ts` serves `local-seed` and `local-deploy`);
-the unknown-option wording of `release-dry-run.ts` is `Unknown option <x>. Usage: ...`. Independent
-review (High tier) is still pending.
+PR 1 (steps 1 to 8) built locally and merged; PR 2 (router, steps 9 to 12) built locally on
+`refactor/router-commander`: step 9 (`test(router)`, `src/__tests__/cli-args.spec.ts`, green on the old
+parser first), step 10 (`refactor(router)`, parser swap), step 11 (`feat(router)`, `<subcommand> --help`),
+step 12 (docs). Deviations: the top-level dispatch (no argument, `-h`, `--help`, unknown command with
+its 40-character cut) stays a small hand check before commander runs, because commander would report
+`--bogus` as an unknown option and print help to stderr; commander dispatches the four subcommands
+and maps every `CommanderError` to the existing text. `--help` per subcommand prints the verbatim
+`USAGE`, not a generated per-command help. The environment is read inside each action, after parsing,
+so a usage error on `init`/`rotate` now wins over a bad environment (listed above); `serve x` and
+`healthcheck x` with a bad environment still report the environment (pinned). Not run: the image
+build and `test:images` (Docker, left to CI). Independent review (High tier) is still pending.

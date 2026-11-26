@@ -14,7 +14,11 @@ sockets, owns the process lock and reads secrets safely.
 launchpad-router serve                                     # run both listeners
 launchpad-router init   (--token-file <path> | --token-stdin)   # create new state, print its epoch
 launchpad-router rotate (--token-file <path> | --token-stdin) (--database-url-file <path> | --standalone)
+launchpad-router healthcheck                               # exit 0 when the control listener is healthy
 ```
+
+`launchpad-router --help` and `launchpad-router <command> --help` print the usage and exit 0. Arguments
+are parsed with commander; the usage text and error messages are fixed.
 
 Stop the router before rotation. For a router used by Launchpad, pass `--database-url-file` (an owner-only 0600 file
 holding the primary promotion database URL; a role with only CONNECT is enough, since
