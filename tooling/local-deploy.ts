@@ -54,6 +54,7 @@ export const DEFAULT_PORT_BASE = 32180;
 // default base reproduces docker-compose.yaml's defaults.
 export const PORT_OFFSETS = { controller: 0, http: 1, router: 2, ssh: 42, https: 263 } as const;
 export const MAX_OFFSET = 263;
+export const SERVICE_UID = 10001;
 export const PROJECT_PATTERN = /^launchpad-local-[a-z0-9-]{1,40}$/;
 export const BASE_URL = "https://control.localhost:8443";
 export const APPS_DOMAIN = "apps.localhost";
@@ -623,8 +624,6 @@ export function composePrefix(layout: Layout, project: string): string[] {
         COMPOSE_FILE,
         "-f",
         layout.file("override.json"),
-        "--profile",
-        "admin",
     ];
 }
 
@@ -1198,10 +1197,14 @@ export async function up(d: Deps, options: UpOptions = {}): Promise<Summary> {
 
     d.log("Building the five images (the slow part on a first run)...");
     must(
-        await d.run(
-            [...composePrefix(layout, project), "build", "--builder", "default"],
-            undefined,
-        ),
+        await d.run([
+            ...composePrefix(layout, project),
+            "--profile",
+            "admin",
+            "build",
+            "--builder",
+            "default",
+        ]),
         "Building the images",
         `See: docker compose -p ${project} build`,
     );
@@ -1217,6 +1220,9 @@ export async function up(d: Deps, options: UpOptions = {}): Promise<Summary> {
     if (!epoch || epoch.size === 0) {
         d.log("Pinning Dokku's host key, registering the worker's key, initialising the router...");
         await bootstrapDokkuAndRouter(c);
+    } else if (epoch.uid !== SERVICE_UID) {
+        // An earlier run stopped between writing the epoch and fixing ownership.
+        await ownedByServiceUser(c);
     }
     const mode = adminMode(layout, project);
     classifyAdmin("migrate", await d.run(adminArgs("migrate", [], mode)), mode);

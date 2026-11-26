@@ -263,8 +263,9 @@ export class FakeHost {
         if (args[0] !== "docker") return args.join(" ");
         const rest = args.slice(args[1] === "--host" ? 3 : 1);
         if (rest[0] === "compose") {
-            const sub = rest.slice(rest.indexOf("admin") + 1);
-            return `compose ${sub.join(" ")}`;
+            let start = rest.indexOf("-f", rest.indexOf("-f") + 1) + 2;
+            if (rest[start] === "--profile") start += 2;
+            return `compose ${rest.slice(start).join(" ")}`;
         }
         return rest.join(" ");
     }
@@ -571,7 +572,9 @@ export class FakeHost {
         const project = all[all.indexOf("-p") + 1]!;
         const envFile = all[all.indexOf("--env-file") + 1]!;
         if (!all.includes(COMPOSE_FILE)) return fail("wrong compose file", 125);
-        const sub = all.slice(all.indexOf("admin") + 1);
+        let start = all.indexOf("-f", all.indexOf("-f") + 1) + 2;
+        if (all[start] === "--profile") start += 2;
+        const sub = all.slice(start);
         const overrideFile = all[all.indexOf("-f", all.indexOf("-f") + 1) + 1]!;
         if (!this.nodes.get(envFile) || !this.nodes.get(overrideFile))
             return fail("env file missing");

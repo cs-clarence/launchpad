@@ -180,7 +180,29 @@ describe("up on a fresh machine", () => {
     });
 });
 
+describe("the admin profile", () => {
+    it("is enabled only for the build, so up never starts the admin service", async () => {
+        await up(deps());
+        for (const args of host.calls.filter((a) => a[3] === "compose")) {
+            const profiled = args.includes("--profile");
+            expect(profiled, args.join(" ")).toBe(args.includes("build"));
+        }
+    });
+});
+
 describe("re-running up", () => {
+    it("fixes ownership when an earlier run stopped before it", async () => {
+        host.killAt = { match: (a) => a.includes("chown"), remaining: 0 };
+        await expect(up(deps())).rejects.toThrow("killed");
+        expect((host.nodes.get(`${host.dir}/credentials/epoch`) as { uid: number }).uid).toBe(1000);
+        host.calls.length = 0;
+        await up(deps());
+        expect((host.nodes.get(`${host.dir}/credentials/epoch`) as { uid: number }).uid).toBe(
+            10001,
+        );
+        expect(host.calls.some((a) => a.includes("init"))).toBe(false);
+    });
+
     it("keeps files and bootstrap, and re-checks the stack", async () => {
         await up(deps());
         const env = host.text(`${host.dir}/compose.env`);
