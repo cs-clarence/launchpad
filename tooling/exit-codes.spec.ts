@@ -87,4 +87,14 @@ describe("release-dry-run.ts", () => {
         expect(result.err).toContain("its name must contain release-dry-run");
         expect(result.out).toBe("");
     });
+
+    it("rejects an unknown option before doing any work and exits 1", () => {
+        const result = run("release-dry-run.ts", "--bogus");
+        expect(result.code).toBe(1);
+        expect(result.err).toContain("Unknown option --bogus.");
+        expect(result.out).toBe("");
+        const mixed = run("release-dry-run.ts", "out-release-dry-run", "--skip-images", "--bogus");
+        expect(mixed.code).toBe(1);
+        expect(mixed.err).toContain("Unknown option --bogus.");
+    });
 });

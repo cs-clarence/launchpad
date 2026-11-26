@@ -18,7 +18,7 @@ import {
     writeFileSync,
 } from "node:fs";
 import path from "node:path";
-import { Command } from "commander";
+import { Command, CommanderError } from "commander";
 import { build, checkListing, checkManifest, pack, stage, TARGETS } from "./package-clients";
 import { checkVersions, sharedWorkspaces } from "./versions";
 
@@ -93,9 +93,18 @@ async function main() {
         .argument("[outDir]")
         .option("--skip-images")
         .allowExcessArguments()
-        .allowUnknownOption()
-        .configureOutput({ writeOut: () => {}, writeErr: () => {}, outputError: () => {} })
-        .parse(process.argv.slice(2), { from: "user" });
+        .configureOutput({ writeOut: () => {}, writeErr: () => {}, outputError: () => {} });
+    try {
+        program.parse(process.argv.slice(2), { from: "user" });
+    } catch (error) {
+        if (!(error instanceof CommanderError)) throw error;
+        const token = /unknown option '([^']+)'/.exec(error.message)?.[1];
+        throw new Error(
+            token
+                ? `Unknown option ${token}. Usage: bun tooling/release-dry-run.ts [outDir] [--skip-images]`
+                : error.message.replace(/^error: /, ""),
+        );
+    }
     const skipImages = program.opts().skipImages === true;
     const out = path.resolve(program.args[0] ?? path.join(root, ".release-dry-run"));
     const problems = checkVersions(root);
