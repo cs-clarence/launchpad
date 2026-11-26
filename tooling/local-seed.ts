@@ -378,12 +378,17 @@ export interface Api {
     fetch: typeof fetch;
 }
 
-async function send(api: Api, url: string, init: RequestInit): Promise<Response> {
+async function send(
+    api: Api,
+    url: string,
+    init: RequestInit,
+    timeoutMs = 15_000,
+): Promise<Response> {
     try {
         return await api.fetch(url, {
             ...init,
             redirect: "manual",
-            signal: AbortSignal.timeout(15_000),
+            signal: AbortSignal.timeout(timeoutMs),
         });
     } catch {
         throw new SeedError(
@@ -395,8 +400,16 @@ async function send(api: Api, url: string, init: RequestInit): Promise<Response>
 
 // A controller whose database has no schema yet answers 503 `schema-mismatch`: it is up, and
 // the migration below is what fixes it. Anything else but 200 is not this controller.
-export async function checkHealth(api: Api, options: { pending?: boolean } = {}): Promise<void> {
-    const response = await send(api, `${api.controller}/api/health`, { method: "GET" });
+export async function checkHealth(
+    api: Api,
+    options: { pending?: boolean; timeoutMs?: number } = {},
+): Promise<void> {
+    const response = await send(
+        api,
+        `${api.controller}/api/health`,
+        { method: "GET" },
+        options.timeoutMs,
+    );
     const body = await response.text().catch(() => "");
     if (response.status === 200) return;
     if (options.pending && response.status === 503 && /"schema-mismatch"/.test(body)) return;
@@ -409,20 +422,23 @@ export async function checkHealth(api: Api, options: { pending?: boolean } = {})
 }
 
 // The controller remembers a failed schema check and tries again only after a few seconds, so
-// right after migrating it can still answer 503 `schema-mismatch`. Wait for it to notice.
+// right after migrating it can still answer 503 `schema-mismatch`. Wait for it to notice, for at
+// most `budgetMs` in all: each request is bounded by what is left of the budget.
 export async function waitUntilReady(
     api: Api,
-    sleep: (ms: number) => Promise<void>,
-    attempts = 15,
+    clock: { sleep: (ms: number) => Promise<void>; now: () => number },
+    budgetMs = 15_000,
 ): Promise<void> {
-    for (let attempt = 1; ; attempt++) {
+    const deadline = clock.now() + budgetMs;
+    for (;;) {
+        const left = deadline - clock.now();
         try {
-            return await checkHealth(api);
+            return await checkHealth(api, { timeoutMs: Math.max(1, left) });
         } catch (error) {
             const stale = error instanceof SeedError && /answered 503/.test(error.message);
-            if (!stale || attempt >= attempts) throw error;
+            if (!stale || deadline - clock.now() <= 1000) throw error;
         }
-        await sleep(1000);
+        await clock.sleep(1000);
     }
 }
 
@@ -623,6 +639,7 @@ export interface Deps {
     env: Record<string, string | undefined>;
     log: (line: string) => void;
     sleep?: (ms: number) => Promise<void>;
+    now?: () => number;
 }
 
 export interface Summary {
@@ -731,7 +748,10 @@ async function seedWith(deps: Deps, options: Options, secrets: string[]): Promis
     await checkHealth(api, { pending: true });
     classifyAdmin("migrate", await deps.run(adminArgs("migrate", [])));
     deps.log("Database is migrated.");
-    await waitUntilReady(api, deps.sleep ?? ((ms) => new Promise((done) => setTimeout(done, ms))));
+    await waitUntilReady(api, {
+        sleep: deps.sleep ?? ((ms) => new Promise((done) => setTimeout(done, ms))),
+        now: deps.now ?? Date.now,
+    });
 
     const operatorPassword = await ensureAccount(
         deps,

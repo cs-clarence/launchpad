@@ -162,16 +162,22 @@ let logs: string[];
 beforeEach(() => {
     dir = mkdtempSync(path.join(tmpdir(), "local-seed-"));
     fake = new Fake();
+    clockNow = 0;
     logs = [];
 });
 afterEach(() => rmSync(dir, { recursive: true, force: true }));
 
+// A fake clock: sleeping moves it, so the tests never wait.
+let clockNow = 0;
 const deps = (): Deps => ({
     fetch: fake.fetch,
     run: fake.run,
     env: { HOME: dir },
     log: (line) => logs.push(line),
-    sleep: async () => {},
+    sleep: async (ms) => {
+        clockNow += ms;
+    },
+    now: () => clockNow,
 });
 const options = (extra: string[] = []): Options =>
     parseArgs(["--out", path.join(dir, "cfg"), ...extra]);
@@ -420,6 +426,20 @@ describe("failures give one clear message", () => {
         fake.staleHealthAfterMigrate = 3;
         await seed(deps(), options());
         expect(fake.calls.filter((c) => c === "GET /api/health").length).toBeGreaterThanOrEqual(5);
+    });
+
+    it("bounds the wait by elapsed time, not only by the number of attempts", async () => {
+        fake.migrated = false;
+        fake.staleHealthAfterMigrate = 1000;
+        const slow = fake.fetch;
+        fake.fetch = (async (input: string, init: RequestInit = {}) => {
+            if (new URL(input).pathname === "/api/health" && fake.migrated) clockNow += 6_000;
+            return slow(input, init);
+        }) as typeof fetch;
+        const before = clockNow;
+        expect(await message(() => seed(deps(), options()))).toMatch(/answered 503.*not ready/);
+        expect(clockNow - before).toBeLessThan(30_000);
+        expect(fake.calls.filter((c) => c === "GET /api/health").length).toBeLessThanOrEqual(5);
     });
 
     it("gives up if the controller never becomes ready after migrating", async () => {
