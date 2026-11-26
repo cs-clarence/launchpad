@@ -435,7 +435,7 @@ export function summarizeDockerProblems(input: {
     ) {
         return (
             "The default local Docker builder is required (`docker buildx inspect default`). See " +
-            "docs/production-fresh-host-recovery.md#repeat-the-rehearsal for combinations that were observed to work."
+            "docs/plans/production-fresh-host-recovery.md#repeat-the-rehearsal for combinations that were observed to work."
         );
     }
     if (
