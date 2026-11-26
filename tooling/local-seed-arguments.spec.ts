@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { HELP, parseArgs, SeedError } from "./local-seed";
+import { HELP, OPTIONS, parseArgs, SeedError, SWITCH_FLAGS, VALUE_FLAGS } from "./local-seed";
 
 const message = (argv: string[]) => {
     try {
@@ -84,9 +84,10 @@ describe("local-seed arguments (worked examples)", () => {
         expect(message(["--org", "a", "--", "--new-key"])).toContain("Unknown option --.");
     });
 
-    it("does not accept --flag=value yet", () => {
-        expect(message(["--org=a"])).toBe(
-            "Unknown option --org=a. Run with --help to list the options.",
+    it("accepts --flag=value, and --org= fails the validator", () => {
+        expect(parseArgs(["--org=a"]).org).toBe("a");
+        expect(message(["--org="])).toBe(
+            "--org must be lowercase letters, digits and hyphens (40 at most).",
         );
     });
 });
@@ -114,5 +115,34 @@ describe("local-seed process", () => {
             "Unknown option --nope. Run with --help to list the options.",
         );
         expect(result.out).toBe("");
+    });
+});
+
+// The option block of HELP as it was written by hand, before it was generated.
+const OLD_OPTION_BLOCK = `  --controller <url>             controller to seed (default http://127.0.0.1:3000)
+  --origin <origin>              origin to send; must equal LAUNCHPAD_BASE_URL (default: the controller's)
+  --org <slug>                   organization slug (default local)
+  --project <slug>               project slug (default demo)
+  --operator-email <email>       operator account (default operator@launchpad.local)
+  --owner-email <email>          organization owner account (default owner@launchpad.local)
+  --profile <name>               CLI profile to save the key in (default local)
+  --out <dir>                    directory for password files and the credential store (default: $LAUNCHPAD_CONFIG_DIR, $XDG_CONFIG_HOME/launchpad or ~/.config/launchpad); must be a directory you own
+  --operator-password-file <f>   mode-600 file holding the operator password (default <out>/local-operator.password)
+  --owner-password-file <f>      mode-600 file holding the owner password (default <out>/local-owner.password)
+  --new-key                      issue another API key and replace the profile's key
+  --force                        replace a profile that is not this controller's working profile
+  --allow-remote                 allow a controller that is not on this machine (https only)
+  --help                         show this text`;
+
+describe("local-seed HELP", () => {
+    it("lists the option block exactly as the hand-written text did", () => {
+        expect(HELP).toContain(`\n${OLD_OPTION_BLOCK}\n`);
+    });
+
+    it("lists every table option, and the flag lists come from the table", () => {
+        for (const option of OPTIONS) expect(HELP).toContain(option.flag);
+        expect([...VALUE_FLAGS, ...SWITCH_FLAGS].toSorted()).toEqual(
+            OPTIONS.map((o) => o.flag).toSorted(),
+        );
     });
 });

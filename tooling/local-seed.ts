@@ -12,6 +12,7 @@ import { randomBytes } from "node:crypto";
 import { lstat, mkdir, readFile, unlink, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import path from "node:path";
+import { flagsOf, keyOf, optionHelp, parseOrFail, toolCommand, type Opt } from "./cli";
 import { LaunchpadApiError } from "../packages/sdk/src/index";
 import {
     ClientCoreError,
@@ -59,78 +60,93 @@ export interface Options {
     help: boolean;
 }
 
-// Each flag takes a value except the booleans listed after it. The documentation test reads this
-// table, so a flag the guide names must exist here.
-export const VALUE_FLAGS = [
-    "--controller",
-    "--origin",
-    "--org",
-    "--project",
-    "--operator-email",
-    "--owner-email",
-    "--profile",
-    "--out",
-    "--operator-password-file",
-    "--owner-password-file",
-] as const;
-export const SWITCH_FLAGS = ["--new-key", "--force", "--allow-remote", "--help"] as const;
+// The single source of options: commander, the two flag lists below (the documentation test
+// reads them, so a flag the guide names must exist here) and the option list of HELP.
+export const OPTIONS: Opt[] = [
+    {
+        flag: "--controller",
+        arg: "url",
+        help: `controller to seed (default ${DEFAULT_CONTROLLER})`,
+    },
+    {
+        flag: "--origin",
+        arg: "origin",
+        help: "origin to send; must equal LAUNCHPAD_BASE_URL (default: the controller's)",
+    },
+    { flag: "--org", arg: "slug", help: "organization slug (default local)" },
+    { flag: "--project", arg: "slug", help: "project slug (default demo)" },
+    {
+        flag: "--operator-email",
+        arg: "email",
+        help: "operator account (default operator@launchpad.local)",
+    },
+    {
+        flag: "--owner-email",
+        arg: "email",
+        help: "organization owner account (default owner@launchpad.local)",
+    },
+    { flag: "--profile", arg: "name", help: "CLI profile to save the key in (default local)" },
+    {
+        flag: "--out",
+        arg: "dir",
+        help: "directory for password files and the credential store (default: $LAUNCHPAD_CONFIG_DIR, $XDG_CONFIG_HOME/launchpad or ~/.config/launchpad); must be a directory you own",
+    },
+    {
+        flag: "--operator-password-file",
+        arg: "f",
+        help: "mode-600 file holding the operator password (default <out>/local-operator.password)",
+    },
+    {
+        flag: "--owner-password-file",
+        arg: "f",
+        help: "mode-600 file holding the owner password (default <out>/local-owner.password)",
+    },
+    { flag: "--new-key", help: "issue another API key and replace the profile's key" },
+    { flag: "--force", help: "replace a profile that is not this controller's working profile" },
+    { flag: "--allow-remote", help: "allow a controller that is not on this machine (https only)" },
+    { flag: "--help", help: "show this text" },
+];
+export const VALUE_FLAGS: readonly string[] = flagsOf(OPTIONS).value;
+export const SWITCH_FLAGS: readonly string[] = flagsOf(OPTIONS).switch;
 
 export const HELP = `Seed a local Launchpad controller (see docs/local-quickstart.md).
 
 Usage: omni -i run local:seed [-a "options=<flags>"]
 
-  --controller <url>             controller to seed (default ${DEFAULT_CONTROLLER})
-  --origin <origin>              origin to send; must equal LAUNCHPAD_BASE_URL (default: the controller's)
-  --org <slug>                   organization slug (default local)
-  --project <slug>               project slug (default demo)
-  --operator-email <email>       operator account (default operator@launchpad.local)
-  --owner-email <email>          organization owner account (default owner@launchpad.local)
-  --profile <name>               CLI profile to save the key in (default local)
-  --out <dir>                    directory for password files and the credential store (default: $LAUNCHPAD_CONFIG_DIR, $XDG_CONFIG_HOME/launchpad or ~/.config/launchpad); must be a directory you own
-  --operator-password-file <f>   mode-600 file holding the operator password (default <out>/local-operator.password)
-  --owner-password-file <f>      mode-600 file holding the owner password (default <out>/local-owner.password)
-  --new-key                      issue another API key and replace the profile's key
-  --force                        replace a profile that is not this controller's working profile
-  --allow-remote                 allow a controller that is not on this machine (https only)
-  --help                         show this text
+${optionHelp(OPTIONS, 31)}
 
 Re-running is safe: an existing operator, owner, organization, project and working profile are
 reused. Passwords and keys are never printed; password files are never overwritten.
 `;
 
+const unknownOption = (token: string) =>
+    `Unknown option ${token}. Run with --help to list the options.`;
+
 export function parseArgs(argv: string[]): Options {
-    const values = new Map<string, string>();
-    const switches = new Set<string>();
-    for (let i = 0; i < argv.length; i++) {
-        const flag = argv[i]!;
-        if ((SWITCH_FLAGS as readonly string[]).includes(flag)) {
-            switches.add(flag);
-        } else if ((VALUE_FLAGS as readonly string[]).includes(flag)) {
-            const value = argv[++i];
-            if (value === undefined || value.startsWith("--")) {
-                throw new SeedError(`${flag} needs a value.`);
-            }
-            values.set(flag, value);
-        } else {
-            throw new SeedError(`Unknown option ${flag}. Run with --help to list the options.`);
-        }
-    }
-    const controller = values.get("--controller") ?? DEFAULT_CONTROLLER;
+    const program = toolCommand("local-seed", OPTIONS);
+    const parsed = parseOrFail(program, argv, (message) => new SeedError(message), {
+        unknownOption,
+        rejectDashValues: "--",
+    });
+    if (program.args.length > 0) throw new SeedError(unknownOption(program.args[0]!));
+    const value = (flag: string) => parsed[keyOf(flag)] as string | undefined;
+    const switched = (flag: string) => parsed[keyOf(flag)] === true;
+    const controller = value("--controller") ?? DEFAULT_CONTROLLER;
     const options: Options = {
         controller,
-        origin: values.get("--origin") ?? controller,
-        org: values.get("--org") ?? "local",
-        project: values.get("--project") ?? "demo",
-        operatorEmail: values.get("--operator-email") ?? "operator@launchpad.local",
-        ownerEmail: values.get("--owner-email") ?? "owner@launchpad.local",
-        profile: values.get("--profile") ?? "local",
-        out: values.get("--out"),
-        operatorPasswordFile: values.get("--operator-password-file"),
-        ownerPasswordFile: values.get("--owner-password-file"),
-        newKey: switches.has("--new-key"),
-        force: switches.has("--force"),
-        allowRemote: switches.has("--allow-remote"),
-        help: switches.has("--help"),
+        origin: value("--origin") ?? controller,
+        org: value("--org") ?? "local",
+        project: value("--project") ?? "demo",
+        operatorEmail: value("--operator-email") ?? "operator@launchpad.local",
+        ownerEmail: value("--owner-email") ?? "owner@launchpad.local",
+        profile: value("--profile") ?? "local",
+        out: value("--out"),
+        operatorPasswordFile: value("--operator-password-file"),
+        ownerPasswordFile: value("--owner-password-file"),
+        newKey: switched("--new-key"),
+        force: switched("--force"),
+        allowRemote: switched("--allow-remote"),
+        help: switched("--help"),
     };
     if (!options.help) validate(options);
     return options;
