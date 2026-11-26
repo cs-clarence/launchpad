@@ -34,6 +34,51 @@ tasks:
       options: ""
     interactive: true
 
+  # Starts and removes docker-compose.dev.yaml (PostgreSQL, Mailpit, Dokku, the router) for running
+  # the controller, worker and CLI on the host. Docker only; the host socket is mounted into Dokku.
+  # See docs/local-dev-infra.md.
+  dev:infra:up:
+    description: "Start PostgreSQL, Mailpit, Dokku and the router for host development, and write the app settings to .dev-infra/env (needs Docker, ssh-keygen); options --preset app|deploy, --aliases on|off"
+    exec: sh -c 'cd "$(git rev-parse --show-toplevel)" && bun tooling/dev-infra.ts up {{ args.options }}'
+    args:
+      options: ""
+    interactive: true
+
+  dev:infra:down:
+    description: "Stop the development infrastructure and keep its data (database, Dokku state, credentials, images)"
+    exec: sh -c 'cd "$(git rev-parse --show-toplevel)" && bun tooling/dev-infra.ts down {{ args.options }}'
+    args:
+      options: ""
+    interactive: true
+
+  dev:infra:destroy:
+    description: "Remove everything the development infrastructure created: sites, containers, volumes, network, images and .dev-infra/"
+    exec: sh -c 'cd "$(git rev-parse --show-toplevel)" && bun tooling/dev-infra.ts destroy {{ args.options }}'
+    args:
+      options: ""
+    interactive: true
+
+  dev:infra:status:
+    description: "Show the development infrastructure: service health, ports and deployed sites"
+    exec: sh -c 'cd "$(git rev-parse --show-toplevel)" && bun tooling/dev-infra.ts status {{ args.options }}'
+    args:
+      options: ""
+    interactive: true
+
+  dev:infra:logs:
+    description: "Follow the development infrastructure logs; option --service <name>"
+    exec: sh -c 'cd "$(git rev-parse --show-toplevel)" && bun tooling/dev-infra.ts logs {{ args.options }}'
+    args:
+      options: ""
+    interactive: true
+
+  dev:infra:seed:
+    description: "Migrate and seed the running host controller with the generated settings (operator, owner, organization, project, key)"
+    exec: sh -c 'cd "$(git rev-parse --show-toplevel)" && bun tooling/dev-infra.ts seed {{ args.options }}'
+    args:
+      options: ""
+    interactive: true
+
   check:format:
     description: Format check of the whole repository, including docs and root files
     exec: sh -c 'cd "$(git rev-parse --show-toplevel)" && bun x oxfmt --check'

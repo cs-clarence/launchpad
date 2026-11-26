@@ -457,7 +457,7 @@ export function must(result: RunResult, what: string, hint = ""): RunResult {
 
 export const outOf = (r: RunResult) => r.stdout ?? r.output;
 
-const lines = (text: string) =>
+export const lines = (text: string) =>
     text
         .split("\n")
         .map((l) => l.trim())
@@ -469,7 +469,7 @@ export interface Labeled {
     service: string;
 }
 
-async function labeledContainers(c: Ctx, extra: string[] = []): Promise<Labeled[]> {
+export async function labeledContainers(c: Ctx, extra: string[] = []): Promise<Labeled[]> {
     const result = must(
         await docker(c, [
             "ps",
@@ -490,13 +490,13 @@ async function labeledContainers(c: Ctx, extra: string[] = []): Promise<Labeled[
     });
 }
 
-async function inspectLabel(c: Ctx, id: string, key: string): Promise<string> {
+export async function inspectLabel(c: Ctx, id: string, key: string): Promise<string> {
     const result = await docker(c, ["inspect", "-f", LABEL_TEMPLATE(key), id]);
     return result.code === 0 ? outOf(result).trim() : "";
 }
 
 // A container is touched only after its Compose project label is confirmed by inspect.
-async function confirmed(c: Ctx, containers: Labeled[]): Promise<Labeled[]> {
+export async function confirmed(c: Ctx, containers: Labeled[]): Promise<Labeled[]> {
     for (const container of containers) {
         if ((await inspectLabel(c, container.id, LABEL_PROJECT)) !== c.project) {
             throw new DeployError(
@@ -522,7 +522,7 @@ async function labeledNames(c: Ctx, kind: "network" | "volume"): Promise<string[
     return lines(outOf(result));
 }
 
-async function projectResources(c: Ctx) {
+export async function projectResources(c: Ctx) {
     return {
         containers: await labeledContainers(c),
         networks: await labeledNames(c, "network"),
@@ -530,13 +530,13 @@ async function projectResources(c: Ctx) {
     };
 }
 
-async function networkOwner(c: Ctx, name: string): Promise<"absent" | "ours" | "foreign"> {
+export async function networkOwner(c: Ctx, name: string): Promise<"absent" | "ours" | "foreign"> {
     const result = await docker(c, ["network", "inspect", "-f", NETWORK_LABEL_TEMPLATE, name]);
     if (result.code !== 0) return "absent";
     return outOf(result).trim() === c.project ? "ours" : "foreign";
 }
 
-async function imageExists(c: Ctx, name: string): Promise<boolean> {
+export async function imageExists(c: Ctx, name: string): Promise<boolean> {
     return (await docker(c, ["image", "inspect", "-f", "{{.Id}}", name])).code === 0;
 }
 
@@ -867,7 +867,7 @@ export function dokkuIdle(result: RunResult): boolean {
     );
 }
 
-const APP_CONTAINER = /^(lp-[a-z0-9]{10})\.[a-z0-9_-]+\.[0-9]+$/;
+export const APP_CONTAINER = /^(lp-[a-z0-9]{10})\.[a-z0-9_-]+\.[0-9]+$/;
 
 function postgresImage(): string {
     const image = interpolate(loadRaw().services.postgres.image, {});
@@ -1146,8 +1146,10 @@ export async function teardown(
 
     let sites: Site[] = [];
     if (resources.containers.length > 0) {
-        d.log(`Stopping ${profile.writers.join(" and ")}...`);
-        await stopWriters(c);
+        if (profile.writers.length > 0) {
+            d.log(`Stopping ${profile.writers.join(" and ")}...`);
+            await stopWriters(c);
+        }
         if (dokku) await waitForDokkuToSettle(c, dokku.id);
         const found = await discover(c, dokku?.id ?? null);
         for (const name of found.ignored) d.log(`Ignoring ${name}: not a Launchpad site name.`);
