@@ -1,0 +1,173 @@
+## s2b.txt
+2026-11-26T06:32:00Z S2b backup b0-a
+ Container launchpad-local-3853718e-admin-run-98111b5edc9e Creating 
+ Container launchpad-local-3853718e-admin-run-98111b5edc9e Created 
+Backup written to /backups/b0-a: 1 migrations, 1 archive(s). Keep it private: the dump holds password and API-key hashes.
+
+real	0m1.179s
+user	0m0.156s
+sys	0m0.034s
+ Container launchpad-local-3853718e-admin-run-0b6d226f36df Creating 
+ Container launchpad-local-3853718e-admin-run-0b6d226f36df Created 
+The backup verifies.
+
+real	0m0.933s
+user	0m0.139s
+sys	0m0.041s
+ls: cannot open directory '<checkout>/.local-deploy/backups': Permission denied
+
+real	0m1.422s
+user	0m0.009s
+sys	0m0.018s
+/launchpad-local-3853718e-controller-1 status=exited health=unhealthy restarts=0 exit=0 started=2026-11-26T06:30:41.11715084Z
+
+real	0m0.255s
+user	0m0.021s
+sys	0m0.014s
+/launchpad-local-3853718e-worker-1 status=exited health=unhealthy restarts=0 exit=0 started=2026-11-26T06:30:40.812933446Z
+2026-11-26T06:32:09Z writers stopped; settling 330s
+UID                 PID                 PPID                C                   STIME               TTY                 TIME                CMD
+root                785488              785445              0                   14:27               ?                   00:00:00            /usr/bin/p
+root                792286              785488              0                   14:28               ?                   00:00:00            /usr/bin/r
+root                792287              792286              0                   14:28               ?                   00:00:00            runsv cron
+root                792288              792286              0                   14:28               ?                   00:00:00            runsv sshd
+root                792289              792286              0                   14:28               ?                   00:00:00            runsv dokk
+root                792290              792286              0                   14:28               ?                   00:00:00            runsv ngin
+root                792291              792286              0                   14:28               ?                   00:00:00            runsv rsys
+root                792292              792288              0                   14:28               ?                   00:00:00            sshd: /usr
+102                 792293              792291              0                   14:28               ?                   00:00:00            /usr/sbin/
+root                792294              792287              0                   14:28               ?                   00:00:00            /usr/sbin/
+root                792296              792290              0                   14:28               ?                   00:00:00            nginx: mas
+root                792779              792289              0                   14:28               ?                   00:00:00            sleep infi
+33                  836914              792296              0                   14:30               ?                   00:00:00            nginx: wor
+33                  836915              792296              0                   14:30               ?                   00:00:00            nginx: wor
+33                  836916              792296              0                   14:30               ?                   00:00:00            nginx: wor
+33                  836917              792296              0                   14:30               ?                   00:00:00            nginx: wor
+33                  836919              792296              0                   14:30               ?                   00:00:00            nginx: wor
+33                  836920              792296              0                   14:30               ?                   00:00:00            nginx: wor
+2026-11-26T06:37:57Z restore without --replace (expect refusal)
+postgres:5432/launchpad already has data. Restore into an empty database, or replace it by naming it with --replace postgres:5432/launchpad (back it up first).
+
+exit=1
+1
+2026-11-26T06:38:03Z R0 restore start
+Restored the database (1 migrations applied) and 0 archive(s) copied (1 already there).
+Next: follow docs/restore.md before migrating or starting the controller; keep ingress closed and preserve the recovery records.
+
+real	0m1.635s
+user	0m0.145s
+sys	0m0.038s
+
+applied: 1
+pending: 0
+migstatus=0
+0 archive(s) missing; 0 of 1 deployment(s) have no app
+chk=0
+ Container launchpad-local-3853718e-admin-run-1ad98f4b0fdf Creating 
+ Container launchpad-local-3853718e-admin-run-1ad98f4b0fdf Created 
+{"version":2,"restoreStartedAt":"2026-11-26T06:38:04.000Z","routerEpoch":"<redacted>","routerEpochNote":"recorded"}
+2026-11-26T06:38:12Z revoke-all
+Revoked 6 session(s), 3 API key(s), 0 emailed token(s) and 0 open invitation(s). Passwords are unchanged: reset any account that must be locked out.
+--rotate
+ Container launchpad-local-3853718e-admin-run-9166f4d62592 Creating 
+ Container launchpad-local-3853718e-admin-run-9166f4d62592 Created 
+ Container launchpad-local-3853718e-admin-run-30e8f88cc083 Creating 
+ Container launchpad-local-3853718e-admin-run-30e8f88cc083 Created 
+ Container launchpad-local-3853718e-admin-run-d76792424419 Creating 
+ Container launchpad-local-3853718e-admin-run-d76792424419 Created 
+2026-11-26T06:38:28Z router rotated to <new-epoch> (read-back, health and drift checked)
+
+real	0m15.077s
+user	0m1.175s
+sys	0m0.702s
+rc=0
+total 16
+drwx------.  6 <user> <user>  200 Nov 26 14:30 .
+drwxr-xr-x. 14 <user> <user>  560 Nov 26 14:27 ..
+ Container launchpad-local-3853718e-admin-run-47c7d89ef586 Creating 
+ Container launchpad-local-3853718e-admin-run-47c7d89ef586 Created 
+0
+--raise
+Raised 0 alias counter(s).
+rc=0
+--clear early
+Wait at least 25 minutes from the recorded restore start before clearing recovery.
+
+rc=1
+2026-11-26T06:32:07Z INJECT stop controller (S2b) b79e68625248737f0013d1f9b9c450ea8fa5029b821d670b7c45c312050a288f controller
+2026-11-26T06:32:09Z INJECT stop worker (S2b) aca5a0473205eae99dd28aa460a729a6a9cc8dab0992656b7a4f7da91cf40e91 worker
+2026-11-26T06:38:14Z INJECT stop router (rotation) 98f2ac14bc4affeff7c4153a166873dea24cca210bf249fa6f1135bceab2255f router
+2026-11-26T06:38:28Z UNDO   stop router (rotation) 98f2ac14bc4affeff7c4153a166873dea24cca210bf249fa6f1135bceab2255f router
+/launchpad-local-3853718e-controller-1 status=running health=healthy restarts=0 exit=0 started=2026-11-26T06:38:41.694866493Z
+Error: Unauthorized
+old pilot key: 401
+signin: 200
+health 200
+/launchpad-local-3853718e-controller-1 status=exited health=unhealthy restarts=0 exit=0 started=2026-11-26T06:38:41.694866493Z
+Thursday, 26 November, 2026 07:03:27 AM UTC
+protected-same
+2026-11-26T07:03:27Z recovery-clear after gate
+{
+  "sources": {
+    "dokku": "ok",
+    "router": "ok",
+    "probe": "ok",
+    "archives": "ok"
+  },
+  "inFlight": [],
+  "findings": [],
+  "ignoredAppCount": 0
+}
+Deployment recovery cleared after verification.
+rc=0
+2026-11-26T07:03:34Z rekey
+Building the five images (the slow part on a first run)...
+Starting PostgreSQL and Dokku (Dokku's first start takes minutes)...
+Database is migrated.
+Starting the controller, worker and router...
+Database is migrated.
+The operator already exists; reusing it.
+The owner already exists; reusing it.
+Found the organization local; found the project demo.
+The profile "local-deploy" already exists and is not a working key for this controller and organization. Choose another --profile, or pass --force to replace it.
+Task '@launchpad-kit/tooling#local:deploy' error: exit code '1'
+
+real	0m13.502s
+user	0m1.898s
+sys	0m0.764s
+1
+/launchpad-local-3853718e-postgres-1 status=running health=healthy restarts=0 exit=0 started=2026-11-26T06:27:50.504469803Z
+/launchpad-local-3853718e-dokku-1 status=running health=healthy restarts=0 exit=0 started=2026-11-26T06:27:50.837427446Z
+/launchpad-local-3853718e-controller-1 status=running health=healthy restarts=0 exit=0 started=2026-11-26T07:03:37.427936416Z
+/launchpad-local-3853718e-worker-1 status=running health=healthy restarts=0 exit=0 started=2026-11-26T07:03:37.734897074Z
+/launchpad-local-3853718e-router-1 status=running health=healthy restarts=0 exit=0 started=2026-11-26T06:38:21.157845969Z
+
+Error: Unauthorized
+Logged out of profile "local-deploy".
+2026-11-26T07:04:02Z rekey retry after logout
+  Dokku HTTP     http://127.0.0.1:32181  (send a Host header, see the guide)
+  Dokku SSH      127.0.0.1:32222
+  Dokku HTTPS    127.0.0.1:32443
+  router (data)  127.0.0.1:32182
+CLI profile: local-deploy; organization local, project demo.
+Next: deploy examples/hello with the launchpad CLI (docs/local-deploy.md).
+To stop without deleting: docker compose -p launchpad-local-3853718e --env-file <checkout>/.local-deploy/compose.env -f <checkout>/docker-compose.yaml -f <checkout>/.local-deploy/override.json stop. To remove everything: down.
+Executed task '@launchpad-kit/tooling#local:deploy'
+
+real	0m7.467s
+user	0m1.750s
+sys	0m0.743s
+Profile:      local-deploy
+Scopes:       organization:read, project:read, project:create, app:read, app:deploy, app:delete
+deployment d38d2c5e-81ee-4d48-93bf-0f00430db99f succeeded in 62s
+site2 http 200
+--- old site A:
+A http 200
+  "status": "succeeded",
+  "desiredState": "active",
+  postgres    running healthy
+  dokku       running healthy
+  controller  running healthy
+  worker      running healthy
+  router      running healthy
+

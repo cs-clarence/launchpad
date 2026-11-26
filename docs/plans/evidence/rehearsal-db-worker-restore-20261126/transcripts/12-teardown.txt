@@ -1,0 +1,23 @@
+## s9-down.txt
+2026-11-26T13:03:56Z S9 down start
+/cloudflare-connector 6a33f7899b93a769ac3dd60845707cbcfebf6024380984f31e94e769d309813f 2026-11-26T01:13:31.298
+error: no such object: launchpad-test-db
+/playit-connector de1d2ee43a3f6c183e98e5ca4207d732e348b28072b824c2106e6da4a275ecc5 2026-11-26T01:13:31.3024615
+status=running health=healthy restarts=0
+status=running health=healthy restarts=0
+status=running health=healthy restarts=0
+status=running health=healthy restarts=0
+status=running health=healthy restarts=0
+5
+Stopping the controller and worker...
+Removing 15 deployed sites...
+The image launchpad/site:<id> of lp-649v8kyoh8 could not be derived (no deployment id is known); if one remains, find it with: docker image ls launchpad/site
+Removing the root-owned state...
+Removed project launchpad-local-27b61035: its containers, volumes, network, images and .local-deploy/.
+Pulled base images and the build cache stay (docker image prune, docker builder prune).
+Executed task '@launchpad-kit/tooling#local:deploy'
+
+real	1m1.775s
+user	0m4.286s
+sys	0m2.642s
+

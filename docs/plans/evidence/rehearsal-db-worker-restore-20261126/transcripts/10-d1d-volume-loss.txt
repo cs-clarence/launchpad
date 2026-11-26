@@ -1,0 +1,154 @@
+## d1d0.txt
+2026-11-26T12:13:33Z D1d start
+/launchpad-local-27b61035-worker-1 status=running health=healthy restarts=0 exit=0 started=2026-11-26T11:11:01.92885975Z
+postgres 3d3d53c91d4c status=running health=healthy restarts=0 exit=0
+dokku 9ad1a118f50d status=running health=healthy restarts=0 exit=0
+controller 99390c61c4c6 status=running health=healthy restarts=0 exit=0
+worker 6c22c18da622 status=running health=healthy restarts=0 exit=0
+router edd53555912e status=running health=healthy restarts=0 exit=0
+volumes: launchpad-local-27b61035_launchpad-data launchpad-local-27b61035_postgres-data launchpad-local-27b61035_router-state 
+in-flight: 0
+dokku apps vs db: dokku=[lp-g3ts3hsz2i lp-i0ximpgj5p lp-nphktg6kop lp-pp9w3ti64p lp-tas2cz0nid lp-xosukcu750 ] db=[lp-g3ts3hsz2i lp-i0ximpgj5p lp-nphktg6kop lp-pp9w3ti64p lp-tas2cz0nid lp-xosukcu750 ]
+Backup written to /backups/b0-d: 1 migrations, 1 archive(s). Keep it private: the dump holds password and API-key hashes.
+The backup verifies.
+h6: deployment a99c8fea-efa7-4f8a-85bc-d5b2dbdd0169 succeeded app lp-649v8kyoh8
+dokku apps now: lp-649v8kyoh8 lp-g3ts3hsz2i lp-i0ximpgj5p lp-nphktg6kop lp-pp9w3ti64p lp-tas2cz0nid lp-xosukcu750 
+counts (live, post-backup): 2|2|5|14 
+PG volume: launchpad-local-27b61035_postgres-data
+
+## d1d1.txt
+container removed
+launchpad-local-27b61035_postgres-data
+volume removed
+14d13
+< launchpad-local-27b61035_postgres-data
+new postgres c161e1c8d734 healthy after 31s
+role/db: launchpad|launchpad|0
+t+31s 12:17:21 pg[status=running health=healthy restarts=0] ctl[status=running health=healthy restarts=0] wkr[status=running health=healthy restarts=0 exit=0] marker=34s health=200 siteA=200 apistatus=[401]  wlog60=[      1 "event":"deployment-run-ended"      11 "event":"deployment-worker-error" ]
+t+57s 12:17:47 pg[status=running health=healthy restarts=0] ctl[status=running health=healthy restarts=0] wkr[status=running health=healthy restarts=0 exit=0] marker=59s health=200 siteA=200 apistatus=[401]  wlog60=[     24 "event":"deployment-worker-error" ]
+CLI: Error: Internal Server Error 
+deploy: Error: Internal Server Error 
+t+83s 12:18:13 pg[status=running health=healthy restarts=0] ctl[status=running health=healthy restarts=0] wkr[status=running health=healthy restarts=0 exit=0] marker=85s health=200 siteA=200 apistatus=[401]  wlog60=[     30 "event":"deployment-worker-error" ]
+t+108s 12:18:38 pg[status=running health=healthy restarts=0] ctl[status=running health=healthy restarts=0] wkr[status=running health=unhealthy restarts=0 exit=0] marker=110s health=200 siteA=200 apistatus=[401]  wlog60=[     30 "event":"deployment-worker-error" ]
+t+235s 12:20:45 pg[status=running health=healthy restarts=0] ctl[status=running health=healthy restarts=0] wkr[status=running health=unhealthy restarts=0 exit=0] marker=237s health=200 siteA=200 apistatus=[401]  wlog60=[     30 "event":"deployment-worker-error" ]
+t+260s 12:21:11 pg[status=running health=healthy restarts=0] ctl[status=running health=healthy restarts=0] wkr[status=running health=unhealthy restarts=0 exit=0] marker=263s health=200 siteA=200 apistatus=[401]  wlog60=[     30 "event":"deployment-worker-error" ]
+  ... (4 sample lines trimmed)
+worker log:       1 "event":"deployment-run-ended"     138 "event":"deployment-worker-error" 
+controller log: 
+restarts: status=running health=healthy restarts=0 exit=0 status=running health=unhealthy restarts=0 exit=0 
+
+## d1d2.txt
+controller after restart: status=running health=unhealthy restarts=0 exit=0 health=503
+CLI: Error: Service Unavailable
+controller log:       3 The database schema is behind: 1 migration(s) pending (20261124_001_initial_schema). Take a backup, then run `launchpad-admin migrate`. 
+-- migrate --status (empty db)
+applied: 0
+pending: 1
+  20261124_001_initial_schema
+
+exit=1
+-- check-restore
+relation "artifact" does not exist
+
+exit=1
+-- drift
+
+maintenance: deployment-import-ack-e02fdcf4-95c0-4bef-8b42-23e24a1de1b3 model-writer-seen 
+archives: 1
+dokku apps: lp-649v8kyoh8 lp-g3ts3hsz2i lp-i0ximpgj5p lp-nphktg6kop lp-pp9w3ti64p lp-tas2cz0nid lp-xosukcu750 
+-- WRONG recovery: migrate
+20261124_001_initial_schema: Success
+exit=0
+after migrate: counts 0|0|0|0 ; instance_state: deployment_recovery|ready|2026-11-26 12:23:02.593169+00 
+maintenance: deployment-import-ack-e02fdcf4-95c0-4bef-8b42-23e24a1de1b3 model-writer-seen 
+-- controller after migrate
+health 200 CLI: Error: Unauthorized
+worker: status=running health=unhealthy restarts=0 exit=0 |      12 "event":"deployment-worker-error" 
+-- check-restore/drift after migrate
+0 archive(s) missing; 0 of 0 deployment(s) have no app
+"inFlight":[],"findings":[{"code":"orphan-app","severity":"medium","resources":[{"kind":"dokku-app","id":"lp-649v8kyoh8"}],"action":"Identifytheowner;deletionisaseparate,exact-name,authorizedaction."},{"code":"orphan-app","severity":"medium","resources":[{"kind":"dokku-app","id":"lp-g3ts3hsz2i"}],"action":"Identifytheowner;deletionisaseparate,exact-name,authorizedaction."},{"code":"orphan-app","severity":"medium","resources":[{"kind":"dokku-app","id":"lp-i0ximpgj5p"}],"action":"Identifytheowner;deletionisaseparate,exact-name,authorizedaction."},{"code":"orphan-app","severity":"medium","resourc
+
+-- restore into now-populated db without --replace
+postgres:5432/launchpad already has data. Restore into an empty database, or replace it by naming it with --replace postgres:5432/launchpad (back it up first).
+
+exit=1
+
+## r6.txt
+2026-11-26T12:29:19Z R6 documented recovery
+The backup verifies.
+verify exit=0
+Restored the database (1 migrations applied) and 0 archive(s) copied (1 already there).
+Next: follow docs/restore.md before migrating or starting the controller; keep ingress closed and preserve the recovery records.
+restore exit=0 after 2s
+{"version":2,"restoreStartedAt":"2026-11-26T12:29:21.282Z","routerEpoch":"<redacted>","routerEpochNote":"recorded"}
+counts 2|2|5|13  (backup-time 2|2|5|14 incl. later h6? backup preceded h6 so 13 expected)
+schemas: public
+applied: 1
+pending: 0
+migrate exit=0
+-- check-restore
+missing app: lp-6n3jz4y3p2 (deployment 8c226a6c-29aa-4dc4-8422-ba41325bac44, organization 833d6ae3-4681-4345-bc0b-3e5e0f70e4c4)
+0 archive(s) missing; 1 of 7 deployment(s) have no app
+
+exit=1
+-- drift (expect exactly h6 app lp-649v8kyoh8 as orphan)
+"inFlight":[],"findings":[{"code":"orphan-app","severity":"medium","resources":[{"kind":"dokku-app","id":"lp-649v8kyoh8"}],"action":"Identifytheowner;deletionisaseparate,exact-name,authorizedaction."}],"ignoredAppCount":0}
+
+"id": "lp-649v8kyoh8"
+Revoked 2 session(s), 1 API key(s), 0 emailed token(s) and 0 open invitation(s). Passwords are unchanged: reset any account that must be locked out.
+2026-11-26T12:29:46Z router rotated to <new-epoch> (read-back, health and drift checked)
+
+real	0m14.730s
+user	0m1.096s
+sys	0m0.634s
+Raised 0 alias counter(s).
+Wait at least 25 minutes from the recorded restore start before clearing recovery.
+
+clear before gate exit=1
+
+## r6b.txt
+2026-11-26T12:55:09Z R6 clear
+}
+Deployment recovery cleared after verification.
+clear exit=0
+Logged out of profile "local-deploy".
+2026-11-26T12:55:13Z rekey
+Project launchpad-local-27b61035 is up. Everything listens on 127.0.0.1 only:
+status=running health=healthy restarts=0 exit=0
+status=running health=healthy restarts=0 exit=0
+deployment 859a9233-ec82-4da1-b875-02f1122cbbd9 succeeded in 63s
+site 200
+counts 2|2|6|14 
+-- final checks
+postgres c161e1c8d734 status=running health=healthy restarts=0 exit=0
+dokku 9ad1a118f50d status=running health=healthy restarts=0 exit=0
+controller 99390c61c4c6 status=running health=healthy restarts=0 exit=0
+worker 6c22c18da622 status=running health=healthy restarts=0 exit=0
+router edd53555912e status=running health=healthy restarts=0 exit=0
+missing app: lp-6n3jz4y3p2 (deployment 8c226a6c-29aa-4dc4-8422-ba41325bac44, organization 833d6ae3-4681-4345-bc0b-3e5e0f70e4c4)
+0 archive(s) missing; 1 of 8 deployment(s) have no app
+
+"inFlight":[],"findings":[{"code":"orphan-app","severity":"medium","resources":[{"kind":"dokku-app","id":"lp-649v8kyoh8"}],"action":"Identifytheowner;deletionisaseparate,exact-name,authorizedaction."}],"ignoredAppCount":0}
+
+hello-1zbbydgjdg-preview.apps.localhost 200
+hello-k28pt2vzf8-preview.apps.localhost 200
+hello-90y2ja84ee-preview.apps.localhost 200
+hello-79icz86dz5-preview.apps.localhost 200
+hello-4838vkbk8n-preview.apps.localhost 200
+hello-aykqw6hdiz-preview.apps.localhost 200
+hello-jldymdnil4-preview.apps.localhost 200
+H6 orphan app still present: yes
+
+## c4a.txt
+before: failed|active
+after: deleted
+0 archive(s) missing; 0 of 7 deployment(s) have no app
+exit=0
+"inFlight":[],"findings":[{"code":"orphan-app","severity":"medium","resources":[{"kind":"dokku-app","id":"lp-649v8kyoh8"}],"action":"Identifytheowner;deletionisaseparate,exact-name,authorizedaction."}],"ignoredAppCount":0}
+
+postgres status=running health=healthy restarts=0
+dokku status=running health=healthy restarts=0
+controller status=running health=healthy restarts=0
+worker status=running health=healthy restarts=0
+router status=running health=healthy restarts=0
+

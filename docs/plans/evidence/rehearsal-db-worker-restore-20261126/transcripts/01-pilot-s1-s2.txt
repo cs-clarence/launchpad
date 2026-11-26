@@ -1,0 +1,43 @@
+## s1-deploy.txt
+2026-11-26T06:29:23Z S1 deploy hello
+deployment ed3d7f2b-dd62-4eef-acf3-2997ca036de4 succeeded in 62s
+hostname hello-bvk7rsxb3x-preview.apps.localhost
+site http 200
+
+## s2.txt
+2026-11-26T06:30:39Z S2 aliases on: recreate controller worker
+ Container launchpad-local-3853718e-controller-1 Recreate 
+ Container launchpad-local-3853718e-worker-1 Recreate 
+ Container launchpad-local-3853718e-worker-1 Recreated 
+ Container launchpad-local-3853718e-controller-1 Recreated 
+ Container launchpad-local-3853718e-worker-1 Starting 
+ Container launchpad-local-3853718e-controller-1 Starting 
+ Container launchpad-local-3853718e-worker-1 Started 
+ Container launchpad-local-3853718e-controller-1 Started 
+
+real	0m2.174s
+user	0m0.125s
+sys	0m0.043s
+/launchpad-local-3853718e-controller-1 status=running health=healthy restarts=0 exit=0 started=2026-11-26T06:30:41.11715084Z
+/launchpad-local-3853718e-worker-1 status=running health=healthy restarts=0 exit=0 started=2026-11-26T06:30:40.812933446Z
+/launchpad-local-3853718e-router-1 status=running health=healthy restarts=0 exit=0 started=2026-11-26T06:28:57.320958295Z
+signin 200
+key issued (len 46)
+{"id":"1510c70b-3697-4dc7-9e2e-bf46748ceacb","appId":"8631859b-ea3b-4a5d-b9b0-be2ba6e2cf23","slug":"pilot","hostname":"view-pilot-hu4hkgcqla.apps.localhost","state":"unbound","targetDeploymentId":null,"reservedGeneration":"0","committedGeneration":"0","createdAt":"2026-11-26T06:31:28.003Z"}
+201
+signin 200
+key issued (len 46)
+{"id":"e0c9bdfa-86d8-48aa-8305-1f0a804b9e44","aliasId":"1510c70b-3697-4dc7-9e2e-bf46748ceacb","action":"bind","status":"queued","generation":"1","expectedGeneration":"0","previousTargetDeploymentId":null,"desiredTargetDeploymentId":"ed3d7f2b-dd62-4eef-acf3-2997ca036de4","supersedesOperationId":null,"supersededByOperationId":null,"failureCode":null,"createdAt":"2026-11-26T06:31:39.386Z","finishedAt":null}
+202
+0s "status":"queued"
+3s "status":"succeeded"
+HTTP/1.1 200 OK
+X-Launchpad-Deployment: ed3d7f2bdd624eefacf32997ca036de4
+A id nodash: ed3d7f2bdd624eefacf32997ca036de4
+{"id":"b1696f80-a364-495b-ae2b-c2a5e7445a3e","aliasId":"1510c70b-3697-4dc7-9e2e-bf46748ceacb","action":"withdraw","status":"queued","generation":"2","expectedGeneration":"1","previousTargetDeploymentId":"ed3d7f2b-dd62-4eef-acf3-2997ca036de4","desiredTargetDeploymentId":null,"supersedesOperationId":null,"supersededByOperationId":null,"failureCode":null,"createdAt":"2026-11-26T06:31:48.503Z","finishedAt":null}
+202
+0s "status":"queued"
+3s "status":"succeeded"
+{"id":"1510c70b-3697-4dc7-9e2e-bf46748ceacb","appId":"8631859b-ea3b-4a5d-b9b0-be2ba6e2cf23","slug":"pilot","hostname":"view-pilot-hu4hkgcqla.apps.localhost","state":"withdrawn","targetDeploymentId":null,"reservedGeneration":"2","committedGeneration":"2","createdAt":"2026-11-26T06:31:28.003Z"}
+HTTP/1.1 404 Not Found
+
