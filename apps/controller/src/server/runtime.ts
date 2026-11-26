@@ -3,6 +3,7 @@ import { assertSchemaCurrent, createDatabase } from "@launchpad-kit/database";
 import {
     parseAliasConfig,
     parseDeploymentConfig,
+    parseHeartbeatConfig,
     parseSchemaCheckConfig,
     DeploymentRecoveryError,
     requireModelDataDirectory,
@@ -64,6 +65,7 @@ function compose() {
         docs: process.env.LAUNCHPAD_API_DOCS !== "false",
         readiness: () => getSchemaGate().check({ includeDataDirectory: true }),
         onSchemaError: () => getSchemaGate().invalidate(),
+        heartbeat: parseHeartbeatConfig(process.env, "controller"),
     });
     return { config, db, auth, api, invitations, features, artifacts, deployments, aliases };
 }

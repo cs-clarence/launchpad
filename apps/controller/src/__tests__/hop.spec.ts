@@ -976,6 +976,10 @@ describe("operator status over HTTP", () => {
         const report = statusSchema.parse(await read.json());
         expect(report.dependencies).toEqual({ database: "ok" });
         expect(report.artifacts.stored).toBeGreaterThanOrEqual(0);
+        // Deployments are off on this instance: no worker is expected, nothing is in flight.
+        expect(report.workers).toEqual({ state: "off", items: [] });
+        expect(report.leases).toEqual({ inFlight: 0, expiring: 0, expired: 0 });
+        expect(report.warnings).toEqual([]);
         // An ordinary member, even an owner, is refused, and so is no one at all.
         expect((await api(ownerCookie, "/status")).status).toBe(403);
         expect((await fetch(`${proxied.base}/api/v1/status`)).status).toBe(401);

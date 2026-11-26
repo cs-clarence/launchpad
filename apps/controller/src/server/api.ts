@@ -9,7 +9,9 @@ import type { Kysely } from "kysely";
 import {
     acceptInvitation,
     addMember,
+    DEFAULT_HEARTBEAT,
     getStatus,
+    type HeartbeatConfig,
     type ApiKeyPrincipal,
     type ApiKeyScope,
     authenticateApiKey,
@@ -146,6 +148,8 @@ export function createApi(deps: {
     readiness?: () => Promise<GateOutcome>;
     // Called when a request found the schema missing something, so the next check runs at once.
     onSchemaError?: () => void;
+    // Worker liveness limits for the operator status; defaults when absent.
+    heartbeat?: HeartbeatConfig;
 }) {
     const { auth, db, origin, invitations } = deps;
     const artifacts = deps.artifacts ?? { dataDir: "", limits: {} };
@@ -1176,7 +1180,12 @@ export function createApi(deps: {
                     ),
             )
             .get("/v1/status", { detail: docs.getStatus }, ({ request, set }) =>
-                respond(request, set, null, (p) => getStatus(db, p)),
+                respond(request, set, null, (p) =>
+                    getStatus(db, p, {
+                        deploymentsEnabled: deployments.settings.enabled,
+                        thresholds: deps.heartbeat ?? DEFAULT_HEARTBEAT,
+                    }),
+                ),
             )
 
             .use(openApiPlugin(withDocs))

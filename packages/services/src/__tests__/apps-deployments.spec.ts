@@ -35,6 +35,7 @@ import {
     parseDeploymentConfig,
     renewDeploymentClaim,
     ServiceError,
+    getStatus,
     uploadArtifact,
     type AppDeps,
     type Principal,
@@ -248,6 +249,81 @@ describe("worker claims", () => {
             .where("id", "in", ids)
             .where("status", "in", ["queued", "preparing", "building", "deploying", "verifying"])
             .execute();
+    });
+
+    describe("lease counts in the operator status", () => {
+        const operator = () => people.root!;
+        const status = async () =>
+            (
+                await getStatus(testDb.db, operator(), {
+                    deploymentsEnabled: true,
+                    thresholds: { staleAfterSeconds: 60, warnBeforeSeconds: 90 },
+                })
+            ).leases;
+        const lease = (id: string, seconds: number) =>
+            sql`update deployment set lease_expires_at = clock_timestamp() + make_interval(secs => ${seconds}) where id = ${id}`.execute(
+                testDb.db,
+            );
+
+        it("counts a claimed deployment as in flight, then expiring, then expired, never a finished one", async () => {
+            const before = await status();
+            const queued = await enqueue();
+            expect(await status()).toEqual(before);
+            const claimed = await claim("worker");
+            if (claimed.kind !== "claimed") throw new Error("Expected a claim");
+            await beginDeploymentStep(testDb.db, dataDir, claimed.token, "app");
+            const live = await status();
+            expect(live).toEqual({ ...before, inFlight: before.inFlight + 1 });
+            await lease(queued.id, 89);
+            expect(await status()).toEqual({
+                ...before,
+                inFlight: before.inFlight + 1,
+                expiring: before.expiring + 1,
+            });
+            await lease(queued.id, 91);
+            expect((await status()).expiring).toBe(before.expiring);
+            await lease(queued.id, -5);
+            expect(await status()).toEqual({
+                ...before,
+                inFlight: before.inFlight + 1,
+                expired: before.expired + 1,
+            });
+            await sql`update deployment set status = 'failed', lease_owner = null, lease_expires_at = null where id = ${queued.id}`.execute(
+                testDb.db,
+            );
+            expect(await status()).toEqual(before);
+        });
+
+        it("raises the lease warnings only with a worker missing, or long past with one reporting", async () => {
+            await sql`delete from worker_heartbeat`.execute(testDb.db);
+            const queued = await enqueue();
+            await claim("worker");
+            const read = () =>
+                getStatus(testDb.db, operator(), {
+                    deploymentsEnabled: true,
+                    thresholds: { staleAfterSeconds: 60, warnBeforeSeconds: 90 },
+                });
+            await lease(queued.id, 30);
+            const dead = await read();
+            expect(dead.warnings).toEqual([
+                "No deployment worker has reported yet.",
+                "1 deployment operation(s) hold a lease that is about to expire or has expired, and no worker is running; they are held for reconciliation when a worker starts.",
+            ]);
+            await sql`insert into worker_heartbeat (name, run_id, started_at, seen_at, beat_seconds)
+                values ('live', gen_random_uuid(), clock_timestamp(), clock_timestamp(), 15)`.execute(
+                testDb.db,
+            );
+            expect((await read()).warnings).toEqual([]);
+            await lease(queued.id, -30);
+            expect((await read()).warnings).toEqual([]);
+            await lease(queued.id, -61);
+            expect((await read()).warnings).toEqual([
+                "1 operation(s) are past their lease while a worker reports in.",
+            ]);
+            const text = (await read()).warnings.join(" ");
+            expect(text).not.toMatch(/[0-9a-f]{8}-[0-9a-f]{4}/);
+            await sql`delete from worker_heartbeat`.execute(testDb.db);
+        });
     });
 
     it("lets only one concurrent worker claim the same queued deployment", async () => {
@@ -1443,6 +1519,35 @@ describe("deployment deletion", () => {
         const resumed =
             race[1].kind === "claimed" ? race[1] : await claimDeletion(testDb.db, dataDir, "racer");
         expect(resumed).toMatchObject({ kind: "claimed", deletion: { stepDone: "destroy" } });
+    });
+
+    it("counts a running deletion's lease in the operator status, and stops once it ends", async () => {
+        const read = async () =>
+            (
+                await getStatus(testDb.db, people.root!, {
+                    deploymentsEnabled: true,
+                    thresholds: { staleAfterSeconds: 60, warnBeforeSeconds: 90 },
+                })
+            ).leases;
+        const before = await read();
+        const { deployment } = await finished();
+        await request(deployment.id);
+        expect(await read()).toEqual(before);
+        const claimed = await claimDeletion(testDb.db, dataDir, "worker");
+        if (claimed.kind !== "claimed") throw new Error("Expected a claim");
+        expect(await read()).toEqual({ ...before, inFlight: before.inFlight + 1 });
+        await sql`update deployment_deletion_operation set lease_expires_at = clock_timestamp() - interval '5 seconds' where id = ${claimed.token.id}`.execute(
+            testDb.db,
+        );
+        expect(await read()).toEqual({
+            ...before,
+            inFlight: before.inFlight + 1,
+            expired: before.expired + 1,
+        });
+        await sql`update deployment_deletion_operation set status = 'reconciliation-needed', lease_owner = null, lease_expires_at = null where id = ${claimed.token.id}`.execute(
+            testDb.db,
+        );
+        expect(await read()).toEqual(before);
     });
 
     it("requeues a held deletion that was not destroyed, for another destroy attempt", async () => {

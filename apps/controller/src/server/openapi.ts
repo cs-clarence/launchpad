@@ -395,7 +395,7 @@ export const docs = {
         tags: ["Operations"],
         summary: "How the instance is doing",
         description:
-            "Needs the instance operator and a session (an API key cannot do this). Database readiness and artifact count/byte totals from database rows only; archive files are not checked. This version emits no warnings (warnings is empty). Counts only: no names or ids. Workers, queues and deployments return with the app model.",
+            "Needs the instance operator and a session (an API key cannot do this). Database readiness and artifact count/byte totals from database rows only; archive files are not checked. `workers` reports each deployment worker's heartbeat: `ok` (beating), `stopped` (a clean shutdown) or `stale` (no beat for too long and no clean stop: a crash, kill, pause or lost database); a worker is stale after `LAUNCHPAD_WORKER_STALE_AFTER` (60s by default). `leases` counts operations that hold a lease, and how many are about to expire (`LAUNCHPAD_LEASE_WARN_BEFORE`, 90s by default) or have expired. `warnings` says in plain words when deployments are on and no worker has reported, when leases are about to lapse with no worker running, and when leases are long past with a worker reporting in. Counts, durations and operator-chosen worker names only: no ids, hostnames or errors.",
         ok: { description: "The status.", schema: statusSchema },
         errors: [401, 403],
     }),
