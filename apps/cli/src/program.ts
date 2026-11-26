@@ -11,24 +11,14 @@ import {
 } from "@launchpad-kit/client-core";
 import { addApiCommand } from "./api-command";
 import { addAppCommands } from "./app-commands";
+import { addInviteCommands } from "./invite-commands";
+import { addKeyCommands } from "./key-commands";
+import { addOrgCommands } from "./org-commands";
 import { describe, EXIT, ExitWith } from "./errors";
 import type { Io } from "./io";
 import { safeOutput } from "./output";
 import { sessionLogin, sessionLogout } from "./session-commands";
-
-const text = (rows: string[][]) => {
-    const widths = rows[0]!.map((_, column) =>
-        Math.max(...rows.map((row) => (row[column] ?? "").length)),
-    );
-    return rows
-        .map((row) =>
-            row
-                .map((cell, i) => cell.padEnd(widths[i]!))
-                .join("  ")
-                .trimEnd(),
-        )
-        .join("\n");
-};
+import { text } from "./table";
 
 // Where a key comes from. Never a command-line value: that lands in shell history and
 // in the process list.
@@ -266,7 +256,11 @@ export function buildProgram(rawIo: Io, secrets: Set<string> = new Set()) {
             print(command, result, () => `Using profile "${result.profile}".`);
         });
 
-    const org = program.command("org").description("Organizations visible to the key.");
+    const org = program
+        .command("org")
+        .description(
+            "Organizations: `list` and `use` need a key, `create` your own account's session.",
+        );
     org.command("list")
         .description("List organizations the key can see.")
         .action(async (_options, command) => {
@@ -299,6 +293,9 @@ export function buildProgram(rawIo: Io, secrets: Set<string> = new Set()) {
         });
 
     addApiCommand(program, io, remember);
+    addOrgCommands(program, org, { io, remember }, wants);
+    addInviteCommands(program, { io, remember }, wants);
+    addKeyCommands(program, { io, remember }, wants);
     addAppCommands(program, io.context, io.workingDir ?? process.cwd(), io.out);
     return program;
 }

@@ -41,7 +41,14 @@ const adminSource = read("apps/controller/src/admin/main.ts");
 const adminCommands = new Set(
     [...adminSource.matchAll(/\.command\("([a-z-]+)"\)/g)].map((m) => m[1]!),
 );
-const cliSource = ["program.ts", "api-command.ts", "app-commands.ts"]
+const cliSource = [
+    "program.ts",
+    "api-command.ts",
+    "app-commands.ts",
+    "key-commands.ts",
+    "org-commands.ts",
+    "invite-commands.ts",
+]
     .map((file) => read(`apps/cli/src/${file}`))
     .join("\n");
 const cliCommands = new Set([...cliSource.matchAll(/\.command\("([a-z-]+)/g)].map((m) => m[1]!));

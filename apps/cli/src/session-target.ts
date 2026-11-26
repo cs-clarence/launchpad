@@ -13,10 +13,10 @@ export function refuseWithKey(ctx: Context, flag: string): void {
     }
 }
 
-export function checkEmail(input: string): string {
+export function checkEmail(input: string, flag = "--email"): string {
     const email = normalizeEmail(input);
     if (email.length > 254 || !/^[^\s@\p{Cc}]+@[^\s@\p{Cc}]+$/u.test(email)) {
-        throw bad("--email must be an email address.");
+        throw bad(`${flag} must be an email address.`);
     }
     return email;
 }

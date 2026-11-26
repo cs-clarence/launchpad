@@ -22,6 +22,10 @@ launchpad api <endpoint> [-X <method>] [-f|-F <key=value>]... [--input <file>] [
 launchpad api --session [--email <address>] [--password-file <path>] [--controller <url>] [--keep] [--secret-file <path>] <endpoint> ...
 launchpad login --session --email <address> [--password-file <path>] [--controller <url>]
 launchpad logout --session [--controller <url>]
+launchpad org create --name <name> --slug <slug> --owner-email <address> --confirm
+launchpad member list | add --user-email <address> --role <role> --confirm | remove <user-id> --confirm
+launchpad invite create --to <address> --role <role> --confirm | list | revoke <invitation-id> --confirm
+launchpad key list | issue --name <name> --scope <scope>... --expires-in-days <n> --secret-file <path> --confirm | revoke <key-id> --confirm
 ```
 
 Global options: `--json` (machine-readable output; errors become `{"error":{"code","message"}}` on stderr)
@@ -209,6 +213,113 @@ launchpad api --session --email op@example.com -X POST organizations -f name=Dem
 - The cookie and password are removed from errors, `--verbose` output and response headers and bodies,
   and from the output filter (`safeOutput`) for the current run.
 - A runner with a password file can still sign in with `--session`; that is the user's choice.
+
+## Organization commands (session-only)
+
+Dedicated commands for the actions a key cannot reach, so you do not hand-write
+`launchpad api --session -X POST ...`. Each is **one API call** with your own account's session (the same
+sign-in as `api --session`, below), follows the controller's OpenAPI document and may change with it, and
+never prints a secret. More verbs need a new plan.
+
+Shared by every command in this group:
+
+- **Account and session:** `--email` (the signing-in account; optional with a saved session, a different one
+  exits 2), `--password-file`, `--keep`, `--controller` and the global `--profile` and `--json` mean what they
+  mean for `api --session`, including the lockout (each run without `--keep` or a saved session is a new
+  sign-in; more than 5 a minute also block that account's dashboard sign-in; for batches use `--keep`, then
+  `logout --session`).
+- **Never with a key:** with `LAUNCHPAD_API_KEY` set every command exits 2 before any prompt or request, and no
+  `Authorization` header is ever sent.
+- **`--org <id>`** (every command but `org create`) takes the organization's **ID** (a UUID), never a slug.
+  Order: `--org`, the nearest `launchpad.json` `organization`, `LAUNCHPAD_ORG`, the selected profile's
+  organization. A value that is not UUID-shaped (a slug, an empty value) exits 2 before any sign-in; find the
+  ID in the dashboard or with `launchpad api --session organizations` (`org list` needs a key you may not
+  have). Unlike `api`, which resolves a slug in `launchpad.json` with `GET /organizations`, these commands do
+  no lookup, so a slug in `launchpad.json` or the profile is refused.
+- **`--confirm`** is required by every command that changes something (all but the `list` commands); without it
+  the command exits 2 before any prompt or request.
+- **`Acting as <email> on <controller>, organization <id>`** goes to stderr once, after sign-in (or from a kept
+  session's stored email) and before the first request, never to stdout, so `--json` stays machine-clean. With
+  the default flow the sign-in has already happened by then, so it is an audit trail, and a real check only for
+  a kept session, where nothing is asked first. It is not an interrupt: `--confirm` is the intent check.
+  Without `--email`, a saved session of another account is used: run `launchpad logout --session` first if
+  that is not the account you mean to act as.
+- **Output:** a table (headers first, `No <things>.` when empty) or, with `--json`, the response as JSON. Exit
+  codes are the usual ones; 409, 422 and 502 exit 1 with the controller's message.
+
+### Organizations and members
+
+```sh
+launchpad org create --email op@example.com --name Demo --slug demo --owner-email ann@example.com --confirm
+launchpad member list --org ORG_ID
+launchpad member add --org ORG_ID --user-email bob@example.com --role deployer --confirm
+launchpad member remove USER_ID --org ORG_ID --confirm
+```
+
+- **`org create`** (`POST /organizations`) needs the instance operator's account (anyone else gets 403, exit
+  3). The owner must be an existing user, and one whose email address is verified or that the operator provisioned (otherwise 422, exit 1: invite the address instead), a duplicate slug is 409 (exit 1), and the operator gets
+  no membership. It takes no `--org`. It prints `Created organization <slug> (<id>) with owner <email>.`
+- **`member list`** (`GET /organizations/:org/members`; any member) prints `USER ID EMAIL NAME ROLE`. A key
+  holder can already read members with `launchpad api`; the command is here because `member remove` needs the
+  user ID it prints.
+- **`member add`** (`POST /organizations/:org/members`) adds an **existing** user by `--user-email` with a
+  `--role` of `owner`, `admin`, `deployer` or `viewer`. Owners and admins may add; an admin may assign only
+  deployer and viewer (the controller answers 403, exit 3). Already a member is 409 (exit 1). An unknown email is 422 "No user has that email address.", and so is an account whose email is unverified and not operator-provisioned (invite it instead) (exit 1). The target is
+  `--user-email` because `--email` is always the account that signs in.
+- **`member remove`** (`DELETE /organizations/:org/members/:userId`) takes the user ID `member list` prints.
+  Owners and admins may remove anyone; a member may remove themselves (leaving is not special-cased). Removing
+  the last owner is 409 (exit 1).
+
+### Invitations
+
+```sh
+launchpad invite create --org ORG_ID --to carol@example.com --role viewer --confirm
+launchpad invite list --org ORG_ID
+launchpad invite revoke INVITATION_ID --org ORG_ID --confirm
+```
+
+- **`invite create`** (`POST /organizations/:org/invitations`; owner or admin) emails the invitation. The
+  controller needs invitation enrollment and SMTP: without them it answers 404 "Invitations are not enabled."
+  (exit 4); if the mail cannot be sent it answers 502 (exit 1) and has already revoked the invitation. A newer
+  invitation to the same address replaces the older one. The output is `Invited <email> as <role> (<id>). The
+  invitation was emailed.` The token is only in the email: it is never printed, and `--json` shows only `id`,
+  `email` and `role`. The target is `--to` because `--email` is always the account that signs in.
+- **`invite list`** (`GET /organizations/:org/invitations`; owner or admin) prints the pending invitations as
+  `ID EMAIL ROLE CREATED EXPIRES`.
+- **`invite revoke`** (`DELETE /organizations/:org/invitations/:id`; owner or admin) takes the ID `invite list`
+  prints.
+- Not included: `invite preview` and `invite accept` (the public token flow).
+
+### Key management
+
+```sh
+launchpad key list --org ORG_ID
+launchpad key issue --org ORG_ID --name ci --scope project:read --scope app:deploy --expires-in-days 30 --secret-file ci.key --confirm
+launchpad key revoke KEY_ID --org ORG_ID --confirm
+```
+
+- **`key list`** (`GET /organizations/:org/api-keys`; owner or admin) prints `ID NAME PREFIX STATUS SCOPES PROJECTS
+  EXPIRES LAST USED`, never a secret.
+- **`key issue`** (`POST /organizations/:org/api-keys`; owner or admin **signed in within the last 15
+  minutes**) takes `--scope` (repeatable, from the controller's scope list), `--project <uuid>` (repeatable,
+  not with `project:create`), `--expires-in-days` (1 to 365, required) and `--secret-file` (required: an `lp_...`
+  key is hidden everywhere, so an unwritten one would be lost). The file is created exclusively with mode 600
+  before the request (an existing file means nothing is sent) and receives the secret as soon as the answer
+  arrives, before the rest of the answer is read; the screen shows only `Issued key <name> (<id>), expires
+  <date>. The secret is in <file>.` and `--json` shows the secret as `"[written to <file>]"`. At 100 active keys
+  the controller answers 409 (exit 1).
+- **When the answer is unclear.** If the request was sent and the result is a 408, 429, any 5xx, a dropped
+  connection, a timeout, a signal or an answer without a `secret`, the key **may exist**: the file is removed and
+  the error ends with `The key may exist: run "launchpad key list" and revoke it.` A 400, 403, 404, 409 or 422
+  means the controller refused; the file is removed and no key exists. If the secret was received but the rest
+  of the answer could not be read, the file keeps the secret and a warning says the key exists. If the write
+  fails after the key was created, the error says it exists and must be revoked.
+- **A kept session goes stale** for `key issue` after 15 minutes: the command prints a warning first and the
+  controller's 403 "Sign in again to do this." exits 3; run `launchpad login --session` again. A 401 from
+  a kept session that has expired is a refusal too: the saved session is removed, the exit code is 3 and no key
+  exists, so there is no "may exist" message.
+- **`key revoke`** (`DELETE /organizations/:org/api-keys/:id`; owner or admin; repeating it is fine) takes the ID
+  `key list` prints.
 
 ## Workspace file
 

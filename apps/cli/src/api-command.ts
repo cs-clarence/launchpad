@@ -23,6 +23,7 @@ import { applyJq, checkJq, chooseJq, findOnPath } from "./jq";
 import { arrayItems, prettyJson } from "./json-text";
 import { ExitWith } from "./errors";
 import { SessionFlow, SignalGuard, withSession } from "./session-flow";
+import { openSession, withSecretFile } from "./session-run";
 import { checkEmail, refuseWithKey, resolveSessionTarget } from "./session-target";
 
 const MAX_PAGES = 1000;
@@ -48,7 +49,6 @@ function untilInterrupted<T>(start: () => Promise<T>, signal?: AbortSignal): Pro
         work.then(resolve, reject).finally(() => signal.removeEventListener("abort", stop));
     });
 }
-const FRESH_MS = 15 * 60 * 1000;
 // Issuing a key is the call the controller allows only for a session signed in recently.
 const needsFreshSession = (method: string, path: string) =>
     method === "POST" && /^\/organizations\/[^/]+\/api-keys\/?$/.test(path);
@@ -163,39 +163,11 @@ export function addApiCommand(
             if (options.secretFile !== undefined && options.paginate) {
                 throw bad("--secret-file cannot be combined with --paginate.");
             }
-            // One guard for the whole run, installed before the file exists, so a signal at any
-            // point (even while stdin is read) removes an empty secret file instead of leaving
-            // it to make the next run fail with "already exists".
-            const guard = options.secretFile !== undefined ? new SignalGuard(io) : undefined;
-            guard?.install();
-            let secretFile: SecretFile | undefined;
-            try {
-                // Created before anything is sent: an existing file or a failed create means no request.
-                if (options.secretFile !== undefined) {
-                    try {
-                        secretFile = await io.createSecretFile(options.secretFile);
-                    } catch (error) {
-                        throw bad(
-                            error instanceof Error
-                                ? error.message
-                                : "The secret file cannot be created.",
-                        );
-                    }
-                }
-                await withSession(io, (holder) =>
+            await withSecretFile(io, options.secretFile, ({ guard, secretFile }) =>
+                withSession(io, (holder) =>
                     execute(endpoint, options, command, holder, secretFile, guard),
-                );
-                if (guard?.interruptedWith != null) throw new ExitWith(guard.interruptedWith);
-            } catch (error) {
-                await secretFile?.remove().catch(() => {});
-                if (guard?.interruptedWith != null) {
-                    if (!(error instanceof ExitWith)) io.err("Interrupted.");
-                    throw new ExitWith(guard.interruptedWith);
-                }
-                throw error;
-            } finally {
-                guard?.uninstall();
-            }
+                ),
+            );
         });
 
     async function execute(
@@ -238,7 +210,7 @@ export function addApiCommand(
             } else {
                 refuseWithKey(io.context, "--session");
             }
-            const email = options.email === undefined ? null : checkEmail(options.email);
+            if (options.email !== undefined) checkEmail(options.email);
             const method = (
                 options.method ?? (fields.length > 0 || options.input ? "POST" : "GET")
             ).toUpperCase();
@@ -308,68 +280,26 @@ export function addApiCommand(
                           };
                       })());
             const sessionBackend = async (): Promise<Backend> => {
-                const target = await resolveSessionTarget(io.context, {
-                    controller: options.controller,
-                    profile: profile ?? workspace.config?.profile,
-                });
-                // `--keep` always signs in again; otherwise a saved session for this controller is used.
-                const saved = options.keep
-                    ? null
-                    : await io.context.sessions.get(target.controller);
-                if (saved && email !== null && email !== saved.email) {
-                    throw bad(
-                        "--email differs from the saved session's account. Use `launchpad login --session` to switch, or `launchpad logout --session` first.",
-                    );
-                }
-                if (!saved && email === null) {
-                    throw bad("--session needs --email <address> to sign in.");
-                }
-                const flow = new SessionFlow({
-                    io,
-                    controller: target.controller,
-                    email: saved?.email ?? email!,
-                    passwordFile: options.passwordFile,
-                    verbose: options.verbose,
-                    keep: options.keep,
-                    guard,
-                    remember,
-                });
-                holder.flow = flow;
-                if (saved) flow.attach(saved.cookie);
-                const raw = async (method: string, path: string, rawOptions: RawOptions) => {
-                    const client = await flow.signIn();
-                    if (
-                        saved &&
-                        needsFreshSession(method, path) &&
-                        Date.now() - Date.parse(saved.savedAt) > FRESH_MS
-                    ) {
-                        io.err(
-                            "Warning: this saved session is older than 15 minutes, and issuing a key needs a sign-in from the last 15 minutes. Run `launchpad login --session` again if the controller refuses.",
-                        );
-                    }
-                    try {
-                        return await client.raw(method, path, {
-                            ...rawOptions,
-                            signal: rawOptions.signal
-                                ? AbortSignal.any([flow.signal, rawOptions.signal])
-                                : flow.signal,
-                        });
-                    } catch (error) {
-                        if (saved && error instanceof LaunchpadApiError && error.status === 401) {
-                            await io.context.sessions.remove(target.controller, saved.cookie);
-                            throw new ClientCoreError(
-                                "not-logged-in",
-                                "The saved session is no longer valid and was removed. Sign in again with `launchpad login --session`.",
-                            );
-                        }
-                        throw error;
-                    }
-                };
+                const open = await openSession(
+                    {
+                        io,
+                        remember,
+                        guard,
+                        controller: options.controller,
+                        profile: profile ?? workspace.config?.profile,
+                        email: options.email,
+                        passwordFile: options.passwordFile,
+                        verbose: options.verbose,
+                        keep: options.keep,
+                        needsFresh: needsFreshSession,
+                    },
+                    holder,
+                );
                 return {
-                    controller: target.controller,
-                    organizationId: target.organizationId,
+                    controller: open.controller,
+                    organizationId: open.organizationId,
                     organizations: async () => {
-                        const response = await raw("GET", "/organizations", {});
+                        const response = await open.caller.raw("GET", "/organizations", {});
                         const list: unknown = JSON.parse(response.body);
                         if (!Array.isArray(list))
                             throw bad("The organization list was not a list.");
@@ -383,10 +313,10 @@ export function addApiCommand(
                             "{org} has no value: with --session select an organization with `launchpad org use`, launchpad.json or LAUNCHPAD_ORG.",
                         );
                     },
-                    raw,
+                    raw: open.caller.raw,
                     credentialLines: [
                         "> cookie: [redacted]",
-                        `> origin: ${new URL(target.controller).origin}`,
+                        `> origin: ${new URL(open.controller).origin}`,
                     ],
                 };
             };

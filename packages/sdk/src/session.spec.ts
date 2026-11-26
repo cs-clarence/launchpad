@@ -401,3 +401,188 @@ describe("calls with a session", () => {
         });
     });
 });
+
+describe("typed session actions", () => {
+    const COOKIE = `__Secure-better-auth.session_token=${VALUE}`;
+    const ORG = "11111111-1111-4111-8111-111111111111";
+    const ID = "22222222-2222-4222-8222-222222222222";
+    const SECRET = `lp_${"a".repeat(40)}`;
+    const when = "2026-11-26T10:00:00.000Z";
+    const key = {
+        id: ID,
+        name: "ci",
+        secret: SECRET,
+        scopes: ["project:read"],
+        projectIds: null,
+        expiresAt: when,
+    };
+    const asBody = (init: RequestInit) => JSON.parse(String(init.body));
+
+    it("sends the right method, path, body, Cookie and Origin and never Authorization", async () => {
+        const { calls, client } = setup(
+            (url, init) => {
+                const path = new URL(url).pathname;
+                if (path === "/api/v1/organizations") {
+                    return json({ id: ORG, name: "Demo", slug: "demo" }, { status: 201 });
+                }
+                if (init.method === "GET" && path.endsWith("/members")) return json([]);
+                if (init.method === "POST" && path.endsWith("/members")) {
+                    return json({ userId: "u1", role: "viewer" }, { status: 201 });
+                }
+                if (init.method === "GET" && path.endsWith("/invitations")) return json([]);
+                if (init.method === "POST" && path.endsWith("/invitations")) {
+                    return json({ id: ID, email: "c@d.e", role: "viewer" }, { status: 201 });
+                }
+                if (init.method === "GET" && path.endsWith("/api-keys")) return json([]);
+                if (init.method === "POST" && path.endsWith("/api-keys")) {
+                    return json(key, { status: 201 });
+                }
+                return json({ ok: true });
+            },
+            { cookie: COOKIE },
+        );
+        await client.organizations.create({ name: "Demo", slug: "demo", ownerEmail: "a@b.c" });
+        await client.members.list(ORG);
+        await client.members.add(ORG, { email: "b@c.d", role: "viewer" });
+        await client.members.remove(ORG, "user/1 ?x");
+        await client.invitations.create(ORG, { email: "c@d.e", role: "viewer" });
+        await client.invitations.list(ORG);
+        await client.invitations.revoke(ORG, ID);
+        await client.apiKeys.list(ORG);
+        await client.apiKeys.issue(ORG, {
+            name: "ci",
+            scopes: ["project:read"],
+            expiresInDays: 30,
+        });
+        await client.apiKeys.revoke(ORG, ID);
+        const base = "https://control.example.com/api/v1";
+        expect(calls.map((c) => `${c.init.method} ${c.url.slice(base.length)}`)).toEqual([
+            "POST /organizations",
+            `GET /organizations/${ORG}/members`,
+            `POST /organizations/${ORG}/members`,
+            `DELETE /organizations/${ORG}/members/user%2F1%20%3Fx`,
+            `POST /organizations/${ORG}/invitations`,
+            `GET /organizations/${ORG}/invitations`,
+            `DELETE /organizations/${ORG}/invitations/${ID}`,
+            `GET /organizations/${ORG}/api-keys`,
+            `POST /organizations/${ORG}/api-keys`,
+            `DELETE /organizations/${ORG}/api-keys/${ID}`,
+        ]);
+        expect(asBody(calls[0]!.init)).toEqual({ name: "Demo", slug: "demo", ownerEmail: "a@b.c" });
+        expect(asBody(calls[2]!.init)).toEqual({ email: "b@c.d", role: "viewer" });
+        expect(asBody(calls[8]!.init)).toEqual({
+            name: "ci",
+            scopes: ["project:read"],
+            expiresInDays: 30,
+        });
+        for (const call of calls) {
+            expect(call.headers.cookie).toBe(COOKIE);
+            expect(call.headers.origin).toBe("https://control.example.com");
+            expect(call.headers.authorization).toBeUndefined();
+        }
+    });
+
+    it("hands the secret to onSecret before the body is parsed, even when parsing then fails", async () => {
+        const order: string[] = [];
+        const { client } = setup(
+            () => json({ secret: SECRET, id: "not-a-uuid" }, { status: 201 }),
+            {
+                cookie: COOKIE,
+            },
+        );
+        const error = await client.apiKeys
+            .issue(
+                ORG,
+                { name: "ci", scopes: ["project:read"], expiresInDays: 1 },
+                {
+                    onSecret: async (secret) => {
+                        await Promise.resolve();
+                        order.push(`secret:${secret === SECRET}`);
+                    },
+                },
+            )
+            .catch((e: unknown) => e);
+        order.push("rejected");
+        expect(order).toEqual(["secret:true", "rejected"]);
+        expect(error).toBeInstanceOf(LaunchpadTransportError);
+        expect((error as LaunchpadTransportError).reason).toBe("invalid-response");
+        expect((error as Error).message).not.toContain(SECRET);
+    });
+
+    it("does not call onSecret for an error status or a body without a secret", async () => {
+        let seen = 0;
+        const onSecret = () => void seen++;
+        for (const response of [
+            json({ code: "forbidden", title: "No." }, { status: 403 }),
+            json({ ...key, secret: undefined }, { status: 201 }),
+        ]) {
+            const { client } = setup(() => response.clone(), { cookie: COOKIE });
+            await client.apiKeys
+                .issue(
+                    ORG,
+                    { name: "ci", scopes: ["project:read"], expiresInDays: 1 },
+                    { onSecret },
+                )
+                .catch(() => {});
+        }
+        expect(seen).toBe(0);
+    });
+
+    it("maps controller failures and keeps the cookie out of errors", async () => {
+        for (const [status, code] of [
+            [401, "unauthenticated"],
+            [403, "forbidden"],
+            [404, "not-found"],
+            [409, "conflict"],
+            [422, "invalid"],
+            [429, "rate-limited"],
+            [502, "bad-gateway"],
+        ] as const) {
+            const { client } = setup(
+                () =>
+                    json(
+                        { code, title: `Refused ${COOKIE} ${VALUE}` },
+                        { status, headers: status === 429 ? { "retry-after": "7" } : {} },
+                    ),
+                { cookie: COOKIE },
+            );
+            const error = await client.members.list(ORG).catch((e: unknown) => e);
+            expect(error).toBeInstanceOf(LaunchpadApiError);
+            expect((error as LaunchpadApiError).status).toBe(status);
+            expect((error as Error).message).not.toContain(VALUE);
+            if (status === 429) expect((error as LaunchpadApiError).retryAfterSeconds).toBe(7);
+        }
+    });
+
+    it("reports a malformed answer as an unexpected answer", async () => {
+        for (const body of ["not json", JSON.stringify({ userId: 1 }), "[]x"]) {
+            const { client } = setup(() => new Response(body, { status: 201 }), {
+                cookie: COOKIE,
+            });
+            const error = await client.members
+                .add(ORG, { email: "b@c.d", role: "viewer" })
+                .catch((e: unknown) => e);
+            expect(error).toBeInstanceOf(LaunchpadTransportError);
+            expect((error as LaunchpadTransportError).reason).toBe("invalid-response");
+        }
+    });
+
+    it("sends nothing for a hostile or empty ID", async () => {
+        const { calls, client } = setup(() => json({ ok: true }), { cookie: COOKIE });
+        for (const bad of ["", ".", "..", "a\nb", "x".repeat(300)]) {
+            await expect(client.members.remove(ORG, bad)).rejects.toBeInstanceOf(
+                LaunchpadConfigError,
+            );
+            await expect(client.apiKeys.revoke(bad, ID)).rejects.toBeInstanceOf(
+                LaunchpadConfigError,
+            );
+        }
+        expect(calls).toEqual([]);
+    });
+
+    it("needs a session", async () => {
+        const { calls, client } = setup(() => json([]));
+        await expect(client.members.list(ORG)).rejects.toBeInstanceOf(LaunchpadConfigError);
+        expect(calls).toEqual([]);
+    });
+});
