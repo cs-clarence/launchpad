@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { DeployError, HELP, parseArgs } from "./local-deploy";
+import { DeployError, HELP, OPTIONS, parseArgs, SWITCH_FLAGS, VALUE_FLAGS } from "./local-deploy";
 
 const message = (argv: string[]) => {
     try {
@@ -83,10 +83,9 @@ describe("local-deploy arguments (worked examples)", () => {
         expect(message(["--new-key", "--help"])).toBe(text);
     });
 
-    it("does not accept --flag=value yet", () => {
-        expect(message(["up", "--port-base=40000"])).toBe(
-            "Unknown argument --port-base=40000. Run with --help to list the commands.",
-        );
+    it("accepts --flag=value", () => {
+        expect(parseArgs(["up", "--port-base=40000"]).portBase).toBe(40000);
+        expect(message(["up", "--port-base="])).toBe("--port-base must be a number.");
     });
 });
 
@@ -113,5 +112,26 @@ describe("local-deploy process", () => {
             "Unknown argument wipe. Run with --help to list the commands.",
         );
         expect(result.out).toBe("");
+    });
+});
+
+// The option block of HELP as it was written by hand, before it was generated.
+const OLD_OPTION_BLOCK = `  --project <name>    project name (default launchpad-local-<8 hex of this checkout's path>;
+                      must match ^launchpad-local-[a-z0-9-]{1,40}$)
+  --port-base <n>     first of the five host ports (default 32180; offsets 0, 1, 2, 42, 263; up only)
+  --new-key           up only: issue a replacement key for the local-deploy profile (needed if its
+                      saved key lacks the scopes deploying needs)
+  --help              show this text`;
+
+describe("local-deploy HELP", () => {
+    it("lists the option block exactly as the hand-written text did", () => {
+        expect(HELP).toContain(`\n${OLD_OPTION_BLOCK}\n`);
+    });
+
+    it("lists every table option, and the flag lists come from the table", () => {
+        for (const option of OPTIONS) expect(HELP).toContain(option.flag);
+        expect([...VALUE_FLAGS, ...SWITCH_FLAGS].toSorted()).toEqual(
+            OPTIONS.map((o) => o.flag).toSorted(),
+        );
     });
 });
