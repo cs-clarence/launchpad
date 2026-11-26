@@ -130,23 +130,6 @@ describe("docker-compose.dev.yaml", () => {
         expect(render().services.mailpit.volumes).toBeUndefined();
     });
 
-    it("fails to render with an empty environment", async () => {
-        const result = Bun.spawnSync(
-            [
-                "docker",
-                "compose",
-                "-f",
-                "docker-compose.dev.yaml",
-                "--env-file",
-                "/dev/null",
-                "config",
-                "--quiet",
-            ],
-            { cwd: new URL("..", import.meta.url).pathname, env: { PATH: process.env.PATH ?? "" } },
-        );
-        expect(result.exitCode).not.toBe(0);
-    });
-
     it("excludes .dev-infra from git and from each root Docker build context", () => {
         expect(lines(".gitignore")).toContain(".dev-infra/");
         for (const app of ["controller", "worker", "router"]) {

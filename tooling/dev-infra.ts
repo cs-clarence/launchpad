@@ -467,6 +467,13 @@ export interface Summary {
     workerEnv: string | null;
 }
 
+// destroy reads the same record and refuses it too, so it is not the way out.
+const unreadableMessage = (layout: Layout) =>
+    `${layout.file("state.json")} is unreadable. Restore it, or remove the project's resources by exact ` +
+    `name (docker ps -a --filter label=com.docker.compose.project=<project>, then docker rm -f, docker ` +
+    `volume rm, docker network rm and docker image rm on what you created), then delete ${layout.dir} ` +
+    "(its dokku/ child is root-owned: sudo rm -rf).";
+
 async function ensureIgnored(d: BaseDeps, layout: Layout): Promise<void> {
     const ignored = await d.run([
         "git",
@@ -493,18 +500,18 @@ async function ensureIgnored(d: BaseDeps, layout: Layout): Promise<void> {
 
 export async function up(d: Deps, options: UpOptions = {}): Promise<Summary> {
     const layout = layoutFor(d.repo);
-    const project = checkProject(options.project ?? projectNameFor(d.repo));
     const preset = options.preset ?? "app";
     const aliases = options.aliases ?? true;
+    const first = await readState({ d, layout, project: "", profile: DEV_PROFILE });
+    if (first.kind === "corrupt") throw new DeployError(unreadableMessage(layout));
+    const project = checkProject(options.project ?? first.state?.project ?? projectNameFor(d.repo));
     const c: Ctx = { d, layout, project, profile: DEV_PROFILE };
     await checkDocker(d);
     await ensureIgnored(d, layout);
 
     const dirStat = await checkDirectory(c);
     const record = await readState(c);
-    if (record.kind === "corrupt") {
-        throw new DeployError(`${layout.file("state.json")} is unreadable; run destroy first.`);
-    }
+    if (record.kind === "corrupt") throw new DeployError(unreadableMessage(layout));
     if (record.kind === "ok") checkRecord(c, record.state!);
     else if (dirStat && (await d.fs.readdir(layout.dir)).length > 0) {
         throw new DeployError(
@@ -516,11 +523,19 @@ export async function up(d: Deps, options: UpOptions = {}): Promise<Summary> {
     // The record comes first: an interrupted up always leaves what destroy needs.
     if (!dirStat) await d.fs.mkdir(layout.dir, 0o700);
     if (record.kind !== "ok") {
-        await d.fs.writeFile(
-            layout.file("state.json"),
-            JSON.stringify({ project, repo: layout.repo, version: TOOL_VERSION }),
-            0o600,
-        );
+        try {
+            // Exclusive, so a concurrent up for another project cannot replace this record.
+            await d.fs.writeFile(
+                layout.file("state.json"),
+                JSON.stringify({ project, repo: layout.repo, version: TOOL_VERSION }),
+                0o600,
+                true,
+            );
+        } catch {
+            throw new DeployError(
+                `${layout.file("state.json")} appeared while starting: is another up running? Nothing was changed.`,
+            );
+        }
     }
 
     const envText = await d.fs.readFile(layout.file("compose.env"));
@@ -534,8 +549,9 @@ export async function up(d: Deps, options: UpOptions = {}): Promise<Summary> {
         ports = portsFromRecord(parseEnv(envText));
         await freePorts(c, ports, true);
     }
-    const stat = await d.fs.stat(layout.file("credentials/id_ed25519"));
-    if (stat === null) await generateCredentials(c);
+    const key = await d.fs.stat(layout.file("credentials/id_ed25519"));
+    const pub = await d.fs.stat(layout.file("credentials/id_ed25519.pub"));
+    if (key === null || pub === null) await generateCredentials(c);
     await verifyCredentials(c);
     await checkOwnDirectory(c, "data", 0o700);
     await checkOwnDirectory(c, "env", 0o700);
@@ -602,8 +618,8 @@ function printSummary(d: BaseDeps, s: Summary): void {
     d.log(
         `Settings for the host apps (preset ${s.preset}${s.preset === "deploy" ? `, aliases ${s.aliases ? "on" : "off"}` : ""}); secrets are in these files, not printed:`,
     );
-    d.log(`  cp ${s.controllerEnv} apps/controller/.env.local`);
-    if (s.workerEnv) d.log(`  cp ${s.workerEnv} apps/worker/.env.local`);
+    d.log(`  install -m 600 ${s.controllerEnv} apps/controller/.env.local`);
+    if (s.workerEnv) d.log(`  install -m 600 ${s.workerEnv} apps/worker/.env.local`);
     d.log("Then run the controller (omni -i run dev -p @launchpad-kit/controller)");
     if (s.workerEnv) d.log("and the worker (omni -i run dev -p @launchpad-kit/worker).");
     d.log("Seed with: omni -i run dev:infra:seed");
@@ -615,9 +631,7 @@ function printSummary(d: BaseDeps, s: Summary): void {
 async function loadContext(d: BaseDeps, options: { project?: string }) {
     const layout = layoutFor(d.repo);
     const record = await readState({ d, layout, project: "", profile: DEV_PROFILE });
-    if (record.kind === "corrupt") {
-        throw new DeployError(`${layout.file("state.json")} is unreadable; run destroy.`);
-    }
+    if (record.kind === "corrupt") throw new DeployError(unreadableMessage(layout));
     const project = checkProject(
         options.project ?? record.state?.project ?? projectNameFor(d.repo),
     );
@@ -674,13 +688,10 @@ export async function status(d: Deps, options: { project?: string } = {}): Promi
 async function stopSites(c: Ctx): Promise<number> {
     const network = appsNetwork(c.project);
     if ((await networkOwner(c, network)) !== "ours") return 0;
-    const members = await docker(c, [
-        "network",
-        "inspect",
-        "-f",
-        NETWORK_MEMBERS_TEMPLATE,
-        network,
-    ]);
+    const members = must(
+        await docker(c, ["network", "inspect", "-f", NETWORK_MEMBERS_TEMPLATE, network]),
+        `Listing the members of ${network}`,
+    );
     let stopped = 0;
     for (const name of lines(outOf(members))) {
         const app = APP_CONTAINER.exec(name)?.[1];
@@ -708,15 +719,18 @@ export async function down(d: Deps, options: { project?: string } = {}): Promise
     if ((await d.fs.stat(c.layout.file("compose.env"))) === null) {
         throw new DeployError("compose.env is missing; run destroy.");
     }
-    const running = await docker(c, [
-        "ps",
-        "--filter",
-        `label=com.docker.compose.project=${c.project}`,
-        "--filter",
-        "label=com.docker.compose.service=dokku",
-        "--format",
-        "{{.ID}}",
-    ]);
+    const running = must(
+        await docker(c, [
+            "ps",
+            "--filter",
+            `label=com.docker.compose.project=${c.project}`,
+            "--filter",
+            "label=com.docker.compose.service=dokku",
+            "--format",
+            "{{.ID}}",
+        ]),
+        "Looking for the Dokku container",
+    );
     const dokkuId = lines(outOf(running))[0];
     if (dokkuId) await waitForDokkuToSettle(c, dokkuId);
     const sites = await stopSites(c);
@@ -824,7 +838,7 @@ export const HELP = `Run the development infrastructure on this machine (see doc
 Usage: omni -i run dev:infra:<command> [-a "options=<flags>"]
 
   up        build and start PostgreSQL, Mailpit, Dokku and the router, write the app settings
-  status    show service health, ports and deployed sites
+  status    show service health, ports and the number of recorded deployments
   down      stop everything and keep the data (database, Dokku state, credentials, images)
   destroy   remove everything this created: sites, containers, volumes, network, images, ${STATE_DIR}/
   logs      follow the Compose logs

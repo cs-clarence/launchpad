@@ -53,7 +53,7 @@ has.
 3. Copy the generated settings into the apps. The tool never writes an app's `.env.local`:
 
     ```sh
-    cp .dev-infra/env/controller.env apps/controller/.env.local
+    install -m 600 .dev-infra/env/controller.env apps/controller/.env.local
     ```
 
 4. Run the controller in one terminal and seed it from another:
@@ -104,14 +104,14 @@ aliases off; they are on by default), copy the new files over the apps' `.env.lo
 apps. The deploy preset also writes `.dev-infra/env/worker.env`:
 
 ```sh
-cp .dev-infra/env/controller.env apps/controller/.env.local
-cp .dev-infra/env/worker.env apps/worker/.env.local
+install -m 600 .dev-infra/env/controller.env apps/controller/.env.local
+install -m 600 .dev-infra/env/worker.env apps/worker/.env.local
 omni -i run dev -p @launchpad-kit/controller
 omni -i run dev -p @launchpad-kit/worker
-omni -i run dev:infra:seed
+omni -i run dev:infra:seed -a "options=--new-key"
 ```
 
-The seed's key then has the deploy scopes (and the alias scopes when aliases are on). Deploy
+The `--new-key` makes the seed issue a key with the deploy scopes (a key saved by the `app` preset lacks them and is refused otherwise) (and the alias scopes when aliases are on). Deploy
 `examples/hello` as in [deploy a site on your machine](local-deploy.md#set-it-up) (steps 3 to 5) with
 `LAUNCHPAD_PROFILE=dev-infra`. The Dokku HTTP port is `33181`: send the host name yourself,
 `curl -H "Host: <hostname>" http://127.0.0.1:33181/`. The dashboard's preview link has no port, so it

@@ -600,7 +600,11 @@ async function siteContainers(c: Ctx, site: Site): Promise<string[]> {
     // Another Compose project's container with the same app label is not ours to remove.
     const mine: string[] = [];
     for (const id of ids) {
-        const owner = await inspectLabel(c, id, LABEL_PROJECT);
+        const looked = must(
+            await docker(c, ["inspect", "-f", LABEL_TEMPLATE(LABEL_PROJECT), id]),
+            `Reading the project label of a container of ${site.app}`,
+        );
+        const owner = outOf(looked).trim();
         // Dokku creates site containers itself, so they carry no Compose project label: an empty
         // label is accepted, another project's label is not.
         if (owner === "" || owner === c.project) mine.push(id);
@@ -1126,12 +1130,30 @@ export async function teardown(
         const strange = children.filter(
             (name) => !profile.fixedChildren.includes(name) && !profile.cleanExtras.has(name),
         );
-        if (hasResources || strange.length > 0) {
+        const images: string[] = [];
+        for (const tag of profile.imageTags(project)) {
+            if (await imageExists(c, tag)) images.push(tag);
+        }
+        if (hasResources || strange.length > 0 || images.length > 0) {
+            const why = hasResources
+                ? `project ${project} has resources`
+                : images.length > 0
+                  ? `project ${project} has images (${images.join(", ")})`
+                  : `holds ${strange.join(", ")}`;
             throw new DeployError(
-                `${layout.dir} has no state.json but ${hasResources ? `project ${project} has resources` : `holds ${strange.join(", ")}`}; ` +
-                    "refusing to remove anything.",
+                `${layout.dir} has no state.json but ${why}; refusing to remove anything.`,
             );
         }
+    }
+    // Every Compose command reads compose.env: check before anything is removed, so a retry is
+    // not stuck half-way.
+    if (hasResources && (await d.fs.stat(layout.file("compose.env"))) === null) {
+        throw new DeployError(
+            `compose.env is missing, so Compose cannot remove project ${project}. Nothing was removed. ` +
+                `Remove its resources by exact name (docker ps -a --filter label=${LABEL_PROJECT}=${project}, ` +
+                "then docker rm -f, docker volume rm and docker network rm on what it lists), then run " +
+                `${profile.removeCommand} again.`,
+        );
     }
     let dokku = resources.containers.find((x) => x.service === "dokku");
     if (dokku && dokku.state !== "running") {
@@ -1171,6 +1193,19 @@ export async function teardown(
             );
         }
         const again = await discover(c, dokku?.id ?? null);
+        // A tag the first pass could not derive may be known now (the database was unreadable
+        // before): remove that image too, so success never leaves it behind.
+        for (let i = 0; i < sites.length; i++) {
+            const old = sites[i]!;
+            const found =
+                old.tag === null ? again.sites.find((s) => s.app === old.app && s.tag) : undefined;
+            if (found) {
+                sites[i] = found;
+                checkSiteName(found);
+                await removeImages(c, await siteImages(c, found));
+            }
+        }
+        await writeInventory(c, sites);
         const known = new Set(sites.map((s) => s.app));
         const added = again.sites.filter((s) => !known.has(s.app)).map((s) => s.app);
         const left = await leftovers(c, sites);

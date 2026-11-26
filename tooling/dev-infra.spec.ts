@@ -312,7 +312,9 @@ describe("up", () => {
             expect(secret.length).toBeGreaterThan(20);
             expect(output).not.toContain(secret);
         }
-        expect(output).toContain(`cp ${host.dir}/env/controller.env apps/controller/.env.local`);
+        expect(output).toContain(
+            `install -m 600 ${host.dir}/env/controller.env apps/controller/.env.local`,
+        );
         // Switching back to the app preset removes the worker file.
         await up(deps(), { preset: "app" });
         expect(host.text(`${host.dir}/env/worker.env`)).toBeNull();
@@ -539,6 +541,101 @@ describe("refusals remove nothing", () => {
         expect(host.snapshot()).toEqual(before);
         expect(has("compose stop")).toEqual([]);
         expect(host.nodes.has(`${host.dir}/credentials/token`)).toBe(true);
+    });
+});
+
+describe("review findings", () => {
+    const failing = (match: (a: string[]) => boolean) =>
+        host.failures.push((args) =>
+            match(args) ? { code: 1, output: "boom", stdout: "" } : undefined,
+        );
+
+    it("reuses the recorded project on a plain up", async () => {
+        await up(deps(), { project: "launchpad-dev-custom" });
+        await up(deps());
+        expect(host.projectContainers("launchpad-dev-custom").length).toBeGreaterThan(0);
+        expect(await fails(up(deps(), { project: "launchpad-dev-other" }))).toContain(
+            "belongs to project",
+        );
+    });
+
+    it("regenerates a key pair whose public half is missing, before the router exists", async () => {
+        await up(deps());
+        host.nodes.delete(`${host.dir}/credentials/id_ed25519.pub`);
+        host.addFile(`${host.dir}/credentials/epoch`, "", 0o600);
+        await up(deps());
+        expect(host.nodes.has(`${host.dir}/credentials/id_ed25519.pub`)).toBe(true);
+    });
+
+    it("stops nothing when the network members cannot be listed", async () => {
+        await up(deps());
+        host.deploySite(project, site);
+        failing(
+            (a) =>
+                a.includes("network") &&
+                a.includes("inspect") &&
+                a.some((x) => x.includes("Containers")),
+        );
+        expect(await fails(down(deps()))).toContain("Listing the members");
+        expect(has("compose stop")).toEqual([]);
+        expect(host.containers.every((c) => c.state === "running")).toBe(true);
+    });
+
+    it("does not stop when the Dokku container cannot be looked up", async () => {
+        await up(deps());
+        failing((a) => a.includes("ps") && a.includes("{{.ID}}"));
+        expect(await fails(down(deps()))).toContain("Looking for the Dokku container");
+        expect(has("compose stop")).toEqual([]);
+    });
+
+    it("removes no site container whose project label cannot be read", async () => {
+        await up(deps());
+        host.deploySite(project, site);
+        failing(
+            (a) =>
+                a.includes("inspect") &&
+                a.some((x) => x.includes("com.docker.compose.project")) &&
+                a.at(-1)!.length === 64,
+        );
+        expect(await fails(destroy(deps()))).toContain("project label");
+        expect(has("rm -f")).toEqual([]);
+        expect(host.nodes.has(`${host.dir}/state.json`)).toBe(true);
+    });
+
+    it("refuses a record-less directory when the project image exists", async () => {
+        host.addDir(host.dir, 0o700);
+        host.images.set(`${project}/router:local`, "aaaaaaaaaaaa");
+        host.imageLabels.set(`${project}/router:local`, project);
+        expect(await fails(destroy(deps()))).toContain("has images");
+        expect(host.images.has(`${project}/router:local`)).toBe(true);
+    });
+
+    it("checks compose.env before removing anything in destroy", async () => {
+        await up(deps());
+        host.deploySite(project, site);
+        host.nodes.delete(`${host.dir}/compose.env`);
+        const before = host.snapshot();
+        expect(await fails(destroy(deps()))).toContain("compose.env is missing");
+        expect(host.snapshot()).toEqual(before);
+        expect(has("apps:destroy")).toEqual([]);
+    });
+
+    it("removes the site image found only by the second discovery", async () => {
+        await up(deps());
+        host.deploySite(project, site, { inDb: false });
+        let psqlCalls = 0;
+        host.failures.push((args) => {
+            if (args.includes("psql") && ++psqlCalls === 1)
+                return { code: 1, output: "down", stdout: "" };
+            if (args.includes("psql") && psqlCalls >= 2) {
+                host.deployments = [site];
+            }
+            return undefined;
+        });
+        host.deployments = [];
+        await destroy(deps());
+        expect([...host.images.keys()].some((k) => k.startsWith("launchpad/site:"))).toBe(false);
+        expect(host.nodes.has(host.dir)).toBe(false);
     });
 });
 

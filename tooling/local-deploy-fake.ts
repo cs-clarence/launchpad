@@ -411,6 +411,14 @@ export class FakeHost {
             if (!args.includes("-a")) found = found.filter((c) => c.state === "running");
             return ok(found.map((c) => c.ports).join("\n"));
         }
+        if (format === "{{.ID}}") {
+            return ok(
+                found
+                    .filter((c) => c.state === "running")
+                    .map((c) => c.id)
+                    .join("\n"),
+            );
+        }
         if (format !== PS_FORMAT) return fail("unexpected format", 125);
         return ok(
             found.map((c) => `${c.id} ${c.state} ${c.labels[LABEL_SERVICE] ?? ""}`).join("\n"),
