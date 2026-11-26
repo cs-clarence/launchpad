@@ -190,6 +190,85 @@ describe("the admin profile", () => {
     });
 });
 
+describe("resumable credentials", () => {
+    const set = [
+        "credentials/id_ed25519",
+        "credentials/id_ed25519.pub",
+        "credentials/token",
+        "credentials/epoch",
+        "credentials/known_hosts",
+        "tls/ca.pem",
+        "tls/server.pem",
+        "tls/server.key",
+    ];
+    it("regenerates the whole set after openssl failed behind ssh-keygen", async () => {
+        let broken = true;
+        host.failures.push((args) =>
+            broken && args[0] === "openssl" ? { code: 127, output: "not found" } : undefined,
+        );
+        expect(await fails(up(deps()))).toContain("openssl");
+        expect(host.nodes.has(`${host.dir}/credentials/id_ed25519`)).toBe(true);
+        expect(host.nodes.has(`${host.dir}/tls/server.pem`)).toBe(false);
+        expect(host.calls.some((a) => a.includes("build"))).toBe(false);
+        broken = false;
+        await up(deps());
+        for (const name of set) {
+            expect(host.nodes.get(`${host.dir}/${name}`)?.kind, name).toBe("file");
+        }
+        for (const name of ["credentials/id_ed25519", "credentials/token", "tls/server.key"]) {
+            expect((host.nodes.get(`${host.dir}/${name}`) as { mode: number }).mode & 0o077).toBe(
+                0,
+            );
+        }
+        expect(host.nodes.has(`${host.dir}/tls/ca.key`)).toBe(false);
+    });
+
+    it("refuses a partial set once the router was initialised, before Compose starts", async () => {
+        await up(deps());
+        host.nodes.delete(`${host.dir}/tls/server.pem`);
+        host.calls.length = 0;
+        expect(await fails(up(deps()))).toContain("run down, then up");
+        expect(host.calls.some((a) => a.includes("compose") && a.includes("up"))).toBe(false);
+    });
+
+    it("refuses a missing or wrongly moded file before starting Compose", async () => {
+        await up(deps());
+        host.calls.length = 0;
+        (host.nodes.get(`${host.dir}/tls/server.key`) as { mode: number }).mode = 0o644;
+        expect(await fails(up(deps()))).toContain("tls/server.key must be mode 600");
+        expect(host.calls.some((a) => a.includes("build"))).toBe(false);
+    });
+});
+
+describe("the current CLI profile", () => {
+    const claiming = (async (_d: unknown, o: { org: string; project: string; profile: string }) => {
+        host.current ??= o.profile;
+        return {
+            organization: o.org,
+            project: o.project,
+            profile: o.profile,
+            keyIssued: true,
+            passwordFiles: [],
+        };
+    }) as never;
+    const state = () => JSON.parse(host.text(`${host.dir}/state.json`)!);
+
+    it("is claimed, and recorded, only when the config had none", async () => {
+        await up(host.deps({ seed: claiming }));
+        expect(host.current).toBe("local-deploy");
+        expect(state().profileSetByUp).toBe(true);
+        await up(host.deps({ seed: claiming }));
+        expect(state().profileSetByUp).toBe(true);
+    });
+
+    it("is left alone when another profile is current", async () => {
+        host.current = "mine";
+        await up(host.deps({ seed: claiming }));
+        expect(host.current).toBe("mine");
+        expect(state().profileSetByUp).toBeUndefined();
+    });
+});
+
 describe("re-running up", () => {
     it("fixes ownership when an earlier run stopped before it", async () => {
         host.killAt = { match: (a) => a.includes("chown"), remaining: 0 };

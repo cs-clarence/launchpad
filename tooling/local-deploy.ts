@@ -393,6 +393,8 @@ export interface State {
     project: string;
     repo: string;
     version: string;
+    // True when `up` made the profile current because the config had none.
+    profileSetByUp?: boolean;
 }
 
 export function parseState(text: string): State | null {
@@ -403,7 +405,12 @@ export function parseState(text: string): State | null {
             typeof s.repo === "string" &&
             typeof s.version === "string"
         ) {
-            return { project: s.project, repo: s.repo, version: s.version };
+            return {
+                project: s.project,
+                repo: s.repo,
+                version: s.version,
+                ...(s.profileSetByUp === true ? { profileSetByUp: true } : {}),
+            };
         }
     } catch {
         // A corrupt record is the same as none.
@@ -545,7 +552,9 @@ export interface Deps {
     sleep: (ms: number) => Promise<void>;
     now: () => number;
     probePort: (port: number) => Promise<boolean>;
-    removeProfile: (controller: string) => Promise<void>;
+    // Deletes the profile if it names this controller; resets the current profile only when asked.
+    removeProfile: (controller: string, resetCurrent: boolean) => Promise<void>;
+    currentProfile: () => Promise<string | null>;
     uid: number;
     repo: string;
     version: string;
@@ -779,7 +788,13 @@ async function siteContainers(c: Ctx, site: Site): Promise<string[]> {
             throw new DeployError(`A container for ${site.app} does not carry its app label.`);
         }
     }
-    return ids;
+    // Another Compose project's container with the same app label is not ours to remove.
+    const mine: string[] = [];
+    for (const id of ids) {
+        const owner = await inspectLabel(c, id, LABEL_PROJECT);
+        if (owner === "" || owner === c.project) mine.push(id);
+    }
+    return mine;
 }
 
 function aborted(d: Deps) {
@@ -984,11 +999,42 @@ async function conflictsWithoutRecord(c: Ctx): Promise<void> {
     }
 }
 
+// Everything below is derived from fixed names inside the validated state directory. The last
+// artifact, tls/server.pem, marks a complete set: without it, partial output from an earlier
+// run is removed and everything is generated again (nothing has used it yet). Once the router has
+// been initialised the files are in use, so a partial set is refused instead.
+const GENERATED = [
+    "credentials/epoch",
+    "credentials/known_hosts",
+    "credentials/token",
+    "credentials/id_ed25519",
+    "credentials/id_ed25519.pub",
+    "tls/extensions",
+    "tls/ca.key",
+    "tls/ca.pem",
+    "tls/ca.srl",
+    "tls/server.key",
+    "tls/server.csr",
+    "tls/server.pem",
+] as const;
+
+async function ensureDirectory(c: Ctx, name: string, mode: number): Promise<void> {
+    const path = c.layout.file(name);
+    if ((await c.d.fs.stat(path)) === null) await c.d.fs.mkdir(path, mode);
+}
+
 async function generateCredentials(c: Ctx): Promise<void> {
     const { d, layout } = c;
     const f = layout.file;
-    for (const name of ["dokku"] as const) await d.fs.mkdir(f(name), 0o755);
-    for (const name of ["backups", "tls", "credentials"]) await d.fs.mkdir(f(name), 0o700);
+    const epoch = await d.fs.stat(f("credentials/epoch"));
+    if (epoch && epoch.size > 0) {
+        throw new DeployError(
+            "The credentials are incomplete but the router was already initialised; run down, then up again.",
+        );
+    }
+    await ensureDirectory(c, "dokku", 0o755);
+    for (const name of ["backups", "tls", "credentials"]) await ensureDirectory(c, name, 0o700);
+    for (const name of GENERATED) await d.fs.unlink(f(name));
     const cmds = credentialCommands(layout);
     const gen = async (args: string[], what: string) => {
         const r = await d.run(args);
@@ -1014,6 +1060,33 @@ async function generateCredentials(c: Ctx): Promise<void> {
     }
 }
 
+// Compose would create a root-owned directory for a missing bind source, so check first.
+async function verifyCredentials(c: Ctx): Promise<void> {
+    const f = c.layout.file;
+    const problems: string[] = [];
+    for (const [name, secret] of [
+        ["credentials/id_ed25519", true],
+        ["credentials/id_ed25519.pub", false],
+        ["credentials/known_hosts", false],
+        ["credentials/token", true],
+        ["credentials/epoch", false],
+        ["tls/ca.pem", false],
+        ["tls/server.pem", false],
+        ["tls/server.key", true],
+    ] as const) {
+        const stat = await c.d.fs.stat(f(name));
+        if (!stat || !stat.isFile) problems.push(`${name} is missing or not a file`);
+        else if (secret && (stat.mode & 0o077) !== 0) problems.push(`${name} must be mode 600`);
+    }
+    for (const name of ["dokku", "backups"]) {
+        const stat = await c.d.fs.stat(f(name));
+        if (!stat || !stat.isDirectory) problems.push(`${name} is missing or not a directory`);
+    }
+    if (problems.length > 0) {
+        throw new DeployError(`${problems.join("; ")}. Run down, then up again.`);
+    }
+}
+
 async function ownedByServiceUser(c: Ctx): Promise<void> {
     const image = projectImages(c.project).worker;
     must(
@@ -1031,6 +1104,7 @@ async function ownedByServiceUser(c: Ctx): Promise<void> {
             "--entrypoint",
             "chown",
             image,
+            "-h",
             "10001:10001",
             ...OWNED_BY_SERVICE.map((name) => `/state/${name}`),
         ]),
@@ -1191,9 +1265,10 @@ export async function up(d: Deps, options: UpOptions = {}): Promise<Summary> {
     if ((await d.fs.stat(layout.file("override.json"))) === null) {
         throw new DeployError("override.json is missing; run down, then up again.");
     }
-    if ((await d.fs.stat(layout.file("credentials/id_ed25519"))) === null) {
+    if ((await d.fs.stat(layout.file("tls/server.pem"))) === null) {
         await generateCredentials(c);
     }
+    await verifyCredentials(c);
 
     d.log("Building the five images (the slow part on a first run)...");
     must(
@@ -1246,6 +1321,7 @@ export async function up(d: Deps, options: UpOptions = {}): Promise<Summary> {
         "--owner-password-file",
         path.join(config, "local-deploy-owner.password"),
     ]);
+    const profileBefore = await d.currentProfile();
     const summary = await (d.seed ?? seed)(
         {
             fetch: d.fetch,
@@ -1260,6 +1336,19 @@ export async function up(d: Deps, options: UpOptions = {}): Promise<Summary> {
         },
         options2,
     );
+    const claimed = record.kind === "ok" && record.state?.profileSetByUp === true;
+    if (claimed || (profileBefore === null && (await d.currentProfile()) === PROFILE)) {
+        await d.fs.writeFile(
+            layout.file("state.json"),
+            JSON.stringify({
+                project,
+                repo: layout.repo,
+                version: TOOL_VERSION,
+                profileSetByUp: true,
+            }),
+            0o600,
+        );
+    }
     const result: Summary = {
         project,
         ports,
@@ -1688,7 +1777,10 @@ export async function down(d: Deps, options: UpOptions = {}): Promise<void> {
     const envText = await d.fs.readFile(layout.file("compose.env"));
     if (envText !== null) {
         try {
-            await d.removeProfile(`http://127.0.0.1:${portsFromEnv(parseEnv(envText)).controller}`);
+            await d.removeProfile(
+                `http://127.0.0.1:${portsFromEnv(parseEnv(envText)).controller}`,
+                record.state?.profileSetByUp === true,
+            );
         } catch {
             d.log(
                 `Could not remove the CLI profile ${PROFILE}; run: launchpad logout --profile ${PROFILE}.`,
@@ -1833,13 +1925,15 @@ export function realDeps(repo: string, version: string, signal: AbortSignal): De
         sleep,
         now: Date.now,
         probePort,
-        removeProfile: async (controller) => {
+        currentProfile: async () =>
+            (await createContext(env, { fetch }).store.load()).currentProfile ?? null,
+        removeProfile: async (controller, resetCurrent) => {
             const ctx = createContext(env, { fetch });
             const config = await ctx.store.load();
             if (config.profiles[PROFILE]?.controller !== controller) return;
             await ctx.store.update((current) => {
                 delete current.profiles[PROFILE];
-                if (current.currentProfile === PROFILE) {
+                if (resetCurrent && current.currentProfile === PROFILE) {
                     current.currentProfile = Object.keys(current.profiles)[0] ?? null;
                 }
             });

@@ -104,7 +104,11 @@ describe("docs/local-deploy.md", () => {
 
     it("names only settings docker-compose.yaml defines", () => {
         for (const name of new Set(guide.match(/\bLAUNCHPAD_[A-Z_]+\b/g) ?? [])) {
-            expect(compose, name).toContain(name);
+            if (name === "LAUNCHPAD_PROFILE") {
+                expect(read("packages/client-core/README.md"), name).toContain(name);
+            } else {
+                expect(compose, name).toContain(name);
+            }
         }
     });
 
@@ -160,6 +164,10 @@ describe("docs/local-deploy.md", () => {
         expect(read("docs/patterns/README.md")).toContain("tooling/local-deploy.ts");
         expect(read("docs/production-compose.md")).toContain("local-deploy.md");
         expect(read("CONTRIBUTING.md")).toContain("docs/local-deploy.md");
+    });
+
+    it("never tells the user to switch their current profile", () => {
+        expect(guide).not.toMatch(/profile use/);
     });
 
     it("has no unmeasured cost left", () => {

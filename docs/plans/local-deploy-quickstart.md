@@ -594,7 +594,16 @@ author reviewed the script against real Docker behaviour (and the real run then 
   when containers exist), so a `down` killed inside `compose down` also resumes; the compose profile `admin`
   is enabled only for `build`.
 - The two password files `local-deploy-*.password` in the CLI config directory are kept by `down` (documented).
-- `down` resets the CLI's current profile to the first remaining one; the guide's `launchpad profile use
-  local-deploy` changes the user's current profile in the first place.
+- Profiles (after review): the guide uses `export LAUNCHPAD_PROFILE=local-deploy`, never `profile use`. `up`
+  makes `local-deploy` current only when the config had no current profile and records `profileSetByUp` in
+  `state.json`; `down` resets the current profile only when that flag is set and it still names
+  `local-deploy`, otherwise it leaves it alone.
+- Credentials (after review): generation is resumable. `tls/server.pem` is the completion marker; without it
+  partial output (fixed names only) is removed and regenerated, unless the router was already initialised (then
+  `up` refuses: run `down`, then `up`). All expected files are checked for type and mode before Compose starts.
+- `down` removes site containers only when they carry no other Compose project label; the chown helper uses
+  `chown -h`.
+- The before/after snapshots (`docker ps -a`, `image ls`, `volume ls`, `network ls`) do not capture dangling
+  layers or build cache; those were reported separately (+2 untagged images, cache 627 MB to 1.82 GB).
 - A cold first run (empty Docker cache) was not measured, because that needs pruning Docker state the build
   task must not touch; the guide gives the warm time and labels the cold figure as a guess.

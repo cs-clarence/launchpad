@@ -19,7 +19,8 @@ To try the controller, dashboard and CLI on your own machine, follow
 [run Launchpad on your machine](docs/local-quickstart.md): a development server, any PostgreSQL 17,
 and one seed command (`omni -i run local:seed`) that creates the accounts, an organization, a project
 and a saved CLI profile. To deploy `examples/hello` on your machine with Docker (controller, worker,
-Dokku and router, removed again by one command), follow [deploy a site on your machine](docs/local-deploy.md).
+Dokku and router, removed again by one command), follow [deploy a site on your machine](docs/local-deploy.md) (it mounts the host Docker socket into
+the worker and Dokku, which is root-equivalent on your machine).
 
 ## Configuration
 

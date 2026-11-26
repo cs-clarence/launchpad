@@ -4,7 +4,8 @@ For a developer who wants a working local controller to try the dashboard, the C
 API. You finish with a migrated database, an operator and an owner account, an organization,
 a project, an API key and a saved `launchpad` profile. Nothing here deploys sites: apps and
 deployments stay off. To deploy `examples/hello` end to end on one machine (Dokku, worker and
-controller in Docker), follow [deploy a site on your machine](local-deploy.md); see
+controller in Docker), follow [deploy a site on your machine](local-deploy.md) (it mounts the host Docker socket into the
+worker and Dokku, which is root-equivalent on your machine); see
 [deployments](deployments.md) for the model.
 
 You need [Bun](https://bun.sh) 1.4.4, [Omni](https://github.com/omni-oss/omni), a checkout of

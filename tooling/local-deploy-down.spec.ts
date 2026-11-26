@@ -226,6 +226,56 @@ describe("every deployment state is destroyed directly", () => {
     });
 });
 
+describe("the current CLI profile on down", () => {
+    it("is reset only when up set it", async () => {
+        await ready();
+        await down(deps());
+        expect(host.resets).toEqual([false]);
+        host = new FakeHost();
+        await up(
+            deps({
+                seed: (async () => {
+                    host.current = "local-deploy";
+                    return {
+                        organization: "local",
+                        project: "demo",
+                        profile: "local-deploy",
+                        keyIssued: true,
+                        passwordFiles: [],
+                    };
+                }) as never,
+            }),
+        );
+        await down(deps());
+        expect(host.resets).toEqual([true]);
+    });
+});
+
+describe("foreign containers and helper arguments", () => {
+    it("never removes a container of another Compose project that carries the app label", async () => {
+        await ready();
+        host.deploySite(project, site(1));
+        const foreign = host.add("other-web-1", "other-project", "web", {
+            labels: {
+                "com.docker.compose.project": "other-project",
+                "com.dokku.app-name": "lp-abcdefghij",
+            },
+        });
+        await down(deps());
+        expect(host.containers.map((c) => c.id)).toContain(foreign.id);
+        expect(host.calls.some((a) => a.includes("rm") && a.includes(foreign.id))).toBe(false);
+    });
+
+    it("chowns without following symlinks", async () => {
+        await up(deps());
+        const chown = host.calls.find((a) => a.includes("chown"))!;
+        expect(chown.slice(chown.indexOf("chown") + 2, chown.indexOf("chown") + 4)).toEqual([
+            "-h",
+            "10001:10001",
+        ]);
+    });
+});
+
 describe("discovery", () => {
     it("aborts before any removal on a bad database row", async () => {
         await ready();

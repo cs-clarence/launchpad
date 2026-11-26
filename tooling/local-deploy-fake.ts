@@ -79,6 +79,8 @@ export class FakeHost {
     events: string[] = [];
     realpaths = new Map<string, string>();
     removedProfiles: string[] = [];
+    resets: boolean[] = [];
+    current: string | null = null;
 
     constructor(public repo = "/home/dev/launchpad") {
         this.addDir("/home/dev", 0o755);
@@ -246,9 +248,11 @@ export class FakeHost {
             },
             now: () => this.clock,
             probePort: async (port) => !this.busyPorts.has(port),
-            removeProfile: async (controller) => {
+            removeProfile: async (controller, resetCurrent) => {
                 this.removedProfiles.push(controller);
+                this.resets.push(resetCurrent);
             },
+            currentProfile: async () => this.current,
             uid: this.uid,
             repo: this.repo,
             version: "0.0.0",
@@ -550,7 +554,7 @@ export class FakeHost {
         if (this.helperFails) return fail("helper failed");
         const names = args.slice(args.indexOf(image) + 1);
         if (entry === "chown") {
-            for (const n of names.slice(1)) {
+            for (const n of names.filter((x) => x.startsWith("/state/"))) {
                 const node = this.nodes.get(`${src}/${n.replace("/state/", "")}`);
                 if (node) node.uid = 10001;
             }

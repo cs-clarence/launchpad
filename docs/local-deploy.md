@@ -68,7 +68,7 @@ Builds and deployed sites run in the host engine, outside the memory limits.
     ```sh
     omni -i run build -p @launchpad-kit/cli
     alias launchpad="bun $PWD/apps/cli/dist/index.js"
-    launchpad profile use local-deploy
+    export LAUNCHPAD_PROFILE=local-deploy
     PROJECT=$(launchpad api organizations/{org}/projects | grep -m1 '"id"' | cut -d'"' -f4)
     ARTIFACT=$(launchpad artifact upload "$PROJECT" examples/hello --directory | grep -m1 '"id"' | cut -d'"' -f4)
     APP=$(launchpad app create "$PROJECT" hello | grep -m1 '"id"' | cut -d'"' -f4)
@@ -125,6 +125,14 @@ Builds and deployed sites run in the host engine, outside the memory limits.
     ```sh
     omni -i run local:deploy -a options=down
     ```
+
+## What it does to your CLI profiles
+
+`up` saves a profile `local-deploy` and never switches your current profile, except when you have none:
+then it becomes current and `up` records that in `.local-deploy/state.json`. The guide selects the profile
+per shell with `LAUNCHPAD_PROFILE` (or use `--profile local-deploy` on a command). `down` deletes the
+`local-deploy` profile, and resets the current profile only if `up` had set it and it still points at
+`local-deploy`; otherwise it leaves your current profile as it is.
 
 ## What `down` removes, and what stays
 
