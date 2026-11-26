@@ -113,8 +113,10 @@
       "name": "@launchpad-kit/router",
       "version": "0.0.0",
       "dependencies": {
+        "@commander-js/extra-typings": "catalog:",
         "@launchpad-kit/alias-router": "workspace:^",
         "@launchpad-kit/database": "workspace:^",
+        "commander": "catalog:",
       },
       "devDependencies": {
         "@launchpad-kit/tsconfig": "workspace:^",
