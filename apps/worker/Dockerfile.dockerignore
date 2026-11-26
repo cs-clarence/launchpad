@@ -9,6 +9,7 @@ docs
 **/.tanstack
 **/.env*
 docker-compose.env
+.local-deploy
 **/*.pem
 **/*.key
 **/id_*

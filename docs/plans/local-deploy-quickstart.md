@@ -545,3 +545,56 @@ Done by hand under the project `launchpad-local-5b1ce000` and its own tags, then
   volumes and all three networks including `<project>-apps`.
 - Unknown 6: no `HOST` or port setting beyond the Compose defaults was needed.
 - Note for zsh users and for the code: `"$P/x:local"` must be braced, `$s:l` is a lowercase modifier.
+
+### Steps 2 to 5 (built 2026-11-26)
+
+`tooling/local-deploy.ts` (planning, `up`, `status`, `down`, CLI), `tooling/local-deploy-fake.ts` (in-memory
+file system, Docker, Compose and Dokku), the seed's Compose mode, task `local:deploy`, `docs/local-deploy.md`
+and the drift test are built; every test runs against fakes. No independent reviewer was available to the
+build task (subagents cannot nest), so the High-risk review gate before the real run is **not met**; the
+author reviewed the script against real Docker behaviour (and the real run then found one defect, below).
+
+### Step 6 real run (2026-11-26, project `launchpad-local-b58627ef`, ports 32180 to 32443)
+
+- Run through `omni -i run local:deploy`: `up` (72 s, warm caches), manual deploy of `examples/hello` with the
+  guide's commands (`succeeded` in 53 s; `curl -H "Host: ..." http://127.0.0.1:32181/` and
+  `http://<hostname>:32181/` both 200), `up` again (idempotent, 51 to 55 s), `status` (recorded the inventory), a
+  deliberately failed deployment, the database-stopped fallback, an interrupted `down`, and `down`.
+- A deployment cannot be failed with an archive lacking `index.html`: the upload itself is refused. A deploy
+  with Dokku stopped mid-way ended `failed`; `down` then refused by name ("Dokku container exists but is not
+  running") and removed nothing; after `docker compose -p <project> start dokku` it removed both sites.
+- Database stopped (after a `status` had recorded the site): `down` completed from `inventory.json`, Dokku and
+  the apps network.
+- `down` killed right after the project's containers were gone (volumes still being removed): the state
+  directory and five image tags remained, the rerun resumed at the root helper and finished.
+- Proof of absence, by snapshot of `docker ps -a`, `docker image ls`, `docker volume ls`, `docker network ls`
+  before the first real run and after the last `down`: containers, volumes, networks and tagged images are
+  identical; no resource carries the project label; `.local-deploy/` is gone; nothing listens on the five ports.
+  What stayed: the Docker build cache (627 MB to 1.82 GB, three builds) and two dangling superseded layers
+  (+2 untagged images, about 80 MB). The user's containers `cloudflare-connector` and `playit-connector` were
+  untouched (up throughout).
+- Costs recorded in `docs/local-deploy.md`: idle memory about 175 MiB; images about 2.4 GB.
+
+### Findings and deviations
+
+- **Defect found by the real run:** the controller, worker and router build contexts are the repository root, so
+  a second `up` failed (`permission denied` on the root-owned `.local-deploy/backups`) and the first would have
+  sent secrets into the build context. Fixed by adding `.local-deploy` to the three `Dockerfile.dockerignore`
+  files (and the existing compose test asserts it). This touches files the plan did not list, but not
+  `docker-compose.yaml`.
+- `admin migrate`, setup and create-user: the plan lists `setup` and `create-user` before starting the rest;
+  here `migrate` runs before the controller starts (as planned) and `setup`/`create-user` run inside the seed
+  after the controller is healthy (the seed owns that sequence).
+- The plan's "containers whose name matches `NAME.app`" cannot match real names (`lp-xxxxxxxxxx.web.1`); the
+  tool matches `NAME.app` followed by `.<process>.<n>`.
+- If the database is unreadable and no `status` recorded a deployment, its `launchpad/site:<id>` image tag
+  cannot be derived (the id is only in the database); `down` destroys the app, names the limit and points at
+  `docker image ls launchpad/site`.
+- `down` runs the Compose project removal whenever labeled containers, volumes or networks exist (not only
+  when containers exist), so a `down` killed inside `compose down` also resumes; the compose profile `admin`
+  is enabled only for `build`.
+- The two password files `local-deploy-*.password` in the CLI config directory are kept by `down` (documented).
+- `down` resets the CLI's current profile to the first remaining one; the guide's `launchpad profile use
+  local-deploy` changes the user's current profile in the first place.
+- A cold first run (empty Docker cache) was not measured, because that needs pruning Docker state the build
+  task must not touch; the guide gives the warm time and labels the cold figure as a guess.

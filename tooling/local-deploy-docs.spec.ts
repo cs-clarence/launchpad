@@ -152,4 +152,17 @@ describe("docs/local-deploy.md", () => {
             }
         }
     });
+
+    it("is linked from the other docs", () => {
+        expect(read("README.md")).toContain("docs/local-deploy.md");
+        expect(read("docs/tooling.md")).toContain("local-deploy.md");
+        expect(read("docs/local-quickstart.md")).toContain("local-deploy.md");
+        expect(read("docs/patterns/README.md")).toContain("tooling/local-deploy.ts");
+        expect(read("docs/production-compose.md")).toContain("local-deploy.md");
+        expect(read("CONTRIBUTING.md")).toContain("docs/local-deploy.md");
+    });
+
+    it("has no unmeasured cost left", () => {
+        expect(guide).not.toMatch(/MEASURED_/);
+    });
 });

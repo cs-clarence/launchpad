@@ -12,6 +12,8 @@ Targeting `dokku` starts only that service, but Compose still requires the full
 environment to render the file. This is not an in-place migration from the old
 Dokku-only file: the project and default ports changed, and existing Dokku data
 is not adopted automatically. Leave legacy state in place pending a separate cutover.
+To try the same stack on your own machine, [deploy a site locally](local-deploy.md); that tool is a
+developer convenience with generated throwaway credentials and is not the production procedure.
 
 ## What it defines
 

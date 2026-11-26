@@ -73,6 +73,14 @@ runner, so `tooling/local-seed.spec.ts` needs no server or database. It stores t
 `login` in `@launchpad-kit/client-core`. The guide is `docs/local-quickstart.md`, guarded by
 `tooling/local-quickstart.spec.ts`.
 
+The local deployment tool is `tooling/local-deploy.ts` (`omni -i run local:deploy`): pure planning
+functions (names, ports, env, inventory validation) and `up`, `status` and `down` over injected seams
+(command runner, file system, `fetch`, clock, port probe), so its specs run against the in-memory
+`tooling/local-deploy-fake.ts` and never start Docker. It reuses the seed through its Compose mode
+(`AdminMode`, stdin password) and imports nothing from the experiments. The guide is
+`docs/local-deploy.md`, guarded by `tooling/local-deploy-docs.spec.ts` with helpers in
+`tooling/docs-check.ts`.
+
 Opt-in disposable rehearsals live under `tooling/experiments/`: `routing/` (the router
 experiment and its production-router rehearsal) and `acceptance/` (the full-stack P7 rehearsal:
 `run.ts` creates and cleans up resources, `world.ts` is the HTTP/SQL/docker access layer,

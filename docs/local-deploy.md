@@ -26,14 +26,14 @@ repository root.
 
 ## What it costs
 
-| What                                    | Measured                                                                              |
-| --------------------------------------- | ------------------------------------------------------------------------------------- |
-| Memory limits of the five services      | 0.5 + 0.5 + 1 + 1 + 0.125 GiB, about 3.1 GiB (3.6 GiB while the admin container runs) |
-| Idle memory (measured)                  | MEASURED_MEMORY                                                                       |
-| First `up` (cold image cache, measured) | MEASURED_FIRST                                                                        |
-| `up` again with warm layers (measured)  | MEASURED_WARM                                                                         |
-| One deployment of `hello` (measured)    | MEASURED_DEPLOY                                                                       |
-| Disk (images and build cache, measured) | MEASURED_DISK                                                                         |
+| What                                    | Measured                                                                                                                                                                                                                                                                   |
+| --------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Memory limits of the five services      | 0.5 + 0.5 + 1 + 1 + 0.125 GiB, about 3.1 GiB (3.6 GiB while the admin container runs)                                                                                                                                                                                      |
+| Idle memory (measured)                  | about 175 MiB with one deployed site (PostgreSQL 61, controller 52, Dokku 26, worker 25, router 11 MiB)                                                                                                                                                                    |
+| First `up` (cold image cache, measured) | 72 s with warm Docker layer and base-image caches (Dokku healthy after about a minute). A cold first run was not measured; earlier rehearsals saw 4.5 minutes for Dokku's first start alone, so allow 10 to 20 minutes (a guess)                                           |
+| `up` again with warm layers (measured)  | 51 to 55 s (images rebuilt from cache, services re-checked, nothing re-seeded)                                                                                                                                                                                             |
+| One deployment of `hello` (measured)    | 53 to 59 s from `app deploy` to `succeeded`                                                                                                                                                                                                                                |
+| Disk (images and build cache, measured) | the five images are about 2.4 GB (Dokku 1.53 GB, worker 242 MB, controller 212 MB, admin 269 MB, router 190 MB), removed by `down`; the build cache grew by about 1.2 GB over the runs and stays, as do a few superseded layers (docker builder prune, docker image prune) |
 
 Builds and deployed sites run in the host engine, outside the memory limits.
 
