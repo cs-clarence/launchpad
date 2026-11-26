@@ -83,6 +83,10 @@ describe("docker-compose.yaml", () => {
         expect(model.services.worker.environment.LAUNCHPAD_DEPLOYMENTS).toBe("off");
     });
 
+    it("gives the admin service the data directory, so migrate checks the real archives", () => {
+        expect(render().services.admin.environment.LAUNCHPAD_DATA_DIR).toBe("/data");
+    });
+
     it("rejects the departures it exists to catch", () => {
         const mutate = (change: (model: any) => void) => {
             const model = render();

@@ -11,7 +11,12 @@ import {
     up,
     type Summary,
 } from "./local-deploy";
-import { DEPLOY_KEY_SCOPES, type Deps as SeedDeps, type Options } from "./local-seed";
+import {
+    ALIAS_KEY_SCOPES,
+    DEPLOY_KEY_SCOPES,
+    type Deps as SeedDeps,
+    type Options,
+} from "./local-seed";
 
 let host: FakeHost;
 let project: string;
@@ -168,6 +173,19 @@ describe("up on a fresh machine", () => {
         expect(seedDeps.scopes).toEqual(DEPLOY_KEY_SCOPES);
         expect(seedDeps.admin?.kind).toBe("compose");
         expect(options.ownerPasswordFile).toContain("local-deploy-owner.password");
+    });
+
+    it("asks for the alias scopes when compose.env turns aliases on", async () => {
+        await up(deps());
+        const file = `${host.dir}/compose.env`;
+        await host.fs.writeFile(
+            file,
+            host.text(file)!.replace("LAUNCHPAD_ALIASES=off", "LAUNCHPAD_ALIASES=on"),
+            0o600,
+        );
+        await up(deps());
+        expect(seeded[0]!.deps.scopes).toEqual(DEPLOY_KEY_SCOPES);
+        expect(seeded[1]!.deps.scopes).toEqual(ALIAS_KEY_SCOPES);
     });
 
     it("binds only loopback and sets a unique apps network", async () => {

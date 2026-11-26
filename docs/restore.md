@@ -53,13 +53,16 @@ a repair. Use the operator checks in this runbook to complete recovery.
     keeps that marker. A restored `ready` database row cannot bypass it.
 
 3. If `restore` reports pending migrations, run `migrate` from the intended
-   version, then `migrate --status` (`pending: 0`, exit 0). Run
+   version (`migrate` refuses an empty database next to a data directory that holds archives, which
+   looks like a lost database: restore a backup instead, or pass `--allow-orphaned-data` to reuse the
+   data directory deliberately; it does not look at Dokku, `drift` finds orphan apps), then `migrate --status` (`pending: 0`, exit 0). Run
    `bun .output/admin.mjs check-restore` with the pinned `DOKKU_SSH_*` settings
    while workers are stopped. It lists **missing archives, missing deployment apps
    and passed deployment preview deadlines**. Queued
    jobs have not touched Dokku and are not probed. `--no-dokku` is only a partial check.
    Missing archives require repair before a deployment; an unreachable Dokku
-   is an error, not a missing app. The check changes nothing.
+   is an error, not a missing app. The check changes nothing. On a database that is not migrated it
+   prints the schema message and exits 2 ("could not check"; 1 stays "findings"); `drift` does the same.
    It also exits 1 for a deployment that never got a Dokku app (one that failed
    at its first step); that is not damage from the restore. Delete such a
    deployment through the API once recovery is cleared, and the check is clean.

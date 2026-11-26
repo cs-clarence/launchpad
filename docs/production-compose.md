@@ -107,7 +107,8 @@ Each step is a deliberate operator action. `up` never starts `admin`.
    `launchpad-apps`; the network's name has no project prefix). Then read Dokku's host key out of band and write the pinned `known_hosts` entry for the
    host `dokku` port 22; register the worker's **public** key with
    `docker compose ... exec -T dokku dokku ssh-keys:add launchpad-worker < key.pub`.
-3. Migrate, then confirm: `docker compose ... run --rm admin migrate`, then
+3. Migrate (first install expects an empty data volume: `migrate` refuses an empty database next to
+   stored archives, see [restore](restore.md)), then confirm: `docker compose ... run --rm admin migrate`, then
    `... run --rm admin migrate --status` (`pending: 0`).
 4. Create the first operator:
    `... run --rm admin setup --email <address> --password-file <mode-0600 file>`. The

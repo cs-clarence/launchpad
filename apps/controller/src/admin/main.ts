@@ -8,7 +8,12 @@ import {
     revokeAllCredentials,
     setupFirstOperator,
 } from "@launchpad-kit/auth";
-import { createDatabase, migrateToLatest, migrationStatus } from "@launchpad-kit/database";
+import {
+    createDatabase,
+    migrateToLatest,
+    migrationStatus,
+    SchemaMismatchError,
+} from "@launchpad-kit/database";
 import { readFileSync, statSync } from "node:fs";
 import path from "node:path";
 import { createDokkuClient } from "@launchpad-kit/dokku";
@@ -39,6 +44,7 @@ import {
     readUnservableProbe,
 } from "./drift";
 import { recoveryAnchorNotice, routerAnchorFromEnv, routerSessionFromEnv } from "./router-view";
+import { assertMigrateSafe, assertReadyForCheck } from "./preflight";
 import { checkRestore, restoreBackup, replaceTarget } from "./restore";
 
 async function readStdin(): Promise<string> {
@@ -119,6 +125,10 @@ program
     .command("migrate")
     .description("Apply pending database migrations (forward-only)")
     .option("--status", "only list applied and pending migrations; change nothing")
+    .option(
+        "--allow-orphaned-data",
+        "migrate an empty database even though the data directory already holds archives",
+    )
     .action(async (options) => {
         if (options.status) {
             const status = await withDatabase((db) => migrationStatus(db));
@@ -132,7 +142,15 @@ program
             process.exitCode = status.pending.length > 0 || status.unknown.length > 0 ? 1 : 0;
             return;
         }
-        const results = await withDatabase((db) => migrateToLatest(db));
+        const results = await withDatabase(async (db) => {
+            const { warning } = await assertMigrateSafe({
+                db,
+                dataDir: path.resolve(process.env.LAUNCHPAD_DATA_DIR ?? ".data/controller"),
+                allowOrphanedData: options.allowOrphanedData === true,
+            });
+            if (warning) console.error(warning);
+            return migrateToLatest(db);
+        });
         console.log(
             results.length === 0
                 ? "Database is up to date."
@@ -538,8 +556,9 @@ program
     .action(async (options) => {
         const env = process.env;
         try {
-            const report = await withDatabase((db) =>
-                collectDrift({
+            const report = await withDatabase(async (db) => {
+                await assertReadyForCheck(db);
+                return collectDrift({
                     database: () => readDriftDatabase(db),
                     dokku:
                         options.dokku === false
@@ -587,12 +606,16 @@ program
                         appNamePattern: /^lp-[a-z0-9]{10}$/,
                         now: new Date(),
                     },
-                }),
-            );
+                });
+            });
             console.log(JSON.stringify(report, null, 2));
             process.exitCode = driftCommandExitCode(report);
-        } catch {
-            console.error("Drift check failed; no complete report was produced.");
+        } catch (error) {
+            console.error(
+                error instanceof SchemaMismatchError
+                    ? error.message
+                    : "Drift check failed; no complete report was produced.",
+            );
             process.exitCode = 2;
         }
     });
@@ -603,23 +626,23 @@ program
     .option("--no-dokku", "skip the Dokku check (otherwise DOKKU_SSH_* settings are required)")
     .action(async (options) => {
         const env = process.env;
-        const dokku =
-            options.dokku === false
-                ? null
-                : createDokkuClient({
-                      host: required(env, "DOKKU_SSH_HOST"),
-                      port: sshPort(env.DOKKU_SSH_PORT),
-                      username: env.DOKKU_SSH_USER || "dokku",
-                      privateKeyPath: required(env, "DOKKU_SSH_KEY_PATH"),
-                      knownHostsPath: required(env, "DOKKU_SSH_KNOWN_HOSTS_PATH"),
-                  });
-        const report = await withDatabase((db) =>
-            checkRestore({
-                db,
-                dataDir: path.resolve(env.LAUNCHPAD_DATA_DIR ?? ".data/controller"),
-                appExists: dokku ? (name) => dokku.apps.exists(name) : undefined,
-            }),
-        );
+        let report;
+        try {
+            report = await withDatabase(async (db) => {
+                await assertReadyForCheck(db);
+                const dokku = options.dokku === false ? null : dokkuFromEnv(env);
+                return checkRestore({
+                    db,
+                    dataDir: path.resolve(env.LAUNCHPAD_DATA_DIR ?? ".data/controller"),
+                    appExists: dokku ? (name) => dokku.apps.exists(name) : undefined,
+                });
+            });
+        } catch (error) {
+            if (!(error instanceof SchemaMismatchError)) throw error;
+            console.error(error.message);
+            process.exitCode = 2;
+            return;
+        }
         for (const deployment of report.expired) {
             console.log(
                 `expired: deployment ${deployment.deploymentId} preview deadline ${deployment.expiresAt.toISOString()}; reconcile before enabling model mutations`,

@@ -96,7 +96,10 @@ seconds, so it recovers by itself once the database is migrated (or reachable). 
 is **behind** (the API answers `503 schema-mismatch`) needs `migrate`, and one
 a **newer** version already migrated needs that version or a restored backup. `migrate --status`
 lists applied and pending migrations and changes nothing (exit code 1 if any are pending or
-unknown). The controller carries its migrations, bundled so they run without the repository:
+unknown). `migrate` refuses a database with no applied migration when `LAUNCHPAD_DATA_DIR` already
+holds stored archives (a lost or replaced database; restore a backup, see `docs/restore.md`);
+`--allow-orphaned-data` overrides that on purpose. `drift` and `check-restore` exit 2 on an unmigrated
+database. The controller carries its migrations, bundled so they run without the repository:
 `.output/migrations` for the controller (and the operator commands in `.output/admin.mjs`, so
 `bun .output/admin.mjs migrate` works in the image). The worker has no migration bundle.
 `LAUNCHPAD_MIGRATIONS_DIR` names another folder.

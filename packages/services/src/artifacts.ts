@@ -57,6 +57,10 @@ export function resolveLimits(overrides: Partial<ArtifactLimits> = {}): Artifact
 
 const STORAGE_KEY = /^artifacts\/[0-9a-f]{32}\/[0-9a-f]{64}\.tar\.gz$/;
 
+export function isArtifactStorageKey(storageKey: string): boolean {
+    return STORAGE_KEY.test(storageKey);
+}
+
 // The organization id is an opaque string from the auth library, so it never becomes
 // a path component itself; a fixed-length hash of it does.
 export function artifactStorageKey(organizationId: string, digest: string): string {

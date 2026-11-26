@@ -120,7 +120,7 @@ const OLD_OPTION_BLOCK = `  --project <name>    project name (default launchpad-
                       must match ^launchpad-local-[a-z0-9-]{1,40}$)
   --port-base <n>     first of the five host ports (default 32180; offsets 0, 1, 2, 42, 263; up only)
   --new-key           up only: issue a replacement key for the local-deploy profile (needed if its
-                      saved key lacks the scopes deploying needs)
+                      saved key lacks the scopes deploying needs, or was revoked)
   --help              show this text`;
 
 describe("local-deploy HELP", () => {

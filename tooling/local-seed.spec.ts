@@ -19,7 +19,9 @@ import {
     ensureOutDirectory,
     classifyAdmin,
     DEFAULT_CONTROLLER,
+    ALIAS_KEY_SCOPES,
     DEPLOY_KEY_SCOPES,
+    scopesFor,
     spawnRun,
     type AdminMode,
     HELP,
@@ -517,12 +519,41 @@ describe("failures give one clear message", () => {
         expect(await message(() => seed(deps(), options()))).toMatch(/chmod 600/);
     });
 
-    it("a profile that is not ours, unless --force", async () => {
-        await seed(deps(), options());
-        fake.keys.clear();
-        expect(await message(() => seed(deps(), options()))).toMatch(/--force/);
-        const forced = await seed(deps(), options(["--force"]));
-        expect(forced.keyIssued).toBe(true);
+    describe("a saved key that no longer works", () => {
+        it("is refused without --new-key, naming it", async () => {
+            await seed(deps(), options());
+            fake.keys.clear();
+            expect(await message(() => seed(deps(), options()))).toMatch(/--new-key/);
+            expect(fake.keys.size).toBe(0);
+        });
+
+        it("is replaced with --new-key, and with --force", async () => {
+            await seed(deps(), options());
+            fake.keys.clear();
+            expect((await seed(deps(), options(["--new-key"]))).keyIssued).toBe(true);
+            fake.keys.clear();
+            expect((await seed(deps(), options(["--force"]))).keyIssued).toBe(true);
+        });
+    });
+
+    describe("a profile of another controller", () => {
+        const elsewhere = ["--controller", "http://127.0.0.1:3001", "--origin", BASE];
+
+        it("is refused even with --new-key, which names --force", async () => {
+            await seed(deps(), options());
+            const before = fake.keys.size;
+            for (const flags of [[], ["--new-key"]]) {
+                expect(
+                    await message(() => seed(deps(), options([...elsewhere, ...flags]))),
+                ).toMatch(/--force/);
+            }
+            expect(fake.keys.size).toBe(before);
+        });
+
+        it("is replaced with --force", async () => {
+            await seed(deps(), options());
+            expect((await seed(deps(), options([...elsewhere, "--force"]))).keyIssued).toBe(true);
+        });
     });
 
     it("keeps the key when saving the profile fails, and still prints no secret", async () => {
@@ -883,6 +914,14 @@ describe("compose mode", () => {
         expect(KEY_SCOPES).toHaveLength(4);
         expect(DEPLOY_KEY_SCOPES).toEqual([...KEY_SCOPES, "app:deploy", "app:delete"]);
         expect(DEPLOY_KEY_SCOPES).toHaveLength(6);
+    });
+
+    it("adds promote and alias management for a stack with aliases on", () => {
+        expect(ALIAS_KEY_SCOPES).toEqual([...DEPLOY_KEY_SCOPES, "app:promote", "app:alias:manage"]);
+        expect(ALIAS_KEY_SCOPES).toHaveLength(8);
+        expect(scopesFor({ LAUNCHPAD_ALIASES: "on" })).toBe(ALIAS_KEY_SCOPES);
+        expect(scopesFor({ LAUNCHPAD_ALIASES: "off" })).toBe(DEPLOY_KEY_SCOPES);
+        expect(scopesFor({})).toBe(DEPLOY_KEY_SCOPES);
     });
 
     it("sends the deploy scopes and key name when given", async () => {

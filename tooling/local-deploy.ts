@@ -29,7 +29,7 @@ import { ClientCoreError, configDirectory, createContext } from "../packages/cli
 import { flagsOf, keyOf, optionHelp, parseOrFail, toolCommand, type Opt } from "./cli";
 import { COMPOSE_FILE, interpolate, loadRaw, requiredVariables } from "./compose-production";
 import {
-    DEPLOY_KEY_SCOPES,
+    scopesFor,
     parseArgs as parseSeedArgs,
     seed,
     SeedError,
@@ -1420,7 +1420,7 @@ export async function up(d: Deps, options: UpOptions = {}): Promise<Summary> {
             sleep: d.sleep,
             now: d.now,
             admin: mode,
-            scopes: DEPLOY_KEY_SCOPES,
+            scopes: scopesFor(parseEnv((await d.fs.readFile(layout.file("compose.env"))) ?? "")),
             keyName: PROFILE,
         },
         options2,
@@ -1959,7 +1959,7 @@ export const OPTIONS: Opt[] = [
     },
     {
         flag: "--new-key",
-        help: "up only: issue a replacement key for the local-deploy profile (needed if its\nsaved key lacks the scopes deploying needs)",
+        help: "up only: issue a replacement key for the local-deploy profile (needed if its\nsaved key lacks the scopes deploying needs, or was revoked)",
     },
     { flag: "--help", help: "show this text" },
 ];
