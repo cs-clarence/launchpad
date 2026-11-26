@@ -44,6 +44,7 @@ export default defineConfig({
     // The server runs on Bun and imports `bun` (Bun SQL) from the workspace sources it
     // bundles. Node-based builds (CI) cannot resolve it, so it stays a run-time import.
     ssr: { external: ["bun"] },
+    optimizeDeps: { rolldownOptions: { external: ["bun", /^bun:/] } },
     build: { rolldownOptions: { external: ["bun", /^bun:/] } },
     plugins: [
         tailwindcss(),

@@ -5,7 +5,7 @@
     "description": "Launchpad dashboard and controller API",
     "type": "module",
     "scripts": {
-        "dev": "vite dev --host 127.0.0.1",
+        "dev": "bun --bun vite dev --host 127.0.0.1",
         "build": "vite build && bun ../../packages/database/scripts/bundle-migrations.mjs .output/migrations && bun build src/admin/main.ts --target=bun --outfile=.output/admin.mjs",
         "start": "bun .output/server/index.mjs",
         "test:unit": "bun --bun vitest run",
