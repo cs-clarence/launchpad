@@ -35,7 +35,12 @@ export const BASE_URL = "https://control.localhost:8443";
 export const APPS_DOMAIN = "apps.localhost";
 export const IMAGE_SERVICES = ["controller", "worker", "dokku", "router", "admin"] as const;
 export const FIXED_CHILDREN = ["dokku", "backups", "credentials", "tls"] as const;
-export const STATE_FILES = ["compose.env", "override.json", "state.json", "inventory.json"] as const;
+export const STATE_FILES = [
+    "compose.env",
+    "override.json",
+    "state.json",
+    "inventory.json",
+] as const;
 export const DOCKER_HOST = "unix:///var/run/docker.sock";
 export const DOCKER_SOCKET = "/var/run/docker.sock";
 const SAFE_PATH = /^[A-Za-z0-9_@.+/-]+$/;
@@ -216,20 +221,66 @@ export interface CredentialCommands {
 export function credentialCommands(layout: Layout): CredentialCommands {
     const f = layout.file;
     return {
-        sshKeygen: ["ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-f", f("credentials/id_ed25519")],
+        sshKeygen: [
+            "ssh-keygen",
+            "-q",
+            "-t",
+            "ed25519",
+            "-N",
+            "",
+            "-f",
+            f("credentials/id_ed25519"),
+        ],
         caKey: [
-            "openssl", "req", "-new", "-x509", "-newkey", "rsa:2048", "-nodes", "-days", "30",
-            "-subj", "/CN=Launchpad local deploy CA", "-addext", "basicConstraints=critical,CA:TRUE",
-            "-keyout", f("tls/ca.key"), "-out", f("tls/ca.pem"),
+            "openssl",
+            "req",
+            "-new",
+            "-x509",
+            "-newkey",
+            "rsa:2048",
+            "-nodes",
+            "-days",
+            "30",
+            "-subj",
+            "/CN=Launchpad local deploy CA",
+            "-addext",
+            "basicConstraints=critical,CA:TRUE",
+            "-keyout",
+            f("tls/ca.key"),
+            "-out",
+            f("tls/ca.pem"),
         ],
         serverCsr: [
-            "openssl", "req", "-new", "-newkey", "rsa:2048", "-nodes", "-subj", "/CN=router",
-            "-keyout", f("tls/server.key"), "-out", f("tls/server.csr"),
+            "openssl",
+            "req",
+            "-new",
+            "-newkey",
+            "rsa:2048",
+            "-nodes",
+            "-subj",
+            "/CN=router",
+            "-keyout",
+            f("tls/server.key"),
+            "-out",
+            f("tls/server.csr"),
         ],
         serverCert: [
-            "openssl", "x509", "-req", "-days", "30", "-in", f("tls/server.csr"), "-CA", f("tls/ca.pem"),
-            "-CAkey", f("tls/ca.key"), "-CAcreateserial", "-extfile", f("tls/extensions"),
-            "-out", f("tls/server.pem"),
+            "openssl",
+            "x509",
+            "-req",
+            "-days",
+            "30",
+            "-in",
+            f("tls/server.csr"),
+            "-CA",
+            f("tls/ca.pem"),
+            "-CAkey",
+            f("tls/ca.key"),
+            "-CAcreateserial",
+            "-extfile",
+            f("tls/extensions"),
+            "-out",
+            f("tls/server.pem"),
         ],
         extensions: "subjectAltName=DNS:router\nextendedKeyUsage=serverAuth\n",
     };
@@ -263,7 +314,12 @@ export class InventoryError extends Error {}
 
 // Rows are validated every time they are read; the image tag is derived from the id, never read.
 export function siteFromRow(id: unknown, app: unknown): Site {
-    if (typeof id !== "string" || typeof app !== "string" || !UUID.test(id) || !NAME.app.test(app)) {
+    if (
+        typeof id !== "string" ||
+        typeof app !== "string" ||
+        !UUID.test(id) ||
+        !NAME.app.test(app)
+    ) {
         throw new InventoryError("Unexpected name in a deployment record.");
     }
     return { id, app, tag: imageTagFor(id) };
@@ -345,7 +401,8 @@ export function summarizeDockerProblems(input: {
     if (input.version.code !== 0) {
         return "The Docker daemon did not answer (is Docker installed and running, and may you use it?).";
     }
-    if (input.compose.code !== 0) return "Docker Compose v2 is required (`docker compose version`).";
+    if (input.compose.code !== 0)
+        return "Docker Compose v2 is required (`docker compose version`).";
     const builder = input.buildx.output;
     if (
         input.buildx.code !== 0 ||
@@ -357,7 +414,10 @@ export function summarizeDockerProblems(input: {
             "docs/production-fresh-host-recovery.md#repeat-the-rehearsal for combinations that were observed to work."
         );
     }
-    if (/rootless/i.test(input.info.output) || !/OSType: linux|Operating System:/i.test(input.info.output)) {
+    if (
+        /rootless/i.test(input.info.output) ||
+        !/OSType: linux|Operating System:/i.test(input.info.output)
+    ) {
         return "Rootless Docker and non-Linux engines are not supported.";
     }
     return null;

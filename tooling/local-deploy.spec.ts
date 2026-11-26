@@ -51,14 +51,23 @@ describe("names", () => {
 
     it("accepts only launchpad-local-* project names", () => {
         expect(checkProject("launchpad-local-abc")).toBe("launchpad-local-abc");
-        for (const bad of ["launchpad", "launchpad-local-", "launchpad-local-A", "x-launchpad-local-a", `launchpad-local-${"a".repeat(41)}`, "launchpad-local-a/b"]) {
+        for (const bad of [
+            "launchpad",
+            "launchpad-local-",
+            "launchpad-local-A",
+            "x-launchpad-local-a",
+            `launchpad-local-${"a".repeat(41)}`,
+            "launchpad-local-a/b",
+        ]) {
             expect(() => checkProject(bad), bad).toThrow(DeployError);
         }
     });
 
     it("builds five image tags under the project and a project apps network", () => {
         expect(Object.values(projectImages(project)).sort()).toEqual(
-            ["controller", "worker", "dokku", "router", "admin"].map((s) => `${project}/${s}:local`).sort(),
+            ["controller", "worker", "dokku", "router", "admin"]
+                .map((s) => `${project}/${s}:local`)
+                .sort(),
         );
         expect(appsNetwork(project)).toBe(`${project}-apps`);
         expect(Object.keys(overrideFor(project).services)).toHaveLength(5);
@@ -76,11 +85,23 @@ describe("names", () => {
 
 describe("ports", () => {
     it("reproduces the compose defaults at the default base", () => {
-        expect(portsFor(32180)).toEqual({ controller: 32180, http: 32181, router: 32182, ssh: 32222, https: 32443 });
+        expect(portsFor(32180)).toEqual({
+            controller: 32180,
+            http: 32181,
+            router: 32182,
+            ssh: 32222,
+            https: 32443,
+        });
     });
 
     it("maps offsets from another base and refuses a bad range", () => {
-        expect(portsFor(40000)).toEqual({ controller: 40000, http: 40001, router: 40002, ssh: 40042, https: 40263 });
+        expect(portsFor(40000)).toEqual({
+            controller: 40000,
+            http: 40001,
+            router: 40002,
+            ssh: 40042,
+            https: 40263,
+        });
         expect(checkPortBase(1024)).toBe(1024);
         expect(checkPortBase(65535 - 263)).toBe(65272);
         for (const bad of [1023, 65273, 70000, 1.5, Number.NaN]) {
@@ -114,7 +135,12 @@ describe("the generated settings", () => {
 
     it("puts every bind source inside the state directory", () => {
         const values = env();
-        for (const key of ["DOKKU_DATA_DIR", "LAUNCHPAD_BACKUP_DIR", "LAUNCHPAD_DOKKU_SSH_KEY_FILE", "LAUNCHPAD_ROUTER_TLS_KEY_FILE"]) {
+        for (const key of [
+            "DOKKU_DATA_DIR",
+            "LAUNCHPAD_BACKUP_DIR",
+            "LAUNCHPAD_DOKKU_SSH_KEY_FILE",
+            "LAUNCHPAD_ROUTER_TLS_KEY_FILE",
+        ]) {
             expect(values[key]!.startsWith(`${REPO}/.local-deploy/`), key).toBe(true);
         }
     });
@@ -149,9 +175,15 @@ describe("hostnames and TLS settings", () => {
         expect(() => parseAliasConfig(aliasEnv(BASE_URL, APPS_DOMAIN))).not.toThrow();
     });
     it("fails the bad pairs the plan rules out", () => {
-        expect(() => parseAliasConfig(aliasEnv("https://localhost:8443", "apps.localhost"))).toThrow();
-        expect(() => parseAliasConfig(aliasEnv("https://control.apps.localhost", "apps.localhost"))).toThrow();
-        expect(() => parseAliasConfig(aliasEnv("http://control.localhost:8443", "apps.localhost"))).toThrow();
+        expect(() =>
+            parseAliasConfig(aliasEnv("https://localhost:8443", "apps.localhost")),
+        ).toThrow();
+        expect(() =>
+            parseAliasConfig(aliasEnv("https://control.apps.localhost", "apps.localhost")),
+        ).toThrow();
+        expect(() =>
+            parseAliasConfig(aliasEnv("http://control.localhost:8443", "apps.localhost")),
+        ).toThrow();
     });
     it("matches deployment hostnames", () => {
         expect(hostnamePattern().test("hello-abcdefghij-preview.apps.localhost")).toBe(true);
@@ -185,16 +217,32 @@ describe("socket group", () => {
 describe("inventory", () => {
     it("derives the image tag from the id and never reads it", () => {
         const [site] = parseDatabaseRows(`${ID} lp-abcdefghij succeeded`);
-        expect(site).toEqual({ id: ID, app: "lp-abcdefghij", tag: `launchpad/site:${ID.replaceAll("-", "")}` });
-        const read = parseInventory(JSON.stringify({ sites: [{ id: ID, app: "lp-abcdefghij", tag: "evil:latest" }] }));
+        expect(site).toEqual({
+            id: ID,
+            app: "lp-abcdefghij",
+            tag: `launchpad/site:${ID.replaceAll("-", "")}`,
+        });
+        const read = parseInventory(
+            JSON.stringify({ sites: [{ id: ID, app: "lp-abcdefghij", tag: "evil:latest" }] }),
+        );
         expect(read[0]!.tag).toBe(imageTagFor(ID));
     });
 
     it("rejects malformed rows", () => {
-        for (const bad of [`${ID} lp-ABCDEFGHIJ x`, `nope lp-abcdefghij x`, `${ID} lp-abcdefghij x extra`, `${ID} ../etc x`]) {
+        for (const bad of [
+            `${ID} lp-ABCDEFGHIJ x`,
+            `nope lp-abcdefghij x`,
+            `${ID} lp-abcdefghij x extra`,
+            `${ID} ../etc x`,
+        ]) {
             expect(() => parseDatabaseRows(bad), bad).toThrow();
         }
-        for (const bad of ["not json", "{}", JSON.stringify({ sites: [{ id: ID, app: "x" }] }), JSON.stringify({ sites: [{ id: "1", app: "lp-abcdefghij" }] })]) {
+        for (const bad of [
+            "not json",
+            "{}",
+            JSON.stringify({ sites: [{ id: ID, app: "x" }] }),
+            JSON.stringify({ sites: [{ id: "1", app: "lp-abcdefghij" }] }),
+        ]) {
             expect(() => parseInventory(bad), bad).toThrow();
         }
     });
@@ -203,7 +251,10 @@ describe("inventory", () => {
         const a = parseDatabaseRows(`${ID} lp-abcdefghij x`);
         const text = renderInventory(project, a);
         expect(parseInventory(text)).toEqual(a);
-        const bare = [{ id: null, app: "lp-abcdefghij", tag: null }, { id: null, app: "lp-zzzzzzzzzz", tag: null }];
+        const bare = [
+            { id: null, app: "lp-abcdefghij", tag: null },
+            { id: null, app: "lp-zzzzzzzzzz", tag: null },
+        ];
         const merged = mergeSites(bare, a);
         expect(merged.map((s) => s.app)).toEqual(["lp-abcdefghij", "lp-zzzzzzzzzz"]);
         expect(merged[0]!.id).toBe(ID);
@@ -213,7 +264,9 @@ describe("inventory", () => {
 
 describe("state record", () => {
     it("reads a complete record and treats anything else as none", () => {
-        expect(parseState(JSON.stringify({ project, repo: REPO, version: "1" }))?.project).toBe(project);
+        expect(parseState(JSON.stringify({ project, repo: REPO, version: "1" }))?.project).toBe(
+            project,
+        );
         expect(parseState("{")).toBeNull();
         expect(parseState(JSON.stringify({ project }))).toBeNull();
     });
@@ -232,12 +285,30 @@ describe("docker preflight", () => {
         expect(summarizeDockerProblems(good)).toBeNull();
     });
     it("names each problem", () => {
-        expect(summarizeDockerProblems({ ...good, env: { DOCKER_HOST: "tcp://x" } })).toContain("DOCKER_HOST");
-        expect(summarizeDockerProblems({ ...good, env: { DOCKER_CONTEXT: "x" } })).toContain("DOCKER_CONTEXT");
-        expect(summarizeDockerProblems({ ...good, version: { code: 1, output: "" } })).toContain("daemon");
-        expect(summarizeDockerProblems({ ...good, compose: { code: 1, output: "" } })).toContain("Compose");
-        expect(summarizeDockerProblems({ ...good, buildx: { code: 0, output: "Driver: docker-container\nStatus: running" } })).toContain("builder");
-        expect(summarizeDockerProblems({ ...good, info: { code: 0, output: "rootless\nOSType: linux" } })).toContain("Rootless");
+        expect(summarizeDockerProblems({ ...good, env: { DOCKER_HOST: "tcp://x" } })).toContain(
+            "DOCKER_HOST",
+        );
+        expect(summarizeDockerProblems({ ...good, env: { DOCKER_CONTEXT: "x" } })).toContain(
+            "DOCKER_CONTEXT",
+        );
+        expect(summarizeDockerProblems({ ...good, version: { code: 1, output: "" } })).toContain(
+            "daemon",
+        );
+        expect(summarizeDockerProblems({ ...good, compose: { code: 1, output: "" } })).toContain(
+            "Compose",
+        );
+        expect(
+            summarizeDockerProblems({
+                ...good,
+                buildx: { code: 0, output: "Driver: docker-container\nStatus: running" },
+            }),
+        ).toContain("builder");
+        expect(
+            summarizeDockerProblems({
+                ...good,
+                info: { code: 0, output: "rootless\nOSType: linux" },
+            }),
+        ).toContain("Rootless");
     });
 });
 
