@@ -1,7 +1,7 @@
 // Starts or stops the disposable PostgreSQL that integration tests use. Bound to
 // 127.0.0.1 only, throwaway credentials, removed on stop. Run by
 // `omni run test:db:up` / `omni run test:db:down`.
-export {};
+import { Command, CommanderError } from "commander";
 
 const NAME = "launchpad-test-db";
 const IMAGE = "postgres:17-alpine";
@@ -85,10 +85,19 @@ async function down() {
     console.log(`Stopped ${NAME}.`);
 }
 
-const command = process.argv[2];
-if (command === "up") await up();
-else if (command === "down") await down();
-else {
+const program = new Command("test-db")
+    .exitOverride()
+    .helpOption(false)
+    .helpCommand(false)
+    .configureOutput({ writeOut: () => {}, writeErr: () => {}, outputError: () => {} });
+// Arguments after the command were never read; keep ignoring them.
+program.command("up").allowExcessArguments().allowUnknownOption().action(up);
+program.command("down").allowExcessArguments().allowUnknownOption().action(down);
+
+try {
+    await program.parseAsync(process.argv.slice(2), { from: "user" });
+} catch (error) {
+    if (!(error instanceof CommanderError)) throw error;
     console.error("Usage: bun tooling/test-db.ts up|down");
     process.exit(2);
 }
