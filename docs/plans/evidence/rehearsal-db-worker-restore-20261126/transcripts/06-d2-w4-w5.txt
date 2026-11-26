@@ -1,0 +1,124 @@
+## w4.txt
+2026-11-26T08:01:26Z W4 start
+/launchpad-local-27b61035-worker-1 status=running health=healthy restarts=0 exit=0 started=2026-11-26T07:53:19.201039412Z
+2026-11-26T08:01:26Z W4 deployment 9f9041ff-e97a-4ba7-b6ba-8d8056163a5d
+at fault: deploying/load
+deploying|load|configure|c26e2565-c2b3-4de8-91a2-2343ba434b6a|2026-11-26 08:07:08.57293+00|08:02:08|active|-
+1401|2026-11-26 08:02:08.572931+00|1
+0s | status=paused health=unhealthy restarts=0 | hmarker=before exec | deploying|load|configure|2026-11-26 08:07:08.57293+00|08:02:09 | health.log=5/0
+10s | status=paused health=unhealthy restarts=0 | hmarker=before exec | deploying|load|configure|2026-11-26 08:07:08.57293+00|08:02:19 | health.log=5/0
+66s | status=paused health=unhealthy restarts=0 | hmarker=before exec | deploying|load|configure|2026-11-26 08:07:08.57293+00|08:03:15 | health.log=5/0
+127s | status=paused health=unhealthy restarts=0 | hmarker=before exec | deploying|load|configure|2026-11-26 08:07:08.57293+00|08:04:17 | health.log=5/0
+189s | status=paused health=unhealthy restarts=0 | hmarker=before exec | deploying|load|configure|2026-11-26 08:07:08.57293+00|08:05:19 | health.log=5/0
+252s | status=paused health=unhealthy restarts=0 | hmarker=before exec | deploying|load|configure|2026-11-26 08:07:08.57293+00|08:06:21 | health.log=5/0
+314s | status=paused health=unhealthy restarts=0 | hmarker=before exec | deploying|load|configure|2026-11-26 08:07:08.57293+00|08:07:23 | health.log=5/0
+324s | status=paused health=unhealthy restarts=0 | hmarker=before exec | deploying|load|configure|2026-11-26 08:07:08.57293+00|08:07:34 | health.log=5/0
+  ... (24 sample lines trimmed)
+1401|2026-11-26 08:02:08.572931+00|1|deploying
+unpaused
+0s | status=running health=unhealthy restarts=0 | deploying|load|configure|2026-11-26 08:07:08.57293+00|08:07:45|-
+4s | status=running health=unhealthy restarts=0 | reconciliation-needed|load|configure||08:07:48|lease-expired-with-pending-step
+1404|2026-11-26 08:07:46.8854+00|1|reconciliation-needed|lease-expired-with-pending-step
+    "phase": "configure",	    "createdAt": "2026-11-26T08:02:01.618Z"
+    "phase": "configure",	    "createdAt": "2026-11-26T08:02:08.460Z"
+    "phase": "load",	    "createdAt": "2026-11-26T08:02:08.474Z"
+    "phase": "reconciliation-needed",	    "createdAt": "2026-11-26T08:07:46.878Z"
+{"event":"deployment-reconciliation-needed","deploymentId":"c174784a-9cec-454b-8028-2b3dcc814113"}
+{"event":"deployment-run-ended","deploymentId":"0283d4fb-4717-44a9-bb16-ffb40dba357c","status":"succeeded"}
+{"event":"deletion-run-ended","operationId":"7bdd23ee-afd8-47ee-b7bf-6ea2840bd60e","status":"succeeded"}
+{"event":"deployment-run-ended","deploymentId":"9f9041ff-e97a-4ba7-b6ba-8d8056163a5d","status":"authority-lost"}
+{"event":"deployment-reconciliation-needed","deploymentId":"9f9041ff-e97a-4ba7-b6ba-8d8056163a5d"}
+
+## w4b.txt
+status=running health=healthy restarts=0
+app lp-mzkwocz95g exists
+       Deployed:                         false
+       Running:                          false
+Recorded failed-owned for 1 deployment.
+failed|-|configure|-||08:08:37|active|reconciled-owned
+deletion: deleted
+protected unchanged
+snap diff:
+2026-11-26T08:08:52Z W4 done
+
+## w5.txt
+2026-11-26T08:09:04Z W5 start
+/launchpad-local-27b61035-worker-1 status=running health=healthy restarts=0 exit=0 started=2026-11-26T07:53:19.201039412Z
+target a81e9689-a124-4803-a8ee-4e3164e840df app lp-c1qskud3cr: succeeded|active
+at fault: queued/-
+queued|||2026-11-26 08:11:48.099634+00
+deleting|succeeded
+dokku: status=running health=unhealthy restarts=0
+app after unpause+20s: EXISTS
+0s | running|-|2026-11-26 08:17:12.843694+00 | deleting
+11s | running|destroy|2026-11-26 08:17:23.116708+00 | deleting
+65s |  | deleted
+129s |  | deleted
+193s |  | deleted
+258s |  | deleted
+322s |  | deleted
+387s |  | deleted
+454s |  | deleted
+465s |  | deleted
+476s |  | deleted
+  ... (34 sample lines trimmed)
+    "phase": "succeeded",	    "createdAt": "2026-11-26T07:40:19.445Z"
+    "phase": "deleting",	    "createdAt": "2026-11-26T08:09:06.098Z"
+    "phase": "deleted",	    "createdAt": "2026-11-26T08:12:42.647Z"
+-- drift (with dokku)
+"inFlight":[],"findings":[],"ignoredAppCount":0}
+-- hostname/dokku name reserved:
+8
+
+## w5b.txt
+target 0283d4fb-4717-44a9-bb16-ffb40dba357c app lp-8qoqirq6lb: succeeded|active
+at fault after 2s: running/destroy
+running|destroy||2026-11-26 08:25:58.9297+00
+dokku: status=running health=unhealthy restarts=0
+app after unpause+20s: EXISTS
+deleting|succeeded
+1s | running|destroy|2026-11-26 08:25:58.9297+00 | deleting
+12s | running|destroy|2026-11-26 08:25:58.9297+00 | deleting
+67s | running|destroy|2026-11-26 08:25:58.9297+00 | deleting
+130s | running|destroy|2026-11-26 08:25:58.9297+00 | deleting
+192s | running|destroy|2026-11-26 08:25:58.9297+00 | deleting
+257s | running|destroy|2026-11-26 08:25:58.9297+00 | deleting
+321s |  | deleting
+385s |  | deleting
+448s |  | deleting
+459s |  | deleting
+469s |  | deleting
+  ... (34 sample lines trimmed)
+
+## w5c.txt
+reconciliation-needed|destroy|||lease-expired-with-pending-step|08:29:36
+deleting|succeeded
+    "phase": "succeeded",	    "message": "Deployment step completed.",
+    "phase": "deleting",	    "message": "Deletion requested.",
+    "phase": "deletion-reconciliation-needed",	    "message": "The previous worker left an unconfirmed deletion step.",
+app lp-8qoqirq6lb: EXISTS
+-- new deployment while deletion held (hostname/name reserved?)
+new fd38c284-e3f0-4785-aa13-0577f4b52d0e
+deploying
+-- request reconciliation (no body)
+signin(owner) 200
+{"ok":true} [202]
+[
+  {
+    "requestedAt": "2026-11-26T08:31:53.214Z",
+    "actor": "user:19d0377f-d9c8-4448-8e2c-af20fcd0c908",
+    "organizationId": "833d6ae3-4681-4345-bc0b-3e5e0f70e4c4",
+    "kind": "deployment",
+-- drift
+"inFlight":[{"kind":"deployment","id":"0283d4fb-4717-44a9-bb16-ffb40dba357c"},{"kind":"deployment","id":"fd38c284-e3f0-4785-aa13-0577f4b52d0e"}],"findings":[],"ignoredAppCount":0}
+
+## w5d.txt
+new deployment: succeeded
+Recorded failed-clean for 1 deletion.
+exit=0
+deleting|succeeded | op: running|destroy
+deleted|succeeded | op: succeeded|
+app lp-8qoqirq6lb: gone
+  "status": "succeeded",
+  "desiredState": "deleted",
+

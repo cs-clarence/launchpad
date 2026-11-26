@@ -187,7 +187,23 @@ not use it to finish the work). The Dokku or Docker step it dispatched may still
 host. The deployment stays in its step until its lease expires (about 170 s in the 2026-11-21
 rehearsal) and is then held as `reconciliation-needed`. Recovery is an operator action: wait for the
 host to settle, then run `deployment-reconcile` (see [deployments](deployments.md)); do not retry by
-hand. Restarting the worker does not resume a held operation by itself.
+hand. Starting the worker again does resume work that had no step in flight, and holds work that had one
+(the first claim after the lease turns it into `reconciliation-needed`).
+
+What the 2026-11-26 [rehearsal](plans/evidence/rehearsal-db-worker-restore-20261126/README.md) showed:
+
+- **A container stopped with `docker kill` is not restarted by `restart: unless-stopped`** on that host
+  (`RestartCount` stayed 0 for over nine minutes), the same as `docker stop`. Nothing brings a dead worker back
+  but an operator (or a crash, which the policy does restart). Start it again by name and expect the hold above.
+- **Nothing in the API says the worker is dead.** `GET /api/v1/status` has no worker or lease information, and an
+  interrupted deployment keeps its in-flight status (`deploying`) until a worker claims it after the 300 s lease.
+  Monitor the worker container itself and the age of in-flight deployments.
+- **The worker healthcheck proves liveness and database access only.** It is `unhealthy` within about two minutes
+  of a database outage, while recovery is blocking claims (after `restore`), and at once while the container is
+  paused; it stays `healthy` while Dokku is down (a queued deployment then fails with `step-failed`). Nothing
+  restarts an unhealthy container.
+- **A paused or frozen worker past its lease stops its run as `authority-lost` when it wakes** and writes nothing
+  after the lease; the row is then held.
 
 Do not shorten the **restore** waits on the strength of this: after a restore the 25-minute minimum
 in [restore](restore.md) is a conservative bound on every dispatched call, not a statement that
@@ -352,6 +368,14 @@ for the remaining decisions and their verification criteria.
   rejects the aliases Compose sends), so app containers live on the `apps` network. Without the
   `initial-network` setting (kept in `DOKKU_DATA_DIR`) apps would land on the default bridge, where
   Dokku's proxy cannot reach them (not tested).
+- **The controller does not notice a lost database until it restarts.** After the database volume was deleted and
+  Postgres came back empty, `/api/health` stayed `200` and requests returned a raw "Internal Server Error" for as
+  long as the controller process lived; after a restart it answered `503` ("database schema is behind") for every
+  route including `/api/health`. The same `503 schema-mismatch` appears for a database with migrations this
+  version does not know.
+- **Do not run `migrate` on a database that was lost.** On an empty database it succeeds and yields a ready,
+  empty instance with no recovery marker, over the intact data directory and Dokku apps (they then show as
+  orphans in `drift`). Restore the backup into it with `--replace`, as in [restore](restore.md).
 - **A stopped worker abandons its run.** Stopping the worker during a deploy ended the run
   `authority-lost` immediately, and the deployment became `reconciliation-needed` after the lease
   expired (about 170 s); the 25-minute grace did not make it finish. Stop the worker only when
@@ -366,7 +390,10 @@ for the remaining decisions and their verification criteria.
   Access to its socket is root-equivalent on that host; the stack gives no isolation
   from hostile uploaded sites beyond Dokku's own.
 - **Resource limits come from the [2026-11-23 measurements](#measured-at-the-default-limits-2026-11-23).**
-  Database loss, worker liveness and load beyond the default 10-app quota are not rehearsed.
+  Load beyond the default 10-app quota is not rehearsed. Database loss, worker liveness and failed restores were
+  rehearsed on the aliases-on Compose topology on 2026-11-26
+  ([evidence](plans/evidence/rehearsal-db-worker-restore-20261126/README.md)); schema rollback with a real
+  migration delta, a held promotion and the real dashboard were not.
 - **Whole-host recovery passed on disposable QEMU/KVM guests.** The `backup` command
   does not include Dokku or router state or the container images. The
   [clean-host rehearsal](plans/production-fresh-host-recovery.md#result-2026-11-23)

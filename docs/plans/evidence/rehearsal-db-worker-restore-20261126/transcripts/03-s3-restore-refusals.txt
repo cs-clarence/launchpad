@@ -1,0 +1,320 @@
+## s3c.txt
+2026-11-26T07:19:46Z S3 (new stack) start
+
+===== v1
+-- verify-backup
+  database.dump: does not match its recorded size and checksum
+The backup does not verify (1 problem(s)).
+
+exit=1
+-- restore --i-have-stopped-the-workers
+The backup does not verify, so nothing was restored:
+  database.dump: does not match its recorded size and checksum
+
+exit=1
+UNCHANGED (non-empty panels equal)
+
+===== v2
+-- verify-backup
+  database.dump: does not match its recorded size and checksum
+The backup does not verify (1 problem(s)).
+
+exit=1
+-- restore --i-have-stopped-the-workers
+The backup does not verify, so nothing was restored:
+  database.dump: does not match its recorded size and checksum
+
+exit=1
+UNCHANGED (non-empty panels equal)
+
+===== v3a
+deleted artifact
+-- verify-backup
+  artifacts/f9348431d6146f0cb47769217e8cb802/e47419b2b5fffba3a18d351b82394b039ed7a1976810833d38c43999b35f9cac.tar.gz: missing
+The backup does not verify (1 problem(s)).
+
+exit=1
+-- restore --i-have-stopped-the-workers
+The backup does not verify, so nothing was restored:
+  artifacts/f9348431d6146f0cb47769217e8cb802/e47419b2b5fffba3a18d351b82394b039ed7a1976810833d38c43999b35f9cac.tar.gz: missing
+
+exit=1
+UNCHANGED (non-empty panels equal)
+
+===== v3b
+-- verify-backup
+  extra.txt: not in the manifest
+The backup does not verify (1 problem(s)).
+
+exit=1
+-- restore --i-have-stopped-the-workers
+The backup does not verify, so nothing was restored:
+  extra.txt: not in the manifest
+
+exit=1
+UNCHANGED (non-empty panels equal)
+
+===== v3c
+-rw-------. 1 launchpad launchpad 106443 Nov 26 07:19 database.dump
+-rw-------. 1 launchpad launchpad    836 Nov 26 07:19 m.real
+lrwxrwxrwx. 1 launchpad launchpad      6 Nov 26 07:20 manifest.json -> m.real
+-- verify-backup
+  manifest.json is not a plain file
+The backup does not verify (1 problem(s)).
+
+exit=1
+-- restore --i-have-stopped-the-workers
+The backup does not verify, so nothing was restored:
+  manifest.json is not a plain file
+
+exit=1
+UNCHANGED (non-empty panels equal)
+
+===== v4a
+-- verify-backup
+  manifest.json is missing or unreadable
+The backup does not verify (1 problem(s)).
+
+exit=1
+-- restore --i-have-stopped-the-workers
+The backup does not verify, so nothing was restored:
+  manifest.json is missing or unreadable
+
+exit=1
+UNCHANGED (non-empty panels equal)
+
+===== v4b
+0
+-- verify-backup
+  manifest.json is missing or unreadable
+The backup does not verify (1 problem(s)).
+
+exit=1
+-- restore --i-have-stopped-the-workers
+The backup does not verify, so nothing was restored:
+  manifest.json is missing or unreadable
+
+exit=1
+UNCHANGED (non-empty panels equal)
+
+===== v5a
+  "format": 2,
+-- verify-backup
+  unsupported backup format 2
+The backup does not verify (1 problem(s)).
+
+exit=1
+-- restore --i-have-stopped-the-workers
+The backup does not verify, so nothing was restored:
+  unsupported backup format 2
+
+exit=1
+UNCHANGED (non-empty panels equal)
+
+===== v5b
+  "launchpadVersion": "9.9.9",
+-- verify-backup
+The backup verifies.
+exit=0
+UNCHANGED (non-empty panels equal)
+
+===== v6a
+  "migrations": [
+    "20261124_001_initial_schema",
+    "29990101_001_future"
+  ],
+-- verify-backup
+The backup verifies.
+exit=0
+-- restore --i-have-stopped-the-workers --replace postgres:5432/launchpad
+The backup holds migrations this version does not know (29990101_001_future): restore it with a compatible version.
+
+exit=1
+UNCHANGED (non-empty panels equal)
+
+## s3d.txt
+
+===== v7a
+-- verify-backup
+The backup verifies.
+exit=0
+-- restore --i-have-stopped-the-workers
+postgres:5432/launchpad already has data. Restore into an empty database, or replace it by naming it with --replace postgres:5432/launchpad (back it up first).
+
+exit=1
+UNCHANGED (non-empty panels equal)
+
+===== v7b
+-- verify-backup
+The backup verifies.
+exit=0
+-- restore --i-have-stopped-the-workers --replace postgres:5432/otherdb
+--replace names postgres:5432/otherdb, but the target is postgres:5432/launchpad.
+
+exit=1
+UNCHANGED (non-empty panels equal)
+
+===== v7c
+forged artifact entry
+-- verify-backup
+The backup verifies.
+exit=0
+-- restore --i-have-stopped-the-workers --replace postgres:5432/launchpad
+/data/artifacts/f9348431d6146f0cb47769217e8cb802/e47419b2b5fffba3a18d351b82394b039ed7a1976810833d38c43999b35f9cac.tar.gz exists with different content (or is not a plain file); nothing was restored.
+
+exit=1
+UNCHANGED (non-empty panels equal)
+-- markers after collision attempt
+total 0
+drwx------. 1 launchpad launchpad 34 Nov 26 07:15 .
+drwx------. 1 launchpad launchpad 56 Nov 26 07:17 ..
+-rw-------. 1 launchpad launchpad  0 Nov 26 07:15 model-writer-seen
+
+## s3e.txt
+2026-11-26T07:21:42Z V6b scratch db
+CREATE DATABASE
+INSERT 0 1
+20261124_001_initial_schema
+29990101_001_future
+-- admin migrate --status (scratch6)
+applied: 1
+pending: 0
+unknown to this version: 29990101_001_future
+exit=1
+-- admin migrate (scratch6)
+The database has migrations this version does not know (29990101_001_future). Use a compatible Launchpad version or a fresh database.
+exit=1
+-- scratch rows after
+20261124_001_initial_schema
+29990101_001_future
+-- live migrate --status (unaffected)
+applied: 1
+pending: 0
+exit=0
+
+## s3f.txt
+status 503 {"code":"schema-mismatch","status":503,"title":"Service Unavailable"}
+health 503
+-- controller log
+➜ Listening on: http://localhost:3000/ (all interfaces)
+The database has migrations this version does not know (29990101_001_future). Use a compatible Launchpad version or a fresh database.
+The database has migrations this version does not know (29990101_001_future). Use a compatible Launchpad version or a fresh database.
+DROP DATABASE
+scratch dropped
+postgres
+launchpad
+template1
+template0
+
+## s3g.txt
+try 1: runexit=137 killed_id=bef5256e0908
+listing:
+  manifest.json is missing or unreadable
+The backup does not verify (1 problem(s)).
+
+verify exit=1
+0
+0
+
+try 2: runexit=137 killed_id=2fca568cad96
+listing:
+  manifest.json is missing or unreadable
+The backup does not verify (1 problem(s)).
+
+verify exit=1
+0
+0
+
+try 3: runexit=137 killed_id=9c25a26887e3
+listing:
+  manifest.json is missing or unreadable
+The backup does not verify (1 problem(s)).
+
+verify exit=1
+0
+0
+
+try 4: runexit=137 killed_id=b25481bbd04a
+listing:
+  manifest.json is missing or unreadable
+The backup does not verify (1 problem(s)).
+
+verify exit=1
+0
+0
+
+try 5: runexit=137 killed_id=c7592c3f4f46
+listing:
+  manifest.json is missing or unreadable
+The backup does not verify (1 problem(s)).
+
+verify exit=1
+0
+0
+
+try 6: runexit=137 killed_id=ceefe9a2f9ec
+listing:
+  manifest.json is missing or unreadable
+The backup does not verify (1 problem(s)).
+
+verify exit=1
+0
+0
+
+UNCHANGED
+
+## s3h.txt
+Error response from daemon: No such container: 143854c641810d5522cd451db4be6d9c2a1b9c65837cbeb4942ff1b62337fbe4
+2026-11-26T07:23:04Z ABORT: 143854c641810d5522cd451db4be6d9c2a1b9c65837cbeb4942ff1b62337fbe4 is not launchpad-local-27b61035/admin
+try 1 delay 0.5: runexit=0 killed_id=143854c64181
+listing:
+drwx------. 1 launchpad launchpad     70 Nov 26 07:23 .
+drwx------. 1 launchpad launchpad     94 Nov 26 07:23 ..
+drwx------. 1 launchpad launchpad     64 Nov 26 07:23 artifacts
+-rw-------. 1 launchpad launchpad 106443 Nov 26 07:23 database.dump
+-rw-------. 1 launchpad launchpad    836 Nov 26 07:23 manifest.json
+The backup verifies.
+verify exit=0
+0
+1
+Error response from daemon: No such container: 16cf4b4ec4bc2ea9ff8e6666253ea9debebe3c11bdf7ffbf9e0e4fd0e360e39c
+2026-11-26T07:23:08Z ABORT: 16cf4b4ec4bc2ea9ff8e6666253ea9debebe3c11bdf7ffbf9e0e4fd0e360e39c is not launchpad-local-27b61035/admin
+try 2 delay 0.7: runexit=0 killed_id=16cf4b4ec4bc
+listing:
+drwx------. 1 launchpad launchpad     70 Nov 26 07:23 .
+drwx------. 1 launchpad launchpad    102 Nov 26 07:23 ..
+drwx------. 1 launchpad launchpad     64 Nov 26 07:23 artifacts
+-rw-------. 1 launchpad launchpad 106443 Nov 26 07:23 database.dump
+-rw-------. 1 launchpad launchpad    836 Nov 26 07:23 manifest.json
+The backup verifies.
+verify exit=0
+0
+1
+Error response from daemon: No such container: c3e19e60793461bca2b50122cfe72ec43f87d9b22e382fb4927a5c782167f3f9
+2026-11-26T07:23:12Z ABORT: c3e19e60793461bca2b50122cfe72ec43f87d9b22e382fb4927a5c782167f3f9 is not launchpad-local-27b61035/admin
+try 3 delay 0.9: runexit=0 killed_id=c3e19e607934
+listing:
+drwx------. 1 launchpad launchpad     70 Nov 26 07:23 .
+drwx------. 1 launchpad launchpad    110 Nov 26 07:23 ..
+drwx------. 1 launchpad launchpad     64 Nov 26 07:23 artifacts
+-rw-------. 1 launchpad launchpad 106443 Nov 26 07:23 database.dump
+-rw-------. 1 launchpad launchpad    836 Nov 26 07:23 manifest.json
+The backup verifies.
+verify exit=0
+0
+1
+Error response from daemon: No such container: 6c98bc9577e004a6127a6b1c87ee0dca57d9e99ae3b92ccb5ebbd9a27b92f784
+2026-11-26T07:23:16Z ABORT: 6c98bc9577e004a6127a6b1c87ee0dca57d9e99ae3b92ccb5ebbd9a27b92f784 is not launchpad-local-27b61035/admin
+try 4 delay 1.0: runexit=0 killed_id=6c98bc9577e0
+listing:
+drwx------. 1 launchpad launchpad     70 Nov 26 07:23 .
+drwx------. 1 launchpad launchpad    118 Nov 26 07:23 ..
+drwx------. 1 launchpad launchpad     64 Nov 26 07:23 artifacts
+-rw-------. 1 launchpad launchpad 106443 Nov 26 07:23 database.dump
+-rw-------. 1 launchpad launchpad    836 Nov 26 07:23 manifest.json
+The backup verifies.
+verify exit=0
+0
+1
+UNCHANGED
+

@@ -1,0 +1,203 @@
+## w0.txt
+2026-11-26T07:23:43Z W0 start
+/launchpad-local-27b61035-worker-1 status=running health=healthy restarts=0 exit=0 started=2026-11-26T07:19:11.363512803Z
+07:23:43 marker_age=1s status=running health=healthy restarts=0
+07:24:14 marker_age=1s status=running health=healthy restarts=0
+07:24:44 marker_age=1s status=running health=healthy restarts=0
+07:25:14 marker_age=1s status=running health=healthy restarts=0
+07:25:44 marker_age=2s status=running health=healthy restarts=0
+07:26:15 marker_age=2s status=running health=healthy restarts=0
+protected unchanged
+snap diff:
+2026-11-26T07:26:45Z W0 done
+
+## w1.txt
+2026-11-26T07:29:21Z W1 start
+/launchpad-local-27b61035-worker-1 status=running health=healthy restarts=0 exit=0 started=2026-11-26T07:19:11.363512803Z
+2026-11-26T07:29:22Z W1 deployment 1cfb1225-61ce-42a5-b2f7-e262dd6a5075
+deploying|configure|build|f826c7b1-9d66-49dc-95cb-d531b371c6fd|2026-11-26 07:34:26.537438+00|07:29:26|active|-
+2026-11-26T07:29:26Z worker killed
+0s | status=exited health=unhealthy restarts=0 exit=137 | deploying | deploying|configure|build|f826c7b1-9d66-49dc-95cb-d531b371c6fd|2026-11-26 07:34:26.537438+00|07:29:27|active|- | api=200
+11s | status=exited health=unhealthy restarts=0 exit=137 | deploying | deploying|configure|build|f826c7b1-9d66-49dc-95cb-d531b371c6fd|2026-11-26 07:34:26.537438+00|07:29:37|active|- | api=200
+63s | status=exited health=unhealthy restarts=0 exit=137 | deploying | deploying|configure|build|f826c7b1-9d66-49dc-95cb-d531b371c6fd|2026-11-26 07:34:26.537438+00|07:30:29|active|- | api=200
+126s | status=exited health=unhealthy restarts=0 exit=137 | deploying | deploying|configure|build|f826c7b1-9d66-49dc-95cb-d531b371c6fd|2026-11-26 07:34:26.537438+00|07:31:33|active|- | api=200
+190s | status=exited health=unhealthy restarts=0 exit=137 | deploying | deploying|configure|build|f826c7b1-9d66-49dc-95cb-d531b371c6fd|2026-11-26 07:34:26.537438+00|07:32:37|active|- | api=200
+253s | status=exited health=unhealthy restarts=0 exit=137 | deploying | deploying|configure|build|f826c7b1-9d66-49dc-95cb-d531b371c6fd|2026-11-26 07:34:26.537438+00|07:33:40|active|- | api=200
+315s | status=exited health=unhealthy restarts=0 exit=137 | deploying | deploying|configure|build|f826c7b1-9d66-49dc-95cb-d531b371c6fd|2026-11-26 07:34:26.537438+00|07:34:42|active|- | api=200
+378s | status=exited health=unhealthy restarts=0 exit=137 | deploying | deploying|configure|build|f826c7b1-9d66-49dc-95cb-d531b371c6fd|2026-11-26 07:34:26.537438+00|07:35:45|active|- | api=200
+442s | status=exited health=unhealthy restarts=0 exit=137 | deploying | deploying|configure|build|f826c7b1-9d66-49dc-95cb-d531b371c6fd|2026-11-26 07:34:26.537438+00|07:36:48|active|- | api=200
+504s | status=exited health=unhealthy restarts=0 exit=137 | deploying | deploying|configure|build|f826c7b1-9d66-49dc-95cb-d531b371c6fd|2026-11-26 07:34:26.537438+00|07:37:50|active|- | api=200
+545s | status=exited health=unhealthy restarts=0 exit=137 | deploying | deploying|configure|build|f826c7b1-9d66-49dc-95cb-d531b371c6fd|2026-11-26 07:34:26.537438+00|07:38:31|active|- | api=200
+555s | status=exited health=unhealthy restarts=0 exit=137 | deploying | deploying|configure|build|f826c7b1-9d66-49dc-95cb-d531b371c6fd|2026-11-26 07:34:26.537438+00|07:38:42|active|- | api=200
+  ... (42 sample lines trimmed)
+[
+  {
+    "seq": "1",
+    "phase": "queued",
+    "level": "info",
+    "message": "Queued.",
+    "createdAt": "2026-11-26T07:29:22.288Z"
+  },
+  {
+    "seq": "2",
+    "phase": "app",
+    "level": "info",
+    "message": "Deployment step started.",
+    "createdAt": "2026-11-26T07:29:22.423Z"
+  },
+  {
+    "seq": "3",
+    "phase": "app",
+    "level": "info",
+    "message": "Deployment step completed.",
+    "createdAt": "2026-11-26T07:29:26.235Z"
+  },
+  {
+    "seq": "4",
+    "phase": "build",
+    "level": "info",
+    "message": "Deployment step started.",
+    "createdAt": "2026-11-26T07:29:26.241Z"
+  },
+  {
+    "seq": "5",
+    "phase": "build",
+    "level": "info",
+    "message": "Deployment step completed.",
+    "createdAt": "2026-11-26T07:29:26.526Z"
+  },
+  {
+    "seq": "6",
+    "phase": "configure",
+    "level": "info",
+    "message": "Deployment step started.",
+    "createdAt": "2026-11-26T07:29:26.531Z"
+  }
+]
+{"event":"deployment-run-ended","deploymentId":"8ffc7431-b168-4b98-b169-d7987b2d53b0","status":"succeeded"}
+=====> My Apps
+lp-i0ximpgj5p
+lp-vav78knd3x
+lp-xosukcu750
+dokku procs after:
+PID                 COMMAND             COMMAND
+build helper containers:
+lp-xosukcu750.web.1 Up 11 minutes
+lp-i0ximpgj5p.web.1 Up 20 minutes
+
+## w1b.txt
+before start: status=exited health=unhealthy restarts=0 exit=137 | deploying|configure|build|f826c7b1-9d66-49dc-95cb-d531b371c6fd|2026-11-26 07:34:26.537438+00|07:39:13|active|-
+dokku app by exact name:
+exists
+0s | status=running health=starting restarts=0 exit=0 | deploying | reconciliation-needed|configure|build|-||07:39:14|active|lease-expired-with-pending-step
+    "phase": "build",	    "message": "Deployment step started.",	    "createdAt": "2026-11-26T07:29:26.241Z"
+    "phase": "build",	    "message": "Deployment step completed.",	    "createdAt": "2026-11-26T07:29:26.526Z"
+    "phase": "configure",	    "message": "Deployment step started.",	    "createdAt": "2026-11-26T07:29:26.531Z"
+    "phase": "reconciliation-needed",	    "message": "The previous worker left an unconfirmed deployment step.",	    "createdAt": "2026-11-26T07:39:14.661Z"
+{"event":"deployment-reconciliation-needed","deploymentId":"1cfb1225-61ce-42a5-b2f7-e262dd6a5075"}
+-- drift
+{
+  "sources": {
+    "dokku": "skipped",
+    "router": "ok",
+    "probe": "skipped",
+    "archives": "ok"
+  },
+  "inFlight": [
+    {
+      "kind": "deployment",
+      "id": "1cfb1225-61ce-42a5-b2f7-e262dd6a5075"
+    }
+  ],
+  "findings": [],
+  "ignoredAppCount": 0
+}
+
+## w1c.txt
+-- status endpoint H1 (operator)
+Recorded failed-owned for 1 deployment.
+exit=0
+failed|-|build|-||07:39:27|active|reconciled-owned
+-- new deployment to same app
+new a81e9689-a124-4803-a8ee-4e3164e840df succeeded in 53s
+-- delete held one via API
+Error: Confirm this change explicitly before proceeding.
+active|failed
+active|failed
+active|failed
+active|failed
+active|failed
+active|failed
+active|failed
+active|failed
+active|failed
+active|failed
+active|failed
+active|failed
+active|failed
+active|failed
+active|failed
+active|failed
+active|failed
+active|failed
+active|failed
+active|failed
+active|failed
+active|failed
+active|failed
+active|failed
+active|failed
+active|failed
+active|failed
+active|failed
+active|failed
+active|failed
+active|failed
+active|failed
+active|failed
+active|failed
+active|failed
+active|failed
+active|failed
+active|failed
+active|failed
+active|failed
+active|failed
+active|failed
+active|failed
+active|failed
+active|failed
+active|failed
+active|failed
+active|failed
+active|failed
+active|failed
+active|failed
+active|failed
+active|failed
+active|failed
+active|failed
+active|failed
+active|failed
+active|failed
+active|failed
+active|failed
+lp-c1qskud3cr lp-i0ximpgj5p lp-vav78knd3x lp-xosukcu750 
+
+## w1d.txt
+  "status": "queued"
+deleted|failed
+last: deleted|failed
+succeeded||manual
+lp-c1qskud3cr lp-i0ximpgj5p lp-xosukcu750 
+"inFlight":[],"findings":[],"ignoredAppCount":0}
+protected unchanged
+snap diff:
+   8a9
+   > 170bd52a016e lp-c1qskud3cr.web.1 dokku/lp-c1qskud3cr:latest
+   38a40
+   > 9abddd2b5403 launchpad/site:a81e9689a1244803a8ee4e3164e840df
+   39a42
+   > 9d53f1f125cf dokku/lp-c1qskud3cr:latest
+2026-11-26T07:45:44Z W1 done
+

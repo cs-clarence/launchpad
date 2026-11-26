@@ -1,0 +1,108 @@
+## w2.txt
+2026-11-26T07:52:57Z W2 start
+/launchpad-local-27b61035-worker-1 status=running health=healthy restarts=0 exit=0 started=2026-11-26T07:52:10.172008254Z
+dokku: status=paused health=unhealthy restarts=0
+2026-11-26T07:52:57Z W2 deployment c174784a-9cec-454b-8028-2b3dcc814113
+at fault: preparing/app | preparing|app|-|2a049a83-17f3-4de5-bdf8-b83527ec01e4|2026-11-26 07:57:57.745163+00|07:52:57|active|-
+worker: status=exited health=unhealthy restarts=0 exit=137
+dokku: status=running health=unhealthy restarts=0
+app lp-3qskqovqtk:  !     App lp-3qskqovqtk does not exist (exit 0)
+lp-c1qskud3cr lp-i0ximpgj5p lp-xosukcu750 
+Error response from daemon: Couldn't find PID field in ps output
+dokku procs touching app: 0
+H1 op status while held-to-be:
+signin(operator) 200
+{"generatedAt":"2026-11-26T07:53:18.978Z","dependencies":{"database":"ok"},"artifacts":{"stored":1,"bytes":723},"warnings":[]} [200]
+preparing|app|-|2a049a83-17f3-4de5-bdf8-b83527ec01e4|2026-11-26 07:57:57.745163+00|07:53:19|active|-
+(worker restarted immediately; lease still ~5 min: waiting for lease before it holds)
+0s | preparing|app|-|2a049a83-17f3-4de5-bdf8-b83527ec01e4|2026-11-26 07:57:57.745163+00|07:53:19|active|-
+10s | preparing|app|-|2a049a83-17f3-4de5-bdf8-b83527ec01e4|2026-11-26 07:57:57.745163+00|07:53:29|active|-
+62s | preparing|app|-|2a049a83-17f3-4de5-bdf8-b83527ec01e4|2026-11-26 07:57:57.745163+00|07:54:22|active|-
+125s | preparing|app|-|2a049a83-17f3-4de5-bdf8-b83527ec01e4|2026-11-26 07:57:57.745163+00|07:55:24|active|-
+187s | preparing|app|-|2a049a83-17f3-4de5-bdf8-b83527ec01e4|2026-11-26 07:57:57.745163+00|07:56:26|active|-
+250s | preparing|app|-|2a049a83-17f3-4de5-bdf8-b83527ec01e4|2026-11-26 07:57:57.745163+00|07:57:30|active|-
+273s | preparing|app|-|2a049a83-17f3-4de5-bdf8-b83527ec01e4|2026-11-26 07:57:57.745163+00|07:57:52|active|-
+283s | reconciliation-needed|app|-|-||07:58:03|active|lease-expired-with-pending-step
+  ... (20 sample lines trimmed)
+
+## w2b.txt
+-- new deploy while held:
+Error: This app already has a deployment in progress.
+-- reconciliation request (owner session)
+signin(owner) 200
+{"code":"invalid","status":422,"title":"Send a request without a body; only the operator may record evidence."} [422]
+[]
+reconciliation-needed|app|-|-||07:58:29|active|lease-expired-with-pending-step
+-- refused outcome (succeeded without image)
+No image was recorded for this deployment, so it cannot be marked succeeded.
+
+exit=1
+reconciliation-needed|app|-|-||07:58:50|active|lease-expired-with-pending-step
+-- failed-clean
+Recorded failed-clean for 1 deployment.
+exit=0
+failed|-|-|-||07:59:27|active|reconciled-clean
+-- new deployment
+new 0283d4fb-4717-44a9-bb16-ffb40dba357c succeeded in 101s
+-- delete held
+deletion: deleted
+2
+status=running health=healthy restarts=0 exit=0
+status=running health=healthy restarts=0 exit=0
+status=running health=healthy restarts=0 exit=0
+status=running health=healthy restarts=0 exit=0
+status=running health=healthy restarts=0 exit=0
+protected unchanged
+snap diff:
+   18a19
+   > 401462ead9f5 dokku/lp-8qoqirq6lb:latest
+   20a22
+   > 536418f146a4 launchpad/site:0283d4fb471744a9bb16ffb40dba357c
+   50a53
+   > c76397be79de lp-8qoqirq6lb.web.1 dokku/lp-8qoqirq6lb:latest
+2026-11-26T08:01:12Z W2 done
+
+## w3.txt
+2026-11-26T07:45:56Z W3 start
+/launchpad-local-27b61035-worker-1 status=running health=healthy restarts=0 exit=0 started=2026-11-26T07:39:14.298275155Z
+2026-11-26T07:45:56Z W3 deployment 6a27aeb9-f430-4b4e-8573-2bcd98f0860e
+at fault: deploying/load
+deploying|load|configure|62bf8da3-35a8-4e1b-9710-03c4884d1c9e|2026-11-26 07:51:09.125965+00|07:46:09|active|-
+stop took 0s: status=exited health=unhealthy restarts=0 exit=0
+{"event":"deletion-run-ended","operationId":"d1ed6515-be8e-456b-82f1-a27431c14fac","status":"succeeded"}
+{"event":"deployment-run-ended","deploymentId":"6a27aeb9-f430-4b4e-8573-2bcd98f0860e","status":"authority-lost"}
+{"event":"stopped"}
+0s | status=exited health=unhealthy restarts=0 exit=0 | deploying|load|configure|62bf8da3-35a8-4e1b-9710-03c4884d1c9e|2026-11-26 07:51:09.125965+00|07:46:09|active|- | deploying
+10s | status=exited health=unhealthy restarts=0 exit=0 | deploying|load|configure|62bf8da3-35a8-4e1b-9710-03c4884d1c9e|2026-11-26 07:51:09.125965+00|07:46:19|active|- | deploying
+62s | status=exited health=unhealthy restarts=0 exit=0 | deploying|load|configure|62bf8da3-35a8-4e1b-9710-03c4884d1c9e|2026-11-26 07:51:09.125965+00|07:47:11|active|- | deploying
+123s | status=exited health=unhealthy restarts=0 exit=0 | deploying|load|configure|62bf8da3-35a8-4e1b-9710-03c4884d1c9e|2026-11-26 07:51:09.125965+00|07:48:12|active|- | deploying
+185s | status=exited health=unhealthy restarts=0 exit=0 | deploying|load|configure|62bf8da3-35a8-4e1b-9710-03c4884d1c9e|2026-11-26 07:51:09.125965+00|07:49:14|active|- | deploying
+246s | status=exited health=unhealthy restarts=0 exit=0 | deploying|load|configure|62bf8da3-35a8-4e1b-9710-03c4884d1c9e|2026-11-26 07:51:09.125965+00|07:50:16|active|- | deploying
+308s | status=exited health=unhealthy restarts=0 exit=0 | deploying|load|configure|62bf8da3-35a8-4e1b-9710-03c4884d1c9e|2026-11-26 07:51:09.125965+00|07:51:17|active|- | deploying
+328s | status=exited health=unhealthy restarts=0 exit=0 | deploying|load|configure|62bf8da3-35a8-4e1b-9710-03c4884d1c9e|2026-11-26 07:51:09.125965+00|07:51:38|active|- | deploying
+339s | status=exited health=unhealthy restarts=0 exit=0 | deploying|load|configure|62bf8da3-35a8-4e1b-9710-03c4884d1c9e|2026-11-26 07:51:09.125965+00|07:51:48|active|- | deploying
+  ... (25 sample lines trimmed)
+
+## w3b.txt
+Error response from daemon: Couldn't find PID field in ps output
+dokku procs: 0
+app lp-9ma9zd9suo exists
+       Deployed:                         false
+       Running:                          false
+0s | status=running health=starting restarts=0 exit=0 | reconciliation-needed|load|configure|-||07:52:10|active|lease-expired-with-pending-step
+    "phase": "configure",	    "createdAt": "2026-11-26T07:46:09.115Z"
+    "phase": "load",	    "createdAt": "2026-11-26T07:46:09.120Z"
+    "phase": "reconciliation-needed",	    "createdAt": "2026-11-26T07:52:10.511Z"
+Recorded failed-owned for 1 deployment.
+exit=0
+failed|-|configure|-||07:52:11|active|reconciled-owned
+deletion: deleted
+status=running health=healthy restarts=0 exit=0
+status=running health=healthy restarts=0 exit=0
+status=running health=healthy restarts=0 exit=0
+status=running health=healthy restarts=0 exit=0
+status=running health=healthy restarts=0 exit=0
+protected unchanged
+snap diff:
+2026-11-26T07:52:18Z W3 done
+

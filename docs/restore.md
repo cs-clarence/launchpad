@@ -60,6 +60,9 @@ a repair. Use the operator checks in this runbook to complete recovery.
    jobs have not touched Dokku and are not probed. `--no-dokku` is only a partial check.
    Missing archives require repair before a deployment; an unreachable Dokku
    is an error, not a missing app. The check changes nothing.
+   It also exits 1 for a deployment that never got a Dokku app (one that failed
+   at its first step); that is not damage from the restore. Delete such a
+   deployment through the API once recovery is cleared, and the check is clean.
 4. **Before starting any controller**, run `bun .output/admin.mjs revoke-all-credentials
    --i-understand-this-signs-everyone-out` with every controller stopped. The restored
    database holds the sessions, API keys, emailed tokens and invitations of the backup
@@ -266,10 +269,26 @@ wrapper safe; such wrappers are unsupported.
     The audit records the operator's attestation/request before removal, not a claim
     that removal succeeded; if removal fails, the pending record continues to block.
 
-4. Follow the interrupted-schema recovery notes in the
-   [controller reference](../apps/controller/README.md#restore), then retry the
-   verified restore procedure. Never remove import/recovery records manually
+4. Only now put the old data back or retry. Follow the interrupted-schema recovery notes in the
+   [controller reference](../apps/controller/README.md#restore) (the manual `alter schema ... rename to public`
+   works whatever state `public` is in, including a missing one, and must come **after** the
+   acknowledgement), or restore a fresh verified backup with `--replace`. Either way the recovery marker
+   keeps the **first** restore's start time, so the 25-minute gate is counted from it, not from the retry. Never remove import/recovery records manually
    or run `migrate` while an import could still be running.
+
+## After a failed restore
+
+A restore that fails **before** it changes anything (a backup that does not verify, a `pg_restore` preflight
+failure, an unknown migration, a collision, a wrong `--replace` address) leaves no marker and nothing to
+undo. A restore that fails **during** the import puts the old schema back and **keeps** the recovery marker:
+the old data and every credential are exactly as before, sign-in and key administration keep working, model
+writes (including the worker's claims, so the worker turns `unhealthy` after a minute or two) stay blocked, and
+`recovery-clear` still demands the router rotation and 25 minutes from that first restore. To continue, either
+repeat the restore from a good backup and follow steps 3 to 6 (the same gate covers both restores), or, if the
+old data is what you want, rotate the router (the marker anchored its epoch) and wait out the 25 minutes before
+`recovery-clear`. Stop the controller and worker again and wait for settlement before any second restore or
+the rotation if you started them to look. A failed restore whose importer exit could not be established is the
+crashed-importer case below. Evidence: [2026-11-26 rehearsal](plans/evidence/rehearsal-db-worker-restore-20261126/README.md).
 
 ## Repeat the disposable drill
 

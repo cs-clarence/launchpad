@@ -164,15 +164,16 @@ prints the exact `sudo rm -rf` command for each root-owned directory. If an imag
 
 Each failure prints one message and exits nonzero; nothing is rolled back and `down` removes whatever exists.
 
-| Message starts with                | What to do                                                                                                                                                                                |
-| ---------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `The Docker daemon did not answer` | Start Docker, or check that you may use it.                                                                                                                                               |
-| `DOCKER_HOST is set`               | Unset it: only the local engine at `/var/run/docker.sock` works.                                                                                                                          |
-| `... is in use on 127.0.0.1`       | Free the port, or run `up` with `--port-base <n>`.                                                                                                                                        |
-| `... is not ignored by git`        | `.local-deploy/` must be in `.gitignore`.                                                                                                                                                 |
-| `Timed out waiting for dokku`      | Look at `docker compose -p <project> --env-file .local-deploy/compose.env -f docker-compose.yaml -f .local-deploy/override.json logs --tail 50 dokku`; Dokku's first start takes minutes. |
-| `... has no matching state.json`   | Another checkout or an earlier run owns those resources; run `down` from there.                                                                                                           |
-| `Compose ... Buildx`               | See the [recovery record](plans/production-fresh-host-recovery.md#repeat-the-rehearsal).                                                                                                  |
+| Message starts with                                                  | What to do                                                                                                                                                                                                                              |
+| -------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `The Docker daemon did not answer`                                   | Start Docker, or check that you may use it.                                                                                                                                                                                             |
+| `DOCKER_HOST is set`                                                 | Unset it: only the local engine at `/var/run/docker.sock` works.                                                                                                                                                                        |
+| `... is in use on 127.0.0.1`                                         | Free the port, or run `up` with `--port-base <n>`.                                                                                                                                                                                      |
+| `... is not ignored by git`                                          | `.local-deploy/` must be in `.gitignore`.                                                                                                                                                                                               |
+| `Timed out waiting for dokku`                                        | Look at `docker compose -p <project> --env-file .local-deploy/compose.env -f docker-compose.yaml -f .local-deploy/override.json logs --tail 50 dokku`; Dokku's first start takes minutes.                                               |
+| `... has no matching state.json`                                     | Another checkout or an earlier run owns those resources; run `down` from there.                                                                                                                                                         |
+| `The profile "local-deploy" already exists and is not a working key` | The saved key was revoked (for example by `revoke-all-credentials`) or belongs to a stack you removed by hand. With `LAUNCHPAD_PROFILE=local-deploy` set, run `launchpad logout`, then `up --new-key`; `--force` is not an `up` option. |
+| `Compose ... Buildx`                                                 | See the [recovery record](plans/production-fresh-host-recovery.md#repeat-the-rehearsal).                                                                                                                                                |
 
 ## Limits
 
@@ -184,4 +185,8 @@ Each failure prints one message and exits nonzero; nothing is rolled back and `d
   A dashboard through a proxy with a local certificate is a follow-up (see the
   [ingress example](ingress-example.md)).
 - Aliases are off (`LAUNCHPAD_ALIASES=off`); the router only has to be running.
+  To try aliases, set `LAUNCHPAD_ALIASES=on` in `.local-deploy/compose.env` and recreate the controller and worker
+  (`up` keeps the value). The key `up` saves has only the six scopes in the setup step, so it cannot create or
+  promote an alias: issue a second key with `app:alias:manage` and `app:promote` through an owner session, and
+  revoke it afterwards.
 - Linux with native Docker only; one worker; no backups or restores.

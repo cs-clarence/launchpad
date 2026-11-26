@@ -1,0 +1,210 @@
+## v8.txt
+2026-11-26T10:10:40Z V8 start
+forged 57001
+[panel] counts=2|3|3|11 
+[panel] maintenance: drwx------. .;drwx------. ..;-rw-------. model-writer-seen;
+[panel] schemas: public
+[panel] dokku apps: lp-g3ts3hsz2i lp-i0ximpgj5p lp-pp9w3ti64p lp-xosukcu750 
+[panel] dokku procs: 19
+filler rows: 600000
+-- verify
+The backup verifies.
+exit=0
+-- restore
+pg_restore cannot read this dump (pg_restore: error: could not read from input file: end of file); it must be at least the version that wrote it. Nothing was changed.
+
+exit=1 after 0s
+after:
+[panel] counts=2|3|3|11 
+[panel] maintenance: drwx------. .;drwx------. ..;-rw-------. model-writer-seen;
+[panel] schemas: public
+[panel] dokku apps: lp-g3ts3hsz2i lp-i0ximpgj5p lp-pp9w3ti64p lp-xosukcu750 
+[panel] dokku procs: 19
+filler rows after: 600000
+marker: cat: /data/maintenance/deployment-recovery-blocked: No such file or directory
+total 0
+drwx------. 1 launchpad launchpad 34 Nov 26 10:02 .
+drwx------. 1 launchpad launchpad 56 Nov 26 07:17 ..
+-rw-------. 1 launchpad launchpad  0 Nov 26 07:15 model-writer-seen
+stray-done
+
+0
+-- restore again (refused?)
+pg_restore cannot read this dump (pg_restore: error: could not read from input file: end of file); it must be at least the version that wrote it. Nothing was changed.
+
+exit=1
+-- recovery-clear now
+The restore recorded no router epoch (no router was configured or readable then, or the marker predates this check), so the rotation cannot be verified. After rotating the router, repeat with --router-epoch-unrecorded to confirm it yourself.
+
+exit=1
+-- recovery-ack-import (no importer record)
+Usage: launchpad-admin recovery-ack-import [options]
+
+Acknowledge a crashed restore importer only after its OS process and database
+backend have exited
+
+Options:
+  --i-have-stopped-the-importer  confirm the old importer, wrappers and its
+                                 database backend have exited
+
+## v8c.txt
+2026-11-26T10:11:42Z V8b start (corrupted block, forged manifest)
+forged 114002
+counts before: 2|3|3|11  filler=600000
+-- verify
+The backup verifies.
+exit=0
+-- restore
+pg_restore exited with code 1: pg_restore: error: could not uncompress data: (null)
+
+exit=1 after 2s
+after:
+[panel] counts=2|3|3|11 
+[panel] maintenance: drwx------. .;drwx------. ..;-rw-------. deployment-recovery-blocked;-rw-------. model-writer-seen;
+[panel] schemas: public
+[panel] dokku apps: lp-g3ts3hsz2i lp-i0ximpgj5p lp-pp9w3ti64p lp-xosukcu750 
+[panel] dokku procs: 19
+filler rows after: 600000
+marker: {"version":2,"restoreStartedAt":"2026-11-26T10:11:46.594Z","routerEpoch":"<redacted>","routerEpochNote":"recorded"}
+total 4
+drwx------. 1 launchpad launchpad  88 Nov 26 10:11 .
+drwx------. 1 launchpad launchpad  56 Nov 26 07:17 ..
+-rw-------. 1 launchpad launchpad 142 Nov 26 10:11 deployment-recovery-blocked
+-rw-------. 1 launchpad launchpad   0 Nov 26 07:15 model-writer-seen
+stray-done
+replaced schemas: 
+restore backends: 0
+
+## v8d.txt
+2026-11-26T10:12:06Z V8d writers started deliberately
+ctl/worker: status=running health=healthy restarts=0 / status=running health=starting restarts=0
+pre-restore CLI key whoami: Controller:   http://127.0.0.1:32180
+read projects: Error: (outputHelp) 
+deploy (POST deployments): Error: Deployments are unavailable while recovery is in progress. 
+signin(owner) 200
+api create app: {"type":"not-found","code":"not-found","status":404,"title":"Not Found"} [404]
+worker log:       1 "event":"deployment-recovery-blocked"       1 "event":"deployment-worker-started" 
+worker health marker: stat: cannot statx '/tmp/launchpad-worker-health': No such file or directory
+sh: 1: arithmetic expression: expecting primary: " 1795687948 -  "s, status=running health=starting restarts=0
+health 200 opstatus: {"generatedAt":"2026-11-26T10:12:29.070Z","dependencies":{"database":"ok"},"artifacts":{"stored":1,"bytes":723},"warnings":[]} [200]
+-- early recovery-clear
+The router's epoch has not changed since the restore began, so a delayed pre-restore write could still land. Stop the router, rotate its epoch and credentials (docs/restore.md), update the epoch and token files, then retry.
+
+exit=1
+counts 2|5|3|11 
+deployment-recovery-blocked model-writer-seen 
+
+## r3.txt
+2026-11-26T10:20:38Z R3 recovery restore of b0-v2
+dokku procs: 0
+before counts 2|5|3|11  filler=600000
+The backup verifies.
+Restored the database (1 migrations applied) and 0 archive(s) copied (1 already there).
+Next: follow docs/restore.md before migrating or starting the controller; keep ingress closed and preserve the recovery records.
+restore exit=0 after 1s
+{"version":2,"restoreStartedAt":"2026-11-26T10:11:46.594Z","routerEpoch":"<redacted>","routerEpochNote":"recorded"}
+after counts 2|3|3|11 ; filler:                              ^
+applied: 1
+pending: 0
+0 archive(s) missing; 1 of 5 deployment(s) have no app
+
+"inFlight":[],"findings":[],"ignoredAppCount":0}
+Revoked 3 session(s), 1 API key(s), 0 emailed token(s) and 0 open invitation(s). Passwords are unchanged: reset any account that must be locked out.
+2026-11-26T10:21:05Z router rotated to <new-epoch> (read-back, health and drift checked)
+
+real	0m14.223s
+user	0m1.167s
+sys	0m0.673s
+Raised 0 alias counter(s).
+raise exit=0
+Wait at least 25 minutes from the recorded restore start before clearing recovery.
+
+clear before gate exit=1
+
+
+## v9.txt
+2026-11-26T10:44:44Z V9 start
+counts before 2|2|4|12 
+backends visible: 1 after 5s; app names: launchpad-restore-e02fdcf4-95c0-4bef-8b42-23e24a1de1b3|activ 
+killed at +9s
+run exit=137
+t+9s backends=0 
+t+13s backends=0 
+t+17s backends=0 
+t+21s backends=0 
+t+25s backends=0 
+t+28s backends=0 
+maintenance: total 8;drwx------. .;drwx------. ..;-rw-------. deployment-import-in-progress;-rw-------. deployment-recovery-blocked;-rw-------. model-writer-seen;
+schemas: launchpad_replaced_1795689896773
+tables in public: 0
+stray-done
+importer record: {"version":1,"id":"e02fdcf4-95c0-4bef-8b42-23e24a1de1b3","databaseIdentity":"postgres:5432/launchpad","applicationName":"launchpad-restore-e02fdcf4-95c0-4bef-8b42-23e24a1de1b3","startedAt":"2026-11-26
+-- restore refuses?
+A previous pg_restore may still be running. Stop and verify its OS process and database backend, then run recovery-ack-import --i-have-stopped-the-importer before retrying.
+
+exit=1
+-- recovery-clear refuses?
+A previous pg_restore may still be running. Stop and verify its OS process and database backend, then run recovery-ack-import --i-have-stopped-the-importer before retrying.
+
+exit=1
+
+## v9b.txt
+replaced schema: launchpad_replaced_1795689896773
+old data in replaced schema: users=2 deployments=12
+-- ack without flag
+error: required option '--i-have-stopped-the-importer' not specified
+
+Usage: launchpad-admin recovery-ack-import [options]
+
+Acknowledge a crashed restore importer only after its OS process and database
+backend have exited
+
+Options:
+  --i-have-stopped-the-importer  confirm the old importer, wrappers and its
+                                 database backend have exited
+  -h, --help                     display help for command
+
+exit=1
+-- ack with flag
+Previous importer acknowledged in the durable maintenance audit. Model recovery remains blocked.
+exit=0
+maintenance: deployment-import-ack-e02fdcf4-95c0-4bef-8b42-23e24a1de1b3 deployment-recovery-blocked model-writer-seen 
+-- restore after ack but before put-back (public empty, replaced exists)
+-- manual put-back per controller README
+NOTICE:  schema "public" does not exist, skipping
+DROP SCHEMA
+ALTER SCHEMA
+after put-back counts 2|2|4|12  (before V9: 2|2|4|12)
+schemas: public
+applied: 1
+pending: 0
+The router's epoch has not changed since the restore began, so a delayed pre-restore write could still land. Stop the router, rotate its epoch and credentials (docs/restore.md), update the epoch and token files, then retry.
+
+clear exit=1
+[panel] counts=2|2|4|12 
+[panel] maintenance: drwx------. .;drwx------. ..;-rw-------. deployment-import-ack-e02fdcf4-95c0-4bef-8b42-23e24a1de1b3;-rw-------. deployment-recovery-blocked;-rw-------. model-writer-seen;
+[panel] schemas: public
+[panel] dokku apps: lp-g3ts3hsz2i lp-i0ximpgj5p lp-nphktg6kop lp-pp9w3ti64p lp-xosukcu750 
+[panel] dokku procs: 19
+
+## r5.txt
+2026-11-26T10:46:51Z R5 recovery restore of b0-v3
+dokku procs: 0
+The backup verifies.
+Restored the database (1 migrations applied) and 0 archive(s) copied (1 already there).
+Next: follow docs/restore.md before migrating or starting the controller; keep ingress closed and preserve the recovery records.
+restore exit=0
+{"version":2,"restoreStartedAt":"2026-11-26T10:44:56.697Z","routerEpoch":"<redacted>","routerEpochNote":"recorded"}
+counts 2|2|4|12 ; schemas: public
+applied: 1
+pending: 0
+0 archive(s) missing; 1 of 6 deployment(s) have no app
+
+"inFlight":[],"findings":[],"ignoredAppCount":0}
+Revoked 2 session(s), 1 API key(s), 0 emailed token(s) and 0 open invitation(s). Passwords are unchanged: reset any account that must be locked out.
+2026-11-26T10:48:10Z router rotated to <new-epoch> (read-back, health and drift checked)
+Raised 0 alias counter(s).
+Wait at least 25 minutes from the recorded restore start before clearing recovery.
+
+clear before gate exit=1
+

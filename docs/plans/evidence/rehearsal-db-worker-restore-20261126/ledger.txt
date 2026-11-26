@@ -1,0 +1,136 @@
+2026-11-26T06:32:07Z INJECT stop controller (S2b) b79e68625248737f0013d1f9b9c450ea8fa5029b821d670b7c45c312050a288f controller
+2026-11-26T06:32:09Z INJECT stop worker (S2b) aca5a0473205eae99dd28aa460a729a6a9cc8dab0992656b7a4f7da91cf40e91 worker
+2026-11-26T06:38:14Z INJECT stop router (rotation) 98f2ac14bc4affeff7c4153a166873dea24cca210bf249fa6f1135bceab2255f router
+2026-11-26T06:38:28Z UNDO   stop router (rotation) 98f2ac14bc4affeff7c4153a166873dea24cca210bf249fa6f1135bceab2255f router
+2026-11-26T06:38:49Z UNDO   stop controller (S2b) b79e68625248737f0013d1f9b9c450ea8fa5029b821d670b7c45c312050a288f controller
+2026-11-26T07:05:30Z UNDO   stop worker (S2b; restarted by rekey at 07:03:37) aca5a0473205eae99dd28aa460a729a6a9cc8dab0992656b7a4f7da91cf40e91 worker
+2026-11-26T07:12:07Z RECOVERY R1 old stack inventory (ids/names only):
+containers: 0c2d5ea16fa3 aca5a0473205 b79e68625248 98f2ac14bc4a 28c7dab385b2 9cbedb488d6d lp-5gbnd9ic0p.web.1(1e85bbe74967) lp-z7ara5oj95.web.1(9b9870173414)
+volumes: launchpad-local-3853718e_{launchpad-data,postgres-data,router-state}
+networks: launchpad-local-3853718e-apps _backend _database
+images: dokku/lp-5gbnd9ic0p:latest dokku/lp-z7ara5oj95:latest launchpad/site:ed3d7f2bdd624eefacf32997ca036de4 launchpad/site:d38d2c5e81ee4d4893bf0f00430db99f launchpad-local-3853718e/{admin,controller,router,worker,dokku}:local
+2026-11-26T07:12:23Z RECOVERY-REMOVE container b79e68625248737f0013d1f9b9c450ea8fa5029b821d670b7c45c312050a288f (com.docker.compose.project=launchpad-local-3853718e)
+2026-11-26T07:12:29Z RECOVERY-REMOVE container aca5a0473205eae99dd28aa460a729a6a9cc8dab0992656b7a4f7da91cf40e91 (com.docker.compose.project=launchpad-local-3853718e)
+2026-11-26T07:12:31Z RECOVERY-REMOVE container 98f2ac14bc4affeff7c4153a166873dea24cca210bf249fa6f1135bceab2255f (com.docker.compose.project=launchpad-local-3853718e)
+2026-11-26T07:12:32Z RECOVERY-REMOVE container 1e85bbe749674e5ab65ef0c7036e81877a9a225a72ee2092bf03aac0776375ec (com.dokku.app-name=lp-5gbnd9ic0p)
+2026-11-26T07:12:34Z RECOVERY-REMOVE container 9b9870173414b1442880ee737178d578f05325f07d00e75c8f0a7abf6a5b3b57 (com.dokku.app-name=lp-z7ara5oj95)
+2026-11-26T07:12:34Z RECOVERY-REMOVE container 0c2d5ea16fa3cce31a93470bcbab6952e16511b6c05d67fee8fd4ef162af3ae6 (com.docker.compose.project=launchpad-local-3853718e)
+2026-11-26T07:12:35Z RECOVERY-REMOVE container 28c7dab385b25ace8019042313367daee1fa195cadb1853127f6a21bc7157656 (com.docker.compose.project=launchpad-local-3853718e)
+2026-11-26T07:13:06Z RECOVERY-REMOVE container 9cbedb488d6ddc8d9c9c851003258766ab3b0579cd3a87944ba5b6a0b15d2fc6 (com.docker.compose.project=launchpad-local-3853718e)
+2026-11-26T07:13:08Z RECOVERY-REMOVE volume launchpad-local-3853718e_launchpad-data
+2026-11-26T07:13:08Z RECOVERY-REMOVE volume launchpad-local-3853718e_postgres-data
+2026-11-26T07:13:08Z RECOVERY-REMOVE volume launchpad-local-3853718e_router-state
+2026-11-26T07:13:08Z RECOVERY-REMOVE network launchpad-local-3853718e-apps
+2026-11-26T07:13:09Z RECOVERY-REMOVE network launchpad-local-3853718e_backend
+2026-11-26T07:13:09Z RECOVERY-REMOVE network launchpad-local-3853718e_database
+2026-11-26T07:13:10Z RECOVERY-REMOVE image tag dokku/lp-5gbnd9ic0p:latest
+2026-11-26T07:13:10Z RECOVERY-REMOVE image tag dokku/lp-z7ara5oj95:latest
+2026-11-26T07:13:10Z RECOVERY-REMOVE image tag launchpad/site:ed3d7f2bdd624eefacf32997ca036de4
+2026-11-26T07:13:10Z RECOVERY-REMOVE image tag launchpad/site:d38d2c5e81ee4d4893bf0f00430db99f
+2026-11-26T07:13:10Z RECOVERY-REMOVE image tag launchpad-local-3853718e/admin:local
+2026-11-26T07:13:10Z RECOVERY-REMOVE image tag launchpad-local-3853718e/controller:local
+2026-11-26T07:13:10Z RECOVERY-REMOVE image tag launchpad-local-3853718e/router:local
+2026-11-26T07:13:10Z RECOVERY-REMOVE image tag launchpad-local-3853718e/worker:local
+2026-11-26T07:13:10Z RECOVERY-REMOVE image tag launchpad-local-3853718e/dokku:local
+2026-11-26T07:13:20Z RECOVERY-REMOVE root-owned .local-deploy/{backups,dokku} via helper
+2026-11-26T07:13:50Z RECOVERY R2 done: old stack removed; new checkout ~/.t3/worktrees/fe-preview/rehearsal-evidence (branch docs/rehearsal-evidence-2)
+2026-11-26T07:22:10Z INJECT temp controller on scratch6 (V6b) 025e750eb532747c8ae0b9698db88efce0a94465acb6f9a8c8327c3520770b9b controller
+2026-11-26T07:22:23Z UNDO   temp controller on scratch6 (V6b) 025e750eb532747c8ae0b9698db88efce0a94465acb6f9a8c8327c3520770b9b controller
+2026-11-26T07:22:35Z INJECT kill backup v4k1 (V4k) bef5256e090886b5ecfb6d48fd2237bfaab3b74731c91fe6a831b1fa0c539807 admin
+2026-11-26T07:22:35Z UNDO   kill backup v4k1 (V4k) bef5256e090886b5ecfb6d48fd2237bfaab3b74731c91fe6a831b1fa0c539807 admin
+2026-11-26T07:22:38Z INJECT kill backup v4k2 (V4k) 2fca568cad966e4ce3cdd65bc4c3366ee2eea903d211c6575746f7a8397d3636 admin
+2026-11-26T07:22:38Z UNDO   kill backup v4k2 (V4k) 2fca568cad966e4ce3cdd65bc4c3366ee2eea903d211c6575746f7a8397d3636 admin
+2026-11-26T07:22:40Z INJECT kill backup v4k3 (V4k) 9c25a26887e3acacba0029516bb4b8752d938bf017263b0cbc7752dfb75bccfc admin
+2026-11-26T07:22:41Z UNDO   kill backup v4k3 (V4k) 9c25a26887e3acacba0029516bb4b8752d938bf017263b0cbc7752dfb75bccfc admin
+2026-11-26T07:22:45Z INJECT kill backup v4k4 (V4k) b25481bbd04a037c5b479523741644356642ab742fb7448686b37b911169c776 admin
+2026-11-26T07:22:45Z UNDO   kill backup v4k4 (V4k) b25481bbd04a037c5b479523741644356642ab742fb7448686b37b911169c776 admin
+2026-11-26T07:22:47Z INJECT kill backup v4k5 (V4k) c7592c3f4f46164f5c70b1e6c85c6a7dd640ee1f13cd64fbc9fcf88dc9912530 admin
+2026-11-26T07:22:47Z UNDO   kill backup v4k5 (V4k) c7592c3f4f46164f5c70b1e6c85c6a7dd640ee1f13cd64fbc9fcf88dc9912530 admin
+2026-11-26T07:22:50Z INJECT kill backup v4k6 (V4k) ceefe9a2f9ec1d6de246b8f54b85e56275978a12c0861af6314680be12340398 admin
+2026-11-26T07:22:50Z UNDO   kill backup v4k6 (V4k) ceefe9a2f9ec1d6de246b8f54b85e56275978a12c0861af6314680be12340398 admin
+2026-11-26T07:23:04Z UNDO   kill backup v4m1 (V4k) 143854c641810d5522cd451db4be6d9c2a1b9c65837cbeb4942ff1b62337fbe4 admin
+2026-11-26T07:29:26Z INJECT kill worker (W1) 6c22c18da622058e7c085b7970173ac2efe843272e8d8caa2e6c4b503b4cf535 worker
+2026-11-26T07:38:52Z UNDO   kill worker (W1) 6c22c18da622058e7c085b7970173ac2efe843272e8d8caa2e6c4b503b4cf535 worker
+2026-11-26T07:39:14Z INJECT start worker after kill (W1 undo) 6c22c18da622058e7c085b7970173ac2efe843272e8d8caa2e6c4b503b4cf535 worker
+2026-11-26T07:39:14Z UNDO   start worker after kill (W1 undo) 6c22c18da622058e7c085b7970173ac2efe843272e8d8caa2e6c4b503b4cf535 worker
+2026-11-26T07:46:09Z INJECT stop worker (W3) 6c22c18da622058e7c085b7970173ac2efe843272e8d8caa2e6c4b503b4cf535 worker
+2026-11-26T07:52:10Z INJECT start worker after stop (W3 undo) 6c22c18da622058e7c085b7970173ac2efe843272e8d8caa2e6c4b503b4cf535 worker
+2026-11-26T07:52:10Z UNDO   start worker after stop (W3 undo) 6c22c18da622058e7c085b7970173ac2efe843272e8d8caa2e6c4b503b4cf535 worker
+2026-11-26T07:52:57Z INJECT pause dokku (W2) 9ad1a118f50de378ea4d8fcb7d69c806ca084e842fde164ba8aafcca39c963b2 dokku
+2026-11-26T07:52:57Z INJECT kill worker (W2) 6c22c18da622058e7c085b7970173ac2efe843272e8d8caa2e6c4b503b4cf535 worker
+2026-11-26T07:52:58Z UNDO   pause dokku (W2) 9ad1a118f50de378ea4d8fcb7d69c806ca084e842fde164ba8aafcca39c963b2 dokku
+2026-11-26T07:53:19Z INJECT worker start for claim (W2 undo) 6c22c18da622058e7c085b7970173ac2efe843272e8d8caa2e6c4b503b4cf535 worker
+2026-11-26T07:58:03Z UNDO   worker start for claim (W2 undo) 6c22c18da622058e7c085b7970173ac2efe843272e8d8caa2e6c4b503b4cf535 worker
+2026-11-26T08:02:09Z INJECT pause worker (W4) 6c22c18da622058e7c085b7970173ac2efe843272e8d8caa2e6c4b503b4cf535 worker
+2026-11-26T08:07:44Z UNDO   pause worker (W4) 6c22c18da622058e7c085b7970173ac2efe843272e8d8caa2e6c4b503b4cf535 worker
+2026-11-26T08:09:05Z INJECT pause dokku (W5) 9ad1a118f50de378ea4d8fcb7d69c806ca084e842fde164ba8aafcca39c963b2 dokku
+2026-11-26T08:11:44Z INJECT kill worker (W5) 6c22c18da622058e7c085b7970173ac2efe843272e8d8caa2e6c4b503b4cf535 worker
+2026-11-26T08:11:51Z UNDO   pause dokku (W5) 9ad1a118f50de378ea4d8fcb7d69c806ca084e842fde164ba8aafcca39c963b2 dokku
+2026-11-26T08:12:11Z INJECT worker start for claim (W5 undo) 6c22c18da622058e7c085b7970173ac2efe843272e8d8caa2e6c4b503b4cf535 worker
+2026-11-26T08:20:19Z UNDO   worker start for claim (W5 undo) 6c22c18da622058e7c085b7970173ac2efe843272e8d8caa2e6c4b503b4cf535 worker
+2026-11-26T08:20:59Z INJECT pause dokku (W5b) 9ad1a118f50de378ea4d8fcb7d69c806ca084e842fde164ba8aafcca39c963b2 dokku
+2026-11-26T08:21:00Z INJECT kill worker (W5b) 6c22c18da622058e7c085b7970173ac2efe843272e8d8caa2e6c4b503b4cf535 worker
+2026-11-26T08:21:03Z UNDO   pause dokku (W5b) 9ad1a118f50de378ea4d8fcb7d69c806ca084e842fde164ba8aafcca39c963b2 dokku
+2026-11-26T08:21:24Z INJECT worker start for claim (W5b undo) 6c22c18da622058e7c085b7970173ac2efe843272e8d8caa2e6c4b503b4cf535 worker
+2026-11-26T08:29:24Z UNDO   worker start for claim (W5b undo) 6c22c18da622058e7c085b7970173ac2efe843272e8d8caa2e6c4b503b4cf535 worker
+2026-11-26T08:35:23Z INJECT stop dokku (W7) 9ad1a118f50de378ea4d8fcb7d69c806ca084e842fde164ba8aafcca39c963b2 dokku
+2026-11-26T08:40:20Z UNDO   stop dokku (W7) 9ad1a118f50de378ea4d8fcb7d69c806ca084e842fde164ba8aafcca39c963b2 dokku
+2026-11-26T08:41:48Z INJECT pause router (W6) edd53555912e056259005576c63b4aff5754df018d4f9a478d390fe03fc7117f router
+2026-11-26T08:43:42Z INJECT kill worker (W6) 6c22c18da622058e7c085b7970173ac2efe843272e8d8caa2e6c4b503b4cf535 worker
+2026-11-26T08:43:44Z UNDO   pause router (W6) edd53555912e056259005576c63b4aff5754df018d4f9a478d390fe03fc7117f router
+2026-11-26T08:43:54Z INJECT worker start for claim (W6 undo) 6c22c18da622058e7c085b7970173ac2efe843272e8d8caa2e6c4b503b4cf535 worker
+2026-11-26T08:46:58Z UNDO   worker start for claim (W6 undo) 6c22c18da622058e7c085b7970173ac2efe843272e8d8caa2e6c4b503b4cf535 worker
+2026-11-26T08:51:38Z INJECT pause router (W6b) edd53555912e056259005576c63b4aff5754df018d4f9a478d390fe03fc7117f router
+2026-11-26T08:51:38Z INJECT kill worker (W6b) 6c22c18da622058e7c085b7970173ac2efe843272e8d8caa2e6c4b503b4cf535 worker
+2026-11-26T08:51:38Z UNDO   pause router (W6b) edd53555912e056259005576c63b4aff5754df018d4f9a478d390fe03fc7117f router
+2026-11-26T08:51:43Z INJECT worker start for claim (W6b undo) 6c22c18da622058e7c085b7970173ac2efe843272e8d8caa2e6c4b503b4cf535 worker
+2026-11-26T08:51:44Z UNDO   worker start for claim (W6b undo) 6c22c18da622058e7c085b7970173ac2efe843272e8d8caa2e6c4b503b4cf535 worker
+2026-11-26T08:52:30Z NOTE all kill/stop-worker INJECTs (W2,W3,W5,W5b,W6,W6b,S2b) are undone by the matching 'worker start' UNDO lines; worker healthy, no fault outstanding at C2
+2026-11-26T09:17:47Z INJECT stop postgres (D1a) 3d3d53c91d4c83d11f97216e9a3b960b98017d585560344d0175c168617de0ea postgres
+2026-11-26T09:20:20Z UNDO   stop postgres (D1a) 3d3d53c91d4c83d11f97216e9a3b960b98017d585560344d0175c168617de0ea postgres
+2026-11-26T09:23:09Z INJECT kill postgres (D1b) 3d3d53c91d4c83d11f97216e9a3b960b98017d585560344d0175c168617de0ea postgres
+2026-11-26T09:24:09Z UNDO   kill postgres (D1b) 3d3d53c91d4c83d11f97216e9a3b960b98017d585560344d0175c168617de0ea postgres
+2026-11-26T09:28:49Z INJECT drop schema public cascade (D1c) 3d3d53c91d4c83d11f97216e9a3b960b98017d585560344d0175c168617de0ea postgres
+2026-11-26T09:31:04Z INJECT stop controller (R1) 99390c61c4c6bff6aa53b6e58a7cfb4c37d0b0943c7e3fb575bd515d59114b19 controller
+2026-11-26T09:31:05Z INJECT stop worker (R1) 6c22c18da622058e7c085b7970173ac2efe843272e8d8caa2e6c4b503b4cf535 worker
+2026-11-26T09:37:10Z INJECT stop router (rotation) edd53555912e056259005576c63b4aff5754df018d4f9a478d390fe03fc7117f router
+2026-11-26T09:37:24Z UNDO   stop router (rotation) edd53555912e056259005576c63b4aff5754df018d4f9a478d390fe03fc7117f router
+2026-11-26T09:37:34Z INJECT start controller for credential check (R1) 99390c61c4c6bff6aa53b6e58a7cfb4c37d0b0943c7e3fb575bd515d59114b19 controller
+2026-11-26T09:37:42Z UNDO   start controller for credential check (R1) 99390c61c4c6bff6aa53b6e58a7cfb4c37d0b0943c7e3fb575bd515d59114b19 controller
+2026-11-26T10:02:40Z UNDO   stop controller (R1; restarted by rekey) 99390c61c4c6bff6aa53b6e58a7cfb4c37d0b0943c7e3fb575bd515d59114b19 controller
+2026-11-26T10:02:40Z UNDO   stop worker (R1; restarted by rekey) 6c22c18da622058e7c085b7970173ac2efe843272e8d8caa2e6c4b503b4cf535 worker
+2026-11-26T10:04:17Z INJECT create filler table (S6 prep) 3d3d53c91d4c83d11f97216e9a3b960b98017d585560344d0175c168617de0ea postgres
+2026-11-26T10:04:36Z UNDO   create filler table (S6 prep) 3d3d53c91d4c83d11f97216e9a3b960b98017d585560344d0175c168617de0ea postgres
+2026-11-26T10:04:44Z INJECT stop controller (V8) 99390c61c4c6bff6aa53b6e58a7cfb4c37d0b0943c7e3fb575bd515d59114b19 controller
+2026-11-26T10:04:45Z INJECT stop worker (V8) 6c22c18da622058e7c085b7970173ac2efe843272e8d8caa2e6c4b503b4cf535 worker
+2026-11-26T10:12:06Z INJECT start controller (V8 observe) 99390c61c4c6bff6aa53b6e58a7cfb4c37d0b0943c7e3fb575bd515d59114b19 controller
+2026-11-26T10:12:06Z INJECT start worker (V8 observe) 6c22c18da622058e7c085b7970173ac2efe843272e8d8caa2e6c4b503b4cf535 worker
+2026-11-26T10:14:47Z INJECT stop controller (V8b) 99390c61c4c6bff6aa53b6e58a7cfb4c37d0b0943c7e3fb575bd515d59114b19 controller
+2026-11-26T10:14:49Z INJECT stop worker (V8b) 6c22c18da622058e7c085b7970173ac2efe843272e8d8caa2e6c4b503b4cf535 worker
+2026-11-26T10:20:52Z INJECT stop router (rotation) edd53555912e056259005576c63b4aff5754df018d4f9a478d390fe03fc7117f router
+2026-11-26T10:21:05Z UNDO   stop router (rotation) edd53555912e056259005576c63b4aff5754df018d4f9a478d390fe03fc7117f router
+2026-11-26T10:37:37Z UNDO   stop controller (V8b; restarted by rekey) 99390c61c4c6bff6aa53b6e58a7cfb4c37d0b0943c7e3fb575bd515d59114b19 controller
+2026-11-26T10:37:37Z UNDO   stop worker (V8b; restarted by rekey) 6c22c18da622058e7c085b7970173ac2efe843272e8d8caa2e6c4b503b4cf535 worker
+2026-11-26T10:38:50Z INJECT stop controller (V9) 99390c61c4c6bff6aa53b6e58a7cfb4c37d0b0943c7e3fb575bd515d59114b19 controller
+2026-11-26T10:38:51Z INJECT stop worker (V9) 6c22c18da622058e7c085b7970173ac2efe843272e8d8caa2e6c4b503b4cf535 worker
+2026-11-26T10:44:58Z INJECT kill restore (V9) 350d34f26c8aeb27248df04a0f5584ce4e1cb9aa0de4e0dd553a8af9a68b16b1 admin
+2026-11-26T10:45:01Z UNDO   kill restore (V9) 350d34f26c8aeb27248df04a0f5584ce4e1cb9aa0de4e0dd553a8af9a68b16b1 admin
+2026-11-26T10:46:24Z INJECT manual schema put-back (V9) 3d3d53c91d4c83d11f97216e9a3b960b98017d585560344d0175c168617de0ea postgres
+2026-11-26T10:46:24Z UNDO   manual schema put-back (V9) 3d3d53c91d4c83d11f97216e9a3b960b98017d585560344d0175c168617de0ea postgres
+2026-11-26T10:47:30Z INJECT stop router (rotation) edd53555912e056259005576c63b4aff5754df018d4f9a478d390fe03fc7117f router
+2026-11-26T10:48:10Z UNDO   stop router (rotation) edd53555912e056259005576c63b4aff5754df018d4f9a478d390fe03fc7117f router
+2026-11-26T11:11:14Z UNDO   stop controller (V9; restarted by rekey) 99390c61c4c6bff6aa53b6e58a7cfb4c37d0b0943c7e3fb575bd515d59114b19 controller
+2026-11-26T11:11:14Z UNDO   stop worker (V9; restarted by rekey) 6c22c18da622058e7c085b7970173ac2efe843272e8d8caa2e6c4b503b4cf535 worker
+2026-11-26T11:13:02Z NOTE V8 observe: 'start controller/worker (V8 observe)' INJECTs undone by 'stop ... (V8b)' stops and the rekey restarts; no fault outstanding at C3
+2026-11-26T12:16:50Z INJECT rm postgres (D1d) 3d3d53c91d4c83d11f97216e9a3b960b98017d585560344d0175c168617de0ea postgres
+2026-11-26T12:17:01Z INJECT volume rm launchpad-local-27b61035_postgres-data
+2026-11-26T12:17:21Z UNDO   rm postgres (D1d; recreated empty by compose) c161e1c8d7348fb432d5277065198c64e34ee593488d856f7445a1acf8c7cdb4 postgres
+2026-11-26T12:21:47Z INJECT restart controller (D1d) 99390c61c4c6bff6aa53b6e58a7cfb4c37d0b0943c7e3fb575bd515d59114b19 controller
+2026-11-26T12:21:49Z UNDO   restart controller (D1d) 99390c61c4c6bff6aa53b6e58a7cfb4c37d0b0943c7e3fb575bd515d59114b19 controller
+2026-11-26T12:23:23Z INJECT stop controller (D1d) 99390c61c4c6bff6aa53b6e58a7cfb4c37d0b0943c7e3fb575bd515d59114b19 controller
+2026-11-26T12:23:25Z INJECT stop worker (D1d) 6c22c18da622058e7c085b7970173ac2efe843272e8d8caa2e6c4b503b4cf535 worker
+2026-11-26T12:29:33Z INJECT stop router (rotation) edd53555912e056259005576c63b4aff5754df018d4f9a478d390fe03fc7117f router
+2026-11-26T12:29:46Z UNDO   stop router (rotation) edd53555912e056259005576c63b4aff5754df018d4f9a478d390fe03fc7117f router
+2026-11-26T12:55:29Z UNDO   stop controller (D1d; restarted by rekey) 99390c61c4c6bff6aa53b6e58a7cfb4c37d0b0943c7e3fb575bd515d59114b19 controller
+2026-11-26T12:55:29Z UNDO   stop worker (D1d; restarted by rekey) 6c22c18da622058e7c085b7970173ac2efe843272e8d8caa2e6c4b503b4cf535 worker
+2026-11-26T13:05:20Z S9 REMOVE image tag launchpad/site:a99c8feaefa74f8a85bcd5b2dbdd0169 (h6 orphan's site image; down could not derive it)

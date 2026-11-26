@@ -1,0 +1,27 @@
+## r3-deploy.txt
+2026-11-26T07:16:41Z R3 deploy hello
+deployment c3694c3e-c2e9-4236-9160-7cbfdc127646 succeeded in 129s
+hostname hello-1zbbydgjdg-preview.apps.localhost
+site http 200
+/launchpad-local-27b61035-postgres-1 status=running health=healthy restarts=0 exit=0 started=2026-11-26T07:13:56.972543633Z
+/launchpad-local-27b61035-dokku-1 status=running health=healthy restarts=0 exit=0 started=2026-11-26T07:13:57.444718309Z
+/launchpad-local-27b61035-controller-1 status=running health=healthy restarts=0 exit=0 started=2026-11-26T07:15:42.54145237Z
+/launchpad-local-27b61035-worker-1 status=running health=healthy restarts=0 exit=0 started=2026-11-26T07:15:48.104067737Z
+/launchpad-local-27b61035-router-1 status=running health=healthy restarts=0 exit=0 started=2026-11-26T07:15:42.007203905Z
+launchpad-local-27b61035
+
+## r3-b0.txt
+2026-11-26T07:19:05Z aliases on; recreate controller worker (R3)
+2
+/launchpad-local-27b61035-controller-1 status=running health=healthy restarts=0 exit=0 started=2026-11-26T07:19:11.562922546Z
+/launchpad-local-27b61035-worker-1 status=running health=healthy restarts=0 exit=0 started=2026-11-26T07:19:11.363512803Z
+Backup written to /backups/b0: 1 migrations, 1 archive(s). Keep it private: the dump holds password and API-key hashes.
+The backup verifies.
+Backup written to /backups/b0-v: 1 migrations, 1 archive(s). Keep it private: the dump holds password and API-key hashes.
+The backup verifies.
+[panel] counts=2|5|1|1 
+[panel] maintenance: drwx------. .;drwx------. ..;-rw-------. model-writer-seen;
+[panel] schemas: public
+[panel] dokku apps: lp-i0ximpgj5p 
+[panel] dokku procs: 19
+

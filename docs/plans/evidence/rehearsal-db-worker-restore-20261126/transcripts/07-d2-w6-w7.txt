@@ -1,0 +1,63 @@
+## w6a.txt
+2026-11-26T08:41:44Z W6 start
+/launchpad-local-27b61035-worker-1 status=running health=healthy restarts=0 exit=0 started=2026-11-26T08:21:24.211392484Z
+signin(owner) 200
+temp key issued (id recorded outside evidence, len 46)
+alias 3426c682-f71f-4b38-809e-d54954c93d74 view-w6-e599ldbqxc.apps.localhost
+bind to A: succeeded; router serves: X-Launchpad-Deployment: c3694c3ec2e9423691607cbfdc127646  (A=c3694c3ec2e9423691607cbfdc127646)
+gen row: 1
+promotion op 16c12970-39c8-4f7d-ba43-7a73f4909019
+at fault: applying/-
+applying|||2026-11-26 08:46:58.527196+00
+router: status=running health=unhealthy restarts=0
+router serves now: X-Launchpad-Deployment: c3694c3ec2e9423691607cbfdc127646 (B=fd38c284e3f04785aa130577f4b52d0e)
+1s | applying|-|2026-11-26 08:46:58.527196+00
+11s | applying|-|2026-11-26 08:46:58.527196+00
+62s | applying|-|2026-11-26 08:46:58.527196+00
+123s | applying|-|2026-11-26 08:46:58.527196+00
+174s | applying|-|2026-11-26 08:46:58.527196+00
+184s | succeeded|-|
+  ... (13 sample lines trimmed)
+
+## w6c.txt
+gen 2
+saw step_pending=-
+succeeded||verify
+router serves: X-Launchpad-Deployment: c3694c3ec2e9423691607cbfdc127646 (A=c3694c3ec2e9423691607cbfdc127646)
+0s | succeeded|-||
+OP3=30f3814c-fb2b-4fc5-9a3c-97e662187101
+
+## w7.txt
+2026-11-26T08:35:21Z W7 start
+/launchpad-local-27b61035-worker-1 status=running health=healthy restarts=0 exit=0 started=2026-11-26T08:21:24.211392484Z
+idle worker: 0 in flight
+dokku stop took 32s: status=exited health=unhealthy restarts=0 exit=137
+32s | worker status=running health=healthy restarts=0 marker=1s | api health=200
+42s | worker status=running health=healthy restarts=0 marker=2s | api health=200
+53s | worker status=running health=healthy restarts=0 marker=0s | api health=200
+64s | worker status=running health=healthy restarts=0 marker=0s | api health=200
+75s | worker status=running health=healthy restarts=0 marker=1s | api health=200
+85s | worker status=running health=healthy restarts=0 marker=2s | api health=200
+queued 8c226a6c-29aa-4dc4-8422-ba41325bac44
+96s | worker status=running health=healthy restarts=0 marker=1s | queued|-|-|- | 0 errlines
+108s | worker status=running health=healthy restarts=0 marker=0s | failed|-|-|step-failed | 0 errlines
+163s | worker status=running health=healthy restarts=0 marker=0s | failed|-|-|step-failed | 0 errlines
+229s | worker status=running health=healthy restarts=0 marker=1s | failed|-|-|step-failed | 0 errlines
+274s | worker status=running health=healthy restarts=0 marker=1s | failed|-|-|step-failed | 0 errlines
+285s | worker status=running health=healthy restarts=0 marker=2s | failed|-|-|step-failed | 0 errlines
+  ... (12 sample lines trimmed)
+      1 {"event":"deployment-run-ended","deploymentId":"8c226a6c-29aa-4dc4-8422-ba41325bac44","status":"failed"}
+    "phase": "queued",	    "message": "Queued.",
+    "phase": "app",	    "message": "Deployment step started.",
+    "phase": "failed",	    "message": "Deployment step failed.",
+-- opstatus while Dokku down
+signin(operator) 200
+{"generatedAt":"2026-11-26T08:40:19.405Z","dependencies":{"database":"ok"},"artifacts":{"stored":1,"bytes":723},"warnings":[]} [200]
+dokku healthy after 46s
+queued deployment final: failed (failed|-|-|step-failed) after 47s
+status=running health=healthy restarts=0 exit=0
+status=running health=healthy restarts=0 exit=0
+status=running health=healthy restarts=0 exit=0
+status=running health=healthy restarts=0 exit=0
+status=running health=healthy restarts=0 exit=0
+

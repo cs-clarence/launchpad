@@ -1,0 +1,103 @@
+## d1a.txt
+09:17:47 pg[status=running health=healthy restarts=0] ctl[status=running health=healthy restarts=0] wkr[status=running health=healthy restarts=0 exit=0] marker=2s health=200 siteA=200 apistatus="database":"ok" [] [200]  wlog60=[]
+stopped after 0s
+t+0s 09:17:48 pg[status=exited health=unhealthy restarts=0] ctl[status=running health=healthy restarts=0] wkr[status=running health=healthy restarts=0 exit=0] marker=3s health=200 siteA=200 apistatus=[401]  wlog60=[      2 "event":"deployment-worker-error" ]
+t+28s 09:18:15 pg[status=exited health=unhealthy restarts=0] ctl[status=running health=healthy restarts=0] wkr[status=running health=healthy restarts=0 exit=0] marker=30s health=200 siteA=200 apistatus=[401]  wlog60=[      7 "event":"deployment-worker-error" ]
+CLI during outage: Error: Internal Server Error 
+worker log tail: {"event":"deployment-worker-error"} {"event":"deployment-worker-error"} {"event":"deployment-worker-error"} 
+t+64s 09:18:51 pg[status=exited health=unhealthy restarts=0] ctl[status=running health=healthy restarts=0] wkr[status=running health=healthy restarts=0 exit=0] marker=66s health=200 siteA=200 apistatus=[401]  wlog60=[     12 "event":"deployment-worker-error" ]
+t+90s 09:19:17 pg[status=exited health=unhealthy restarts=0] ctl[status=running health=healthy restarts=0] wkr[status=running health=healthy restarts=0 exit=0] marker=92s health=200 siteA=200 apistatus=[401]  wlog60=[     14 "event":"deployment-worker-error" ]
+t+115s 09:19:42 pg[status=exited health=unhealthy restarts=0] ctl[status=running health=healthy restarts=0] wkr[status=running health=unhealthy restarts=0 exit=0] marker=117s health=200 siteA=200 apistatus=[401]  wlog60=[     13 "event":"deployment-worker-error" ]
+started at t+153s
+back+0s 09:20:20 pg[status=running health=starting restarts=0] ctl[status=running health=healthy restarts=0] wkr[status=running health=unhealthy restarts=0 exit=0] marker=155s health=200 siteA=200 apistatus="database":"ok" [] [200]  wlog60=[     13 "event":"deployment-worker-error" ]
+back+16s 09:20:36 pg[status=running health=healthy restarts=0] ctl[status=running health=healthy restarts=0] wkr[status=running health=healthy restarts=0 exit=0] marker=1s health=200 siteA=200 apistatus="database":"ok" [] [200]  wlog60=[     10 "event":"deployment-worker-error" ]
+back+93s 09:21:53 pg[status=running health=healthy restarts=0] ctl[status=running health=healthy restarts=0] wkr[status=running health=healthy restarts=0 exit=0] marker=2s health=200 siteA=200 apistatus=[401]  wlog60=[]
+back+109s 09:22:09 pg[status=running health=healthy restarts=0] ctl[status=running health=healthy restarts=0] wkr[status=running health=healthy restarts=0 exit=0] marker=1s health=200 siteA=200 apistatus=[401]  wlog60=[]
+back+124s 09:22:24 pg[status=running health=healthy restarts=0] ctl[status=running health=healthy restarts=0] wkr[status=running health=healthy restarts=0 exit=0] marker=0s health=200 siteA=200 apistatus="database":"ok" [] [200]  wlog60=[]
+  ... (4 sample lines trimmed)
+CLI after:   "status": "succeeded",
+counts 2|21|2|10 
+     32 "event":"deployment-worker-error"
+
+## d1b.txt
+deploying|load|configure|cf21eac3-49c8-482c-9239-d38c6dc09da9|2026-11-26 09:28:09.230087+00|09:23:09|active|-
+t+0s pg[status=exited health=unhealthy restarts=0 exit=137] wkr[status=running health=healthy restarts=0 exit=0] wlog=[]
+t+15s pg[status=exited health=unhealthy restarts=0 exit=137] wkr[status=running health=healthy restarts=0 exit=0] wlog=[      1 "event":"deployment-run-ended"       1 "event":"deployment-worker-error" ]
+t+31s pg[status=exited health=unhealthy restarts=0 exit=137] wkr[status=running health=healthy restarts=0 exit=0] wlog=[      1 "event":"deployment-run-ended"       5 "event":"deployment-worker-error" ]
+pg started at t+60s
+back+0s | wkr[status=running health=healthy restarts=0 exit=0] | 
+back+10s | wkr[status=running health=healthy restarts=0 exit=0] | deploying|load|configure|cf21eac3-49c8-482c-9239-d38c6dc09da9|2026-11-26 09:28:09.230087+00|09:24:19|active|-
+back+61s | wkr[status=running health=healthy restarts=0 exit=0] | deploying|load|configure|cf21eac3-49c8-482c-9239-d38c6dc09da9|2026-11-26 09:28:09.230087+00|09:25:10|active|-
+back+122s | wkr[status=running health=healthy restarts=0 exit=0] | deploying|load|configure|cf21eac3-49c8-482c-9239-d38c6dc09da9|2026-11-26 09:28:09.230087+00|09:26:11|active|-
+back+183s | wkr[status=running health=healthy restarts=0 exit=0] | deploying|load|configure|cf21eac3-49c8-482c-9239-d38c6dc09da9|2026-11-26 09:28:09.230087+00|09:27:12|active|-
+back+234s | wkr[status=running health=healthy restarts=0 exit=0] | deploying|load|configure|cf21eac3-49c8-482c-9239-d38c6dc09da9|2026-11-26 09:28:09.230087+00|09:28:03|active|-
+back+244s | wkr[status=running health=healthy restarts=0 exit=0] | reconciliation-needed|load|configure|-||09:28:13|active|lease-expired-with-pending-step
+  ... (18 sample lines trimmed)
+    "phase": "build",	    "createdAt": "2026-11-26T09:23:03.486Z"
+    "phase": "configure",	    "createdAt": "2026-11-26T09:23:03.492Z"
+    "phase": "configure",	    "createdAt": "2026-11-26T09:23:09.219Z"
+    "phase": "load",	    "createdAt": "2026-11-26T09:23:09.224Z"
+    "phase": "reconciliation-needed",	    "createdAt": "2026-11-26T09:28:10.703Z"
+     38 "event":"deployment-worker-error"
+      1 "event":"deployment-run-ended","deploymentId":"39deb51d-e772-453f-94cf-08074814557b","status":"authority-lost"
+      1 "event":"deployment-reconciliation-needed","deploymentId":"39deb51d-e772-453f-94cf-08074814557b"
+worker started value same as before: started=2026-11-26T08:51:43.843304183Z vs started=2026-11-26T08:51:43.843304183Z
+app: EXISTS
+
+## d1c.txt
+09:28:49 pg[status=running health=healthy restarts=0] ctl[status=running health=healthy restarts=0] wkr[status=running health=healthy restarts=0 exit=0] marker=0s health=200 siteA=200 apistatus="database":"ok" [] [200]  wlog60=[      1 "event":"deletion-run-ended"       1 "event":"deployment-reconciliation-needed" ]
+t+1s 09:28:50 pg[status=running health=healthy restarts=0] ctl[status=running health=healthy restarts=0] wkr[status=running health=healthy restarts=0 exit=0] marker=1s health=200 siteA=200 apistatus=[401]  wlog60=[      1 "event":"deletion-run-ended"       1 "event":"deployment-reconciliation-needed" ]
+t+16s 09:29:05 pg[status=running health=healthy restarts=0] ctl[status=running health=healthy restarts=0] wkr[status=running health=healthy restarts=0 exit=0] marker=16s health=200 siteA=200 apistatus=[401]  wlog60=[      1 "event":"deletion-run-ended"       1 "event":"deployment-reconciliation-needed"       8 "event":"deployment-worker-error" ]
+CLI: Error: Internal Server Error 
+CLI deploy: Error: Internal Server Error 
+whoami: Error: Internal Server Error 
+http: {"code":"unauthenticated","status":401,"title":"Unauthorized"} [401]
+t+32s 09:29:21 pg[status=running health=healthy restarts=0] ctl[status=running health=healthy restarts=0] wkr[status=running health=healthy restarts=0 exit=0] marker=32s health=200 siteA=200 apistatus=[401]  wlog60=[      1 "event":"deletion-run-ended"      16 "event":"deployment-worker-error" ]
+t+47s 09:29:36 pg[status=running health=healthy restarts=0] ctl[status=running health=healthy restarts=0] wkr[status=running health=healthy restarts=0 exit=0] marker=47s health=200 siteA=200 apistatus=[401]  wlog60=[     23 "event":"deployment-worker-error" ]
+t+62s 09:29:51 pg[status=running health=healthy restarts=0] ctl[status=running health=healthy restarts=0] wkr[status=running health=healthy restarts=0 exit=0] marker=63s health=200 siteA=200 apistatus=[401]  wlog60=[     30 "event":"deployment-worker-error" ]
+t+78s 09:30:07 pg[status=running health=healthy restarts=0] ctl[status=running health=healthy restarts=0] wkr[status=running health=healthy restarts=0 exit=0] marker=78s health=200 siteA=200 apistatus=[401]  wlog60=[     31 "event":"deployment-worker-error" ]
+t+93s 09:30:22 pg[status=running health=healthy restarts=0] ctl[status=running health=healthy restarts=0] wkr[status=running health=healthy restarts=0 exit=0] marker=93s health=200 siteA=200 apistatus=[401]  wlog60=[     30 "event":"deployment-worker-error" ]
+t+108s 09:30:38 pg[status=running health=healthy restarts=0] ctl[status=running health=healthy restarts=0] wkr[status=running health=unhealthy restarts=0 exit=0] marker=109s health=200 siteA=200 apistatus=[401]  wlog60=[     30 "event":"deployment-worker-error" ]
+      1 "event":"deletion-run-ended"
+      1 "event":"deployment-reconciliation-needed"
+     61 "event":"deployment-worker-error"
+tables left: 0
+dokku apps: lp-g3ts3hsz2i lp-i0ximpgj5p lp-xosukcu750 
+restarts: status=running health=healthy restarts=0 exit=0
+status=running health=unhealthy restarts=0 exit=0
+
+## r1b.txt
+marker pre: model-writer-seen 
+The backup verifies.
+verify exit=0
+2026-11-26T09:37:00Z R1 restore start
+Restored the database (1 migrations applied) and 0 archive(s) copied (1 already there).
+Next: follow docs/restore.md before migrating or starting the controller; keep ingress closed and preserve the recovery records.
+
+real	0m1.426s
+user	0m0.192s
+sys	0m0.066s
+restore exit=0
+applied: 1
+pending: 0
+migrate exit=0
+missing app: lp-6n3jz4y3p2 (deployment 8c226a6c-29aa-4dc4-8422-ba41325bac44, organization 833d6ae3-4681-4345-bc0b-3e5e0f70e4c4)
+0 archive(s) missing; 1 of 4 deployment(s) have no app
+
+"inFlight":[],"findings":[],"ignoredAppCount":0}
+{"version":2,"restoreStartedAt":"2026-11-26T09:37:01.691Z","routerEpoch":"<redacted>","routerEpochNote":"recorded"}
+counts 2|13|2|10 
+Revoked 13 session(s), 1 API key(s), 0 emailed token(s) and 0 open invitation(s). Passwords are unchanged: reset any account that must be locked out.
+2026-11-26T09:37:24Z router rotated to <new-epoch> (read-back, health and drift checked)
+
+real	0m14.746s
+user	0m1.222s
+sys	0m0.696s
+Raised 0 alias counter(s).
+raise exit=0
+Wait at least 25 minutes from the recorded restore start before clearing recovery.
+
+early clear exit=1
+
+## (missing) r1c.txt
+## (missing) r1e.txt
