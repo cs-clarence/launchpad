@@ -85,7 +85,16 @@ export function parseOrFail(
         program.options.filter((o) => o.required).map((o) => o.long ?? o.flags),
     );
     for (let i = 0; i < argv.length; i++) {
-        if (!valueFlags.has(argv[i]!)) continue;
+        const token = argv[i]!;
+        // The joined form, `--out=--x`, is a dash-prefixed value too.
+        const joined = /^(--[^=]+)=(.*)$/s.exec(token);
+        if (joined && valueFlags.has(joined[1]!)) {
+            if (joined[2]!.startsWith(policy.rejectDashValues)) {
+                throw fail(`${joined[1]} needs a value.`);
+            }
+            continue;
+        }
+        if (!valueFlags.has(token)) continue;
         const value = argv[++i];
         if (value !== undefined && value.startsWith(policy.rejectDashValues)) {
             throw fail(`${argv[i - 1]} needs a value.`);

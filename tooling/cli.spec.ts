@@ -107,6 +107,16 @@ describe("parseOrFail", () => {
         expect(parse(["--org", "-x"]).opts.org).toBe("-x");
     });
 
+    it("treats a joined value starting with -- as missing too", () => {
+        expect(message(["--org=--force"])).toBe("--org needs a value.");
+        expect(message(["--database-url-file=--x"])).toBe("--database-url-file needs a value.");
+        expect(parse(["--org=-x"]).opts.org).toBe("-x");
+        expect(parse(["--org=a=b"]).opts.org).toBe("a=b");
+        expect(message(["--org=-x"], { ...policy, rejectDashValues: "-" })).toBe(
+            "--org needs a value.",
+        );
+    });
+
     it("can reject any dash-leading value", () => {
         expect(message(["--org", "-x"], { ...policy, rejectDashValues: "-" })).toBe(
             "--org needs a value.",
