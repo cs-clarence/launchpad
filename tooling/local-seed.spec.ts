@@ -60,6 +60,8 @@ class Fake {
     projectStatus = 201;
     private seq = 0;
     migrated = true;
+    staleHealthAfterMigrate = 0;
+    private stale = 0;
 
     run = async (args: string[]): Promise<RunResult> => {
         this.adminCalls.push(args);
@@ -68,6 +70,7 @@ class Fake {
         const command = args.find((a) => a.startsWith("command="))!.slice("command=".length);
         if (command === "migrate") {
             this.migrated = true;
+            this.stale = this.staleHealthAfterMigrate;
             return { code: 0, output: "Database is up to date." };
         }
         const options = (args.find((a) => a.startsWith("options=")) ?? "").slice(8).split(" ");
@@ -90,6 +93,10 @@ class Fake {
         if (!this.up) throw new TypeError("connection refused");
         const headers = new Headers(init.headers);
         if (url.pathname === "/api/health") {
+            if (this.migrated && this.stale > 0) {
+                this.stale--;
+                return json({ code: "schema-mismatch", status: 503 }, 503);
+            }
             return this.migrated
                 ? json({ name: "launchpad" })
                 : json({ code: "schema-mismatch", status: 503 }, 503);
@@ -155,15 +162,22 @@ let logs: string[];
 beforeEach(() => {
     dir = mkdtempSync(path.join(tmpdir(), "local-seed-"));
     fake = new Fake();
+    clockNow = 0;
     logs = [];
 });
 afterEach(() => rmSync(dir, { recursive: true, force: true }));
 
+// A fake clock: sleeping moves it, so the tests never wait.
+let clockNow = 0;
 const deps = (): Deps => ({
     fetch: fake.fetch,
     run: fake.run,
     env: { HOME: dir },
     log: (line) => logs.push(line),
+    sleep: async (ms) => {
+        clockNow += ms;
+    },
+    now: () => clockNow,
 });
 const options = (extra: string[] = []): Options =>
     parseArgs(["--out", path.join(dir, "cfg"), ...extra]);
@@ -405,6 +419,33 @@ describe("failures give one clear message", () => {
         await seed(deps(), options());
         expect(fake.migrated).toBe(true);
         expect(fake.transcript[0]).toMatch(/command=migrate/);
+    });
+
+    it("waits while the controller still remembers the old schema failure", async () => {
+        fake.migrated = false;
+        fake.staleHealthAfterMigrate = 3;
+        await seed(deps(), options());
+        expect(fake.calls.filter((c) => c === "GET /api/health").length).toBeGreaterThanOrEqual(5);
+    });
+
+    it("bounds the wait by elapsed time, not only by the number of attempts", async () => {
+        fake.migrated = false;
+        fake.staleHealthAfterMigrate = 1000;
+        const slow = fake.fetch;
+        fake.fetch = (async (input: string, init: RequestInit = {}) => {
+            if (new URL(input).pathname === "/api/health" && fake.migrated) clockNow += 6_000;
+            return slow(input, init);
+        }) as typeof fetch;
+        const before = clockNow;
+        expect(await message(() => seed(deps(), options()))).toMatch(/answered 503.*not ready/);
+        expect(clockNow - before).toBeLessThan(30_000);
+        expect(fake.calls.filter((c) => c === "GET /api/health").length).toBeLessThanOrEqual(5);
+    });
+
+    it("gives up if the controller never becomes ready after migrating", async () => {
+        fake.migrated = false;
+        fake.staleHealthAfterMigrate = 1000;
+        expect(await message(() => seed(deps(), options()))).toMatch(/answered 503.*not ready/);
     });
 
     it("a controller that is not ready for another reason", async () => {
