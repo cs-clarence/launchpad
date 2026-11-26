@@ -65,6 +65,8 @@ Rules that keep the graph correct:
   controller integration need disposable PostgreSQL (`omni -i run test:db:up`).
   The SDK's integration suite only uses ephemeral loopback HTTP fixtures; run it
   alone with `omni -i run test:integration -p @launchpad-kit/sdk`. No database is needed.
+- **Database package tests.** `@launchpad-kit/database` has unit tests (the error classifier) and integration
+  tests (the migrations, including the schema-rollback gate); both follow the services layout.
 - **Built database drill.** `omni -i run test:upgrade -p @launchpad-kit/controller`
   initializes a fresh database, restarts the controller and verifies backup and
   restore on disposable PostgreSQL. No Dokku is touched.
@@ -79,7 +81,9 @@ Rules that keep the graph correct:
   example settings. Both are uncached like every `tooling` task, so the cache-key rules are
   unaffected. The same task asserts that every external base image in the application and Dokku
   Dockerfiles is pinned by digest and the Dokku plugin by commit, and that every service has
-  memory, CPU and process limits. They prove the configuration's shape, not that the stack runs
+  memory, CPU and process limits. It also asserts that `LAUNCHPAD_WORKER_STALE_AFTER` is the same on
+  the controller and the worker, that the schema-check settings reach the controller only, and that the
+  controller healthcheck waits longer than the 2 s liveness deadline. They prove the configuration's shape, not that the stack runs
   (a one-time disposable run is recorded in `docs/plans/evidence/p7-compose-20261121/`). See
   [production Compose](production-compose.md).
 - **Disposable Compose preflight.** `omni -i run check:compose:rehearsal`
@@ -342,7 +346,7 @@ Its native control TLS and scoped worker/admin trust are configured by
 
 `omni -i run test:images -p @launchpad-kit/tooling` builds both, checks them (non-root, no secret in a
 layer, no `.env`, `.git`, key or source file, the expected files present), runs `migrate` from the
-controller image against the disposable PostgreSQL, starts the controller and waits for `/api/health`
+controller image (checking it carries every migration) against the disposable PostgreSQL, starts the controller and waits for `/api/health`
 and a healthy healthcheck, and starts the worker with deployments off (it logs `deployment-worker-idle`). It also builds the router image and
 checks it end to end: unprivileged, no secret, no published port, `init` from stdin (printing only the
 epoch and refusing to reinitialize), healthy, 401 on the control plane and a fixed 404 on the data plane,

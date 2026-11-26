@@ -330,13 +330,27 @@ If the callback fails, the response reports failure but the password/token chang
 may already have committed. Key revocation precedes its audit insert, so audit
 failure does not restore keys. Use operator recovery if necessary.
 
+## Health and readiness
+
+`GET /api/health` is liveness: it answers `200` without touching the database, within 2 s, even while the
+database is down (a proven `schema-mismatch` still answers `503`). `GET /api/ready` is readiness: `200
+{"status":"ready"}` when the database is reachable and migrated and the data directory is mounted, otherwise `503`
+with `code` `database-unavailable` (with `Retry-After`), `schema-mismatch` or `unavailable`, and a fixed title.
+Neither needs a sign-in; `/api/ready` is in the OpenAPI document. Every other route answers the same `503` codes
+while a check fails, and the dashboard shows an unavailable page with a Retry button.
+
 ## Instance status
 
 `GET /api/v1/status` is for the instance operator and needs a session (an API key cannot read it,
-whatever its scopes; an organization owner who is not the operator gets 403). It returns counts only:
+whatever its scopes; an organization owner who is not the operator gets 403). It returns counts, durations and operator-chosen worker names, never ids or errors:
 `dependencies.database` (`ok` if the request got an answer), `artifacts` (count and bytes from
-uncollected database rows, not checks that archive files exist) and `warnings` (always empty in this
-version). Workers, queues and deployments report nothing here yet. There is no dashboard panel for it.
+uncollected database rows, not checks that archive files exist), `workers` (`state` of `off`, `ok`, `stale`
+or `missing`, and per worker `name`, `state` of `ok`, `stale` or `stopped`, `lastSeenSecondsAgo` and
+`runStartedAt`, newest first, at most 20), `leases` (`inFlight`, `expiring` and `expired` operations holding a
+lease) and `warnings` (plain words: no worker has reported, leases about to lapse with no worker running, leases
+long past with a worker reporting in). `stale` with no clean stop means a crash, kill, pause or lost database;
+`stopped` is a clean shutdown. See [production Compose](../../docs/production-compose.md#health-readiness-and-worker-status)
+for the thresholds. There is no dashboard panel for it.
 
 ## Apps, uploads and deployments
 

@@ -1,6 +1,6 @@
 # Fixes for the defects found in the DB, worker and restore rehearsals, second PR
 
-Status: **plan, not implemented; all decisions taken (revision 2).** Planned against `origin/main` at `730f0fa`.
+Status: **implemented on `fix/rehearsal-defects-second` (see "Implementation notes" at the end); all decisions taken (revision 2).** Planned against `origin/main` at `730f0fa`; built on `668b1df`.
 Source: the "Defects and follow-ups" table in `docs/plans/evidence/rehearsal-db-worker-restore-20261126/README.md`
 (transcripts `04`, `05`, `08`, `09`, `10`). The first PR (#2, #4, #6, #7) is #105 (`fix/rehearsal-defects-first`); its plan,
 `docs/plans/rehearsal-defects-fixes.md`, exists only on that branch. This file replaces its "Second PR" sketches.
@@ -572,3 +572,41 @@ records the name, now **verified safe** by the fencing audit above; setting name
 3. **Bounds** in the arithmetic table (beat 5 s to 60 s, stale 15 s to 240 s, warn 30 s to 240 s, prune 1 h to 90 d): confirm.
 4. **Stage 2 (data directory) scope:** first check and `/api/ready` only, not the periodic traffic gate (recommended), or gate all traffic on it every interval.
 5. **`LAUNCHPAD_SCHEMA_CHECK_TIMEOUT`** default 4 s (1 s to 30 s) and the fixed 2 s health deadline, plus `connectionTimeout: 5` on the controller pool: confirm.
+
+## Implementation notes
+
+Spike findings (run against PostgreSQL 17 and the built server; nothing left running):
+
+1. **Bun SQL error shapes.** Every error is a `PostgresError`. Driver-side failures carry only `code`:
+   `ERR_POSTGRES_CONNECTION_REFUSED` (closed port and unresolvable host) and `ERR_POSTGRES_CONNECTION_TIMEOUT`
+   (blackholed address with `connectionTimeout`). Errors the server sent carry `code: "ERR_POSTGRES_SERVER_ERROR"`
+   (or a specific label such as `ERR_POSTGRES_SYNTAX_ERROR`) and the **SQLSTATE in `errno`**, not in `code`:
+   `42P01`, `42703`, `57P01` (terminated by an administrator, and in flight when the server stopped), `57P03`
+   (server shutting down), `57014` (statement timeout), `28P01`, `3D000`. `ERR_POSTGRES_CONNECTION_CLOSED` was not
+   produced by any fault tried and is not classified. A pool whose backend was terminated reconnects on the next
+   query. `allow_connections false` answers `55000`, which is not classified (it is not specific to an outage);
+   the hop test uses a TCP forwarder that is taken away instead.
+2. **TanStack Start (start-server-core 1.169, start-client-core 1.170).** A server function error crosses as the
+   serialized error with **only its message** (`$TSR/Error`): custom classes, `code` and `status` fields are lost,
+   and unclassified messages (`Failed to connect`, Zod details) reach the browser. `setResponseStatus` and
+   `setResponseHeader` do work: the SSR page and the server function endpoint answer `503` with `Retry-After`, and
+   SSR renders the `defaultErrorComponent`. So the mechanism is a fixed code in the error message
+   (`launchpad:<code>`, `apps/controller/src/lib/problem.ts`), set by `withDatabaseProblems` on the server and read
+   by `describeProblem` in the error components. Dashboard status codes are therefore real 503s, not 200s.
+3. **Elysia.** A root `.onError` registered before the routes also receives errors thrown from `onRequest` hooks
+   (sign-in throttling); returning `undefined` leaves the framework's own 500. Elysia's 500 for an unclassified
+   error outside `execute` is its own body, not the contract's `internal`.
+
+Deviations from the plan:
+
+- **No index on `worker_heartbeat(seen_at)`.** The plan's index would make every beat a non-HOT update (the column
+  is updated each beat) for no benefit on a table of a handful of rows pruned at least daily.
+- **Heartbeat store method `cleanup`** (not `prune`) in the worker: a source scan in `lifecycle-ports.spec.ts` forbids the word anywhere in worker sources.
+- **`getReadyRuntime` rejects with `GateRejectedError`** (carrying the outcome) instead of the original error, so
+  the server functions and the API map one outcome table.
+- **The gate has no "newest result" sequence guard**: with at most one outstanding check no newer result can exist, so a late settle simply updates the state.
+- **`@launchpad-kit/database` gained unit and integration test tasks** (it had none) for the classifier and the
+  migration tests.
+- The `statusSchema` `inFlight` counts every non-terminal operation holding a lease, expired ones included.
+- Dashboard not-found: a missing or forbidden organization maps to a fixed `not-found` code so
+  "Organization not found." stays exactly for that case; its HTTP status is unchanged (not set to 404).

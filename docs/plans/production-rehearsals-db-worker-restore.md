@@ -9,6 +9,11 @@ restore is not rehearsed on the Compose topology and schema rollback is untested
 Writing this plan does not authorize starting any container; the user approves the run (see
 [open questions](#open-questions-and-user-checkpoints)).
 
+**Follow-ups from the run:** #1 (no surface shows a dead worker), #3 (a replaced database goes unnoticed), #5
+(worker healthcheck semantics, kept and documented) and #8 (backup checks, documented) are addressed by the second
+defects PR, `fix/rehearsal-defects-second` ([plan and implementation notes](rehearsal-defects-fixes-2.md)); the
+first PR (#2, #4, #6, #7) is #105. Add the second PR's number here once it is opened.
+
 ## Assessment
 
 - **Kind:** medium. Three independent, bounded drills on one disposable stack. No product code changes: the

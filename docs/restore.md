@@ -39,8 +39,9 @@ a repair. Use the operator checks in this runbook to complete recovery.
 
     For a populated target, first back it up, then add
     `--replace <host:port/database>` with **exactly** the address printed by
-    the refusal. The flag confirms _all of step 1_. There is no worker heartbeat
-    table or automatic proof that writers or remote operations stopped. Restore checks
+    the refusal. The flag confirms _all of step 1_. The worker heartbeat in `GET /api/v1/status` shows that a
+    worker has stopped beating, but it is not a proof that writers or remote operations stopped: it only
+    shows what the database was told, and a paused or partitioned worker may still hold a Dokku call. Restore checks
     the manifest and dump before changing anything, restores archives first,
     then swaps the `public` schema. A failed restore rolls back a schema swap
     where possible; for an interrupted process, follow the recovery notes in
@@ -278,6 +279,19 @@ wrapper safe; such wrappers are unsupported.
    acknowledgement), or restore a fresh verified backup with `--replace`. Either way the recovery marker
    keeps the **first** restore's start time, so the 25-minute gate is counted from it, not from the retry. Never remove import/recovery records manually
    or run `migrate` while an import could still be running.
+
+## What the backup checks do and do not prove
+
+`verify-backup` and `restore` check the manifest's recorded size and SHA-256 of the dump before changing anything.
+`pg_restore --list`, which they also run, reads the archive's table of contents and does **not** read data blocks,
+so some single-byte corruptions pass it and only the manifest checksum catches them (rehearsal V8/V9). The manifest
+is not itself signed: whoever can edit the backup directory can forge a manifest to match a modified dump, and the
+check will not notice. A restore that fails mid-import is rolled back (see below). Keep backups on storage you
+trust, and keep the printed checksum somewhere separate from the backup.
+
+After a restore the `worker_heartbeat` table holds the backup's old beats, so status reports the worker `stale`
+until it is started again after the gates and beats. The controller notices a replaced database within
+`LAUNCHPAD_SCHEMA_CHECK_INTERVAL` only if the schema differs; it must still be stopped for a restore, as above.
 
 ## After a failed restore
 

@@ -120,8 +120,8 @@ Each step is a deliberate operator action. `up` never starts `admin`.
    Write it to the epoch file. The router refuses to serve without state, and the worker
    waits for a healthy router. Compose prints its own status lines on standard error; the
    epoch is the one line on standard output.
-6. Start everything else: `... up -d`. Verify `/api/health` on `127.0.0.1:32180` and
-   the signed-in `GET /api/v1/status`.
+6. Start everything else: `... up -d`. Verify `/api/health` and `/api/ready` on `127.0.0.1:32180` and
+   the signed-in `GET /api/v1/status` (see [Health, readiness and worker status](#health-readiness-and-worker-status)).
 7. Leave `LAUNCHPAD_DEPLOYMENTS` off until private routing and a
    [backup/restore rehearsal](restore.md) have passed; then enable deployments in
    `docker-compose.env` and recreate the controller and worker **together** (they must
@@ -196,13 +196,17 @@ What the 2026-11-26 [rehearsal](plans/evidence/rehearsal-db-worker-restore-20261
 - **A container stopped with `docker kill` is not restarted by `restart: unless-stopped`** on that host
   (`RestartCount` stayed 0 for over nine minutes), the same as `docker stop`. Nothing brings a dead worker back
   but an operator (or a crash, which the policy does restart). Start it again by name and expect the hold above.
-- **Nothing in the API says the worker is dead.** `GET /api/v1/status` has no worker or lease information, and an
-  interrupted deployment keeps its in-flight status (`deploying`) until a worker claims it after the 300 s lease.
-  Monitor the worker container itself and the age of in-flight deployments.
+- **The operator status says whether a worker is alive** (it did not before the 2026-11-26 rehearsal): see
+  [Health, readiness and worker status](#health-readiness-and-worker-status). A killed worker is reported `stale`
+  about a minute after its last beat, which is at least a minute before the lease of work it was running can
+  expire; a `docker stop` leaves it `stopped`. An interrupted deployment still keeps its in-flight status
+  (`deploying`) until a worker claims it after the 300 s lease.
 - **The worker healthcheck proves liveness and database access only.** It is `unhealthy` within about two minutes
   of a database outage, while recovery is blocking claims (after `restore`), and at once while the container is
   paused; it stays `healthy` while Dokku is down (a queued deployment then fails with `step-failed`). Nothing
-  restarts an unhealthy container.
+  restarts an unhealthy container: `restart: unless-stopped` restarts a container that exits (a crash), not one that
+  is `unhealthy` and not one that was stopped or killed by hand. This is deliberate and unchanged: the healthcheck
+  means "can this worker do work", which is not "is the process alive" (that is the heartbeat in status).
 - **A paused or frozen worker past its lease stops its run as `authority-lost` when it wakes** and writes nothing
   after the lease; the row is then held.
 
@@ -210,6 +214,56 @@ Do not shorten the **restore** waits on the strength of this: after a restore th
 in [restore](restore.md) is a conservative bound on every dispatched call, not a statement that
 workers drain. Whether to implement a real drain on shutdown is an open product decision; until it
 is made, this stop-and-reconcile behavior is the supported one.
+
+## Health, readiness and worker status
+
+Two endpoints answer different questions, and neither needs a sign-in:
+
+| Endpoint      | Question                         | Depends on the database     | Use it for                                          |
+| ------------- | -------------------------------- | --------------------------- | --------------------------------------------------- |
+| `/api/health` | Is the controller process alive? | No                          | The Compose healthcheck and process supervisors     |
+| `/api/ready`  | Can it serve traffic?            | Yes, and the data directory | Load balancers, ingress, anything that routes to it |
+
+- **`/api/health` stays `200` through a database outage**, so a restart policy or `depends_on` never acts on
+  it because the database is down. It answers within 2 s whatever the database does. It still answers `503`
+  `schema-mismatch` for a database that is behind or carries migrations this build does not know (unchanged), so
+  alert on that, do not restart on it: restarting cannot fix the database.
+- **`/api/ready`** answers `200 {"status":"ready"}`, or `503` with a stable `code` and a fixed title:
+  `database-unavailable` (with `Retry-After: 5`), `schema-mismatch` (run `migrate` or restore), or `unavailable`
+  (the data directory is not mounted). It never answers `500` and never carries an error message.
+- **The controller re-checks its database** (reachable and schema current) at most every
+  `LAUNCHPAD_SCHEMA_CHECK_INTERVAL` (default `10s`, `1s` to `5m`), each check within
+  `LAUNCHPAD_SCHEMA_CHECK_TIMEOUT` (default `4s`, `1s` to `30s`, shorter than the interval). If a check fails,
+  every other `/api` route answers `503` `database-unavailable` or `schema-mismatch` until a check passes
+  again (retried every 3 s), and the dashboard shows an unavailable page with a Retry button. Before this
+  release a passed check was final: a database replaced under a running controller was not noticed until a
+  restart (rehearsal D1c/D1d). `LAUNCHPAD_SCHEMA_CHECK_INTERVAL=off` restores that behavior and is not
+  recommended. A database replaced by one with the **same schema** is not detected; `restore` stops the
+  controller first, as its runbook says. The data directory is checked at the first request and by `/api/ready`;
+  after that a blip there fails readiness and uploads, not every route.
+- **Worker status.** `GET /api/v1/status` (operator, session) lists each worker's heartbeat. The worker beats every
+  `LAUNCHPAD_WORKER_HEARTBEAT_INTERVAL` (`15s`, `5s` to `60s`) into the database, from a loop of its own that a long
+  deployment does not stop. State is derived when read, from the database clock: **`ok`** beating;
+  **`stopped`** a clean shutdown (`docker stop`, SIGTERM); **`stale`** no beat for `LAUNCHPAD_WORKER_STALE_AFTER`
+  (`60s`, `15s` to `240s`, at least three beats) and no clean stop, which means a crash, `docker kill`, a pause,
+  an out-of-memory kill or a lost database. A worker is never judged stale before three of its own beats.
+  `workers.state` is `off` (deployments off), `ok`, `stale` or `missing`. `leases` counts operations holding a
+  lease, those expiring within `LAUNCHPAD_LEASE_WARN_BEFORE` (`90s`, `30s` to `240s`) and those expired. Three
+  warnings, in plain words and without ids: no worker has reported (also with nothing in flight); leases about
+  to lapse or lapsed with no worker running; leases more than a minute past while a worker reports in. The
+  settings are bounded so a killed worker is reported at least 60 s before its 300 s lease can expire.
+  `LAUNCHPAD_WORKER_STALE_AFTER` must be the same on the controller and the worker (Compose passes one value).
+- **Worker identity.** A worker has a stable **name**: `LAUNCHPAD_WORKER_NAME`, else the deprecated
+  `LAUNCHPAD_WORKER_ID` (same rules, so existing installs keep their name; a one-time log line notes it), else the
+  container hostname, which Compose fixes at `launchpad-worker`, so the name survives recreating the container.
+  Outside Compose, or when two workers could share a hostname, set a different name for each. One heartbeat row
+  per name is updated in place on every start (a new run id and start time); rows older than
+  `LAUNCHPAD_WORKER_PRUNE_AFTER` (`7d`, `1h` to `90d`) are removed, so a renamed or decommissioned worker shows
+  once as `stale` and then ages out. Two live workers with one name share a row and log `worker-name-in-use`.
+  After a restore the table holds the backup's old beats, so status says `stale` until the worker, started after
+  the restore gates, beats again.
+- **If the heartbeat table is missing** (a worker started before `migrate`) the beat fails and is logged once; the
+  worker keeps claiming. Run `migrate`, which the upgrade procedure does before starting workers.
 
 ## Backup
 
@@ -369,11 +423,12 @@ for the remaining decisions and their verification criteria.
   rejects the aliases Compose sends), so app containers live on the `apps` network. Without the
   `initial-network` setting (kept in `DOKKU_DATA_DIR`) apps would land on the default bridge, where
   Dokku's proxy cannot reach them (not tested).
-- **The controller does not notice a lost database until it restarts.** After the database volume was deleted and
-  Postgres came back empty, `/api/health` stayed `200` and requests returned a raw "Internal Server Error" for as
-  long as the controller process lived; after a restart it answered `503` ("database schema is behind") for every
-  route including `/api/health`. The same `503 schema-mismatch` appears for a database with migrations this
-  version does not know.
+- **A database replaced under a running controller is noticed within the check interval, not instantly.** After the
+  database volume was deleted and Postgres came back empty, the rehearsal controller kept `/api/health` at `200` and
+  answered a raw "Internal Server Error" until restarted. Now every other route answers `503` `schema-mismatch`
+  within `LAUNCHPAD_SCHEMA_CHECK_INTERVAL` (and `/api/health` the same `503`, as it always did after a restart), the
+  dashboard shows an unavailable page, and it recovers by itself after `migrate` or a restore. A replacement with
+  the same schema is not detected.
 - **Do not run `migrate` on a database that was lost.** On an empty database it succeeds and yields a ready,
   empty instance with no recovery marker, over the intact data directory and Dokku apps (they then show as
   orphans in `drift`). Restore the backup into it with `--replace`, as in [restore](restore.md).
@@ -412,10 +467,9 @@ for the remaining decisions and their verification criteria.
   its password) is a container environment variable visible to anyone who can inspect
   containers.
 - **Cleanup of the old demo/test resources has not been executed** and is separate.
-- **Worker identity.** `LAUNCHPAD_WORKER_ID` (1 to 64 characters: letters, digits, `.`, `_` and `-`, where the first
-  character must be a letter or digit) names
-  the worker in `lease_owner` and in its `deployment-worker-started` log line; unset or empty keeps a new
-  random identity per process. It identifies only. Claims are fenced by an attempt and a fence counter that
-  every claim advances, not by the name, and work is reclaimed only after its lease expires, so a stable
-  name neither speeds up recovery nor lets a stale process write. Give each worker its own name:
-  two workers sharing one stay safe but become indistinguishable in the database and logs.
+- **Worker identity.** See [Health, readiness and worker status](#health-readiness-and-worker-status). The name
+  (1 to 64 characters: letters, digits, `.`, `_` and `-`, starting with a letter or digit) is the lease owner, the
+  heartbeat key and what logs show. It identifies only. Claims are fenced by an attempt and a fence counter that
+  every claim advances, not by the name, and work is reclaimed only after its lease expires, so a stable name
+  neither speeds up recovery nor lets a stale process write. **Behavior change:** with nothing set, `lease_owner`
+  was a random uuid per process and is now the hostname-derived name.
