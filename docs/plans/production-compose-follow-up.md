@@ -412,6 +412,21 @@ passed, including write recovery, on disposable guests. A separate
 also passed. The [runtime upgrade and rollback rehearsal](production-compose-rehearsal.md#runtime-upgrade-and-rollback-result-2026-11-23)
 passed across two distinct aliases-on revisions with no migration delta.
 
+### Rehearsal scenarios not yet reproduced
+
+The [2026-11-26 rehearsals](evidence/rehearsal-db-worker-restore-20261126/README.md) could not
+reproduce these; they stay open and are recorded, not fixed.
+
+- **Held promotion.** A promotion takes about 3 s, shorter than the `dispatch` step can be caught, so the
+  `promotion-reconcile` branch (a promotion held after its worker died) was not exercised. A paused router leaves the
+  operation `applying`; after the lease the next claim resumes it. Needs a way to slow or hold the dispatch step.
+- **Backup killed mid-write.** A backup of the rehearsal database takes about 1 s, so a kill landed either before the
+  dump started (no manifest, never verified) or after it finished. Needs a much larger database or a slowed dump.
+- **Unclassified `ERR_POSTGRES_CONNECTION_CLOSED`.** No fault produced this driver error, so it is not mapped to
+  `database-unavailable`. A connection that drops in flight can answer 500 on a request route until the next schema
+  check; `/api/ready` reports 503 and `/api/health` stays 200. Capture a real shape (for example a server restart
+  during a query) before classifying it.
+
 ### Private router control: approved implementation
 
 Recommend private HTTPS over Compose DNS, rather than sharing the router's network
