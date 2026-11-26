@@ -128,6 +128,15 @@ Rules that keep the graph correct:
   tests use a fake `fetch` and a fake command runner; `tooling/local-quickstart.spec.ts` fails when
   the guide ([run Launchpad on your machine](local-quickstart.md)) names an Omni task, script flag,
   admin or CLI command, setting or link that no longer exists. Update the guide with the script.
+- **Script arguments.** The tooling scripts that take options (`local-seed.ts`, `local-deploy.ts`,
+  `versions.ts`, `test-db.ts`, `release-dry-run.ts`) parse them with commander. `tooling/cli.ts` is the
+  shared helper for the option-table scripts: one option table per script feeds commander, the
+  `VALUE_FLAGS`/`SWITCH_FLAGS` lists the documentation tests read and the option list of `HELP`, and
+  commander's errors become the script's own wording and exit codes. `--flag value` and
+  `--flag=value` both work; `--` and a value starting with `--` are still refused. `commander` and
+  `@commander-js/extra-typings` are root `devDependencies` because `tooling/` has no manifest of its
+  own; `tooling/declared-deps.spec.ts` fails when a file imports commander from a manifest that does
+  not declare it.
 - **Local deploy.** `omni -i run local:deploy -a options=up` (`tooling/local-deploy.ts`; `options=status` and `options=down` are the other
   actions)
   runs the production Compose stack on this machine (Linux, native Docker) under a project named

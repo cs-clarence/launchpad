@@ -389,4 +389,8 @@ experiment drivers alone.
 
 ## Status
 
-Audit and plan only; nothing built. Not yet reviewed (High tier: independent review before step 1).
+PR 1 (steps 1 to 8) built locally; PR 2 (router, steps 9 to 12) not started. Deviations: none from the
+decisions. Notes: `test-db.ts`, `versions.ts` and `release-dry-run.ts` use commander directly (no option
+table: they have no table-worthy options, so `tooling/cli.ts` serves `local-seed` and `local-deploy`);
+the unknown-option wording of `release-dry-run.ts` is `Unknown option <x>. Usage: ...`. Independent
+review (High tier) is still pending.
