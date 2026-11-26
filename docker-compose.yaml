@@ -45,6 +45,9 @@ x-shared-settings: &shared-settings
   LAUNCHPAD_MAX_ALIASES: ${LAUNCHPAD_MAX_ALIASES:-}
   LAUNCHPAD_ALIAS_HOSTNAME_TEMPLATE: ${LAUNCHPAD_ALIAS_HOSTNAME_TEMPLATE:-}
   LAUNCHPAD_ROLLBACK_RETENTION: ${LAUNCHPAD_ROLLBACK_RETENTION:-}
+  # The controller reports a worker as stale after this long without a heartbeat, the worker
+  # refuses a beat interval it is too short for: both must see one value.
+  LAUNCHPAD_WORKER_STALE_AFTER: ${LAUNCHPAD_WORKER_STALE_AFTER:-}
 
 x-database-url: &database-url postgresql://launchpad:${POSTGRES_PASSWORD:?set a URL-safe database password}@postgres:5432/launchpad
 
@@ -162,6 +165,8 @@ services:
       # Empty means the defaults (10s and 4s); see docs/production-compose.md. Controller only.
       LAUNCHPAD_SCHEMA_CHECK_INTERVAL: ${LAUNCHPAD_SCHEMA_CHECK_INTERVAL:-}
       LAUNCHPAD_SCHEMA_CHECK_TIMEOUT: ${LAUNCHPAD_SCHEMA_CHECK_TIMEOUT:-}
+      # Empty means 90s: warn when a lease is this close to expiring with no live worker.
+      LAUNCHPAD_LEASE_WARN_BEFORE: ${LAUNCHPAD_LEASE_WARN_BEFORE:-}
     ports:
       - "${CONTROLLER_BIND_IP:-127.0.0.1}:${CONTROLLER_HOST_PORT:-32180}:3000"
     volumes:
@@ -213,8 +218,13 @@ services:
       DATABASE_URL: *database-url
       LAUNCHPAD_BASE_IMAGE: ${LAUNCHPAD_BASE_IMAGE:-nginx:1.27-alpine@sha256:65645c7bb6a0661892a8b03b89d0743208a18dd2f3f17a54ef4b76fb8e2f2a10}
       LAUNCHPAD_WORKER_HEALTH_FILE: /tmp/launchpad-worker-health
-      # Empty means a new random identity per process; see docs/production-compose.md.
+      # Empty means the container hostname (`launchpad-worker`); see docs/production-compose.md.
+      LAUNCHPAD_WORKER_NAME: ${LAUNCHPAD_WORKER_NAME:-}
+      # Deprecated alias of LAUNCHPAD_WORKER_NAME; kept so installs that set it keep their name.
       LAUNCHPAD_WORKER_ID: ${LAUNCHPAD_WORKER_ID:-}
+      # Empty means the defaults: a beat every 15s, rows older than 7d removed.
+      LAUNCHPAD_WORKER_HEARTBEAT_INTERVAL: ${LAUNCHPAD_WORKER_HEARTBEAT_INTERVAL:-}
+      LAUNCHPAD_WORKER_PRUNE_AFTER: ${LAUNCHPAD_WORKER_PRUNE_AFTER:-}
     volumes:
       - launchpad-data:/data
       - type: bind

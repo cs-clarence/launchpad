@@ -83,7 +83,7 @@ describe("docker-compose.yaml", () => {
         expect(model.services.worker.environment.LAUNCHPAD_DEPLOYMENTS).toBe("off");
     });
 
-    it("passes the schema-check settings to the controller only, and keeps the healthchecks", () => {
+    it("passes the schema-check and heartbeat settings to the right services, and keeps the healthchecks", () => {
         const model = render();
         const controller = model.services.controller;
         for (const name of ["LAUNCHPAD_SCHEMA_CHECK_INTERVAL", "LAUNCHPAD_SCHEMA_CHECK_TIMEOUT"]) {
@@ -91,6 +91,22 @@ describe("docker-compose.yaml", () => {
             expect(model.services.worker.environment).not.toHaveProperty(name);
             expect(model.services.admin.environment).not.toHaveProperty(name);
         }
+        const stale = "LAUNCHPAD_WORKER_STALE_AFTER";
+        expect(controller.environment).toHaveProperty(stale);
+        expect(model.services.worker.environment).toHaveProperty(stale);
+        expect(controller.environment.LAUNCHPAD_WORKER_STALE_AFTER).toBe(
+            model.services.worker.environment.LAUNCHPAD_WORKER_STALE_AFTER,
+        );
+        expect(controller.environment).toHaveProperty("LAUNCHPAD_LEASE_WARN_BEFORE");
+        expect(model.services.worker.environment).not.toHaveProperty("LAUNCHPAD_LEASE_WARN_BEFORE");
+        for (const name of [
+            "LAUNCHPAD_WORKER_HEARTBEAT_INTERVAL",
+            "LAUNCHPAD_WORKER_PRUNE_AFTER",
+        ]) {
+            expect(model.services.worker.environment).toHaveProperty(name);
+            expect(controller.environment).not.toHaveProperty(name);
+        }
+        expect(model.services.worker.environment).toHaveProperty("LAUNCHPAD_WORKER_NAME");
         // Liveness answers within 2 s whatever the database does (HEALTH_DEADLINE_MS); the
         // Compose healthcheck must wait longer than that.
         expect(controller.healthcheck.test.join(" ")).toContain("/api/health");
@@ -200,6 +216,9 @@ describe("docker-compose.yaml", () => {
         expect(mutate((m) => (m.services.worker.env_file = [".env"]))).toContain("env_file");
         expect(
             mutate((m) => (m.services.worker.environment.LAUNCHPAD_MAX_EXPANDED_BYTES = "1")),
+        ).toContain("differs between controller and worker");
+        expect(
+            mutate((m) => (m.services.worker.environment.LAUNCHPAD_WORKER_STALE_AFTER = "90s")),
         ).toContain("differs between controller and worker");
         expect(mutate((m) => (m.services.worker.volumes[2].read_only = false))).toContain(
             "read-only",

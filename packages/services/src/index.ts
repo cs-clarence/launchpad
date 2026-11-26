@@ -14,6 +14,7 @@ export * from "./artifact-config";
 export * from "./artifacts";
 export * from "./artifact-gc";
 export * from "./status";
+export * from "./heartbeat";
 export * from "./hostname-template";
 export * from "./app-routing-config";
 export * from "./controller-config";

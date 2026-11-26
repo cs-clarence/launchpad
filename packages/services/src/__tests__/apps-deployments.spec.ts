@@ -451,6 +451,10 @@ describe("worker claims", () => {
         if (current.kind !== "claimed") throw new Error("Expected replacement claim");
         const before = await beginDeploymentStep(db, dataDir, current.token, "verify");
         const events = await listDeploymentEvents(db, people.vic!, org, job.id);
+        // Both runs are named "worker": a stable worker name must not let the stale run write.
+        expect(old.token.owner).toBe(current.token.owner);
+        expect(await beginDeploymentStep(db, dataDir, old.token, "verify")).toBeNull();
+        expect(await renewDeploymentClaim(db, dataDir, old.token)).toBeNull();
         expect(await completeDeploymentStep(db, dataDir, old.token, { step: "verify" })).toBeNull();
         expect(await stopDeploymentStep(db, dataDir, old.token, "verify", "failed")).toBeNull();
         expect(
