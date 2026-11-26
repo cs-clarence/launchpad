@@ -515,5 +515,33 @@ Medium-to-High: an independent review of this plan before step 1, which this rev
 
 ## Status
 
-Not started. Research done on 2026-11-26 without containers or servers; the hostname validator results
+Research done on 2026-11-26 without containers or servers; the hostname validator results
 above were run against the real `assertSeparateDomains` and `parseAliasConfig`. Revised after review.
+
+### Step 1 spike (done 2026-11-26, Docker 29.10.1, Compose v5.8.0, Buildx default builder, Linux x86_64)
+
+Done by hand under the project `launchpad-local-5b1ce000` and its own tags, then removed with exact names
+(the before/after snapshots of containers, volumes, networks and images were identical afterwards).
+
+- `docker compose config --quiet` renders for the planned env and override.
+- (a) Host `ssh-keygen` and `openssl` output is accepted: Dokku took `ssh-keys:add`, the pinned host key and
+  the router TLS files worked, all five services reached healthy, the worker deployed over SSH.
+- (b) `*.localhost` resolves on this host for curl 8.21 and Bun's `fetch` (HTTP 200 for
+  `http://<hostname>:32181/`); the `Host`-header form to `127.0.0.1` also gave 200. The IPv6 first-resolution
+  problem did not occur here, so the guide keeps both forms.
+- (c) `examples/hello` (with its `Dockerfile`) uploads, deploys and serves its page (deployment `succeeded`
+  in 59 s). The password-on-stdin form of `admin migrate|setup|create-user` and `router init --token-stdin`
+  through `docker compose run --rm --no-deps -T` works.
+- (d) Timings (warm layer cache, so **not** a first-run figure): image build 31 s; Postgres+Dokku healthy 68 s
+  from an empty Dokku state directory; migrate, operator, owner and the rest healthy 15 s; deploy 59 s. Image
+  sizes: controller 212 MB, worker 242 MB, router 190 MB, admin 269 MB, dokku 1.53 GB (about 2.4 GB). Idle
+  memory with one site: worker 31 MiB, controller 50, router 11, dokku 30, postgres 62 (about 185 MiB).
+  `docker system df`: containers 590 MB with the stack up, 0 after; the build cache stayed (503 MB reclaimable).
+- (e) The root helper works: with the pinned `postgres` image, `--network none --user 0 --entrypoint rm`
+  removed the root-owned `dokku/` and the 10001-owned `credentials/`, `tls/`, `backups/`. The chown helper
+  (`--entrypoint chown`, run with the worker image) also worked.
+- After `dokku apps:destroy <app> --force` the app container and `dokku/<app>` image are gone but
+  `launchpad/site:<id>` remains, as the plan says. `compose down --volumes --remove-orphans` removed the
+  volumes and all three networks including `<project>-apps`.
+- Unknown 6: no `HOST` or port setting beyond the Compose defaults was needed.
+- Note for zsh users and for the code: `"$P/x:local"` must be braced, `$s:l` is a lowercase modifier.
