@@ -1,8 +1,10 @@
 import { createAuth, loadAuthConfig } from "@launchpad-kit/auth";
+import { errorSchema } from "@launchpad-kit/contracts";
 import { createDatabase } from "@launchpad-kit/database";
 import { describe, expect, it } from "vitest";
 import { createApi } from "./api";
 import { resolveClientIp } from "./client-ip";
+import type { GateOutcome } from "./schema-gate";
 
 const config = loadAuthConfig({
     LAUNCHPAD_AUTH_SECRET: "test-secret-".repeat(4),
@@ -200,5 +202,139 @@ describe("OpenAPI document", () => {
         const names = operation.parameters.map((p: { name: string }) => p.name);
         expect(names).toEqual(expect.arrayContaining(["after", "limit"]));
         expect(operation.responses["200"].headers.Link).toBeDefined();
+    });
+});
+
+describe("database problems", () => {
+    const refused = Object.assign(new Error("Failed to connect to 127.0.0.1:5432"), {
+        code: "ERR_POSTGRES_CONNECTION_REFUSED",
+    });
+    const missingTable = Object.assign(new Error('relation "secret_table" does not exist'), {
+        code: "ERR_POSTGRES_SERVER_ERROR",
+        errno: "42P01",
+    });
+    // A database whose every query fails with the given error.
+    const failingDb = (error: unknown) =>
+        new Proxy(
+            {},
+            {
+                get() {
+                    return () => {
+                        throw error;
+                    };
+                },
+            },
+        ) as unknown as typeof db;
+    const apiWith = (error: unknown, extra: Partial<Parameters<typeof createApi>[0]> = {}) =>
+        createApi({ auth, db: failingDb(error), origin: config.origin, invitations, ...extra });
+    const keyRequest = () =>
+        new Request("http://localhost:3000/api/v1/organizations", {
+            headers: { authorization: "Bearer lp_deadbeefdeadbeef_secret" },
+        });
+
+    it("answers 503 database-unavailable with Retry-After and no error text", async () => {
+        const response = await apiWith(refused).fetch(keyRequest());
+        expect(response.status).toBe(503);
+        expect(response.headers.get("retry-after")).toBe("5");
+        const body = errorSchema.parse(await response.json());
+        expect(body).toEqual({
+            code: "database-unavailable",
+            status: 503,
+            title: "The database is unavailable.",
+        });
+    });
+
+    it("answers 503 schema-mismatch for a missing table and asks for a new check", async () => {
+        let invalidated = 0;
+        const response = await apiWith(missingTable, { onSchemaError: () => invalidated++ }).fetch(
+            keyRequest(),
+        );
+        expect(response.status).toBe(503);
+        const text = await response.text();
+        expect(errorSchema.parse(JSON.parse(text)).code).toBe("schema-mismatch");
+        expect(text).not.toContain("secret_table");
+        expect(invalidated).toBe(1);
+    });
+
+    it("leaves an unclassified error to the framework's own 500", async () => {
+        const response = await apiWith(new Error("boom")).fetch(keyRequest());
+        expect(response.status).toBe(500);
+        expect(response.headers.get("retry-after")).toBeNull();
+    });
+
+    it("maps failures outside execute (sign-in throttling) through the root hook", async () => {
+        const body = JSON.stringify({ email: "a@example.com", password: "x" });
+        const response = await apiWith(refused).fetch(
+            new Request("http://localhost:3000/api/auth/sign-in/email", {
+                method: "POST",
+                headers: {
+                    "content-type": "application/json",
+                    "content-length": String(new TextEncoder().encode(body).length),
+                    "x-launchpad-client-ip": "203.0.113.9",
+                },
+                body,
+            }),
+        );
+        expect(response.status).toBe(503);
+        expect(errorSchema.parse(await response.json()).code).toBe("database-unavailable");
+    });
+
+    it("uses the real driver's refused-connection error", async () => {
+        const unreachable = createDatabase("postgres://postgres:x@127.0.0.1:1/x", {
+            connectionTimeout: 1,
+        });
+        const response = await createApi({
+            auth: createAuth({ db: unreachable, config }),
+            db: unreachable,
+            origin: config.origin,
+            invitations,
+        }).fetch(keyRequest());
+        expect(response.status).toBe(503);
+        expect(errorSchema.parse(await response.json()).code).toBe("database-unavailable");
+        await unreachable.destroy();
+    });
+});
+
+describe("GET /api/ready", () => {
+    const readyWith = (outcome: GateOutcome) =>
+        createApi({
+            auth,
+            db,
+            origin: config.origin,
+            invitations,
+            readiness: async () => outcome,
+        }).fetch(new Request("http://localhost:3000/api/ready"));
+
+    it("answers 200 when ready, without a sign-in", async () => {
+        const response = await readyWith({ kind: "ok" });
+        expect(response.status).toBe(200);
+        expect(await response.json()).toEqual({ status: "ready" });
+    });
+
+    it.each([
+        ["schema-mismatch", 503, "schema-mismatch"],
+        ["database-unavailable", 503, "database-unavailable"],
+        ["unavailable", 503, "unavailable"],
+        ["failed", 503, "unavailable"],
+    ] as const)("answers %s as a stable 503 %s and no detail", async (kind, status, code) => {
+        const secret = "postgres://user:hunter2@db.internal:5432/launchpad";
+        const response = await readyWith({ kind, error: new Error(secret) });
+        expect(response.status).toBe(status);
+        const text = await response.text();
+        expect(errorSchema.parse(JSON.parse(text)).code).toBe(code);
+        expect(text).not.toContain("hunter2");
+        expect(response.headers.get("retry-after")).toBe(
+            kind === "database-unavailable" ? "5" : null,
+        );
+    });
+
+    it("is documented as a public operation", async () => {
+        const documented = createApi({ auth, db, origin: config.origin, invitations, docs: true });
+        const doc = (await (
+            await documented.fetch(new Request("http://localhost:3000/api/openapi/json"))
+        ).json()) as { paths: Record<string, { get?: { security?: unknown[]; responses: any } }> };
+        const operation = doc.paths["/api/ready"]!.get!;
+        expect(operation.security).toEqual([]);
+        expect(operation.responses["503"]).toBeDefined();
     });
 });

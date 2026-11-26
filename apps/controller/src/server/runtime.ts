@@ -11,7 +11,7 @@ import {
 import path from "node:path";
 import { createApi } from "./api";
 import { artifactLimitsFromEnv } from "./artifact-config";
-import { createSchemaGate, type SchemaGate } from "./schema-gate";
+import { createSchemaGate, GateRejectedError, type SchemaGate } from "./schema-gate";
 
 function requireEnv(name: string): string {
     const value = process.env[name];
@@ -60,6 +60,8 @@ function compose() {
         aliases,
         // Serves the OpenAPI document and Scalar reference; set to "false" to remove them.
         docs: process.env.LAUNCHPAD_API_DOCS !== "false",
+        readiness: () => getSchemaGate().check({ includeDataDirectory: true }),
+        onSchemaError: () => getSchemaGate().invalidate(),
     });
     return { config, db, auth, api, invitations, features, artifacts, deployments, aliases };
 }
@@ -72,6 +74,7 @@ export function getRuntime() {
 }
 
 const RECHECK_AFTER_MS = 3000;
+const CHECK_TIMEOUT_MS = 4000;
 
 function dataDirectory() {
     return path.resolve(process.env.LAUNCHPAD_DATA_DIR ?? ".data/controller");
@@ -92,19 +95,20 @@ export function getSchemaGate(): SchemaGate {
             typeof (error as NodeJS.ErrnoException)?.code === "string",
         intervalMs: null,
         retryMs: RECHECK_AFTER_MS,
+        timeoutMs: CHECK_TIMEOUT_MS,
         onFailure: (failure) =>
             console.error(failure.error instanceof Error ? failure.error.message : failure.error),
     });
     return gate;
 }
 
-// The runtime once the schema is known to match. Rejects with SchemaMismatchError when it
-// does not; any other rejection is a failure to check (and surfaces as an error).
+// The runtime once the schema is known to match. Rejects with GateRejectedError carrying the
+// outcome, which `databaseProblem` maps to a response.
 export async function getReadyRuntime() {
     const ready = getRuntime();
     const outcome = await getSchemaGate().check();
     if (outcome.kind !== "ok") {
-        throw outcome.error;
+        throw new GateRejectedError(outcome);
     }
     return ready;
 }

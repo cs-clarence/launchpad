@@ -18,6 +18,15 @@ export class SchemaCheckTimeoutError extends Error {
     }
 }
 
+// What a caller gets when the gate does not pass: the outcome travels with it so a handler can
+// map it without reading the message.
+export class GateRejectedError extends Error {
+    override name = "GateRejectedError";
+    constructor(readonly failure: GateFailure) {
+        super(failure.error instanceof Error ? failure.error.message : String(failure.error));
+    }
+}
+
 export interface SchemaGateOptions {
     // Stage 1: the database. Rejects with SchemaMismatchError or a database error.
     checkSchema(): Promise<void>;

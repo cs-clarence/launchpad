@@ -58,7 +58,7 @@ const ERRORS = {
     409: "The change conflicts with existing data.",
     413: "The upload is larger than the allowed size.",
     422: "The request body, `limit` or `cursor` is invalid.",
-    503: "Deployments or aliases are turned off, or not available on this instance.",
+    503: "Deployments or aliases are turned off, or not available on this instance, or the database or data directory is unavailable (`database-unavailable`, `unavailable`, or `schema-mismatch` while the database needs `migrate` or a restore).",
 } as const;
 
 const LINK_HEADER = {
@@ -266,7 +266,10 @@ export function openApiPlugin(enabled: boolean) {
                         "Stable hostnames an app can point at a deployment (not routed yet).",
                 },
                 { name: "API keys", description: "Organization-owned automation keys." },
-                { name: "Operations", description: "Instance health, for the operator." },
+                {
+                    name: "Operations",
+                    description: "Instance status for the operator, and readiness for traffic.",
+                },
                 {
                     name: "Invitations",
                     description: "Email invitations (invitation enrollment only).",
@@ -293,6 +296,18 @@ export function openApiPlugin(enabled: boolean) {
 }
 
 export const docs = {
+    ready: operation({
+        tags: ["Operations"],
+        public: true,
+        summary: "Whether the instance can serve traffic",
+        description:
+            "Readiness, for load balancers and anything that decides where to send traffic. Checks only the database (reachable, schema current) and the shared data directory; never Dokku, the router or the worker. Needs no sign-in and exposes no detail: the 503 body has only a stable `code` (`database-unavailable`, `schema-mismatch` or `unavailable`) and a fixed title. `database-unavailable` carries `Retry-After: 5`. Use `/api/health` (liveness) for process supervisors; it does not depend on the database.",
+        ok: {
+            description: "Ready.",
+            schema: z.strictObject({ status: z.literal("ready") }),
+        },
+        errors: [503],
+    }),
     me: operation({
         tags: ["Session"],
         summary: "Current user",

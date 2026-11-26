@@ -96,22 +96,27 @@ export const statusSchema = z.strictObject({
 const role = z.enum(ORGANIZATION_ROLES);
 const timestamp = z.string().meta({ format: "date-time" });
 
+// Every `code` the API can answer with. A test scans the controller for emitted codes.
+export const ERROR_CODES = [
+    "unauthenticated",
+    "forbidden-origin",
+    "too-many-requests",
+    "client-address-unavailable",
+    "not-found",
+    "forbidden",
+    "conflict",
+    "invalid",
+    "delivery-failed",
+    "too-large",
+    "timeout",
+    "unavailable",
+    "schema-mismatch",
+    "database-unavailable",
+    "internal",
+] as const;
+
 export const errorSchema = z.strictObject({
-    code: z.enum([
-        "unauthenticated",
-        "forbidden-origin",
-        "too-many-requests",
-        "client-address-unavailable",
-        "not-found",
-        "forbidden",
-        "conflict",
-        "invalid",
-        "delivery-failed",
-        "too-large",
-        "timeout",
-        "unavailable",
-        "internal",
-    ]),
+    code: z.enum(ERROR_CODES),
     status: z.number().int(),
     title: z.string(),
 });
