@@ -37,6 +37,16 @@ export const KEY_SCOPES = ["organization:read", "project:read", "project:create"
 // What deploying the example needs on top: artifact upload, app and deployment creation, and
 // deleting a deployment (docs/local-deploy.md).
 export const DEPLOY_KEY_SCOPES = [...KEY_SCOPES, "app:deploy", "app:delete"];
+// The deploy scopes plus promoting a deployment and managing aliases, for a stack that has
+// LAUNCHPAD_ALIASES=on.
+export const ALIAS_KEY_SCOPES = [...DEPLOY_KEY_SCOPES, "app:promote", "app:alias:manage"];
+export function scopesFor(env: Record<string, string>): string[] {
+    const value = (env.LAUNCHPAD_ALIASES ?? "")
+        .trim()
+        .replace(/^(["'])(.*)\1$/, "$2")
+        .trim();
+    return value === "on" ? ALIAS_KEY_SCOPES : DEPLOY_KEY_SCOPES;
+}
 const ADMIN_PROJECT = "@launchpad-kit/controller";
 const FILE_SAFE = /^[A-Za-z0-9_@.+/~-]+$/;
 const SLUG = /^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$/;
@@ -774,9 +784,12 @@ async function profileIsReady(
     controller: string,
     organizationId: string,
     required: readonly string[],
-): Promise<{ state: "absent" | "ready" | "other" | "scopes"; missing: string[] }> {
+): Promise<{ state: "absent" | "ready" | "other" | "stale" | "scopes"; missing: string[] }> {
     const config = await ctx.store.load();
-    const none = (state: "absent" | "ready" | "other") => ({ state, missing: [] as string[] });
+    const none = (state: "absent" | "ready" | "other" | "stale") => ({
+        state,
+        missing: [] as string[],
+    });
     if (!Object.hasOwn(config.profiles, options.profile)) return none("absent");
     const profile = config.profiles[options.profile]!;
     if (profile.controller !== controller) return none("other");
@@ -788,9 +801,13 @@ async function profileIsReady(
         return missing.length > 0 ? { state: "scopes", missing } : none("ready");
     } catch (error) {
         if (error instanceof ClientCoreError) return none("other");
-        // A revoked, expired or foreign key: the profile is not a working one for this controller.
+        // A revoked or expired key of this same controller: dead, so a replacement may overwrite it.
         if (error instanceof LaunchpadApiError && (error.status === 401 || error.status === 403)) {
-            return none("other");
+            // A profile that names another organization is not ours to replace with --new-key.
+            if (profile.organizationId && profile.organizationId !== organizationId) {
+                return none("other");
+            }
+            return none("stale");
         }
         throw new SeedError(
             `Checking the saved profile "${options.profile}" failed; is the controller reachable?`,
@@ -905,16 +922,19 @@ async function seedWith(deps: Deps, options: Options, secrets: string[]): Promis
                 `(${missing.join(", ")}). Pass --new-key to issue a replacement key, or choose another --profile.`,
         );
     }
+    if (state === "stale" && !options.newKey && !options.force) {
+        throw new SeedError(
+            `The saved key of the profile "${options.profile}" is not a working key for this ` +
+                "controller. Pass --new-key to issue a replacement key, or choose another --profile.",
+        );
+    }
     if (state === "other" && !options.force) {
         throw new SeedError(
             `The profile "${options.profile}" already exists and is not a working key for this ` +
                 "controller and organization. Choose another --profile, or pass --force to replace it.",
         );
     }
-    const keyIssued =
-        state === "absent" ||
-        options.newKey ||
-        (options.force && (state === "other" || state === "scopes"));
+    const keyIssued = state === "absent" || options.newKey || (options.force && state !== "ready");
     if (keyIssued) {
         if (await modeOf(pendingFile)) {
             throw new SeedError(

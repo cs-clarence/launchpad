@@ -61,7 +61,11 @@ Builds and deployed sites run in the host engine, outside the memory limits.
     run again: it keeps what exists. If a default port (32180 to 32443) is busy it stops and names
     it; choose another range with `--port-base <n>`. `omni -i run local:deploy -a options=--help`
     lists everything. If a saved `local-deploy` key lacks the scopes deploying needs, `up` refuses and
-    names them; run `up --new-key` to issue a replacement.
+    names them; run `up --new-key` to issue a replacement. `up --new-key` also replaces a saved key of
+    this same controller that was revoked or expired. A profile that points at a different controller
+    (a stack removed by hand and recreated on other ports) is never replaced by `up`: run
+    `launchpad logout --profile local-deploy` first. With `LAUNCHPAD_ALIASES=on` in `.local-deploy/compose.env`, the key has
+    eight scopes (the six plus `app:promote` and `app:alias:manage`).
 
 3. Build the CLI once and deploy the example. The profile is on loopback `http`, so no certificate is
    needed:
@@ -164,16 +168,16 @@ prints the exact `sudo rm -rf` command for each root-owned directory. If an imag
 
 Each failure prints one message and exits nonzero; nothing is rolled back and `down` removes whatever exists.
 
-| Message starts with                                                  | What to do                                                                                                                                                                                                                              |
-| -------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `The Docker daemon did not answer`                                   | Start Docker, or check that you may use it.                                                                                                                                                                                             |
-| `DOCKER_HOST is set`                                                 | Unset it: only the local engine at `/var/run/docker.sock` works.                                                                                                                                                                        |
-| `... is in use on 127.0.0.1`                                         | Free the port, or run `up` with `--port-base <n>`.                                                                                                                                                                                      |
-| `... is not ignored by git`                                          | `.local-deploy/` must be in `.gitignore`.                                                                                                                                                                                               |
-| `Timed out waiting for dokku`                                        | Look at `docker compose -p <project> --env-file .local-deploy/compose.env -f docker-compose.yaml -f .local-deploy/override.json logs --tail 50 dokku`; Dokku's first start takes minutes.                                               |
-| `... has no matching state.json`                                     | Another checkout or an earlier run owns those resources; run `down` from there.                                                                                                                                                         |
-| `The profile "local-deploy" already exists and is not a working key` | The saved key was revoked (for example by `revoke-all-credentials`) or belongs to a stack you removed by hand. With `LAUNCHPAD_PROFILE=local-deploy` set, run `launchpad logout`, then `up --new-key`; `--force` is not an `up` option. |
-| `Compose ... Buildx`                                                 | See the [recovery record](plans/production-fresh-host-recovery.md#repeat-the-rehearsal).                                                                                                                                                |
+| Message starts with                                                  | What to do                                                                                                                                                                                                                                                                                |
+| -------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `The Docker daemon did not answer`                                   | Start Docker, or check that you may use it.                                                                                                                                                                                                                                               |
+| `DOCKER_HOST is set`                                                 | Unset it: only the local engine at `/var/run/docker.sock` works.                                                                                                                                                                                                                          |
+| `... is in use on 127.0.0.1`                                         | Free the port, or run `up` with `--port-base <n>`.                                                                                                                                                                                                                                        |
+| `... is not ignored by git`                                          | `.local-deploy/` must be in `.gitignore`.                                                                                                                                                                                                                                                 |
+| `Timed out waiting for dokku`                                        | Look at `docker compose -p <project> --env-file .local-deploy/compose.env -f docker-compose.yaml -f .local-deploy/override.json logs --tail 50 dokku`; Dokku's first start takes minutes.                                                                                                 |
+| `... has no matching state.json`                                     | Another checkout or an earlier run owns those resources; run `down` from there.                                                                                                                                                                                                           |
+| `The profile "local-deploy" already exists and is not a working key` | The saved key was revoked (for example by `revoke-all-credentials`): run `up --new-key`. If it points at a different controller or organization (a stack you removed by hand), run `launchpad logout --profile local-deploy` first, then `up --new-key`; `--force` is not an `up` option. |
+| `Compose ... Buildx`                                                 | See the [recovery record](plans/production-fresh-host-recovery.md#repeat-the-rehearsal).                                                                                                                                                                                                  |
 
 ## Limits
 
@@ -186,7 +190,7 @@ Each failure prints one message and exits nonzero; nothing is rolled back and `d
   [ingress example](ingress-example.md)).
 - Aliases are off (`LAUNCHPAD_ALIASES=off`); the router only has to be running.
   To try aliases, set `LAUNCHPAD_ALIASES=on` in `.local-deploy/compose.env` and recreate the controller and worker
-  (`up` keeps the value). The key `up` saves has only the six scopes in the setup step, so it cannot create or
-  promote an alias: issue a second key with `app:alias:manage` and `app:promote` through an owner session, and
-  revoke it afterwards.
+  (`up` keeps the value). When `compose.env` says `on` at the time of `up`, the key `up` issues also has
+  `app:promote` and `app:alias:manage`. A key saved before you switched has only the six, so run
+  `up --new-key` after flipping the setting.
 - Linux with native Docker only; one worker; no backups or restores.
