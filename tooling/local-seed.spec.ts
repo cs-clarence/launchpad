@@ -527,6 +527,16 @@ describe("failures give one clear message", () => {
             expect(fake.keys.size).toBe(0);
         });
 
+        it("is not replaced by --new-key when it names another organization", async () => {
+            await seed(deps(), options());
+            fake.keys.clear();
+            const ctx = createContext({ HOME: dir, LAUNCHPAD_CONFIG_DIR: path.join(dir, "cfg") });
+            await ctx.store.update((config) => {
+                config.profiles.local!.organizationId = "org-other";
+            });
+            expect(await message(() => seed(deps(), options(["--new-key"])))).toMatch(/--force/);
+        });
+
         it("is replaced with --new-key, and with --force", async () => {
             await seed(deps(), options());
             fake.keys.clear();
@@ -922,6 +932,10 @@ describe("compose mode", () => {
         expect(scopesFor({ LAUNCHPAD_ALIASES: "on" })).toBe(ALIAS_KEY_SCOPES);
         expect(scopesFor({ LAUNCHPAD_ALIASES: "off" })).toBe(DEPLOY_KEY_SCOPES);
         expect(scopesFor({})).toBe(DEPLOY_KEY_SCOPES);
+        for (const quoted of ['"on"', "'on'", ' "on" ']) {
+            expect(scopesFor({ LAUNCHPAD_ALIASES: quoted })).toBe(ALIAS_KEY_SCOPES);
+        }
+        expect(scopesFor({ LAUNCHPAD_ALIASES: '"off"' })).toBe(DEPLOY_KEY_SCOPES);
     });
 
     it("sends the deploy scopes and key name when given", async () => {

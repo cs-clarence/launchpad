@@ -53,6 +53,14 @@ describe("countOrphanedArchives", () => {
         await expect(countOrphanedArchives(data2)).rejects.toThrow(/symbolic link/);
     });
 
+    it("fails closed on a validly named archive that is a symbolic link", async () => {
+        const target = path.join(dir, "target");
+        writeFileSync(target, "x");
+        mkdirSync(path.join(dir, "artifacts", OWNER), { recursive: true });
+        symlinkSync(target, path.join(dir, "artifacts", OWNER, `${DIGEST}.tar.gz`));
+        await expect(countOrphanedArchives(dir)).rejects.toThrow(/symbolic link/);
+    });
+
     it("fails closed when artifacts is a file", async () => {
         writeFileSync(path.join(dir, "artifacts"), "x");
         await expect(countOrphanedArchives(dir)).rejects.toThrow(/not a plain directory/);

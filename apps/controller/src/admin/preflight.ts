@@ -41,7 +41,11 @@ export async function countOrphanedArchives(dataDir: string, limit = 1): Promise
         if (!ownerStat.isDirectory()) continue;
         for (const name of await fs.readdir(ownerPath)) {
             if (!isArtifactStorageKey(`artifacts/${owner}/${name}`)) continue;
-            if (!(await fs.lstat(path.join(ownerPath, name))).isFile()) continue;
+            const entry = await fs.lstat(path.join(ownerPath, name));
+            if (entry.isSymbolicLink()) {
+                throw new Error(`${path.join(ownerPath, name)} is a symbolic link.`);
+            }
+            if (!entry.isFile()) continue;
             found += 1;
             if (found >= limit) return found;
         }

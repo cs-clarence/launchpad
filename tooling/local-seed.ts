@@ -41,7 +41,11 @@ export const DEPLOY_KEY_SCOPES = [...KEY_SCOPES, "app:deploy", "app:delete"];
 // LAUNCHPAD_ALIASES=on.
 export const ALIAS_KEY_SCOPES = [...DEPLOY_KEY_SCOPES, "app:promote", "app:alias:manage"];
 export function scopesFor(env: Record<string, string>): string[] {
-    return env.LAUNCHPAD_ALIASES === "on" ? ALIAS_KEY_SCOPES : DEPLOY_KEY_SCOPES;
+    const value = (env.LAUNCHPAD_ALIASES ?? "")
+        .trim()
+        .replace(/^(["'])(.*)\1$/, "$2")
+        .trim();
+    return value === "on" ? ALIAS_KEY_SCOPES : DEPLOY_KEY_SCOPES;
 }
 const ADMIN_PROJECT = "@launchpad-kit/controller";
 const FILE_SAFE = /^[A-Za-z0-9_@.+/~-]+$/;
@@ -799,6 +803,10 @@ async function profileIsReady(
         if (error instanceof ClientCoreError) return none("other");
         // A revoked or expired key of this same controller: dead, so a replacement may overwrite it.
         if (error instanceof LaunchpadApiError && (error.status === 401 || error.status === 403)) {
+            // A profile that names another organization is not ours to replace with --new-key.
+            if (profile.organizationId && profile.organizationId !== organizationId) {
+                return none("other");
+            }
             return none("stale");
         }
         throw new SeedError(
