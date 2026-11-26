@@ -3,6 +3,7 @@ import { assertSchemaCurrent, createDatabase } from "@launchpad-kit/database";
 import {
     parseAliasConfig,
     parseDeploymentConfig,
+    parseSchemaCheckConfig,
     DeploymentRecoveryError,
     requireModelDataDirectory,
     sweepStaleUploads,
@@ -25,7 +26,8 @@ function requireEnv(name: string): string {
 // generation) never reads configuration or opens a connection.
 function compose() {
     const config = loadAuthConfig(process.env);
-    const db = createDatabase(requireEnv("DATABASE_URL"));
+    // A request never waits more than a few seconds for a connection to an unreachable database.
+    const db = createDatabase(requireEnv("DATABASE_URL"), { connectionTimeout: 5 });
     const mailer = createMailer(config);
     const auth = createAuth({ db, config, mailer });
     // Email settings never enable invitations on their own: enrollment must also
@@ -74,18 +76,25 @@ export function getRuntime() {
 }
 
 const RECHECK_AFTER_MS = 3000;
-const CHECK_TIMEOUT_MS = 4000;
 
 function dataDirectory() {
     return path.resolve(process.env.LAUNCHPAD_DATA_DIR ?? ".data/controller");
 }
 
-// The one check behind every request, readiness and the dashboard. For now a pass is final and
-// a failure is repeated at most every few seconds, shared by concurrent callers, so a database
-// that was briefly unreachable, or one the operator has since migrated, recovers without a restart.
+// The one check behind every request, readiness and the dashboard. A pass is trusted for
+// LAUNCHPAD_SCHEMA_CHECK_INTERVAL (10 s by default) and then checked again, so a database
+// replaced or dropped under a running controller is noticed without a restart; a failed re-check
+// answers 503 until a check passes. A failure is repeated at most every few seconds, shared by
+// concurrent callers, so a database that was briefly unreachable, or one the operator has since
+// migrated, recovers by itself. `off` makes a pass final. A replaced database with the same
+// schema is not detected: restore stops the controller first (docs/restore.md).
 let gate: SchemaGate | undefined;
 export function getSchemaGate(): SchemaGate {
-    gate ??= createSchemaGate({
+    if (gate) {
+        return gate;
+    }
+    const { intervalMs, timeoutMs } = parseSchemaCheckConfig(process.env);
+    gate = createSchemaGate({
         checkSchema: () => assertSchemaCurrent(getRuntime().db),
         checkDataDirectory: async () => {
             await requireModelDataDirectory(dataDirectory());
@@ -93,9 +102,9 @@ export function getSchemaGate(): SchemaGate {
         isDataDirectoryProblem: (error) =>
             error instanceof DeploymentRecoveryError ||
             typeof (error as NodeJS.ErrnoException)?.code === "string",
-        intervalMs: null,
+        intervalMs,
         retryMs: RECHECK_AFTER_MS,
-        timeoutMs: CHECK_TIMEOUT_MS,
+        timeoutMs,
         onFailure: (failure) =>
             console.error(failure.error instanceof Error ? failure.error.message : failure.error),
     });

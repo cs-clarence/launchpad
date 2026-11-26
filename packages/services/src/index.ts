@@ -16,6 +16,7 @@ export * from "./artifact-gc";
 export * from "./status";
 export * from "./hostname-template";
 export * from "./app-routing-config";
+export * from "./controller-config";
 export * from "./apps";
 export { MAX_PAGE_LIMIT, parsePageQuery, type Page, type PageRequest } from "./pagination";
 export * from "./aliases";

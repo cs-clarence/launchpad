@@ -83,6 +83,23 @@ describe("docker-compose.yaml", () => {
         expect(model.services.worker.environment.LAUNCHPAD_DEPLOYMENTS).toBe("off");
     });
 
+    it("passes the schema-check settings to the controller only, and keeps the healthchecks", () => {
+        const model = render();
+        const controller = model.services.controller;
+        for (const name of ["LAUNCHPAD_SCHEMA_CHECK_INTERVAL", "LAUNCHPAD_SCHEMA_CHECK_TIMEOUT"]) {
+            expect(controller.environment).toHaveProperty(name);
+            expect(model.services.worker.environment).not.toHaveProperty(name);
+            expect(model.services.admin.environment).not.toHaveProperty(name);
+        }
+        // Liveness answers within 2 s whatever the database does (HEALTH_DEADLINE_MS); the
+        // Compose healthcheck must wait longer than that.
+        expect(controller.healthcheck.test.join(" ")).toContain("/api/health");
+        expect(seconds(controller.healthcheck.timeout)).toBeGreaterThan(2);
+        expect(model.services.worker.healthcheck.test.join(" ")).toContain(
+            "LAUNCHPAD_WORKER_HEALTH_FILE",
+        );
+    });
+
     it("gives the admin service the data directory, so migrate checks the real archives", () => {
         expect(render().services.admin.environment.LAUNCHPAD_DATA_DIR).toBe("/data");
     });

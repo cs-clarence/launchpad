@@ -159,6 +159,9 @@ services:
       LAUNCHPAD_PUBLIC_SIGNUP: "false"
       LAUNCHPAD_TRUSTED_PROXY: ${LAUNCHPAD_TRUSTED_PROXY:-false}
       LAUNCHPAD_API_DOCS: ${LAUNCHPAD_API_DOCS:-false}
+      # Empty means the defaults (10s and 4s); see docs/production-compose.md. Controller only.
+      LAUNCHPAD_SCHEMA_CHECK_INTERVAL: ${LAUNCHPAD_SCHEMA_CHECK_INTERVAL:-}
+      LAUNCHPAD_SCHEMA_CHECK_TIMEOUT: ${LAUNCHPAD_SCHEMA_CHECK_TIMEOUT:-}
     ports:
       - "${CONTROLLER_BIND_IP:-127.0.0.1}:${CONTROLLER_HOST_PORT:-32180}:3000"
     volumes:
