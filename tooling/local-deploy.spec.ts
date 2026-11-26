@@ -330,6 +330,8 @@ describe("command line", () => {
             project: "launchpad-local-x",
         });
         expect(parseArgs(["--help"]).help).toBe(true);
+        expect(parseArgs(["up", "--new-key"]).newKey).toBe(true);
+        expect(() => parseArgs(["down", "--new-key"])).toThrow(DeployError);
     });
 
     it("refuses what it does not know", () => {

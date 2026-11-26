@@ -228,7 +228,14 @@ export type Run = (args: string[], input?: string) => Promise<RunResult>;
 // Compose: they run in the project's `admin` service, and the password goes to stdin.
 export type AdminMode =
     | { kind: "omni" }
-    | { kind: "compose"; prefix: string[]; project: string; stateDir: string };
+    | {
+          kind: "compose";
+          prefix: string[];
+          project: string;
+          stateDir: string;
+          // A pasteable `docker compose ...` with the project, env file and files.
+          composeCommand: string;
+      };
 
 const OMNI: AdminMode = { kind: "omni" };
 
@@ -262,7 +269,7 @@ export function adminArgs(command: string, options: string[], mode: AdminMode = 
 
 function adminHint(command: string, mode: AdminMode = OMNI): string {
     if (mode.kind === "compose") {
-        return `docker compose -p ${mode.project} logs --tail 50 (and ${mode.stateDir}/compose.env)`;
+        return `${mode.composeCommand} logs --tail 50 (settings: ${mode.stateDir}/compose.env)`;
     }
     return `omni -i run admin -p ${ADMIN_PROJECT} -a command=${command}`;
 }
@@ -750,19 +757,24 @@ async function profileIsReady(
     options: Options,
     controller: string,
     organizationId: string,
-): Promise<"absent" | "ready" | "other"> {
+    required: readonly string[],
+): Promise<{ state: "absent" | "ready" | "other" | "scopes"; missing: string[] }> {
     const config = await ctx.store.load();
-    if (!Object.hasOwn(config.profiles, options.profile)) return "absent";
+    const none = (state: "absent" | "ready" | "other") => ({ state, missing: [] as string[] });
+    if (!Object.hasOwn(config.profiles, options.profile)) return none("absent");
     const profile = config.profiles[options.profile]!;
-    if (profile.controller !== controller) return "other";
+    if (profile.controller !== controller) return none("other");
     try {
         const me = await whoami(ctx, options.profile);
-        return me.key.organizationId === organizationId ? "ready" : "other";
+        if (me.key.organizationId !== organizationId) return none("other");
+        const have = new Set<string>(me.key.scopes ?? []);
+        const missing = required.filter((scope) => !have.has(scope));
+        return missing.length > 0 ? { state: "scopes", missing } : none("ready");
     } catch (error) {
-        if (error instanceof ClientCoreError) return "other";
+        if (error instanceof ClientCoreError) return none("other");
         // A revoked, expired or foreign key: the profile is not a working one for this controller.
         if (error instanceof LaunchpadApiError && (error.status === 401 || error.status === 403)) {
-            return "other";
+            return none("other");
         }
         throw new SeedError(
             `Checking the saved profile "${options.profile}" failed; is the controller reachable?`,
@@ -863,14 +875,30 @@ async function seedWith(deps: Deps, options: Options, secrets: string[]): Promis
     );
 
     const ctx = createContext({ ...deps.env, LAUNCHPAD_CONFIG_DIR: out }, { fetch: deps.fetch });
-    const state = await profileIsReady(ctx, options, controller, workspace.organizationId);
+    const { state, missing } = await profileIsReady(
+        ctx,
+        options,
+        controller,
+        workspace.organizationId,
+        deps.scopes ?? KEY_SCOPES,
+    );
+    // A saved key that cannot do what this run needs is never reused, and never replaced silently.
+    if (state === "scopes" && !options.newKey && !options.force) {
+        throw new SeedError(
+            `The saved key of the profile "${options.profile}" lacks the scopes this run needs ` +
+                `(${missing.join(", ")}). Pass --new-key to issue a replacement key, or choose another --profile.`,
+        );
+    }
     if (state === "other" && !options.force) {
         throw new SeedError(
             `The profile "${options.profile}" already exists and is not a working key for this ` +
                 "controller and organization. Choose another --profile, or pass --force to replace it.",
         );
     }
-    const keyIssued = state === "absent" || options.newKey || (options.force && state === "other");
+    const keyIssued =
+        state === "absent" ||
+        options.newKey ||
+        (options.force && (state === "other" || state === "scopes"));
     if (keyIssued) {
         if (await modeOf(pendingFile)) {
             throw new SeedError(

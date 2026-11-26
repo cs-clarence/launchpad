@@ -289,8 +289,8 @@ describe("discovery", () => {
     it("aborts on a tampered or malformed inventory.json", async () => {
         await ready();
         for (const text of [
-            JSON.stringify({ sites: [{ id: ID1, app: "../../etc" }] }),
-            JSON.stringify({ sites: [{ id: "x", app: "lp-abcdefghij" }] }),
+            JSON.stringify({ project, sites: [{ id: ID1, app: "../../etc" }] }),
+            JSON.stringify({ project, sites: [{ id: "x", app: "lp-abcdefghij" }] }),
             "not json",
         ]) {
             host.addFile(`${host.dir}/inventory.json`, text);
@@ -304,6 +304,7 @@ describe("discovery", () => {
         host.addFile(
             `${host.dir}/inventory.json`,
             JSON.stringify({
+                project,
                 sites: [{ id: ID1, app: "lp-abcdefghij", tag: "postgres:17-alpine" }],
             }),
         );
@@ -343,10 +344,106 @@ describe("discovery", () => {
         host.dokkuApps.delete("lp-abcdefghij");
         host.networks.get(appsNetwork(project))!.project = "someone-else";
         host.dbUp = false;
-        const message = await fails(down(deps()));
-        expect(message).toContain("Not everything was removed");
+        // The foreign network is neither scanned, removed nor counted as ours: down finishes.
+        await down(deps());
         expect(host.containers.some((c) => c.name === "lp-abcdefghij.web.1")).toBe(true);
         expect(host.networks.has(appsNetwork(project))).toBe(true);
+        expect(host.nodes.has(host.dir)).toBe(false);
+    });
+
+    it("rejects an inventory that belongs to another project, before any removal", async () => {
+        await ready();
+        host.deploySite(project, site(1));
+        host.images.set(imageTagFor(ID2), "eeeeeeeeeeee");
+        for (const body of [
+            { project: "launchpad-local-00000000", sites: [{ id: ID2, app: "lp-klmnopqrst" }] },
+            { sites: [{ id: ID2, app: "lp-klmnopqrst" }] },
+        ]) {
+            host.addFile(`${host.dir}/inventory.json`, JSON.stringify(body));
+            expect(await fails(down(deps()))).toContain("belongs to another project");
+        }
+        expect(host.images.has(imageTagFor(ID2))).toBe(true);
+        expect(host.calls.some((a) => a.includes("apps:destroy") || a.includes("rm"))).toBe(false);
+    });
+
+    it("says how to recover from a foreign inventory, and deleting it is safe", async () => {
+        await ready();
+        host.deploySite(project, site(1));
+        host.addFile(
+            `${host.dir}/inventory.json`,
+            JSON.stringify({ project: "launchpad-local-00000000", sites: [] }),
+        );
+        const message = await fails(down(deps()));
+        expect(message).toContain(
+            "Run status to rewrite it, or delete .local-deploy/inventory.json",
+        );
+        host.nodes.delete(`${host.dir}/inventory.json`);
+        await down(deps());
+        gone();
+    });
+
+    it("still accepts a matching inventory when the database is down", async () => {
+        await ready();
+        host.deploySite(project, site(1));
+        await status(deps());
+        host.dbUp = false;
+        await down(deps());
+        gone();
+    });
+});
+
+describe("a project whose containers are already gone", () => {
+    it("removes a leftover site container before the apps network", async () => {
+        await ready();
+        host.deploySite(project, site(1));
+        await status(deps());
+        for (const container of host.projectContainers(project)) host.removeContainer(container.id);
+        expect(host.containers.map((c) => c.name)).toEqual(["lp-abcdefghij.web.1"]);
+        host.calls.length = 0;
+        host.events.length = 0;
+        await down(deps());
+        gone();
+        expect(at("rm -f")).toBeGreaterThan(-1);
+        expect(at("rm -f")).toBeLessThan(at("compose down"));
+    });
+});
+
+describe("interruption between removals", () => {
+    it("stops before clearing the root-owned state once the project is removed, then resumes", async () => {
+        await ready();
+        host.deploySite(project, site(1));
+        const abort = new AbortController();
+        host.failures.push((args) => {
+            if (args.includes("down") && args.includes("--volumes")) abort.abort();
+            return undefined;
+        });
+        expect(await fails(down(deps({ signal: abort.signal })))).toContain("Interrupted");
+        expect(host.projectContainers(project)).toHaveLength(0);
+        expect(host.calls.some((a) => a.includes("--entrypoint") && a.includes("rm"))).toBe(false);
+        expect(host.nodes.has(`${host.dir}/state.json`)).toBe(true);
+        expect(host.nodes.has(`${host.dir}/inventory.json`)).toBe(true);
+        host.failures.length = 0;
+        await down(deps());
+        gone();
+    });
+
+    it("stops before the next site and keeps the state and the inventory, then resumes", async () => {
+        await ready();
+        host.deploySite(project, site(1));
+        host.deploySite(project, site(2));
+        const abort = new AbortController();
+        host.failures.push((args) => {
+            if (args.includes("apps:destroy")) abort.abort();
+            return undefined;
+        });
+        const message = await fails(down(deps({ signal: abort.signal })));
+        expect(message).toContain("Interrupted");
+        expect(host.calls.filter((a) => a.includes("apps:destroy"))).toHaveLength(1);
+        expect(host.nodes.has(`${host.dir}/state.json`)).toBe(true);
+        expect(JSON.parse(host.text(`${host.dir}/inventory.json`)!).sites).toHaveLength(2);
+        host.failures.length = 0;
+        await down(deps());
+        gone();
     });
 });
 
@@ -363,7 +460,8 @@ describe("preflight", () => {
         host.containers.find((c) => c.labels["com.docker.compose.service"] === "dokku")!.state =
             "exited";
         const message = await fails(down(deps()));
-        expect(message).toContain(`docker compose -p ${project} start dokku postgres`);
+        expect(message).toContain(`docker compose -p ${project} --env-file`);
+        expect(message).toContain("start dokku postgres");
         expect(host.calls.some((a) => a.includes("stop"))).toBe(false);
         expect(host.nodes.has(host.dir)).toBe(true);
     });

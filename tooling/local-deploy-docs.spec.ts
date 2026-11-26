@@ -166,6 +166,18 @@ describe("docs/local-deploy.md", () => {
         expect(read("CONTRIBUTING.md")).toContain("docs/local-deploy.md");
     });
 
+    it("gives every docker compose command the generated config", () => {
+        const found = [...guide.matchAll(/docker compose [^`\n]*/g)]
+            .map((m) => m[0])
+            .filter((t) => !t.startsWith("docker compose version"));
+        expect(found.length).toBeGreaterThan(3);
+        for (const text of found) {
+            expect(text, text).toMatch(
+                /-p <project> --env-file \.local-deploy\/compose\.env -f docker-compose\.yaml -f \.local-deploy\/override\.json/,
+            );
+        }
+    });
+
     it("never tells the user to switch their current profile", () => {
         expect(guide).not.toMatch(/profile use/);
     });

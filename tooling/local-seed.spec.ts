@@ -50,6 +50,8 @@ class Fake {
     orgs: { id: string; slug: string; owner: string }[] = [];
     projects: { id: string; slug: string; org: string }[] = [];
     keys = new Map<string, string>();
+    keyScopes = new Map<string, string[]>();
+    keyNames: string[] = [];
     calls: string[] = [];
     adminCalls: string[][] = [];
     adminFailure: RunResult | null = null;
@@ -57,7 +59,7 @@ class Fake {
     up = true;
     transcript: string[] = [];
     failKeyLogin = false;
-    keyBodies: { scopes: string[] }[] = [];
+    keyBodies: { name: string; scopes: string[] }[] = [];
     onKeyIssue: (() => void) | null = null;
     keyStatus = 201;
     projectStatus = 201;
@@ -119,7 +121,7 @@ class Fake {
                 id: crypto.randomUUID(),
                 name: "local-quickstart",
                 organizationId: org,
-                scopes: ["organization:read"],
+                scopes: this.keyScopes.get(secret!) ?? ["organization:read"],
                 projectIds: null,
                 expiresAt: new Date().toISOString(),
             });
@@ -153,6 +155,7 @@ class Fake {
             if (this.keyStatus !== 201) return json({}, this.keyStatus);
             const secret = `lp_${"k".repeat(20)}${++this.seq}`;
             this.keys.set(secret, org);
+            this.keyScopes.set(secret, body.scopes);
             return json({ id: crypto.randomUUID(), secret }, 201);
         }
         return json({}, 404);
@@ -770,6 +773,8 @@ describe("compose mode", () => {
         prefix: ["docker", "compose", "-p", "launchpad-local-abcd1234"],
         project: "launchpad-local-abcd1234",
         stateDir: "/repo/.local-deploy",
+        composeCommand:
+            "docker compose -p launchpad-local-abcd1234 --env-file /repo/.local-deploy/compose.env -f /repo/docker-compose.yaml -f /repo/.local-deploy/override.json",
     };
     const inputs: (string | undefined)[] = [];
     const composeRun = async (args: string[], input?: string) => {
@@ -862,7 +867,7 @@ describe("compose mode", () => {
             }
         }
         expect(() => classifyAdmin("migrate", failed("boom"), mode)).toThrow(
-            /docker compose -p launchpad-local-abcd1234 logs/,
+            /docker compose -p launchpad-local-abcd1234 --env-file .*compose\.env -f .* -f .*override\.json logs --tail 50/,
         );
         expect(() => classifyAdmin("migrate", failed("DATABASE_URL is required."), mode)).toThrow(
             /compose\.env/,
@@ -886,6 +891,44 @@ describe("compose mode", () => {
             options(),
         );
         expect(fake.keyBodies[0]!.scopes).toEqual(DEPLOY_KEY_SCOPES);
+        expect(fake.keyBodies[0]!.name).toBe("local-deploy");
+    });
+
+    describe("a saved key without the scopes this run needs", () => {
+        const deploy = () => ({
+            ...composeDeps(),
+            scopes: DEPLOY_KEY_SCOPES,
+            keyName: "local-deploy",
+        });
+
+        it("is refused, not reused and not silently replaced", async () => {
+            await seed(composeDeps(), options());
+            expect(fake.keys.size).toBe(1);
+            await expect(seed(deploy(), options())).rejects.toThrow(
+                /lacks the scopes.*app:deploy.*--new-key/,
+            );
+            expect(fake.keys.size).toBe(1);
+        });
+
+        it("is replaced with --new-key, then reused on the next run", async () => {
+            await seed(composeDeps(), options());
+            const summary = await seed(deploy(), options(["--new-key"]));
+            expect(summary.keyIssued).toBe(true);
+            expect(fake.keyBodies.at(-1)!.scopes).toEqual(DEPLOY_KEY_SCOPES);
+            const again = await seed(deploy(), options());
+            expect(again.keyIssued).toBe(false);
+            expect(fake.keys.size).toBe(2);
+        });
+
+        it("is replaced with --force as well", async () => {
+            await seed(composeDeps(), options());
+            expect((await seed(deploy(), options(["--force"]))).keyIssued).toBe(true);
+        });
+
+        it("does not apply to the default four scopes", async () => {
+            await seed(deps(), options());
+            expect((await seed(deps(), options())).keyIssued).toBe(false);
+        });
     });
 
     it("pipes stdin only when given", async () => {

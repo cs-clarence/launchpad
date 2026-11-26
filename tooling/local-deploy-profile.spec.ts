@@ -55,10 +55,18 @@ describe("the real profile functions", () => {
         expect(config.profiles[PROFILE]).toBeUndefined();
     });
 
-    it("does not reset when not asked", async () => {
+    it("selects a remaining profile when the user made it current themselves", async () => {
         await arrange(PROFILE, ["mine"]);
         await deps().removeProfile(CONTROLLER, false);
-        expect((await load()).currentProfile).toBe(PROFILE);
+        expect((await load()).currentProfile).toBe("mine");
+    });
+
+    it("never leaves a dangling current profile, even with none remaining", async () => {
+        await arrange(PROFILE);
+        await deps().removeProfile(CONTROLLER, false);
+        const config = await load();
+        expect(config.currentProfile).toBeNull();
+        expect(config.profiles[PROFILE]).toBeUndefined();
     });
 
     it("keeps a profile that names another controller", async () => {

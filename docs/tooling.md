@@ -128,7 +128,8 @@ Rules that keep the graph correct:
   tests use a fake `fetch` and a fake command runner; `tooling/local-quickstart.spec.ts` fails when
   the guide ([run Launchpad on your machine](local-quickstart.md)) names an Omni task, script flag,
   admin or CLI command, setting or link that no longer exists. Update the guide with the script.
-- **Local deploy.** `omni -i run local:deploy -a options=up|status|down` (`tooling/local-deploy.ts`)
+- **Local deploy.** `omni -i run local:deploy -a options=up` (`tooling/local-deploy.ts`; `options=status` and `options=down` are the other
+  actions)
   runs the production Compose stack on this machine (Linux, native Docker) under a project named
   `launchpad-local-<8 hex>`, deploys nothing itself, seeds an organization, project and a six-scope key
   through the seed's Compose mode, and `down` removes everything the run created by exact name, never

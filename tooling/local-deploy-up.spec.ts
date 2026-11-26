@@ -369,6 +369,17 @@ describe("the current CLI profile", () => {
     });
 });
 
+describe("re-running up after a stop", () => {
+    it("starts stopped containers again instead of skipping or duplicating them", async () => {
+        await up(deps());
+        for (const c of host.projectContainers(project)) c.state = "exited";
+        await up(deps());
+        const containers = host.projectContainers(project);
+        expect(containers).toHaveLength(5);
+        expect(containers.every((c) => c.state === "running")).toBe(true);
+    });
+});
+
 describe("re-running up", () => {
     it("fixes ownership when an earlier run stopped before it", async () => {
         host.killAt = { match: (a) => a.includes("chown"), remaining: 0 };
@@ -538,7 +549,8 @@ describe("waiting", () => {
         host.unhealthy.add("dokku");
         const message = await fails(up(deps()));
         expect(message).toContain("Timed out waiting for dokku");
-        expect(message).toContain(`docker compose -p ${project} logs --tail 50 dokku`);
+        expect(message).toContain(`docker compose -p ${project} --env-file`);
+        expect(message).toContain("logs --tail 50 dokku");
         expect(host.clock).toBeGreaterThanOrEqual(11 * 60_000);
         expect(host.projectContainers(project).length).toBeGreaterThan(0);
         expect(host.nodes.has(`${host.dir}/state.json`)).toBe(true);
@@ -578,7 +590,115 @@ describe("waiting", () => {
     });
 });
 
+describe("--new-key", () => {
+    it("is passed to the seed only when asked", async () => {
+        await up(deps());
+        expect(seeded[0]!.options.newKey).toBe(false);
+        await up(deps(), { newKey: true });
+        expect(seeded[1]!.options.newKey).toBe(true);
+    });
+});
+
+describe("tracked state directory", () => {
+    it("refuses to write secrets when any file under .local-deploy/ is tracked", async () => {
+        host.trackedFiles = [".local-deploy/compose.env"];
+        const message = await fails(up(deps()));
+        expect(message).toContain("tracked by git");
+        expect(host.nodes.has(host.dir)).toBe(false);
+        expect(host.calls.some((a) => a.includes("build"))).toBe(false);
+    });
+
+    it("is not blocked by tracked files elsewhere in the repository", async () => {
+        host.trackedFiles = ["README.md", "tooling/local-deploy.ts", ".local-deploy-notes.md"];
+        await up(deps());
+        const argv = host.calls.find((a) => a.includes("ls-files"))!;
+        expect(argv.slice(argv.indexOf("ls-files"))).toEqual(["ls-files", "--", ".local-deploy"]);
+    });
+
+    it("refuses when git cannot say", async () => {
+        host.failures.push((args) =>
+            args.includes("ls-files") ? { code: 128, output: "fatal", stdout: "" } : undefined,
+        );
+        expect(await fails(up(deps()))).toContain("tracked by git");
+        expect(host.nodes.has(host.dir)).toBe(false);
+    });
+});
+
+describe("every printed Compose hint", () => {
+    it("carries the project, the env file and both files", async () => {
+        const hints: string[] = [];
+        const grab = (text: string) => {
+            for (const m of text.matchAll(
+                /docker compose -p \S+(?: --env-file \S+| -f \S+)* ?[a-z-]*/g,
+            ))
+                hints.push(m[0]);
+        };
+        host.unhealthy.add("dokku");
+        grab(await fails(up(deps())));
+        host = new FakeHost();
+        await up(deps());
+        host.logs.forEach(grab);
+        host.containers.find((c) => c.labels["com.docker.compose.service"] === "worker")!.state =
+            "exited";
+        await status(deps());
+        host.containers.find((c) => c.labels["com.docker.compose.service"] === "dokku")!.state =
+            "exited";
+        const { down } = await import("./local-deploy");
+        grab(await fails(down(deps())));
+        host.failures.push((args) =>
+            args.includes("build") ? { code: 1, output: "", stdout: "" } : undefined,
+        );
+        host = new FakeHost();
+        host.failures.push((args) =>
+            args.includes("build") ? { code: 1, output: "", stdout: "" } : undefined,
+        );
+        grab(await fails(up(deps())));
+        expect(hints.length).toBeGreaterThanOrEqual(4);
+        for (const hint of hints) {
+            expect(hint, hint).toMatch(
+                /-p launchpad-local-[0-9a-f]{8} --env-file \S+compose\.env -f \S+docker-compose\.yaml -f \S+override\.json/,
+            );
+        }
+    });
+});
+
 describe("status", () => {
+    it("reports unknown, not running or exited, when the state cannot be read", async () => {
+        await up(deps());
+        host.logs.length = 0;
+        host.failures.push((args) =>
+            args.includes("inspect") &&
+            args.includes("{{.State.Status}} {{if .State.Health}}{{.State.Health.Status}}{{end}}")
+                ? { code: 1, output: "", stdout: "" }
+                : undefined,
+        );
+        await status(deps());
+        expect(
+            host.logs.filter((l) =>
+                /^\s+(postgres|dokku|controller|worker|router)\s+unknown$/.test(l),
+            ),
+        ).toHaveLength(5);
+        host.failures.length = 0;
+        host.failures.push((args) =>
+            args.includes("ps") && args.includes("--format")
+                ? { code: 1, output: "", stdout: "" }
+                : undefined,
+        );
+        host.logs.length = 0;
+        await status(deps());
+        expect(host.logs.join("\n")).not.toMatch(/exited|running/);
+    });
+
+    it("still reports observed running and exited", async () => {
+        await up(deps());
+        host.containers.find((c) => c.labels["com.docker.compose.service"] === "worker")!.state =
+            "exited";
+        host.logs.length = 0;
+        await status(deps());
+        expect(host.logs.join("\n")).toMatch(/worker\s+exited/);
+        expect(host.logs.join("\n")).toMatch(/postgres\s+running healthy/);
+    });
+
     it("shows health and ports and refreshes the inventory", async () => {
         await up(deps());
         host.deploySite(project, {
