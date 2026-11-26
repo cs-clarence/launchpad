@@ -1,3 +1,5 @@
+import { messageForProblem } from "./problem";
+
 // Same-origin JSON calls to the Launchpad API; the browser sends the session
 // cookie and an Origin header that the server checks.
 export async function apiRequest(
@@ -24,8 +26,11 @@ export async function apiRequest(
     if (response.ok) {
         return { ok: true };
     }
-    const problem = (await response.json().catch(() => null)) as { title?: string } | null;
-    return { ok: false, message: problem?.title ?? "The request failed." };
+    const problem = (await response.json().catch(() => null)) as {
+        code?: string;
+        title?: string;
+    } | null;
+    return { ok: false, message: messageForProblem(problem) };
 }
 
 export type ApiResult<T> =
@@ -79,10 +84,9 @@ export async function apiCall<T>(
             };
         }
     }
-    const problem = (await response.json().catch(() => null)) as { title?: string } | null;
-    return {
-        ok: false,
-        status: response.status,
-        message: problem?.title ?? "The request failed.",
-    };
+    const problem = (await response.json().catch(() => null)) as {
+        code?: string;
+        title?: string;
+    } | null;
+    return { ok: false, status: response.status, message: messageForProblem(problem) };
 }

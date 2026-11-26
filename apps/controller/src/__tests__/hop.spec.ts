@@ -1441,6 +1441,14 @@ describe("a controller whose database changes underneath it", () => {
             expect(health.status).toBe(503);
             expect(errorSchema.parse(await health.json()).code).toBe("schema-mismatch");
 
+            // The dashboard shows a clear state with a 503, not a raw error.
+            const page = await fetch(`${instance.base}/login`);
+            expect(page.status).toBe(503);
+            const html = await page.text();
+            expect(html).toContain("Launchpad&#x27;s database needs attention");
+            expect(html).not.toContain("migration(s) pending");
+            expect(html).not.toContain("kysely");
+
             await live.migrate();
             await until(
                 async () => (await fetch(`${instance!.base}/api/ready`)).status === 200,
@@ -1485,6 +1493,47 @@ describe("a controller whose database changes underneath it", () => {
             const me = await fetch(`${instance.base}/api/v1/me`);
             expect(me.status).toBe(503);
             expect(errorSchema.parse(await me.json()).code).toBe("database-unavailable");
+            // The dashboard shows a clear, retryable state with a 503, and no raw error text.
+            const page = await fetch(`${instance.base}/login`);
+            expect(page.status).toBe(503);
+            expect(page.headers.get("retry-after")).toBe("5");
+            const html = await page.text();
+            expect(html).toContain("can&#x27;t reach its database right now");
+            expect(html).toContain("Retry");
+            expect(html).not.toContain("Failed to connect");
+            expect(html).not.toContain(String(proxy.port));
+            // So does a server function call: the classified problem, with the same status.
+            const outputs = path.resolve(import.meta.dirname, "../../.output/public/assets");
+            const ids = new Set<string>();
+            for (const file of await fs.readdir(outputs)) {
+                if (!file.endsWith(".js")) continue;
+                const code = await fs.readFile(path.join(outputs, file), "utf8");
+                for (const match of code.matchAll(/[0-9a-f]{64}/g)) ids.add(match[0]);
+            }
+            const answers = await Promise.all(
+                [...ids].map((id) =>
+                    fetch(`${instance!.base}/_serverFn/${id}`, {
+                        headers: {
+                            "x-tsr-serverFn": "true",
+                            accept: "application/json",
+                            origin: instance!.base,
+                            "sec-fetch-site": "same-origin",
+                        },
+                    }).then(async (response) => ({
+                        status: response.status,
+                        body: await response.text(),
+                    })),
+                ),
+            );
+            const classified = answers.filter((answer) =>
+                answer.body.includes("launchpad:database-unavailable"),
+            );
+            expect(classified.length).toBeGreaterThan(0);
+            for (const answer of classified) expect(answer.status).toBe(503);
+            for (const answer of answers) {
+                expect(answer.body).not.toContain("Failed to connect");
+                expect(answer.body).not.toContain(String(proxy.port));
+            }
             // Liveness never depends on the database.
             const started = Date.now();
             expect((await fetch(`${instance.base}/api/health`)).status).toBe(200);

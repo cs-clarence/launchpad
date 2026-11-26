@@ -1,4 +1,6 @@
 import { classifyDatabaseError } from "@launchpad-kit/database";
+import { ServiceError } from "@launchpad-kit/services";
+import { PROBLEM_MESSAGES } from "../lib/problem";
 import { GateRejectedError, SchemaCheckTimeoutError, type GateFailure } from "./schema-gate";
 
 // A database or data-directory problem as the API and the dashboard describe it. Never carries
@@ -64,4 +66,34 @@ export function problemResponse(found: Problem): Response {
         status: found.status,
         headers: problemHeaders(found),
     });
+}
+
+// Runs a server function's body. A database or data-directory problem becomes an error whose
+// message is a fixed code (the only thing that crosses to the browser, see lib/problem.ts), and
+// the response carries 503 with Retry-After where the framework lets it; a missing or forbidden
+// organization becomes the not-found code; anything else is rethrown unchanged.
+export async function withDatabaseProblems<T>(run: () => Promise<T>): Promise<T> {
+    try {
+        return await run();
+    } catch (error) {
+        const problem = databaseProblem(error);
+        if (problem) {
+            console.error("Database problem", error instanceof Error ? error.message : error);
+            try {
+                const { setResponseHeader, setResponseStatus } =
+                    await import("@tanstack/react-start/server");
+                setResponseStatus(problem.status);
+                if (problem.retryAfter !== undefined) {
+                    setResponseHeader("retry-after", String(problem.retryAfter));
+                }
+            } catch {
+                // No request context (a unit test): the error below is what matters.
+            }
+            throw new Error(PROBLEM_MESSAGES[problem.code]);
+        }
+        if (error instanceof ServiceError && ["not-found", "forbidden"].includes(error.code)) {
+            throw new Error(PROBLEM_MESSAGES["not-found"]);
+        }
+        throw error;
+    }
 }
