@@ -33,6 +33,9 @@ export const KEY_DAYS = 90;
 const KEY_NAME = "local-quickstart";
 // What the guide's walkthrough needs: whoami, reading and creating projects, reading apps.
 export const KEY_SCOPES = ["organization:read", "project:read", "project:create", "app:read"];
+// What deploying the example needs on top: artifact upload, app and deployment creation, and
+// deleting a deployment (docs/local-deploy.md).
+export const DEPLOY_KEY_SCOPES = [...KEY_SCOPES, "app:deploy", "app:delete"];
 const ADMIN_PROJECT = "@launchpad-kit/controller";
 const FILE_SAFE = /^[A-Za-z0-9_@.+/~-]+$/;
 const SLUG = /^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$/;
@@ -217,9 +220,32 @@ export function checkOrigin(value: string): string {
 // ---- operator commands -------------------------------------------------------------------
 
 export type RunResult = { code: number; output: string };
-export type Run = (args: string[]) => Promise<RunResult>;
+// `input` is the child's stdin; when absent the child gets none.
+export type Run = (args: string[], input?: string) => Promise<RunResult>;
 
-export function adminArgs(command: string, options: string[]): string[] {
+// Default: the operator commands run through Omni against the controller's own `.env.local`.
+// Compose: they run in the project's `admin` service, and the password goes to stdin.
+export type AdminMode =
+    | { kind: "omni" }
+    | { kind: "compose"; prefix: string[]; project: string; stateDir: string };
+
+const OMNI: AdminMode = { kind: "omni" };
+
+export function adminArgs(command: string, options: string[], mode: AdminMode = OMNI): string[] {
+    if (mode.kind === "compose") {
+        return [
+            ...mode.prefix,
+            "run",
+            "--rm",
+            "--no-deps",
+            "--pull",
+            "never",
+            "-T",
+            "admin",
+            command,
+            ...options,
+        ];
+    }
     return [
         "omni",
         "-i",
@@ -233,7 +259,10 @@ export function adminArgs(command: string, options: string[]): string[] {
     ];
 }
 
-function adminHint(command: string): string {
+function adminHint(command: string, mode: AdminMode = OMNI): string {
+    if (mode.kind === "compose") {
+        return `docker compose -p ${mode.project} logs --tail 50 (and ${mode.stateDir}/compose.env)`;
+    }
     return `omni -i run admin -p ${ADMIN_PROJECT} -a command=${command}`;
 }
 
@@ -241,14 +270,25 @@ export type AdminOutcome = "done" | "exists";
 
 // The child's output is never echoed: it is only matched, so a message from the database driver
 // cannot carry a connection string into this script's output.
-export function classifyAdmin(command: string, result: RunResult): AdminOutcome {
+export function classifyAdmin(
+    command: string,
+    result: RunResult,
+    mode: AdminMode = OMNI,
+): AdminOutcome {
     if (result.code === 0) return "done";
     const text = result.output;
+    const compose = mode.kind === "compose";
+    // Where the settings live differs by mode; so do the hints.
+    const where = compose
+        ? `${mode.stateDir}/compose.env (see \`omni -i run local:deploy -a options=status\`)`
+        : "apps/controller/.env.local";
     if (command !== "migrate" && /already exists/i.test(text)) return "exists";
     if (/DATABASE_URL is required/.test(text)) {
         throw new SeedError(
-            "DATABASE_URL is not set. Copy apps/controller/.env.local.example to " +
-                "apps/controller/.env.local and fill it in.",
+            compose
+                ? `DATABASE_URL is not set in the admin service. Check ${where}.`
+                : "DATABASE_URL is not set. Copy apps/controller/.env.local.example to " +
+                      "apps/controller/.env.local and fill it in.",
         );
     }
     if (
@@ -257,14 +297,17 @@ export function classifyAdmin(command: string, result: RunResult): AdminOutcome 
         )
     ) {
         throw new SeedError(
-            `${command} could not use the database. Check DATABASE_URL in apps/controller/.env.local ` +
-                "and that PostgreSQL is running.",
+            compose
+                ? `${command} could not use the database. Check that the project's postgres service is ` +
+                      `healthy: ${adminHint(command, mode)}.`
+                : `${command} could not use the database. Check DATABASE_URL in apps/controller/.env.local ` +
+                      "and that PostgreSQL is running.",
         );
     }
     if (/Invalid authentication configuration/.test(text)) {
         throw new SeedError(
             `${command} stopped on the LAUNCHPAD_* settings. Check LAUNCHPAD_AUTH_SECRET (32 or ` +
-                "more characters) and LAUNCHPAD_BASE_URL in apps/controller/.env.local.",
+                `more characters) and LAUNCHPAD_BASE_URL in ${where}.`,
         );
     }
     if (/password must be/i.test(text)) {
@@ -273,15 +316,17 @@ export function classifyAdmin(command: string, result: RunResult): AdminOutcome 
         );
     }
     throw new SeedError(
-        `${command} failed (exit ${result.code}). Run it directly to see why: ${adminHint(command)}`,
+        `${command} failed (exit ${result.code}). ` +
+            (compose ? "See " : "Run it directly to see why: ") +
+            adminHint(command, mode),
     );
 }
 
-export async function spawnRun(args: string[]): Promise<RunResult> {
+export async function spawnRun(args: string[], input?: string): Promise<RunResult> {
     let proc: ReturnType<typeof Bun.spawn>;
     try {
         proc = Bun.spawn(args, {
-            stdin: "ignore",
+            stdin: input === undefined ? "ignore" : new Blob([input]),
             stdout: "pipe",
             stderr: "pipe",
             env: process.env,
@@ -614,6 +659,8 @@ export async function issueKey(
     api: Api,
     organizationId: string,
     owner: { email: string; password: string },
+    scopes: readonly string[] = KEY_SCOPES,
+    keyName: string = KEY_NAME,
 ): Promise<string> {
     const cookie = await signIn(api, { role: "owner", ...owner });
     const issued = await call(
@@ -622,7 +669,7 @@ export async function issueKey(
         "POST",
         `/organizations/${encodeURIComponent(organizationId)}/api-keys`,
         "Issuing the API key",
-        { name: KEY_NAME, scopes: [...KEY_SCOPES], expiresInDays: KEY_DAYS },
+        { name: keyName, scopes: [...scopes], expiresInDays: KEY_DAYS },
     );
     const secret = (issued as { secret?: unknown } | null)?.secret;
     if (typeof secret !== "string" || secret.length === 0) {
@@ -640,6 +687,10 @@ export interface Deps {
     log: (line: string) => void;
     sleep?: (ms: number) => Promise<void>;
     now?: () => number;
+    // Where the operator commands run (default Omni) and what the key may do (default four scopes).
+    admin?: AdminMode;
+    scopes?: readonly string[];
+    keyName?: string;
 }
 
 export interface Summary {
@@ -664,11 +715,19 @@ async function ensureAccount(
         password = generatePassword();
         await createPasswordFile(file, password);
     }
+    const mode = deps.admin ?? OMNI;
     try {
-        const outcome = classifyAdmin(
-            kind,
-            await deps.run(adminArgs(kind, ["--email", email, "--password-file", file])),
-        );
+        const outcome =
+            mode.kind === "compose"
+                ? classifyAdmin(
+                      kind,
+                      await deps.run(adminArgs(kind, ["--email", email], mode), `${password}\n`),
+                      mode,
+                  )
+                : classifyAdmin(
+                      kind,
+                      await deps.run(adminArgs(kind, ["--email", email, "--password-file", file])),
+                  );
         if (outcome === "done") deps.log(`Created the ${role} ${email}.`);
         else deps.log(`The ${role} already exists; reusing it.`);
         if (generated && outcome === "exists") {
@@ -746,7 +805,8 @@ async function seedWith(deps: Deps, options: Options, secrets: string[]): Promis
     await ensureOutDirectory(out);
     for (const file of [operatorFile, ownerFile]) await ensureOutDirectory(path.dirname(file));
     await checkHealth(api, { pending: true });
-    classifyAdmin("migrate", await deps.run(adminArgs("migrate", [])));
+    const mode = deps.admin ?? OMNI;
+    classifyAdmin("migrate", await deps.run(adminArgs("migrate", [], mode)), mode);
     deps.log("Database is migrated.");
     await waitUntilReady(api, {
         sleep: deps.sleep ?? ((ms) => new Promise((done) => setTimeout(done, ms))),
@@ -826,7 +886,13 @@ async function seedWith(deps: Deps, options: Options, secrets: string[]): Promis
         }
         let secret: string;
         try {
-            secret = await issueKey(api, workspace.organizationId, owner);
+            secret = await issueKey(
+                api,
+                workspace.organizationId,
+                owner,
+                deps.scopes,
+                deps.keyName,
+            );
         } catch (error) {
             await unlink(pendingFile).catch(() => undefined);
             throw error;
@@ -837,7 +903,7 @@ async function seedWith(deps: Deps, options: Options, secrets: string[]): Promis
             await writeFile(pendingFile, secret, { mode: 0o600 });
         } catch {
             throw new SeedError(
-                `A key named "${KEY_NAME}" was issued but could not be stored in ${pendingFile}. ` +
+                `A key named "${deps.keyName ?? KEY_NAME}" was issued but could not be stored in ${pendingFile}. ` +
                     "Revoke it in the dashboard (organization page, API keys) and run again.",
             );
         }

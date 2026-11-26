@@ -19,6 +19,9 @@ import {
     ensureOutDirectory,
     classifyAdmin,
     DEFAULT_CONTROLLER,
+    DEPLOY_KEY_SCOPES,
+    spawnRun,
+    type AdminMode,
     HELP,
     main,
     parseArgs,
@@ -758,5 +761,138 @@ describe("review fixes", () => {
         expect(await failure(() => seed(deps(), parseArgs(["--out", "~bob/x"])))).toMatch(
             /not ~user/,
         );
+    });
+});
+
+describe("compose mode", () => {
+    const mode: AdminMode = {
+        kind: "compose",
+        prefix: ["docker", "compose", "-p", "launchpad-local-abcd1234"],
+        project: "launchpad-local-abcd1234",
+        stateDir: "/repo/.local-deploy",
+    };
+    const inputs: (string | undefined)[] = [];
+    const composeRun = async (args: string[], input?: string) => {
+        inputs.push(input);
+        const command = args[args.indexOf("admin") + 1]!;
+        const at = args.indexOf("--email");
+        const file = path.join(dir, `stdin-${inputs.length}`);
+        writeFileSync(file, (input ?? "").replace(/\n$/, ""), { mode: 0o600 });
+        const extra = at >= 0 ? [`options=--email ${args[at + 1]} --password-file ${file}`] : [];
+        const result = await fake.run([
+            "omni",
+            "-a",
+            `command=${command}`,
+            ...extra.flatMap((e) => ["-a", e]),
+        ]);
+        // Record what this script ran, not the adapter's translation.
+        fake.adminCalls.pop();
+        fake.transcript.pop();
+        fake.adminCalls.push(args);
+        fake.transcript.push(args.join(" "));
+        return result;
+    };
+    const composeDeps = (): Deps => ({ ...deps(), run: composeRun, admin: mode });
+    beforeEach(() => {
+        inputs.length = 0;
+    });
+
+    it("runs the admin service with the password on stdin only", async () => {
+        await seed(composeDeps(), options());
+        const calls = fake.adminCalls.filter((c) => c.includes("create-user"));
+        expect(calls[0]).toEqual([
+            ...mode.prefix,
+            "run",
+            "--rm",
+            "--no-deps",
+            "--pull",
+            "never",
+            "-T",
+            "admin",
+            "create-user",
+            "--email",
+            "owner@launchpad.local",
+        ]);
+        expect(everything()).not.toContain("--password-file");
+        const passwords = secretsOnDisk();
+        expect(passwords).toHaveLength(2);
+        expect(inputs.filter((i) => i !== undefined)).toEqual(passwords.map((p) => `${p}\n`));
+        for (const password of passwords) expect(everything()).not.toContain(password);
+    });
+
+    it("migrates without stdin", async () => {
+        await seed(composeDeps(), options());
+        expect(inputs[0]).toBeUndefined();
+        expect(fake.adminCalls[0]!.slice(-2)).toEqual(["admin", "migrate"]);
+    });
+
+    it("keeps default mode on --password-file through Omni with no stdin", async () => {
+        const seen: (string | undefined)[] = [];
+        await seed(
+            {
+                ...deps(),
+                run: async (args, input) => {
+                    seen.push(input);
+                    return fake.run(args);
+                },
+            },
+            options(),
+        );
+        expect(seen.every((i) => i === undefined)).toBe(true);
+        expect(fake.adminCalls[1]!.join(" ")).toContain("--password-file");
+        expect(fake.adminCalls[1]![0]).toBe("omni");
+    });
+
+    it("never sends compose-mode users to apps/controller/.env.local", () => {
+        const failed = (output: string) => ({ code: 1, output });
+        for (const output of [
+            "DATABASE_URL is required.",
+            "ECONNREFUSED",
+            "Invalid authentication configuration",
+            "password must be 12",
+            "unknown failure",
+        ]) {
+            try {
+                classifyAdmin("migrate", failed(output), mode);
+                throw new Error("did not fail");
+            } catch (error) {
+                const message = (error as Error).message;
+                expect(message, output).not.toContain(".env.local");
+                expect(message, output).not.toBe("did not fail");
+            }
+        }
+        expect(() => classifyAdmin("migrate", failed("boom"), mode)).toThrow(
+            /docker compose -p launchpad-local-abcd1234 logs/,
+        );
+        expect(() => classifyAdmin("migrate", failed("DATABASE_URL is required."), mode)).toThrow(
+            /compose\.env/,
+        );
+        expect(() => classifyAdmin("migrate", failed("DATABASE_URL is required."))).toThrow(
+            /apps\/controller\/\.env\.local/,
+        );
+    });
+
+    it("asks for the four scopes by default and six in deploy mode", async () => {
+        await seed(deps(), options());
+        expect(fake.keyBodies[0]!.scopes).toEqual(KEY_SCOPES);
+        expect(KEY_SCOPES).toHaveLength(4);
+        expect(DEPLOY_KEY_SCOPES).toEqual([...KEY_SCOPES, "app:deploy", "app:delete"]);
+        expect(DEPLOY_KEY_SCOPES).toHaveLength(6);
+    });
+
+    it("sends the deploy scopes and key name when given", async () => {
+        await seed(
+            { ...composeDeps(), scopes: DEPLOY_KEY_SCOPES, keyName: "local-deploy" },
+            options(),
+        );
+        expect(fake.keyBodies[0]!.scopes).toEqual(DEPLOY_KEY_SCOPES);
+    });
+
+    it("pipes stdin only when given", async () => {
+        const echo = async (input?: string) =>
+            (await spawnRun(["sh", "-c", "cat; echo end"], input)).output;
+        expect(await echo("secret-in\n")).toContain("secret-in");
+        expect(await echo()).not.toContain("secret-in");
+        expect((await echo()).trim()).toBe("end");
     });
 });
