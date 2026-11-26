@@ -219,7 +219,8 @@ export function checkOrigin(value: string): string {
 
 // ---- operator commands -------------------------------------------------------------------
 
-export type RunResult = { code: number; output: string };
+// `output` is stdout and stderr together, for matching; `stdout` alone, when known, is for data.
+export type RunResult = { code: number; output: string; stdout?: string };
 // `input` is the child's stdin; when absent the child gets none.
 export type Run = (args: string[], input?: string) => Promise<RunResult>;
 

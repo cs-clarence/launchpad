@@ -10,10 +10,33 @@
 // The Docker socket is mounted into the worker and Dokku by docker-compose.yaml, which is
 // root-equivalent on this machine. See docs/local-deploy.md.
 import { createHash, randomBytes, randomUUID } from "node:crypto";
+import {
+    chmod,
+    lstat,
+    mkdir,
+    readdir,
+    readFile,
+    realpath,
+    rename,
+    rmdir,
+    unlink,
+    writeFile,
+} from "node:fs/promises";
 import { createServer } from "node:net";
 import path from "node:path";
-import { interpolate, loadRaw, requiredVariables } from "./compose-production";
-import type { RunResult } from "./local-seed";
+import { ClientCoreError, configDirectory, createContext } from "../packages/client-core/src/index";
+import { COMPOSE_FILE, interpolate, loadRaw, requiredVariables } from "./compose-production";
+import {
+    DEPLOY_KEY_SCOPES,
+    parseArgs as parseSeedArgs,
+    seed,
+    SeedError,
+    adminArgs,
+    classifyAdmin,
+    type AdminMode,
+    type Run,
+    type RunResult,
+} from "./local-seed";
 
 export class DeployError extends Error {
     constructor(message: string) {
@@ -431,4 +454,906 @@ export async function probePort(port: number): Promise<boolean> {
         server.once("error", () => resolve(false));
         server.listen(port, "127.0.0.1", () => server.close(() => resolve(true)));
     });
+}
+
+// ---- seams -------------------------------------------------------------------------------
+
+export interface FsStat {
+    isDirectory: boolean;
+    isSymlink: boolean;
+    isFile: boolean;
+    uid: number;
+    mode: number;
+    size: number;
+}
+
+export interface Fs {
+    stat(file: string): Promise<FsStat | null>;
+    realpath(file: string): Promise<string>;
+    mkdir(dir: string, mode: number): Promise<void>;
+    readdir(dir: string): Promise<string[]>;
+    readFile(file: string): Promise<string | null>;
+    writeFile(file: string, data: string, mode: number, exclusive?: boolean): Promise<void>;
+    rename(from: string, to: string): Promise<void>;
+    unlink(file: string): Promise<void>;
+    rmdir(dir: string): Promise<void>;
+}
+
+const missing = (error: unknown) => (error as NodeJS.ErrnoException).code === "ENOENT";
+
+export const realFs: Fs = {
+    async stat(file) {
+        try {
+            const s = await lstat(file);
+            return {
+                isDirectory: s.isDirectory(),
+                isSymlink: s.isSymbolicLink(),
+                isFile: s.isFile(),
+                uid: s.uid,
+                mode: s.mode & 0o7777,
+                size: s.size,
+            };
+        } catch (error) {
+            if (missing(error)) return null;
+            throw error;
+        }
+    },
+    realpath: (file) => realpath(file),
+    async mkdir(dir, mode) {
+        await mkdir(dir, { mode });
+        await chmod(dir, mode);
+    },
+    readdir: (dir) => readdir(dir),
+    async readFile(file) {
+        try {
+            return await readFile(file, "utf8");
+        } catch (error) {
+            if (missing(error)) return null;
+            throw error;
+        }
+    },
+    writeFile: (file, data, mode, exclusive = false) =>
+        writeFile(file, data, { mode, flag: exclusive ? "wx" : "w" }),
+    rename: (from, to) => rename(from, to),
+    async unlink(file) {
+        try {
+            await unlink(file);
+        } catch (error) {
+            if (!missing(error)) throw error;
+        }
+    },
+    async rmdir(dir) {
+        try {
+            await rmdir(dir);
+        } catch (error) {
+            if (!missing(error)) throw error;
+        }
+    },
+};
+
+export interface Deps {
+    run: Run;
+    fetch: typeof fetch;
+    fs: Fs;
+    env: Record<string, string | undefined>;
+    log: (line: string) => void;
+    sleep: (ms: number) => Promise<void>;
+    now: () => number;
+    probePort: (port: number) => Promise<boolean>;
+    removeProfile: (controller: string) => Promise<void>;
+    uid: number;
+    repo: string;
+    version: string;
+    signal?: AbortSignal;
+    // The seed, replaceable so a test need not run a controller.
+    seed?: typeof seed;
+}
+
+// Children get a minimal environment on purpose: Compose lets the process environment override
+// the env file, so a stray POSTGRES_PASSWORD in the shell must not leak in. Output is returned
+// to be matched, never printed.
+export async function spawnExec(
+    args: string[],
+    input?: string,
+    timeoutMs = 20 * 60_000,
+): Promise<RunResult> {
+    let proc: ReturnType<typeof Bun.spawn>;
+    try {
+        proc = Bun.spawn(args, {
+            stdin: input === undefined ? "ignore" : new Blob([input]),
+            stdout: "pipe",
+            stderr: "pipe",
+            env: { PATH: process.env.PATH ?? "", HOME: process.env.HOME ?? "" },
+        });
+    } catch {
+        return { code: 127, output: `${args[0]}: not found` };
+    }
+    const deadline = setTimeout(() => proc.kill("SIGKILL"), timeoutMs);
+    try {
+        const [out, err, code] = await Promise.all([
+            new Response(proc.stdout as ReadableStream).text(),
+            new Response(proc.stderr as ReadableStream).text(),
+            proc.exited,
+        ]);
+        return { code, output: `${out}\n${err}`, stdout: out };
+    } finally {
+        clearTimeout(deadline);
+    }
+}
+
+// ---- Docker commands ---------------------------------------------------------------------
+
+export const LABEL_PROJECT = "com.docker.compose.project";
+export const LABEL_SERVICE = "com.docker.compose.service";
+export const LABEL_ONEOFF = "com.docker.compose.oneoff";
+export const LABEL_APP = "com.dokku.app-name";
+// Templates are fixed strings so every Docker query has one shape.
+export const PS_FORMAT = `{{.ID}} {{.State}} {{.Label "${LABEL_SERVICE}"}}`;
+export const LABEL_TEMPLATE = (key: string) => `{{index .Config.Labels "${key}"}}`;
+export const NETWORK_LABEL_TEMPLATE = `{{index .Labels "${LABEL_PROJECT}"}}`;
+export const NETWORK_MEMBERS_TEMPLATE = '{{range .Containers}}{{.Name}}{{"\\n"}}{{end}}';
+export const IMAGE_FORMAT = "{{.Repository}} {{.Tag}} {{.ID}}";
+export const STATE_FORMAT = "{{.State.Status}} {{if .State.Health}}{{.State.Health.Status}}{{end}}";
+const SERVICES = ["postgres", "dokku", "controller", "worker", "router"] as const;
+
+interface Ctx {
+    d: Deps;
+    layout: Layout;
+    project: string;
+}
+
+const docker = (c: Ctx, args: string[], input?: string) =>
+    c.d.run(["docker", "--host", DOCKER_HOST, ...args], input);
+
+export function composePrefix(layout: Layout, project: string): string[] {
+    return [
+        "docker",
+        "--host",
+        DOCKER_HOST,
+        "compose",
+        "-p",
+        project,
+        "--env-file",
+        layout.file("compose.env"),
+        "-f",
+        COMPOSE_FILE,
+        "-f",
+        layout.file("override.json"),
+        "--profile",
+        "admin",
+    ];
+}
+
+const compose = (c: Ctx, args: string[], input?: string) =>
+    c.d.run([...composePrefix(c.layout, c.project), ...args], input);
+
+function must(result: RunResult, what: string, hint = ""): RunResult {
+    if (result.code !== 0) {
+        throw new DeployError(`${what} failed (exit ${result.code}).${hint ? ` ${hint}` : ""}`);
+    }
+    return result;
+}
+
+const outOf = (r: RunResult) => r.stdout ?? r.output;
+
+const lines = (text: string) =>
+    text
+        .split("\n")
+        .map((l) => l.trim())
+        .filter(Boolean);
+
+export interface Labeled {
+    id: string;
+    state: string;
+    service: string;
+}
+
+async function labeledContainers(c: Ctx, extra: string[] = []): Promise<Labeled[]> {
+    const result = must(
+        await docker(c, [
+            "ps",
+            "-a",
+            "--no-trunc",
+            "--filter",
+            `label=${LABEL_PROJECT}=${c.project}`,
+            ...extra,
+            "--format",
+            PS_FORMAT,
+        ]),
+        "Listing the project's containers",
+    );
+    return lines(outOf(result)).map((line) => {
+        const [id = "", state = "", service = ""] = line.split(" ");
+        if (!/^[0-9a-f]{64}$/.test(id)) throw new DeployError("Unexpected container listing.");
+        return { id, state, service };
+    });
+}
+
+async function inspectLabel(c: Ctx, id: string, key: string): Promise<string> {
+    const result = await docker(c, ["inspect", "-f", LABEL_TEMPLATE(key), id]);
+    return result.code === 0 ? outOf(result).trim() : "";
+}
+
+// A container is touched only after its Compose project label is confirmed by inspect.
+async function confirmed(c: Ctx, containers: Labeled[]): Promise<Labeled[]> {
+    for (const container of containers) {
+        if ((await inspectLabel(c, container.id, LABEL_PROJECT)) !== c.project) {
+            throw new DeployError(
+                `Container ${container.id.slice(0, 12)} does not carry the project label ${c.project}; refusing to touch it.`,
+            );
+        }
+    }
+    return containers;
+}
+
+async function labeledNames(c: Ctx, kind: "network" | "volume"): Promise<string[]> {
+    const result = must(
+        await docker(c, [
+            kind,
+            "ls",
+            "--filter",
+            `label=${LABEL_PROJECT}=${c.project}`,
+            "--format",
+            "{{.Name}}",
+        ]),
+        `Listing the project's ${kind}s`,
+    );
+    return lines(outOf(result));
+}
+
+async function projectResources(c: Ctx) {
+    return {
+        containers: await labeledContainers(c),
+        networks: await labeledNames(c, "network"),
+        volumes: await labeledNames(c, "volume"),
+    };
+}
+
+async function networkOwner(c: Ctx, name: string): Promise<"absent" | "ours" | "foreign"> {
+    const result = await docker(c, ["network", "inspect", "-f", NETWORK_LABEL_TEMPLATE, name]);
+    if (result.code !== 0) return "absent";
+    return outOf(result).trim() === c.project ? "ours" : "foreign";
+}
+
+async function imageExists(c: Ctx, name: string): Promise<boolean> {
+    return (await docker(c, ["image", "inspect", "-f", "{{.Id}}", name])).code === 0;
+}
+
+const IMAGE_ROW = /^([a-z0-9][a-z0-9._/-]*) ([A-Za-z0-9_.-]+|<none>) ([0-9a-f]{12,64})$/;
+
+// Every tag of one exact repository (never a prefix): `docker image ls --filter reference=`
+// lists them and each row is checked against the repository before use.
+async function repositoryImages(c: Ctx, repository: string, tag?: string) {
+    const result = must(
+        await docker(c, [
+            "image",
+            "ls",
+            "--filter",
+            `reference=${tag ? `${repository}:${tag}` : repository}`,
+            "--format",
+            IMAGE_FORMAT,
+        ]),
+        "Listing images",
+    );
+    return lines(outOf(result)).map((line) => {
+        const m = IMAGE_ROW.exec(line);
+        if (!m || m[1] !== repository || (tag !== undefined && m[2] !== tag)) {
+            throw new DeployError(`Unexpected image listing for ${repository}.`);
+        }
+        return { ref: m[2] === "<none>" ? m[3]! : `${m[1]}:${m[2]}`, id: m[3]! };
+    });
+}
+
+export function checkSiteName(site: Site): void {
+    if (!NAME.app.test(site.app) || (site.tag !== null && !NAME.tag.test(site.tag))) {
+        throw new DeployError("Refusing a deployment name that does not match the fixed patterns.");
+    }
+}
+
+async function removeImages(c: Ctx, images: { ref: string }[]): Promise<void> {
+    for (const image of images)
+        must(await docker(c, ["image", "rm", image.ref]), "Removing an image");
+}
+
+async function siteImages(c: Ctx, site: Site) {
+    const images = await repositoryImages(c, `dokku/${site.app}`);
+    if (site.tag) {
+        const [repository, tag] = site.tag.split(":") as [string, string];
+        images.push(...(await repositoryImages(c, repository, tag)));
+    }
+    return images;
+}
+
+async function siteContainers(c: Ctx, site: Site): Promise<string[]> {
+    const result = must(
+        await docker(c, ["ps", "-aq", "--no-trunc", "--filter", `label=${LABEL_APP}=${site.app}`]),
+        "Listing a site's containers",
+    );
+    const ids = lines(outOf(result));
+    for (const id of ids) {
+        if (!/^[0-9a-f]{64}$/.test(id)) throw new DeployError("Unexpected container listing.");
+        if ((await inspectLabel(c, id, LABEL_APP)) !== site.app) {
+            throw new DeployError(`A container for ${site.app} does not carry its app label.`);
+        }
+    }
+    return ids;
+}
+
+function aborted(d: Deps) {
+    if (d.signal?.aborted) {
+        throw new DeployError(
+            "Interrupted. Nothing was rolled back: run `up` again to continue, or `down` to remove it.",
+        );
+    }
+}
+
+async function waitFor(
+    d: Deps,
+    label: string,
+    budgetMs: number,
+    check: () => Promise<boolean>,
+): Promise<void> {
+    const deadline = d.now() + budgetMs;
+    let next = d.now() + 30_000;
+    for (;;) {
+        aborted(d);
+        if (await check()) return;
+        if (d.now() >= deadline) throw new DeployError(`Timed out waiting for ${label}.`);
+        if (d.now() >= next) {
+            d.log(`Still waiting for ${label}...`);
+            next = d.now() + 30_000;
+        }
+        await d.sleep(2000);
+    }
+}
+
+async function serviceHealth(c: Ctx, service: string): Promise<string> {
+    const found = await labeledContainers(c, [
+        "--filter",
+        `label=${LABEL_SERVICE}=${service}`,
+        "--filter",
+        `label=${LABEL_ONEOFF}=False`,
+    ]);
+    if (found.length === 0) return "absent";
+    if (found.length > 1) throw new DeployError(`More than one ${service} container.`);
+    const out = await docker(c, ["inspect", "-f", STATE_FORMAT, found[0]!.id]);
+    const state = outOf(out).trim();
+    if (/^(exited|dead|restarting)\b/.test(state)) {
+        throw new DeployError(
+            `${service} exited or keeps restarting. See: docker compose -p ${c.project} logs --tail 50 ${service}`,
+        );
+    }
+    return state;
+}
+
+async function waitHealthy(c: Ctx, service: string, budgetMs: number) {
+    try {
+        await waitFor(c.d, `${service} to be healthy`, budgetMs, async () => {
+            return (await serviceHealth(c, service)) === "running healthy";
+        });
+    } catch (error) {
+        if (error instanceof DeployError && /Timed out/.test(error.message)) {
+            throw new DeployError(
+                `${error.message} Everything is kept; look at: docker compose -p ${c.project} logs --tail 50 ${service}`,
+            );
+        }
+        throw error;
+    }
+}
+
+// ---- state directory ---------------------------------------------------------------------
+
+async function readState(c: Ctx): Promise<{ kind: "none" | "corrupt" | "ok"; state?: State }> {
+    const text = await c.d.fs.readFile(c.layout.file("state.json"));
+    if (text === null) return { kind: "none" };
+    const state = parseState(text);
+    return state ? { kind: "ok", state } : { kind: "corrupt" };
+}
+
+function checkRecord(c: Ctx, state: State): void {
+    if (
+        state.project !== c.project ||
+        state.repo !== c.layout.repo ||
+        state.version !== TOOL_VERSION
+    ) {
+        throw new DeployError(
+            `${c.layout.file("state.json")} belongs to project ${state.project} (${state.repo}, tool ` +
+                `version ${state.version}), not ${c.project} here. Run down from the checkout that created it` +
+                (state.project !== c.project ? `, or pass --project ${state.project}` : "") +
+                ".",
+        );
+    }
+}
+
+// The one directory every secret and the root helper's mount live in: a real directory we own,
+// mode 700, whose physical path is exactly <repo>/.local-deploy.
+async function checkDirectory(c: Ctx): Promise<FsStat | null> {
+    const stat = await c.d.fs.stat(c.layout.dir);
+    if (stat === null) return null;
+    if (stat.isSymlink || !stat.isDirectory) {
+        throw new DeployError(`${c.layout.dir} must be a real directory, not a link or a file.`);
+    }
+    if (stat.uid !== c.d.uid) throw new DeployError(`${c.layout.dir} is owned by another user.`);
+    if ((stat.mode & 0o777) !== 0o700) {
+        throw new DeployError(`${c.layout.dir} must be mode 700; run chmod 700 on it.`);
+    }
+    if ((await c.d.fs.realpath(c.layout.dir)) !== c.layout.dir) {
+        throw new DeployError(`${c.layout.dir} does not resolve to itself; refusing to use it.`);
+    }
+    return stat;
+}
+
+async function checkDocker(d: Deps): Promise<void> {
+    const ctx = { d } as Ctx;
+    const [version, composeVersion, buildx, info] = [
+        await docker(ctx, ["version", "--format", "{{.Server.Version}}"]),
+        await docker(ctx, ["compose", "version"]),
+        await docker(ctx, ["buildx", "inspect", "default"]),
+        await docker(ctx, ["info"]),
+    ];
+    const problem = summarizeDockerProblems({
+        version,
+        compose: composeVersion,
+        buildx,
+        info,
+        env: d.env,
+    });
+    if (problem) throw new DeployError(problem);
+}
+
+// ---- up ----------------------------------------------------------------------------------
+
+export interface UpOptions {
+    project?: string;
+    portBase?: number;
+}
+
+const PORT_KEYS = {
+    controller: "CONTROLLER_HOST_PORT",
+    http: "PREVIEW_HTTP_HOST_PORT",
+    router: "ROUTER_DATA_HOST_PORT",
+    ssh: "DOKKU_SSH_HOST_PORT",
+    https: "PREVIEW_HTTPS_HOST_PORT",
+} as const;
+
+function portsFromEnv(env: Record<string, string>): Ports {
+    const out = {} as Ports;
+    for (const [name, key] of Object.entries(PORT_KEYS)) {
+        const n = Number(env[key]);
+        if (!Number.isInteger(n) || n < 1024 || n > 65535) {
+            throw new DeployError(`compose.env has no valid ${key}; run down, then up again.`);
+        }
+        out[name as keyof Ports] = n;
+    }
+    return out;
+}
+
+async function freePorts(c: Ctx, ports: Ports, persisted: boolean): Promise<void> {
+    const busy: string[] = [];
+    let published: string | null = null;
+    for (const [name, port] of Object.entries(ports)) {
+        if (await c.d.probePort(port)) continue;
+        if (persisted) {
+            if (published === null) {
+                const result = await docker(c, [
+                    "ps",
+                    "--filter",
+                    `label=${LABEL_PROJECT}=${c.project}`,
+                    "--format",
+                    "{{.Ports}}",
+                ]);
+                published = outOf(result);
+            }
+            if (published.includes(`127.0.0.1:${port}->`)) continue;
+        }
+        busy.push(`${name} port ${port}`);
+    }
+    if (busy.length > 0) {
+        throw new DeployError(
+            `${busy.join(", ")} ${busy.length > 1 ? "are" : "is"} in use on 127.0.0.1. ` +
+                (persisted
+                    ? "Run down, then up again with --port-base <n> to move."
+                    : "Pass --port-base <n> to choose another range (offsets 0, 1, 2, 42 and 263)."),
+        );
+    }
+}
+
+async function conflictsWithoutRecord(c: Ctx): Promise<void> {
+    const found = await projectResources(c);
+    const tags = Object.values(projectImages(c.project));
+    const present: string[] = [];
+    for (const tag of tags) if (await imageExists(c, tag)) present.push(tag);
+    if ((await networkOwner(c, appsNetwork(c.project))) !== "absent") {
+        present.push(appsNetwork(c.project));
+    }
+    const leftovers = [
+        ...found.containers.map((x) => `container ${x.id.slice(0, 12)}`),
+        ...found.networks.map((x) => `network ${x}`),
+        ...found.volumes.map((x) => `volume ${x}`),
+        ...present,
+    ];
+    if (leftovers.length > 0) {
+        throw new DeployError(
+            `Project ${c.project} already has resources (${leftovers.join(", ")}) but this checkout has no ` +
+                "matching .local-deploy/state.json. Run down from the checkout that created them, or pick another " +
+                "--project. Nothing was changed.",
+        );
+    }
+}
+
+async function generateCredentials(c: Ctx): Promise<void> {
+    const { d, layout } = c;
+    const f = layout.file;
+    for (const name of ["dokku"] as const) await d.fs.mkdir(f(name), 0o755);
+    for (const name of ["backups", "tls", "credentials"]) await d.fs.mkdir(f(name), 0o700);
+    const cmds = credentialCommands(layout);
+    const gen = async (args: string[], what: string) => {
+        const r = await d.run(args);
+        if (r.code !== 0) {
+            throw new DeployError(`${what} failed (exit ${r.code}); is ${args[0]} installed?`);
+        }
+    };
+    await d.fs.writeFile(f("credentials/epoch"), "", 0o600, true);
+    await d.fs.writeFile(f("credentials/known_hosts"), "", 0o600, true);
+    await d.fs.writeFile(
+        f("credentials/token"),
+        `${randomBytes(32).toString("hex")}\n`,
+        0o600,
+        true,
+    );
+    await gen(cmds.sshKeygen, "Generating the worker's SSH key");
+    await gen(cmds.caKey, "Generating the throwaway CA");
+    await gen(cmds.serverCsr, "Generating the router key");
+    await d.fs.writeFile(f("tls/extensions"), cmds.extensions, 0o600, true);
+    await gen(cmds.serverCert, "Signing the router certificate");
+    for (const name of ["tls/ca.key", "tls/server.csr", "tls/extensions", "tls/ca.srl"]) {
+        await d.fs.unlink(f(name));
+    }
+}
+
+async function ownedByServiceUser(c: Ctx): Promise<void> {
+    const image = projectImages(c.project).worker;
+    must(
+        await docker(c, [
+            "run",
+            "--rm",
+            "--pull",
+            "never",
+            "--network",
+            "none",
+            "--user",
+            "0",
+            "--mount",
+            `type=bind,src=${c.layout.dir},dst=/state`,
+            "--entrypoint",
+            "chown",
+            image,
+            "10001:10001",
+            ...OWNED_BY_SERVICE.map((name) => `/state/${name}`),
+        ]),
+        "Fixing file ownership for the services",
+    );
+}
+
+async function bootstrapDokkuAndRouter(c: Ctx): Promise<void> {
+    const { d, layout } = c;
+    const f = layout.file;
+    must(
+        await compose(c, [
+            "exec",
+            "-T",
+            "dokku",
+            "dokku",
+            "network:set",
+            "--global",
+            "initial-network",
+            appsNetwork(c.project),
+        ]),
+        "Setting Dokku's initial network",
+    );
+    const key =
+        must(
+            await compose(c, ["exec", "-T", "dokku", "cat", "/etc/ssh/ssh_host_ed25519_key.pub"]),
+            "Reading Dokku's host key",
+        ).stdout?.trim() ?? "";
+    const hostKey = /ssh-ed25519 [A-Za-z0-9+/=]+/.exec(key)?.[0];
+    if (!hostKey) throw new DeployError("Unexpected Dokku host key.");
+    await d.fs.writeFile(f("credentials/known_hosts"), `dokku ${hostKey}\n`, 0o600);
+    const pub = await d.fs.readFile(f("credentials/id_ed25519.pub"));
+    if (!pub) throw new DeployError("The worker's public key is missing.");
+    await compose(c, ["exec", "-T", "dokku", "dokku", "ssh-keys:remove", "launchpad-worker"]);
+    must(
+        await compose(c, ["exec", "-T", "dokku", "dokku", "ssh-keys:add", "launchpad-worker"], pub),
+        "Registering the worker's key with Dokku",
+    );
+    const token = await d.fs.readFile(f("credentials/token"));
+    if (!token) throw new DeployError("The router token is missing.");
+    const init = must(
+        await compose(
+            c,
+            [
+                "run",
+                "--rm",
+                "--no-deps",
+                "--pull",
+                "never",
+                "-T",
+                "router",
+                "init",
+                "--token-stdin",
+            ],
+            token,
+        ),
+        "Initialising the router",
+        "If it says state exists, run down and up again.",
+    );
+    const epoch = /[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}/.exec(outOf(init))?.[0];
+    if (!epoch) throw new DeployError("The router did not print an epoch.");
+    await d.fs.writeFile(f("credentials/epoch"), `${epoch}\n`, 0o600);
+    await ownedByServiceUser(c);
+}
+
+export function adminMode(layout: Layout, project: string): AdminMode {
+    return {
+        kind: "compose",
+        prefix: composePrefix(layout, project),
+        project,
+        stateDir: layout.dir,
+    };
+}
+
+export interface Summary {
+    project: string;
+    ports: Ports;
+    profile: string;
+    organization: string;
+    projectSlug: string;
+}
+
+export async function up(d: Deps, options: UpOptions = {}): Promise<Summary> {
+    const layout = layoutFor(d.repo);
+    const project = checkProject(options.project ?? projectNameFor(d.repo));
+    if (options.portBase !== undefined) checkPortBase(options.portBase);
+    const c: Ctx = { d, layout, project };
+    await checkDocker(d);
+    const ignored = await d.run([
+        "git",
+        "-C",
+        layout.repo,
+        "check-ignore",
+        "-q",
+        `${STATE_DIR}/state.json`,
+    ]);
+    if (ignored.code !== 0) {
+        throw new DeployError(
+            `${STATE_DIR}/ is not ignored by git; add it to .gitignore before secrets are written there.`,
+        );
+    }
+
+    const dirStat = await checkDirectory(c);
+    const record = await readState(c);
+    if (record.kind === "corrupt") {
+        throw new DeployError(`${layout.file("state.json")} is unreadable; run down first.`);
+    }
+    if (record.kind === "ok") checkRecord(c, record.state!);
+    else if (dirStat && (await d.fs.readdir(layout.dir)).length > 0) {
+        throw new DeployError(
+            `${layout.dir} exists without a state.json; refusing to reuse it. Run down first.`,
+        );
+    }
+    if (record.kind !== "ok") await conflictsWithoutRecord(c);
+
+    // The record comes first: an interrupted up always leaves what down needs.
+    if (!dirStat) await d.fs.mkdir(layout.dir, 0o700);
+    if (record.kind !== "ok") {
+        await d.fs.writeFile(
+            layout.file("state.json"),
+            JSON.stringify({ project, repo: layout.repo, version: TOOL_VERSION }),
+            0o600,
+        );
+    }
+
+    const envText = await d.fs.readFile(layout.file("compose.env"));
+    let ports: Ports;
+    if (envText === null) {
+        ports = portsFor(options.portBase ?? DEFAULT_PORT_BASE);
+        await freePorts(c, ports, false);
+        const gid = parseSocketGid(
+            outOf(
+                must(await d.run(["stat", "-c", "%g", DOCKER_SOCKET]), "Reading the socket group"),
+            ),
+        );
+        const env = composeEnv(layout, project, ports, generateSecrets(), gid, d.version);
+        const missing = missingVariables(env);
+        if (missing.length > 0) throw new DeployError(`Missing settings: ${missing.join(", ")}.`);
+        await d.fs.writeFile(layout.file("compose.env"), renderEnv(env), 0o600, true);
+        await d.fs.writeFile(
+            layout.file("override.json"),
+            JSON.stringify(overrideFor(project)),
+            0o600,
+            true,
+        );
+    } else {
+        ports = portsFromEnv(parseEnv(envText));
+        if (options.portBase !== undefined) {
+            const asked = portsFor(options.portBase);
+            if (JSON.stringify(asked) !== JSON.stringify(ports)) {
+                throw new DeployError(
+                    "Ports are fixed by the first up. Run down, then up --port-base again to move.",
+                );
+            }
+        }
+        await freePorts(c, ports, true);
+    }
+    if ((await d.fs.stat(layout.file("override.json"))) === null) {
+        throw new DeployError("override.json is missing; run down, then up again.");
+    }
+    if ((await d.fs.stat(layout.file("credentials/id_ed25519"))) === null) {
+        await generateCredentials(c);
+    }
+
+    d.log("Building the five images (the slow part on a first run)...");
+    must(
+        await d.run(
+            [...composePrefix(layout, project), "build", "--builder", "default"],
+            undefined,
+        ),
+        "Building the images",
+        `See: docker compose -p ${project} build`,
+    );
+    d.log("Starting PostgreSQL and Dokku (Dokku's first start takes minutes)...");
+    must(
+        await compose(c, ["up", "-d", "--no-build", "postgres", "dokku"]),
+        "Starting PostgreSQL and Dokku",
+    );
+    await waitHealthy(c, "postgres", 7 * 60_000);
+    await waitHealthy(c, "dokku", 11 * 60_000);
+
+    const epoch = await d.fs.stat(layout.file("credentials/epoch"));
+    if (!epoch || epoch.size === 0) {
+        d.log("Pinning Dokku's host key, registering the worker's key, initialising the router...");
+        await bootstrapDokkuAndRouter(c);
+    }
+    const mode = adminMode(layout, project);
+    classifyAdmin("migrate", await d.run(adminArgs("migrate", [], mode)), mode);
+    d.log("Database is migrated.");
+
+    d.log("Starting the controller, worker and router...");
+    must(await compose(c, ["up", "-d", "--no-build"]), "Starting the services");
+    for (const service of ["controller", "router", "worker"])
+        await waitHealthy(c, service, 7 * 60_000);
+
+    const config = path.resolve(configDirectory(d.env));
+    const options2 = parseSeedArgs([
+        "--controller",
+        `http://127.0.0.1:${ports.controller}`,
+        "--origin",
+        BASE_URL,
+        "--profile",
+        PROFILE,
+        "--operator-password-file",
+        path.join(config, "local-deploy-operator.password"),
+        "--owner-password-file",
+        path.join(config, "local-deploy-owner.password"),
+    ]);
+    const summary = await (d.seed ?? seed)(
+        {
+            fetch: d.fetch,
+            run: d.run,
+            env: d.env,
+            log: d.log,
+            sleep: d.sleep,
+            now: d.now,
+            admin: mode,
+            scopes: DEPLOY_KEY_SCOPES,
+            keyName: PROFILE,
+        },
+        options2,
+    );
+    const result: Summary = {
+        project,
+        ports,
+        profile: summary.profile,
+        organization: summary.organization,
+        projectSlug: summary.project,
+    };
+    printSummary(d, result);
+    return result;
+}
+
+function printSummary(d: Deps, s: Summary): void {
+    d.log("");
+    d.log(`Project ${s.project} is up. Everything listens on 127.0.0.1 only:`);
+    d.log(`  controller     http://127.0.0.1:${s.ports.controller}`);
+    d.log(`  Dokku HTTP     http://127.0.0.1:${s.ports.http}  (send a Host header, see the guide)`);
+    d.log(`  Dokku SSH      127.0.0.1:${s.ports.ssh}`);
+    d.log(`  Dokku HTTPS    127.0.0.1:${s.ports.https}`);
+    d.log(`  router (data)  127.0.0.1:${s.ports.router}`);
+    d.log(`CLI profile: ${s.profile}; organization ${s.organization}, project ${s.projectSlug}.`);
+    d.log("Next: deploy examples/hello with the launchpad CLI (docs/local-deploy.md).");
+    d.log(
+        `To stop without deleting: docker compose -p ${s.project} stop. To remove everything: down.`,
+    );
+}
+
+// ---- status ------------------------------------------------------------------------------
+
+async function loadContext(d: Deps, options: UpOptions): Promise<{ c: Ctx; state: State | null }> {
+    const layout = layoutFor(d.repo);
+    const record = await (async () => {
+        const c0: Ctx = { d, layout, project: "" };
+        return readState(c0);
+    })();
+    const project = checkProject(
+        options.project ?? record.state?.project ?? projectNameFor(d.repo),
+    );
+    const c: Ctx = { d, layout, project };
+    if (record.kind === "ok") checkRecord(c, record.state!);
+    return { c, state: record.kind === "ok" ? record.state! : null };
+}
+
+const DB_QUERY = [
+    "exec",
+    "-T",
+    "postgres",
+    "psql",
+    "-X",
+    "-U",
+    "launchpad",
+    "-d",
+    "launchpad",
+    "-At",
+    "-F",
+    " ",
+    "-c",
+    "select id, app_name, desired_state from deployment",
+];
+
+async function readInventoryFile(c: Ctx): Promise<Site[]> {
+    const text = await c.d.fs.readFile(c.layout.file("inventory.json"));
+    return text === null ? [] : parseInventory(text);
+}
+
+async function writeInventory(c: Ctx, sites: Site[]): Promise<void> {
+    const next = c.layout.file("inventory.json.next");
+    await c.d.fs.writeFile(next, renderInventory(c.project, sites), 0o600);
+    await c.d.fs.rename(next, c.layout.file("inventory.json"));
+}
+
+export async function status(d: Deps, options: UpOptions = {}): Promise<void> {
+    await checkDocker(d);
+    const { c, state } = await loadContext(d, options);
+    if (!state) throw new DeployError("No .local-deploy/state.json here: run up first.");
+    await checkDirectory(c);
+    const envText = await d.fs.readFile(c.layout.file("compose.env"));
+    if (envText === null) throw new DeployError("compose.env is missing; run down, then up.");
+    const ports = portsFromEnv(parseEnv(envText));
+    d.log(`Project ${c.project}`);
+    for (const service of SERVICES) {
+        let health: string;
+        try {
+            health = await serviceHealth(c, service);
+        } catch (error) {
+            health = error instanceof DeployError ? "exited" : "unknown";
+        }
+        d.log(`  ${service.padEnd(11)} ${health || "running"}`);
+    }
+    d.log(
+        `Ports (127.0.0.1): controller ${ports.controller}, Dokku HTTP ${ports.http}, SSH ${ports.ssh}`,
+    );
+    d.log(`CLI profile: ${PROFILE}`);
+    const query = await compose(c, DB_QUERY);
+    if (query.code !== 0) {
+        d.log("The database is not reachable; the recorded inventory was kept as it is.");
+        return;
+    }
+    let previous: Site[] = [];
+    try {
+        previous = await readInventoryFile(c);
+    } catch {
+        // A bad file is replaced by what the database says.
+    }
+    const sites = mergeSites(previous, parseDatabaseRows(outOf(query).trim()));
+    await writeInventory(c, sites);
+    d.log(`Recorded ${sites.length} deployment${sites.length === 1 ? "" : "s"} in the inventory.`);
 }
