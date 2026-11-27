@@ -209,6 +209,12 @@ describe("compareSemver", () => {
             expect(compareSemver(ordered[i - 1]!, ordered[i]!)).toBe(-1);
             expect(compareSemver(ordered[i]!, ordered[i - 1]!)).toBe(1);
         }
+        expect(compareSemver("1.0.0-rc.9007199254740992", "1.0.0-rc.9007199254740993")).toBe(-1);
+        expect(compareSemver("1.0.0-rc.9007199254740993", "1.0.0-rc.9007199254740992")).toBe(1);
+        expect(compareSemver("1.0.0-rc.9007199254740993", "1.0.0-rc.9007199254740993")).toBe(0);
+        expect(compareSemver("9007199254740993.0.0", "9007199254740992.0.0")).toBe(1);
+        expect(compareSemver("1.9007199254740992.0", "1.9007199254740993.0")).toBe(-1);
+        expect(compareSemver("1.0.9007199254740993", "1.0.9007199254740992")).toBe(1);
         expect(compareSemver("1.0.0+a", "1.0.0+b")).toBe(0);
         expect(compareSemver("1.0.0-rc.1+x", "1.0.0-rc.1")).toBe(0);
     });
