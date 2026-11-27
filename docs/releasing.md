@@ -120,8 +120,9 @@ only; a fix in `client-core` reaches an installed CLI when npm next resolves it.
 modes and owners on POSIX only) and untested. The decision is
 [npm apps do not bundle](decisions/npm-apps-do-not-bundle.md).
 
-**Publishing is blocked** until the pre-publish security review of `client-core` (it handles API
-keys and session cookies and is now public) is done; nothing here publishes anything.
+The `client-core` pre-publish review is done for the blockers (named public API, redaction of
+the run's secrets, the security model in its README, the packed-file checks). The remaining
+audit findings are a non-blocking follow-up list. Nothing here publishes anything.
 
 The five packages use `@types/node`, not `@types/bun`; tests still run under Bun.
 
@@ -163,14 +164,18 @@ narrows on, changing an error class a caller catches. Adding exports and optiona
 compatible. A change to a schema that the REST API uses follows the REST rule too.
 
 **client-core** (`@launchpad-kit/client-core`). A public package for the CLI and the MCP
-server; other users should use `@launchpad-kit/sdk`. Its interface is every name exported by
-`src/index.ts` under the `0.x` rule above. The files it writes, `credentials.json` and
-`session.json`, are format `version: 1`: a different version is refused and never rewritten, so
-a format change needs a reader for the previous version (the CLI and the MCP server share the
-files). It supports POSIX only (permission and owner checks are skipped on Windows, which is
-untested) and Node `>=22.12`. All five packages carry one version and refer to each other as
-`^<version>`; in `0.x` that allows patch differences only, and from `1.0.0` minors, which these
-rules already treat as compatible.
+server; other users should use `@launchpad-kit/sdk`. Its interface is the list in the
+[README's Public API](../packages/client-core/README.md#public-api). Names marked `@internal`
+(`resolve`, `clientFor`, `Resolved`) may change in any release. Under `0.x` a minor release may
+break the public interface and lists the change under a breaking-change heading; a patch never
+does. The files it writes, `credentials.json` and `session.json`, are format `version: 1`: a
+client that meets another version refuses it and never rewrites it. A format change needs a
+reader for the previous version for at least one minor release, plus a changelog note (the CLI
+and the MCP server share the files). It supports POSIX only and Node `>=22.12`. A change that
+narrows redaction, loosens a mode or owner check or the HTTPS-or-loopback rule, or widens what
+`packDirectory` includes is security-relevant: it needs its own review and a release note. All
+five packages carry one version and refer to each other as `^<version>`; in `0.x` that allows
+patch differences only, and from `1.0.0` minors, which these rules already treat as compatible.
 
 **MCP tool list** (`apps/mcp/src/server.ts`). Tool names, their input schemas and the shape
 of their results are the interface an agent depends on. Breaking: renaming or removing a

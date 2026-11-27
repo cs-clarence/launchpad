@@ -101,6 +101,7 @@ export function createClient(options: ClientOptions) {
         timeoutMs,
         prefix: "/api/v1",
         credentialHeaders: () => ({ authorization: `Bearer ${apiKey}` }),
+        secrets: () => [apiKey, apiKey.slice(3)],
     });
     const { exchange } = transport;
     const nextLink = (headers: Headers, path: string) => nextLinkOf(base, headers, path);

@@ -2,14 +2,8 @@ import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import {
-    createContext,
-    MAX_WORKSPACE_CONFIG_BYTES,
-    ownedByCurrentUser,
-    readWorkspace,
-    workspaceContext,
-    resolve,
-} from "./index";
+import { createContext, readWorkspace, workspaceContext, resolve } from "./index";
+import { MAX_WORKSPACE_CONFIG_BYTES, ownedByCurrentUser } from "./workspace";
 
 let dir = "";
 beforeEach(async () => {

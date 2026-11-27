@@ -661,3 +661,13 @@ describe("raw: base URL with a path prefix", () => {
         ).rejects.toBeInstanceOf(LaunchpadConfigError);
     });
 });
+
+describe("scrub", () => {
+    it("ignores fragments shorter than 8 characters", async () => {
+        const { scrub } = await import("./transport");
+        expect(scrub("the key is abc, not that", ["abc", "key", ""])).toBe(
+            "the key is abc, not that",
+        );
+        expect(scrub("got abcdefgh1 here", ["ABCDEFGH1"])).toBe("got [redacted] here");
+    });
+});

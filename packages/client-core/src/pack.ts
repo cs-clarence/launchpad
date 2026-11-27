@@ -29,6 +29,7 @@ const SECRET_DIRECTORIES = new Set([
     ".gnupg",
     ".kube",
     ".docker",
+    ".terraform",
 ]);
 const SECRET_FILES = new Set([
     ".npmrc",
@@ -39,7 +40,12 @@ const SECRET_FILES = new Set([
     ".git-credentials",
     ".pypirc",
 ]);
-const SECRET_FILE_PATTERNS = [/^\.env(\..*)?$/, /^id_(rsa|dsa|ecdsa|ed25519)(\.pub)?$/];
+const SECRET_FILE_PATTERNS = [
+    /^\.env(\..*)?$/,
+    /^id_(rsa|dsa|ecdsa|ed25519)(\.pub)?$/,
+    /^service-account.*\.json$/,
+    /^secrets?\..*/,
+];
 const SECRET_EXTENSIONS = new Set([
     ".pem",
     ".key",
@@ -48,6 +54,8 @@ const SECRET_EXTENSIONS = new Set([
     ".jks",
     ".keystore",
     ".tfstate",
+    ".kdbx",
+    ".sqlite",
 ]);
 // Every name looked at while walking, selected or not: a very large tree is refused
 // rather than walked for as long as it takes.
@@ -262,7 +270,7 @@ export async function packDirectory(
 
     // Entries are added one by one: `create` would read a list entry that starts with "@"
     // as an archive to merge in, adding files that were never checked.
-    const stream = new Pack({ gzip: true, cwd: root, portable: true, noPax: false });
+    const stream = new Pack({ gzip: true, cwd: root, portable: true, noPax: false, follow: false });
     for (const file of files) stream.add(file);
     stream.end();
     const chunks: Buffer[] = [];

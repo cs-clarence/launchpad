@@ -291,6 +291,30 @@ export function checkListing(files: string[]): string[] {
     return problems;
 }
 
+// A library tarball (no `bin`) holds its manifest, README and built files, and its entry points.
+// Anything else (sources, tests, tsconfig*, vite or vitest configs, project files) is a leak.
+export function checkLibrary(manifest: Record<string, unknown>, files: string[]): string[] {
+    if (manifest.bin) return [];
+    const problems: string[] = [];
+    for (const required of ["README.md", "index.mjs", "index.d.ts"]) {
+        if (!files.includes(required)) problems.push(`${required} is missing`);
+    }
+    for (const file of files) {
+        if (/\.(spec|test)\./.test(file) || /(^|\/)node_modules\//.test(file)) {
+            problems.push(`${file}: tests and dependencies are not packed`);
+        }
+        if (file !== "package.json" && file !== "README.md" && !/\.(mjs|d\.ts)$/.test(file)) {
+            problems.push(`${file}: a library package holds only built files and its README`);
+        }
+        if (
+            /(^|\/)(src|tsconfig[^/]*|vite[^/]*|vitest[^/]*|project\.omni\.yaml)(\/|$)/.test(file)
+        ) {
+            problems.push(`${file}: development file`);
+        }
+    }
+    return problems;
+}
+
 // Problems with a packed manifest.
 export function checkManifest(manifest: Record<string, unknown>): string[] {
     const problems: string[] = [];

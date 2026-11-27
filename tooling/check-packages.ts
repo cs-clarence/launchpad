@@ -12,6 +12,7 @@ import {
     findNode,
     nodeShim,
     resolveNode,
+    checkLibrary,
     checkListing,
     checkManifest,
     checkClosure,
@@ -94,6 +95,7 @@ async function main() {
             manifests.push(manifest);
             const { listing, text } = await readPacked(tarball);
             for (const p of checkListing(listing)) fail(`${manifest.name}: ${p}`);
+            for (const p of checkLibrary(manifest, listing)) fail(`${manifest.name}: ${p}`);
             for (const p of checkManifest(manifest)) fail(`${manifest.name}: ${p}`);
             for (const p of checkBin(manifest, listing)) fail(`${manifest.name}: ${p}`);
             for (const p of checkUnbundled(manifest, text)) fail(`${manifest.name}: ${p}`);
