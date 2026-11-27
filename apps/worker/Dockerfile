@@ -36,6 +36,11 @@ ARG LAUNCHPAD_UID=10001
 # The release version, recorded in backups and shown in the operator status. Pass it at build
 # time (`--build-arg LAUNCHPAD_VERSION=<version>`); an image built without it reports `unknown`.
 ARG LAUNCHPAD_VERSION=unknown
+# OCI metadata, supplied by the release build (`--build-arg LAUNCHPAD_REVISION=<commit>`,
+# `--build-arg LAUNCHPAD_CREATED=<RFC 3339 time>`); the version label is LAUNCHPAD_VERSION. Empty or
+# `unknown` in a local build.
+ARG LAUNCHPAD_REVISION=
+ARG LAUNCHPAD_CREATED=
 RUN apt-get update \
     && apt-get install -y --no-install-recommends openssh-client \
     && rm -rf /var/lib/apt/lists/* \
@@ -46,7 +51,18 @@ COPY --from=docker-cli /usr/local/bin/docker /usr/local/bin/docker
 WORKDIR /app
 ENV NODE_ENV=production LAUNCHPAD_DATA_DIR=/data LAUNCHPAD_VERSION=${LAUNCHPAD_VERSION} \
     LAUNCHPAD_WORKER_HEALTH_FILE=/tmp/launchpad-worker-health
+# Licence and third-party notices (root-owned, read-only to the service user).
+COPY --from=build --chown=root:root /app/LICENSE /app/THIRD_PARTY_NOTICES.md /licenses/
 COPY --from=build --chown=root:root /app/apps/worker/dist ./dist
+LABEL org.opencontainers.image.title="Launchpad worker" \
+      org.opencontainers.image.description="Launchpad worker: builds and deploys uploaded sites through Dokku" \
+      org.opencontainers.image.source="https://github.com/launchpad-kit/launchpad" \
+      org.opencontainers.image.url="https://github.com/launchpad-kit/launchpad" \
+      org.opencontainers.image.documentation="https://github.com/launchpad-kit/launchpad/tree/main/docs" \
+      org.opencontainers.image.licenses="Apache-2.0" \
+      org.opencontainers.image.version="${LAUNCHPAD_VERSION}" \
+      org.opencontainers.image.revision="${LAUNCHPAD_REVISION}" \
+      org.opencontainers.image.created="${LAUNCHPAD_CREATED}"
 USER ${LAUNCHPAD_UID}:${LAUNCHPAD_UID}
 VOLUME /data
 # Liveness only: the worker touches this file after a successful queue check or lease renewal (and

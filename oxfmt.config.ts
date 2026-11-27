@@ -13,6 +13,7 @@ export default defineConfig({
         "**/.tanstack/**",
         "**/routeTree.gen.ts",
         "bun.lock",
+        "THIRD_PARTY_NOTICES.md",
         "omni/generators/**/templates/**",
     ],
     overrides: [{ files: ["*.yaml", "*.yml"], options: { tabWidth: 2 } }],
