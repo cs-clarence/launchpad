@@ -93,7 +93,7 @@ and never start Docker; the guide is `docs/local-dev-infra.md`, guarded by
 Scripts and apps that take arguments parse them with commander (`apps/cli`, the controller's `admin`,
 `apps/mcp`, `apps/router` and the tooling scripts through `tooling/cli.ts`); tooling uses the root
 `devDependencies`, and every other manifest that imports commander declares it itself
-(`tooling/declared-deps.spec.ts`). `bundle-migrations.mjs` and the container-copied experiment drivers are the exceptions.
+(`tooling/declared-deps.spec.ts`). Import commander only from `@commander-js/extra-typings` (typed options and arguments; `omni run check:imports` fails on `"commander"`), but keep `commander` declared beside it because extra-typings needs it as a peer. `bundle-migrations.mjs` and the container-copied experiment drivers are the exceptions.
 
 Opt-in disposable rehearsals live under `tooling/experiments/`: `routing/` (the router
 experiment and its production-router rehearsal) and `acceptance/` (the full-stack P7 rehearsal:

@@ -66,4 +66,22 @@ describe("commander declaration", () => {
         const have = declared(path.join(ROOT, "package.json"));
         for (const name of PACKAGES) expect(have.has(name)).toBe(true);
     });
+
+    it("is declared next to @commander-js/extra-typings, which needs it as a peer", () => {
+        const manifests = Bun.spawnSync(
+            ["git", "ls-files", "-z", "--", "package.json", "*/package.json"],
+            {
+                cwd: ROOT,
+                stdout: "pipe",
+            },
+        )
+            .stdout.toString()
+            .split("\0")
+            .filter((file) => file !== "" && existsSync(path.join(ROOT, file)));
+        const missing = manifests.filter((file) => {
+            const have = declared(path.join(ROOT, file));
+            return have.has("@commander-js/extra-typings") && !have.has("commander");
+        });
+        expect(missing).toEqual([]);
+    });
 });

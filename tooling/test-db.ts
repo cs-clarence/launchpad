@@ -1,14 +1,17 @@
 // Starts or stops the disposable PostgreSQL that integration tests use. Bound to
 // 127.0.0.1 only, throwaway credentials, removed on stop. Run by
 // `omni run test:db:up` / `omni run test:db:down`.
-import { Command, CommanderError } from "commander";
+import { Command, CommanderError } from "@commander-js/extra-typings";
 
 const NAME = "launchpad-test-db";
 const IMAGE = "postgres:17-alpine";
 const PORT = process.env.TEST_DB_PORT ?? "55432";
 
 async function docker(...args: string[]) {
-    const proc = Bun.spawn(["docker", ...args], { stdout: "pipe", stderr: "pipe" });
+    const proc = Bun.spawn(["docker", ...args], {
+        stdout: "pipe",
+        stderr: "pipe",
+    });
     const [out, err, code] = await Promise.all([
         new Response(proc.stdout).text(),
         new Response(proc.stderr).text(),
@@ -89,7 +92,11 @@ const program = new Command("test-db")
     .exitOverride()
     .helpOption(false)
     .helpCommand(false)
-    .configureOutput({ writeOut: () => {}, writeErr: () => {}, outputError: () => {} });
+    .configureOutput({
+        writeOut: () => {},
+        writeErr: () => {},
+        outputError: () => {},
+    });
 // Arguments after the command were never read; keep ignoring them.
 program.command("up").allowExcessArguments().allowUnknownOption().action(up);
 program.command("down").allowExcessArguments().allowUnknownOption().action(down);

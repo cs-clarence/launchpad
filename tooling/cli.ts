@@ -1,7 +1,7 @@
 // Shared argument parsing for the tooling scripts: commander does the parsing, the script keeps
 // its own error class, wording and exit codes. Each script declares one option table; the same
 // table feeds commander, the flag lists the documentation tests read and the option list in HELP.
-import { Command, CommanderError } from "commander";
+import { Command, CommanderError } from "@commander-js/extra-typings";
 
 // `arg` set means the option takes a value; the rest are switches.
 export interface Opt {
@@ -24,7 +24,11 @@ export function toolCommand(name: string, options: Opt[]): Command {
         .exitOverride()
         .helpOption(false)
         .allowExcessArguments()
-        .configureOutput({ writeOut: () => {}, writeErr: () => {}, outputError: () => {} });
+        .configureOutput({
+            writeOut: () => {},
+            writeErr: () => {},
+            outputError: () => {},
+        });
     for (const option of options) {
         program.option(option.arg ? `${option.flag} <${option.arg}>` : option.flag, option.help);
     }
@@ -61,7 +65,8 @@ export function optionHelp(options: Opt[], column: number): string {
 }
 
 export function parseOrFail(
-    program: Command,
+    // oxlint-disable-next-line typescript/no-explicit-any
+    program: Command<any[]>,
     argv: string[],
     fail: (message: string) => Error,
     policy: Policy,
@@ -100,5 +105,5 @@ export function parseOrFail(
             throw fail(`${argv[i - 1]} needs a value.`);
         }
     }
-    return program.opts<Parsed>();
+    return program.opts() as Parsed;
 }

@@ -10,15 +10,21 @@
 import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
-import { Command, CommanderError } from "commander";
+import { Command, CommanderError } from "@commander-js/extra-typings";
 
 export const CORE = "core";
 // Version strings written in source, which no manifest feeds: each is rewritten by `sync core`
 // and compared by `check`. The pattern's first group is everything before the version.
 export const SOURCE_VERSIONS: { file: string; pattern: RegExp }[] = [
     { file: "apps/cli/src/program.ts", pattern: /(\.version\()"[^"]*"/ },
-    { file: "apps/mcp/src/server.ts", pattern: /(name: "launchpad-mcp", version: )"[^"]*"/ },
-    { file: "apps/controller/src/server/openapi.ts", pattern: /(\n\s+version: )"[^"]*"/ },
+    {
+        file: "apps/mcp/src/server.ts",
+        pattern: /(name: "launchpad-mcp", version: )"[^"]*"/,
+    },
+    {
+        file: "apps/controller/src/server/openapi.ts",
+        pattern: /(\n\s+version: )"[^"]*"/,
+    },
 ];
 // Strict SemVer 2.0.0: no leading zeros, no empty identifiers.
 const NUMERIC = "(?:0|[1-9]\\d*)";
@@ -30,7 +36,9 @@ const SEMVER = new RegExp(
 const VERSION_LINE = /^(\s*"version":\s*)"[^"]*"/m;
 
 interface CogConfig {
-    monorepo?: { packages?: Record<string, { path: string; include?: string[] }> };
+    monorepo?: {
+        packages?: Record<string, { path: string; include?: string[] }>;
+    };
 }
 
 export interface Workspace {
@@ -63,7 +71,11 @@ export function coreIncludes(root: string): string[] {
 export function workspaces(root: string): Workspace[] {
     const rootManifest = readJson(path.join(root, "package.json"));
     const found: Workspace[] = [
-        { name: rootManifest.name, dir: ".", version: String(rootManifest.version ?? "") },
+        {
+            name: rootManifest.name,
+            dir: ".",
+            version: String(rootManifest.version ?? ""),
+        },
     ];
     for (const pattern of (rootManifest.workspaces ?? []) as string[]) {
         // Only `dir/*` is understood; anything else would be silently skipped, so refuse it.
@@ -72,7 +84,9 @@ export function workspaces(root: string): Workspace[] {
         }
         const parent = pattern.slice(0, -2);
         if (!existsSync(path.join(root, parent))) continue;
-        for (const entry of readdirSync(path.join(root, parent), { withFileTypes: true })) {
+        for (const entry of readdirSync(path.join(root, parent), {
+            withFileTypes: true,
+        })) {
             const manifest = path.join(root, parent, entry.name, "package.json");
             if (!entry.isDirectory() || !existsSync(manifest)) continue;
             const json = readJson(manifest);
@@ -184,7 +198,11 @@ if (import.meta.main) {
         .exitOverride()
         .helpOption(false)
         .helpCommand(false)
-        .configureOutput({ writeOut: () => {}, writeErr: () => {}, outputError: () => {} });
+        .configureOutput({
+            writeOut: () => {},
+            writeErr: () => {},
+            outputError: () => {},
+        });
     program
         .command("check")
         .allowExcessArguments()
