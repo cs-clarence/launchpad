@@ -59,6 +59,11 @@ include = [
     "packages/sdk/**",
     "apps/**",
     "packages/alias-router/**",
+    # Shipped without being workspace packages: the Dokku image and the production Compose files.
+    # A change here must cause a bump, or a fix to a released image would never be released.
+    "containers/**",
+    "docker-compose.yaml",
+    "docker-compose.env.example",
     # @anchor:new-core-package
 ]
 
