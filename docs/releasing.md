@@ -48,8 +48,9 @@ Packed READMEs are still developer documentation and the manifests have no
 `@launchpad-kit/contracts`, `sdk`, `cli` and `mcp` are published to npm, and `client-core` is
 bundled into the CLI and the MCP server. They must run on Node (engines `>=22.12`) as well as
 Bun, so their `src` may not use a Bun-only API: the `Bun` global, `globalThis.Bun`, `"bun"` or
-`"bun:*"` imports, `process.versions.bun`, or `import.meta.dir`, `.file` and `.path`
-(`import.meta.dirname` and `.filename` are fine). Code bundled into the Docker images
+`"bun:*"` imports, `process.versions.bun`, and any `import.meta` member other than `url`,
+`dirname`, `filename` and `resolve` (so `dir`, `file`, `path`, `require` and `main`, which Node
+only has from 24.2, are rejected). Code bundled into the Docker images
 (controller, worker, router, database, services, ...) may use Bun APIs freely.
 
 Two gates enforce it:
@@ -57,6 +58,12 @@ Two gates enforce it:
 - `omni -i run check:runtime` (part of `check`) scans those packages' `src`, ignoring
   `*.spec.ts` and `__tests__`, and fails with `file:line`. The package list comes from
   `TARGETS` in `tooling/package-clients.ts` plus `client-core` (`tooling/runtime-agnostic.ts`).
+  It parses each file with TypeScript 6 and leans towards false alarms: any identifier `Bun`
+  except a member or key of that name (`x.Bun`, `{ Bun: 1 }`), any string that is exactly `bun`,
+  `Bun` or starts with `bun:` (which also catches `globalThis["Bun"]`), `eval`, `Function`, and
+  a dynamic `import()` or `require()` whose specifier is not a plain string. A file that does not
+  parse, or a broken symbolic link, fails; linked files and directories are scanned. A real need
+  for one of these in a published package means changing the rule here, in review.
 - `test:packages` installs the packed tarballs outside the workspace and runs them under Bun
   **and** Node: `--version`, `--help`, importing `contracts` and `sdk`, an SDK call, an MCP
   handshake and the installed `bin` links. Choose the Node with `LAUNCHPAD_NODE=/path/to/node`
