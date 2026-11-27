@@ -16,13 +16,15 @@ when tools, generators, or their commands change.
   required by declaration tooling, as in Pureform.
 - Vite builds libraries and the controller; Nitro's `bun` preset emits the
   controller's `.output/`. No custom HTTP/static-file server is maintained.
-- The CLI and the separate local MCP app use Bun executable builds. Build MCP with
-  `omni -i run build -p @launchpad-kit/mcp`; it emits `apps/mcp/dist/index.js`.
+- The CLI and the separate local MCP app are built with Vite into one ES module each
+  (`apps/cli/dist/cli.mjs`, `apps/mcp/dist/mcp.mjs`, with a `#!/usr/bin/env node` line taken from the
+  source) that imports its dependencies instead of bundling them. Build MCP with
+  `omni -i run build -p @launchpad-kit/mcp`.
   MCP uses the official MIT-licensed `@modelcontextprotocol/sdk` (pinned in the
   catalog at 1.32.2) for stdio framing, capability negotiation and tool schemas,
   not a custom protocol implementation. Only stdio modules are imported.
   The controller's integration tests build the MCP and CLI first and run their built
-  files (also copied alone into an empty directory) over stdio against the built controller.
+  files over stdio against the built controller.
 - Vitest, Oxfmt, and Oxlint provide tests, formatting, and linting. Commands are
   in [CONTRIBUTING.md](../CONTRIBUTING.md).
 
@@ -56,12 +58,16 @@ Rules that keep the graph correct:
 - **Runtime.** `check:runtime` (part of `check`) fails when a published npm
   package's source uses a Bun-only API; see `docs/releasing.md`.
 - **Packaging.** `omni -i run test:packages -p @launchpad-kit/tooling` builds the SDK, contracts, CLI and
-  MCP server, packs them (`tooling/package-clients.ts`: a generated manifest per package, the SDK
-  and contracts as libraries, the CLI and MCP as one bundled file each), installs the tarballs in a
-  clean project outside the workspace and runs them under Bun and, when it is on the PATH, Node
-  (CLI and MCP `--help`, an MCP handshake, an SDK call against a local server, and a strict
-  TypeScript check of the declarations). It also checks the tarballs hold no `.env`, source, tests
-  or `workspace:`/`catalog:` specifiers. It needs the network and publishes nothing; the package
+  MCP server and client-core, packs the five packages (`tooling/package-clients.ts`: a generated
+  manifest per package; contracts, SDK and client-core as libraries, the CLI and MCP as executables
+  whose dependencies are external), installs the tarballs in clean projects outside the workspace
+  with Bun and with the real npm of the selected Node, and runs them under Bun and, when it is on
+  the PATH, Node (CLI and MCP `--help`, an MCP handshake, an SDK call against a local server, a
+  credential store read and a strict TypeScript check of the declarations). It also checks the
+  tarballs hold no `.env`, source, tests, source maps or `workspace:`/`catalog:` specifiers, that
+  the five form a closed set at one version, and that nothing is bundled (bare-import allowlist,
+  size budgets, marker strings); see `docs/releasing.md`. The `ts-package` generator follows the
+  same rule: a published CLI externalizes its dependencies. It needs the network and publishes nothing; the package
   names are placeholders until the product name is decided. CI runs it as the `Packages` job.
 - **`test` is unit tests only.** `test:integration` is explicit. Auth, services and
   controller integration need disposable PostgreSQL (`omni -i run test:db:up`).
@@ -176,7 +182,7 @@ Rules that keep the graph correct:
 ## Stale build output
 
 Omni 0.21.0 restores only missing outputs on a cache hit and does not overwrite an existing
-file. A stale, git-ignored `dist/` (for example `apps/cli/dist/index.js` lacking newer commands)
+file. A stale, git-ignored `dist/` (for example `apps/cli/dist/index.js`, the name before Vite built the apps, or a `dist/cli.mjs` lacking newer commands)
 survives `omni -i run build`, and the cache is shared across checkouts. Run
 `omni -i run build -f all`, or delete the project's `dist/` and rebuild.
 

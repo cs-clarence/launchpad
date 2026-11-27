@@ -1,3 +1,9 @@
+// Why this empty import exists: the declaration emitted for `AppClient` names types from
+// `@launchpad-kit/contracts`, so users of the published package need it installed, and it is
+// declared in package.json. `check:deps` fails a dependency that nothing imports, so this
+// import keeps it honest. Remove it and `check:deps` fails; remove the dependency instead and
+// the packed declarations import an undeclared package, which `test:packages` refuses.
+import type {} from "@launchpad-kit/contracts";
 import { ClientCoreError } from "./errors";
 import { clientFor, resolve, type Context } from "./operations";
 

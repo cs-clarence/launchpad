@@ -19,7 +19,18 @@ import {
 } from "node:fs";
 import path from "node:path";
 import { Command, CommanderError } from "@commander-js/extra-typings";
-import { build, checkListing, checkManifest, pack, stage, TARGETS } from "./package-clients";
+import {
+    build,
+    checkClosure,
+    checkUnbundled,
+    checkBin,
+    checkListing,
+    checkManifest,
+    pack,
+    readPacked,
+    stage,
+    TARGETS,
+} from "./package-clients";
 import { checkVersions, sharedWorkspaces } from "./versions";
 
 const root = path.resolve(import.meta.dirname, "..");
@@ -140,25 +151,28 @@ async function rehearse(out: string, version: string, skipImages: boolean) {
     mkdirSync(tarballs, { recursive: true });
 
     const checked: string[] = [];
+    const manifests: Record<string, unknown>[] = [];
     for (const target of TARGETS) {
         await build(target);
         const staged = await stage(target, out);
         const tarball = await pack(staged, tarballs);
         const manifest = JSON.parse(readFileSync(path.join(staged, "package.json"), "utf8"));
-        const listing = (await exec(["tar", "tzf", tarball]))
-            .split("\n")
-            .filter(Boolean)
-            .map((line) => line.replace(/^package\//, ""));
+        const { listing, text } = await readPacked(tarball);
         const found = [
             ...checkListing(listing),
             ...checkManifest(manifest),
+            ...checkBin(manifest, listing),
+            ...checkUnbundled(manifest, text),
             ...(manifest.version === version
                 ? []
                 : [`version ${manifest.version} is not the release version ${version}`]),
         ];
         if (found.length > 0) throw new Error(`${manifest.name}:\n${found.join("\n")}`);
         checked.push(`${manifest.name}@${manifest.version}`);
+        manifests.push(manifest);
     }
+    const closure = checkClosure(manifests);
+    if (closure.length > 0) throw new Error(`The published set:\n${closure.join("\n")}`);
     // The staging directories are scratch; only tarballs and checksums are the result.
     rmSync(path.join(out, "stage"), { recursive: true, force: true });
     writeFileSync(

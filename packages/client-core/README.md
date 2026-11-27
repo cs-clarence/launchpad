@@ -1,13 +1,20 @@
 # @launchpad-kit/client-core
 
-Profiles, credentials and operations shared by the CLI and the local MCP server. Node/Bun only.
+Profiles, credentials and operations shared by the CLI and the local MCP server. Node (`>=22.12`) and Bun, ESM only, **POSIX only** (the permission and owner checks are skipped on Windows, which is unsupported and untested).
+
+This is a public package so the CLI and the MCP server can import it instead of bundling it, but
+it is not a general client: other users should use `@launchpad-kit/sdk`. Every name exported by
+`src/index.ts` is part of the package's interface under the `0.x` rule in
+[docs/releasing.md](../../docs/releasing.md), and the files it writes (`credentials.json`,
+`session.json`, format `version: 1`) are never rewritten in another format. Nothing is published
+yet, and publishing waits for a security review of this package.
 
 - `CredentialStore` keeps profiles in `credentials.json` under `$LAUNCHPAD_CONFIG_DIR`, `$XDG_CONFIG_HOME/launchpad` or `~/.config/launchpad`: a mode-700 directory, a mode-600 file replaced atomically under a lock. It refuses a symlink, a file others can read or a file of another owner, and never rewrites a corrupt or newer-format file, so credentials are not lost silently.
 - Operations (`login`, `logout`, `whoami`, `useProfile`, `useOrganization`, `listProjects`, ...) take a `Context` and return plain data. `login` verifies the key with the controller before saving it; a key belongs to one organization, which login selects.
 - Credential resolution: explicit profile, then `LAUNCHPAD_PROFILE`, then the current profile. Without an explicit profile, `LAUNCHPAD_CONTROLLER` plus `LAUNCHPAD_API_KEY` (and optional `LAUNCHPAD_ORG`, an org ID, not a slug) bypass the file for CI. A partial pair is an error, never a fallback to saved credentials. Project listing discovers the key's org if none is selected.
 - `redact` hides anything shaped like a key, for text that reaches a terminal, a log or an MCP response.
 
-Depends on `@launchpad-kit/sdk` and `zod`.
+Depends on `@launchpad-kit/contracts`, `@launchpad-kit/sdk`, `picomatch`, `tar` and `zod`.
 
 ## Lock recovery
 

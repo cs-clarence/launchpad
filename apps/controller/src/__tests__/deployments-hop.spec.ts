@@ -170,7 +170,7 @@ describe("deployments through the built server", () => {
             };
             const cli = async (...args: string[]) => {
                 const proc = Bun.spawn(
-                    ["bun", path.resolve("../cli/dist/index.js"), "--json", ...args],
+                    ["bun", path.resolve("../cli/dist/cli.mjs"), "--json", ...args],
                     {
                         cwd: dataDir,
                         env,
@@ -215,7 +215,7 @@ describe("deployments through the built server", () => {
             const transport = new StdioClientTransport({
                 command: "bun",
                 args: [
-                    path.resolve("../mcp/dist/index.js"),
+                    path.resolve("../mcp/dist/mcp.mjs"),
                     "--allow-promote",
                     "--allowed-projects",
                     project,

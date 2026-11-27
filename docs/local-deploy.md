@@ -78,7 +78,7 @@ Builds and deployed sites run in the host engine, outside the memory limits.
 
     ```sh
     omni -i run build -p @launchpad-kit/cli
-    alias launchpad="bun $PWD/apps/cli/dist/index.js"
+    alias launchpad="bun $PWD/apps/cli/dist/cli.mjs"
     export LAUNCHPAD_PROFILE=local-deploy
     PROJECT=$(launchpad api organizations/{org}/projects | grep -m1 '"id"' | cut -d'"' -f4)
     ARTIFACT=$(launchpad artifact upload "$PROJECT" examples/hello --directory | grep -m1 '"id"' | cut -d'"' -f4)

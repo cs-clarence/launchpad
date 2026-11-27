@@ -3,6 +3,11 @@
 The `launchpad` command talks to a controller with an organization API key. It never
 talks to Dokku. Keep this page current when commands change.
 
+Packed as `@launchpad-kit/cli` (Node `>=22.12` or Bun, POSIX only; nothing is published yet):
+`npm install @launchpad-kit/cli` installs the command and its dependencies, none of which are
+bundled into it. From the repository, run `omni -i run build -p @launchpad-kit/cli` and
+`bun apps/cli/dist/cli.mjs`.
+
 ```text
 launchpad login --controller <url> [--profile <name>] [--key-file <path> | --key-stdin]
 launchpad logout
@@ -341,6 +346,6 @@ is no longer accepted.
   only after confirming no client is writing. Locks are never stolen by age.
 
 `src/program.ts`, `src/api-command.ts` and the session files (`src/session-*.ts`, `src/password.ts`) hold the commands behind an `Io` interface (`src/io.ts`), so tests drive `run(argv, io)` with a
-fake terminal, a temporary config directory and a fake controller. `src/index.ts` is the Bun entry point.
+fake terminal, a temporary config directory and a fake controller. `src/index.ts` is the entry point: it starts with a node shebang, which Bun ignores when it runs the source.
 
 Build and check commands are in [CONTRIBUTING.md](../../CONTRIBUTING.md).

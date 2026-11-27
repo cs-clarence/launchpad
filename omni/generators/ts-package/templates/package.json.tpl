@@ -1,3 +1,5 @@
+{% set shebang = inputs.shebang_executor | default(value="node") -%}
+{% if inputs.published %}{% set shebang = "node" %}{% endif -%}
 {
     "name": "{{ vars.full_package_name }}",
     "type": "module",
@@ -20,7 +22,9 @@
         {% endif %}
     },
     {% if inputs.package_type == 'script' %}
-    "bin": "./dist/{{ inputs.package_name }}-cli.mjs",
+    "bin": {
+        "{% if inputs.bin_name %}{{ inputs.bin_name }}{% else %}{{ inputs.package_name }}{% endif %}": "./dist/cli.mjs"
+    },
     {% endif %}
     {% if inputs.package_type == 'lib' or inputs.package_type == 'ui-lib' or (inputs.package_type == 'script' and inputs.script_can_be_used_as_lib) %}
     "exports": {
@@ -56,9 +60,9 @@
         "vitest": "catalog:",
         {% if inputs.package_type == 'script' %}
         "@types/node": "catalog:",
-            {% if inputs.shebang_executor == 'bun' %}
+            {% if shebang == 'bun' %}
         "@types/bun": "catalog:",
-            {% elif inputs.shebang_executor == 'deno' %}
+            {% elif shebang == 'deno' %}
         "@types/deno": "catalog:",
             {% endif %}
         {% endif %}

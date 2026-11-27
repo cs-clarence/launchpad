@@ -1,7 +1,6 @@
 // The npm packages run on Node as well as Bun, so their source may not use an API only Bun has.
 // Code bundled into the Docker images (controller, worker, router, ...) is not covered.
-// Which packages: the ones tooling/package-clients.ts packs, plus client-core, which is bundled
-// into the CLI and the MCP server. See docs/releasing.md.
+// Which packages: the ones tooling/package-clients.ts packs. See docs/releasing.md.
 //
 // The scan walks the syntax tree (TypeScript 6, the version of the compiler with a JavaScript API;
 // the `typescript` 7 package has none), so comments, string contents and regular expressions
@@ -12,7 +11,7 @@ import ts from "@typescript/typescript6";
 import { TARGETS } from "./package-clients";
 import { scriptKind, syntaxProblems, walkSources } from "./ts-scan";
 
-export const PUBLISHED_DIRS = [...TARGETS.map((target) => target.dir), "packages/client-core"];
+export const PUBLISHED_DIRS = TARGETS.map((target) => target.dir);
 
 // What Node 22.12 has: `import.meta.main` (Node 24.2) and Bun's `dir`, `file`, `path`, `require`
 // are not here.

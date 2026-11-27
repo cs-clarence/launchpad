@@ -25,7 +25,7 @@ The `bun run <name>` scripts in the root `package.json` are only aliases for the
 same Omni tasks; package-level scripts are the commands Omni executes.
 
 A cache hit restores only missing outputs and does not overwrite an existing one (Omni 0.21.0).
-A stale, git-ignored `dist/` (for example `apps/cli/dist/index.js` without newer commands) therefore
+A stale, git-ignored `dist/` (for example `apps/cli/dist/cli.mjs` without newer commands, or an old `dist/index.js` left beside it) therefore
 survives `omni -i run build`. The cache is shared across checkouts, so another checkout's build can
 cause this. Run `omni -i run build -f all`, or delete the project's `dist/` and rebuild.
 

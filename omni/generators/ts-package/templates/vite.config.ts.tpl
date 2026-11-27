@@ -7,7 +7,7 @@ import { createConfig } from "@{{ vars.scope_name }}/vite-config/app";
 {% elif inputs.package_type == "e2e-tests" or inputs.package_type == "service-tests" %}
 import { createConfig } from "@{{ vars.scope_name }}/vite-config/test";
 {% endif %}
-{% set exclude_deps_from_bundle = inputs.package_type == "lib" or inputs.package_type == "ui-lib" or (inputs.package_type == "script" and inputs.script_can_be_used_as_lib) %}
+{% set exclude_deps_from_bundle = inputs.package_type == "lib" or inputs.package_type == "ui-lib" or (inputs.package_type == "script" and (inputs.script_can_be_used_as_lib or inputs.published)) %}
 import packageJson from "./package.json" with { type: "json" };
 
 export default createConfig({
@@ -21,9 +21,11 @@ export default createConfig({
             lib: {
                 entry: {
                     {% if inputs.package_type == "script" %}
-                    "{{ inputs.package_name }}-cli": "src/cli/index.ts",
+                    "cli": "src/cli/index.ts",
                     {% endif %}
+                    {% if inputs.package_type != "script" or inputs.script_can_be_used_as_lib %}
                     "index": "src/index.ts",
+                    {% endif %}
                 },
                 formats: ["es"],
                 fileName: (format, entryName) =>

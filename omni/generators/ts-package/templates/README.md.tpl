@@ -35,7 +35,7 @@ In `src/`:
 - `add.ts`: an example module. Replace it.
 {% endif -%}
 {% if inputs.package_type == 'script' -%}
-- `cli/index.ts`: the command line entry (`bin`).
+- `cli/index.ts`: the command line entry (`bin`, built as `dist/cli.mjs`{% if inputs.published %}; a published CLI imports its dependencies and bundles none of them{% endif %}).
 {% endif -%}
 {% if inputs.unit_test -%}
 - `add.spec.ts`: an example unit test. Unit tests sit next to the code they test.

@@ -40,6 +40,22 @@ inputs:
         value: e2e-tests
     default: lib
 
+  - name: published
+    type: boolean
+    message: Will the package be published to a registry?
+    default: false
+
+  - if: "{{ inputs.published }}"
+    name: publish_access
+    type: string
+    message: What is the publish access of your package?
+    allowed:
+      - name: Public
+        value: public
+      - name: Restricted
+        value: restricted
+    default: public
+
   - if: "{{ inputs.package_type == 'script' }}"
     name: script_can_be_used_as_lib
     type: boolean
@@ -47,6 +63,17 @@ inputs:
     default: false
 
   - if: "{{ inputs.package_type == 'script' }}"
+    name: bin_name
+    type: string
+    message: What is the name of the command? (leave empty to use the package name)
+    default: ""
+    validators:
+      - condition: "{{ value == '' or value is matching(pat='^[a-zA-Z_]{1}[a-zA-Z0-9_-]*$') }}"
+        error_message: >
+          Command name must only contain alphanumeric characters, underscores, and hyphens,
+          and must start with a letter
+
+  - if: "{{ inputs.package_type == 'script' and not inputs.published }}"
     name: shebang_executor
     type: string
     message: What shebang should be used for the script?
@@ -106,22 +133,6 @@ inputs:
     type: string
     message: What is the license of your package?
     default: MIT
-
-  - name: published
-    type: boolean
-    message: Will the package be published to a registry?
-    default: false
-
-  - if: "{{ inputs.published }}"
-    name: publish_access
-    type: string
-    message: What is the publish access of your package?
-    allowed:
-      - name: Public
-        value: public
-      - name: Restricted
-        value: restricted
-    default: public
 
 targets:
   cog_config: "@workspace/cog.toml"

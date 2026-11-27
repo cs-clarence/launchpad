@@ -9,6 +9,7 @@ dependencies:
     - "@launchpad-kit/tsconfig"
     - "@launchpad-kit/vite-config"
     - "@launchpad-kit/vitest-config"
+    - "@launchpad-kit/contracts"
     - "@launchpad-kit/sdk"
 
 tasks:

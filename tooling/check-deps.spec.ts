@@ -239,6 +239,56 @@ describe("dependency check", () => {
         expect(errors.some((e) => e.includes("unused is not used"))).toBe(true);
     });
 
+    it("requires exactly workspace:^ for an owned package", () => {
+        const owned = (spec: string) =>
+            check(
+                workspace({
+                    core: {},
+                    app: {
+                        deps: { "@t/core": spec },
+                        omniDeps: spec.startsWith("workspace:") ? ["@t/core"] : [],
+                        source: 'import "@t/core";\n',
+                    },
+                }),
+            );
+        expect(owned("workspace:^")).toEqual([]);
+        for (const spec of ["workspace:*", "workspace:~", "workspace:^1.2.3"]) {
+            const errors = owned(spec);
+            expect(errors, spec).toContain(`@t/app: @t/core is "${spec}"; use workspace:^`);
+        }
+    });
+
+    it("says an owned package is not referenced through the catalog or a version", () => {
+        for (const spec of ["catalog:", "^1.0.0"]) {
+            const errors = check(
+                workspace(
+                    { core: {}, app: { deps: { "@t/core": spec }, source: 'import "@t/core";\n' } },
+                    { "@t/core": "1.0.0" },
+                ),
+            );
+            expect(
+                errors.some((e) => e.includes("owned packages are referenced as workspace:^")),
+            ).toBe(true);
+            expect(errors.some((e) => e.includes("use catalog:"))).toBe(false);
+        }
+    });
+
+    it("says a third-party package is not a workspace package, and still takes catalog:", () => {
+        const errors = check(
+            workspace(
+                {
+                    app: {
+                        deps: { zod: "workspace:^", ok: "catalog:" },
+                        source: 'import "zod";\nimport "ok";\n',
+                    },
+                },
+                { ok: "1.0.0" },
+            ),
+        );
+        expect(errors).toContain('@t/app: zod is "workspace:^" but is not a workspace package');
+        expect(errors.some((e) => e.includes("ok"))).toBe(false);
+    });
+
     it("counts generator templates as users of the catalog", () => {
         const root = workspace(
             { app: {} },

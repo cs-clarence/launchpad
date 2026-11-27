@@ -1,8 +1,10 @@
-{% if inputs.shebang_executor == "node" -%}
+{% set shebang = inputs.shebang_executor | default(value="node") -%}
+{% if inputs.published %}{% set shebang = "node" %}{% endif -%}
+{% if shebang == "node" -%}
 #!/usr/bin/env node
-{% elif inputs.shebang_executor == "bun" -%}
+{% elif shebang == "bun" -%}
 #!/usr/bin/env bun
-{% elif inputs.shebang_executor == "deno" -%}
+{% elif shebang == "deno" -%}
 #!/usr/bin/env deno
 {% endif %}
 
@@ -25,8 +27,8 @@ program
         console.log(`result ${add(Number(a), Number(b))}`);
     });
 
-{%- if inputs.shebang_executor == "node" %}
+{%- if shebang == "node" %}
 program.parseAsync();
-{%- elif inputs.shebang_executor == "bun" or inputs.shebang_executor == "deno" %}
+{%- elif shebang == "bun" or shebang == "deno" %}
 await program.parseAsync();
 {% endif %}

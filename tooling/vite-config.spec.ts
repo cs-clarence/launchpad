@@ -1,6 +1,10 @@
 import { describe, expect, it } from "bun:test";
 import { builtinModules } from "node:module";
 import { isExternal } from "../packages/vite-config/src/library";
+import cli from "../apps/cli/vite.config";
+import mcp from "../apps/mcp/vite.config";
+import cliPackage from "../apps/cli/package.json";
+import mcpPackage from "../apps/mcp/package.json";
 
 // What Node reports: no `bun`. Vite runs under Node in CI, under Bun locally.
 const nodeBuiltins = builtinModules.filter((m) => m !== "bun" && !m.startsWith("bun:"));
@@ -22,4 +26,47 @@ describe("library build externals", () => {
         expect(isExternal("left-pad", ["zod"], true, nodeBuiltins)).toBe(false);
         expect(isExternal("./local", [], true, nodeBuiltins)).toBe(false);
     });
+});
+
+describe("the executables' build", () => {
+    type Config = {
+        build?: { rolldownOptions?: { external?: unknown }; lib?: unknown };
+        plugins?: unknown[];
+    };
+    const cases = [
+        { key: "cli", config: cli as Config, manifest: cliPackage, subpath: "@elastic/micro-jq" },
+        {
+            key: "mcp",
+            config: mcp as Config,
+            manifest: mcpPackage,
+            subpath: "@modelcontextprotocol/sdk/server/mcp.js",
+        },
+    ];
+
+    for (const { key, config, manifest, subpath } of cases) {
+        it(`${key}: imports every dependency instead of bundling it`, () => {
+            const external = config.build?.rolldownOptions?.external as (id: string) => boolean;
+            expect(typeof external).toBe("function");
+            for (const id of [
+                "@launchpad-kit/client-core",
+                "@launchpad-kit/sdk",
+                subpath,
+                "node:fs",
+                ...Object.keys(manifest.dependencies),
+            ]) {
+                expect(external(id), id).toBe(true);
+            }
+            expect(external("left-pad")).toBe(false);
+        });
+
+        it(`${key}: emits one ${key}.mjs and no declarations`, () => {
+            const lib = config.build?.lib as {
+                entry: Record<string, string>;
+                fileName: (format: string, entry: string) => string;
+            };
+            expect(lib.entry).toEqual({ [key]: "src/index.ts" });
+            expect(lib.fileName("es", key)).toBe(`${key}.mjs`);
+            expect(config.plugins ?? []).toEqual([]);
+        });
+    }
 });

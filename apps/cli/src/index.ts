@@ -1,4 +1,4 @@
-#!/usr/bin/env bun
+#!/usr/bin/env node
 import { realIo } from "./io";
 import { run } from "./program";
 

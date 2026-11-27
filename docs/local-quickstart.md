@@ -93,7 +93,7 @@ repository root unless a step says otherwise.
 
     ```sh
     omni -i run build -p @launchpad-kit/cli
-    alias launchpad="bun $PWD/apps/cli/dist/index.js"
+    alias launchpad="bun $PWD/apps/cli/dist/cli.mjs"
     launchpad whoami
     launchpad api organizations/{org}/projects
     ```
