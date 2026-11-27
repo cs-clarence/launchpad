@@ -94,6 +94,26 @@ describe("redaction keeps JSON valid and prose readable", () => {
         expect(out).not.toMatch(/abcdefghij|tok\.sig|v4lue|abc123/);
     });
 
+    it("hides double-quoted cookie values, plain and JSON-escaped, idempotently", () => {
+        const plain = 'Set-Cookie: __Secure-a.b="v4lue9.sig"; Path=/';
+        expect(core.redact(plain)).toBe('Set-Cookie: __Secure-a.b=[redacted]"; Path=/');
+        expect(core.redact(core.redact(plain))).toBe(core.redact(plain));
+        const json = JSON.stringify({ c: plain, d: '__Host-x="hh8hosted"' });
+        const out = core.safeOutput(json);
+        expect(() => JSON.parse(out)).not.toThrow();
+        expect(out).not.toMatch(/v4lue9|hh8hosted/);
+        expect(core.safeOutput(out)).toBe(out);
+        expect(core.redact("__Secure-a=")).toBe("__Secure-a=");
+    });
+
+    it("is linear on adversarial input", () => {
+        const start = Date.now();
+        for (const unit of ['__Secure-a="', "Bearer ", '__Host-x=\\"', "Bearer a"]) {
+            core.safeOutput(unit.repeat(40_000));
+        }
+        expect(Date.now() - start).toBeLessThan(3000);
+    });
+
     it("leaves ordinary prose about bearer tokens alone", () => {
         for (const text of [
             "the Bearer token is invalid",

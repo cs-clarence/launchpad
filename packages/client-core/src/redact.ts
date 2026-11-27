@@ -10,7 +10,12 @@ export function redact(text: string): string {
                 /\bBearer\s+(?!\[redacted\])(?:[^\s"',;\\]{8,}|[^\s"',;\\]*[\d._-][^\s"',;\\]*)/gi,
                 "Bearer [redacted]",
             )
-            .replace(/__(Secure|Host)-([A-Za-z0-9._-]+)=[^\s;,"'\\]+/gi, "__$1-$2=[redacted]")
+            // A cookie value may be double-quoted (RFC 6265), or \" inside JSON text; the closing
+            // quote stays, so JSON stays valid.
+            .replace(
+                /__(Secure|Host)-([A-Za-z0-9._-]+)=(?:\\?")?[^\s;,"'\\]+/gi,
+                "__$1-$2=[redacted]",
+            )
     );
 }
 

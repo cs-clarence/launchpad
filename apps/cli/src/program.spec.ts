@@ -594,6 +594,8 @@ describe("redaction of the run's own key", () => {
             `shouting ${body.toUpperCase()} and ${body.toLowerCase()}`,
             "header Bearer zzTopSecretToken123",
             "cookie __Secure-better-auth.session_token=abc123.sig%2B",
+            'quoted __Secure-better-auth.session_token="qq9quoted.sig"; Path=/',
+            'host __Host-sid="hh8hosted"; Secure',
         ].join("; ");
         const echo = (async () =>
             json({ code: "forbidden", status: 403, title: forms }, 403)) as unknown as typeof fetch;
@@ -611,7 +613,13 @@ describe("redaction of the run's own key", () => {
                 EXIT.unauthorized,
             );
             const text = fake.all().toLowerCase();
-            for (const leak of [body, "zztopsecrettoken123", "abc123.sig"]) {
+            for (const leak of [
+                body,
+                "zztopsecrettoken123",
+                "abc123.sig",
+                "qq9quoted",
+                "hh8hosted",
+            ]) {
                 expect(text).not.toContain(leak.toLowerCase());
             }
             expect(text).toContain("[redacted]");

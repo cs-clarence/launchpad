@@ -12,8 +12,18 @@ const FORMS = [
     `with prefix ${KEY} / ${KEY.toUpperCase()}`,
     "header Bearer zzTopSecretToken123",
     "cookie __Secure-better-auth.session_token=abc123.sig%2B",
+    'quoted __Secure-better-auth.session_token="qq9quoted.sig"; Path=/',
+    'host __Host-sid="hh8hosted"; Secure',
 ];
-const LEAKS = [BODY, BODY.toUpperCase(), BODY.toLowerCase(), "zzTopSecretToken123", "abc123.sig"];
+const LEAKS = [
+    BODY,
+    BODY.toUpperCase(),
+    BODY.toLowerCase(),
+    "zzTopSecretToken123",
+    "abc123.sig",
+    "qq9quoted",
+    "hh8hosted",
+];
 
 async function call(failing: boolean) {
     const text = FORMS.join("; ");
@@ -58,5 +68,6 @@ it.each([true, false])(
         const text = JSON.stringify(result);
         for (const leak of LEAKS) expect(text.toLowerCase()).not.toContain(leak.toLowerCase());
         expect(text).toContain("[redacted]");
+        expect(() => JSON.parse(text)).not.toThrow();
     },
 );
