@@ -13,6 +13,16 @@ configuration. `release_group=core` appends the package glob to the shared core;
 The root config deliberately omits Pureform's version-update script and
 automatic tag pushes. Version/lockfile synchronization must be added before
 using it to release packages.
+A published CLI never bundles its dependencies: a `script` with `published` set (or one that can
+be used as a library) externalizes every declared dependency, and is built as `dist/cli.mjs`,
+named by `bin_name` (an object `bin`, so the command is not the package name). A plain
+`script` that is not published may still bundle. A script that is not a library has no `index`
+entry. Set `published` only when a publish step exists: in this repository `published` makes the
+source manifest non-private, and the apps (`apps/cli`, `apps/mcp`) stay private and are packed
+from a generated manifest instead (see `docs/releasing.md`). The CLI template imports only
+`@commander-js/extra-typings`; `commander` is declared as its peer and never imported
+(`omni -i run check:imports`). The template reads `package.json` with a JSON import, which a
+bundler inlines whole into the output: do not copy that into a published CLI.
 App scaffolds requesting unit tests also receive the example module those tests
 import.
 

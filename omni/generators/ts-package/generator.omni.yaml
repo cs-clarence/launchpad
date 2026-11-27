@@ -47,6 +47,17 @@ inputs:
     default: false
 
   - if: "{{ inputs.package_type == 'script' }}"
+    name: bin_name
+    type: string
+    message: What is the name of the command?
+    default: "{{ inputs.package_name }}"
+    validators:
+      - condition: "{{ value is matching(pat='^[a-zA-Z_]{1}[a-zA-Z0-9_-]*$') }}"
+        error_message: >
+          Command name must only contain alphanumeric characters, underscores, and hyphens,
+          and must start with a letter
+
+  - if: "{{ inputs.package_type == 'script' }}"
     name: shebang_executor
     type: string
     message: What shebang should be used for the script?

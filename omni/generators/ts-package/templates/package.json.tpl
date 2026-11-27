@@ -20,7 +20,9 @@
         {% endif %}
     },
     {% if inputs.package_type == 'script' %}
-    "bin": "./dist/{{ inputs.package_name }}-cli.mjs",
+    "bin": {
+        "{{ inputs.bin_name }}": "./dist/cli.mjs"
+    },
     {% endif %}
     {% if inputs.package_type == 'lib' or inputs.package_type == 'ui-lib' or (inputs.package_type == 'script' and inputs.script_can_be_used_as_lib) %}
     "exports": {
