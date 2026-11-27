@@ -16,11 +16,16 @@ export const PUBLISHED_DIRS = [...TARGETS.map((target) => target.dir), "packages
 // What Node 22.12 has: `import.meta.main` (Node 24.2) and Bun's `dir`, `file`, `path`, `require`
 // are not here.
 const IMPORT_META = new Set(["url", "dirname", "filename", "resolve"]);
-// A name on these is the global object, so `.Bun` on one of them is the Bun global.
+// The global object under its usual names. Any `.Bun` is flagged whatever the receiver, so
+// aliasing it (`const g = globalThis; g.Bun`) needs more: the name may only be used as the
+// receiver of a named member or of a string-literal key, or under `typeof`.
 const GLOBAL_OBJECTS = new Set(["globalThis", "global", "window", "self"]);
 const BUN_STRING = /^(?:bun|Bun)$|^bun:/;
 
 const SOURCE = /\.(?:[cm]?[jt]sx?)$/;
+// Tests are not scanned because they are not published: `FORBIDDEN_PATH` in package-clients.ts
+// keeps `*.spec.*` and `__tests__/` out of every tarball (the allowlist admits only built
+// `.mjs`/`.d.ts` files, and `checkListing` rejects the rest).
 const TEST = /\.(?:spec|test)\.[cm]?[jt]sx?$/;
 
 function* sources(dir: string, problems: string[], seen = new Set<string>()): Generator<string> {
@@ -81,38 +86,85 @@ export function scan(file: string, text: string): string[] {
         if (ts.isIdentifier(node)) {
             const name = node.text;
             const parent = node.parent;
-            if (name === "Bun") {
-                // A member or key named Bun is harmless; the global and its aliases are not.
-                const member =
-                    (ts.isPropertyAccessExpression(parent) && parent.name === node) ||
-                    (ts.isQualifiedName(parent) && parent.right === node) ||
-                    (ts.isPropertyAssignment(parent) && parent.name === node) ||
-                    (ts.isPropertySignature(parent) && parent.name === node) ||
-                    (ts.isPropertyDeclaration(parent) && parent.name === node) ||
-                    (ts.isMethodDeclaration(parent) && parent.name === node) ||
-                    (ts.isMethodSignature(parent) && parent.name === node) ||
-                    (ts.isEnumMember(parent) && parent.name === node) ||
-                    (ts.isJsxAttribute(parent) && parent.name === node);
-                const onGlobal =
-                    ts.isPropertyAccessExpression(parent) &&
-                    parent.name === node &&
-                    ts.isIdentifier(parent.expression) &&
-                    GLOBAL_OBJECTS.has(parent.expression.text);
-                if (!member) report(node, "the Bun global");
-                else if (onGlobal) report(node, `${parent.expression.getText(sourceFile)}.Bun`);
-            } else if (
-                (name === "eval" || name === "Function") &&
-                !(ts.isPropertyAccessExpression(parent) && parent.name === node)
-            ) {
+            // A key or declared member named like a global is harmless; a property ACCESS is not.
+            const declared =
+                (ts.isQualifiedName(parent) && parent.right === node) ||
+                (ts.isPropertyAssignment(parent) && parent.name === node) ||
+                (ts.isPropertySignature(parent) && parent.name === node) ||
+                (ts.isPropertyDeclaration(parent) && parent.name === node) ||
+                (ts.isMethodDeclaration(parent) && parent.name === node) ||
+                (ts.isMethodSignature(parent) && parent.name === node) ||
+                (ts.isEnumMember(parent) && parent.name === node) ||
+                (ts.isJsxAttribute(parent) && parent.name === node);
+            const accessed = ts.isPropertyAccessExpression(parent) && parent.name === node;
+            const bindingKey =
+                ts.isBindingElement(parent) && (parent.propertyName ?? parent.name) === node;
+            if (name === "Bun" && !declared) {
+                report(
+                    node,
+                    accessed ? `${parent.expression.getText(sourceFile)}.Bun` : "the Bun global",
+                );
+            } else if (name === "bun" && (accessed || bindingKey)) {
+                report(node, "a `bun` member (process.versions.bun)");
+            } else if (name === "createRequire" && !declared) {
+                report(node, "createRequire, which can load Bun modules unchecked");
+            } else if (name === "require" && !declared && !accessed) {
+                const call = ts.isCallExpression(parent) && parent.expression === node;
+                if (!call || !isStatic(parent.arguments[0])) {
+                    report(node, 'require used other than as require("literal")');
+                }
+            } else if (accessed && (name === "require" || name === "constructor")) {
+                // `module.require(...)` and `fn.constructor("code")` load or run unchecked code.
+                const call =
+                    ts.isCallExpression(parent.parent) && parent.parent.expression === parent;
+                if (name === "require" || call) report(node, `.${name}(), which cannot be checked`);
+            } else if (GLOBAL_OBJECTS.has(name) && !declared && !accessed) {
+                const receiver =
+                    (ts.isPropertyAccessExpression(parent) && parent.expression === node) ||
+                    (ts.isElementAccessExpression(parent) &&
+                        parent.expression === node &&
+                        isStatic(parent.argumentExpression)) ||
+                    ts.isTypeOfExpression(parent) ||
+                    ts.isTypeQueryNode(parent) ||
+                    // The one shape the sources use: `globalThis.fetch.bind(globalThis)`.
+                    (ts.isCallExpression(parent) &&
+                        ts.isPropertyAccessExpression(parent.expression) &&
+                        parent.expression.name.text === "bind" &&
+                        parent.arguments[0] === node);
+                if (!receiver)
+                    report(node, `${name} used as a value (it could alias the Bun global)`);
+            } else if ((name === "eval" || name === "Function") && !accessed) {
                 report(node, `${name} runs code that cannot be checked`);
             }
         } else if (ts.isPropertyAccessExpression(node)) {
+            // `process.versions`: only `.node` may be read from it.
             if (
-                node.name.text === "bun" &&
-                ts.isPropertyAccessExpression(node.expression) &&
-                node.expression.name.text === "versions"
+                node.name.text === "versions" &&
+                ts.isIdentifier(node.expression) &&
+                node.expression.text === "process"
             ) {
-                report(node, "process.versions.bun");
+                const use = node.parent;
+                const node_ = ts.isPropertyAccessExpression(use) && use.name.text === "node";
+                if (!node_) report(node, "process.versions read other than .node");
+            }
+        } else if (ts.isElementAccessExpression(node)) {
+            const key = node.argumentExpression;
+            if (
+                ts.isIdentifier(node.expression) &&
+                GLOBAL_OBJECTS.has(node.expression.text) &&
+                !isStatic(key)
+            ) {
+                report(node, `${node.expression.text}[computed key], which could be "Bun"`);
+            }
+            if (
+                ts.isIdentifier(node.expression) &&
+                node.expression.text === "process" &&
+                isStatic(key) &&
+                key.text === "versions"
+            ) {
+                const use = node.parent;
+                const node_ = ts.isPropertyAccessExpression(use) && use.name.text === "node";
+                if (!node_) report(node, "process.versions read other than .node");
             }
         } else if (ts.isMetaProperty(node) && node.keywordToken === ts.SyntaxKind.ImportKeyword) {
             const parent = node.parent;
@@ -145,9 +197,13 @@ export function checkRuntimeAgnostic(root: string, dirs = PUBLISHED_DIRS): strin
             problems.push(`${dir}/src does not exist`);
             continue;
         }
+        let count = 0;
         for (const file of sources(src, problems)) {
+            count++;
             problems.push(...scan(path.relative(root, file), readFileSync(file, "utf8")));
         }
+        if (count === 0)
+            problems.push(`${dir}/src has no source file to scan, so it is not trusted`);
     }
     return problems;
 }

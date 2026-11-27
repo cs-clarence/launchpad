@@ -58,11 +58,23 @@ Two gates enforce it:
 - `omni -i run check:runtime` (part of `check`) scans those packages' `src`, ignoring
   `*.spec.ts` and `__tests__`, and fails with `file:line`. The package list comes from
   `TARGETS` in `tooling/package-clients.ts` plus `client-core` (`tooling/runtime-agnostic.ts`).
-  It parses each file with TypeScript 6 and leans towards false alarms: any identifier `Bun`
-  except a member or key of that name (`x.Bun`, `{ Bun: 1 }`), any string that is exactly `bun`,
-  `Bun` or starts with `bun:` (which also catches `globalThis["Bun"]`), `eval`, `Function`, and
-  a dynamic `import()` or `require()` whose specifier is not a plain string. A file that does not
-  parse, or a broken symbolic link, fails; linked files and directories are scanned. A real need
+  It parses each file with TypeScript 6 and leans towards false alarms. It flags: any `Bun`
+  identifier or `.Bun` property access, whatever the receiver (only a declared key or member
+  such as `{ Bun: 1 }` or `interface { Bun: string }` is harmless); any `.bun` access or
+  destructured `bun`; any string that is exactly `bun`, `Bun` or starts with `bun:`;
+  `globalThis`, `global`, `window` or `self` used as a value (allowed: as the receiver of a
+  named member or a string key, under `typeof`, and as the argument of `.bind(globalThis)`) or
+  with a computed key; `process.versions` read other than `.node`; `import.meta` members
+  other than `url`, `dirname`, `filename` and `resolve`; `createRequire`, `.require`, and
+  `require` not called with a string literal; `eval`, `Function` and `.constructor(...)` calls;
+  a dynamic `import()` or `require()` whose specifier is not a plain string. A file that does
+  not parse, a broken symbolic link, or a `src` with no source file fails; linked files and
+  directories are scanned. Spec files and `__tests__` are skipped because they are not
+  published (`tooling/package-clients.ts` admits only built `.mjs` and `.d.ts` files and rejects
+  `*.spec.*` and `__tests__/`). This is a guardrail against accidents, not a defence against
+  deliberate evasion (a computed key on an aliased object, say, is not caught): the packages'
+  `@types/node` typings and the Node smoke test are the other layers. A real need for one of
+  these in a published package means changing the rule here, in review.
   for one of these in a published package means changing the rule here, in review.
 - `test:packages` installs the packed tarballs outside the workspace and runs them under Bun
   **and** Node: `--version`, `--help`, importing `contracts` and `sdk`, an SDK call, an MCP

@@ -74,6 +74,33 @@ const DETECTED: [string, string?][] = [
     ["const re = /x/; Bun.file(re);"],
     ["if (a) Bun.file(x);"],
     ["Bun: for (;;) {}"],
+    ["const g = globalThis; g.Bun;"],
+    ["function f(g: any) { return g.Bun; }"],
+    ["const a = x.Bun;"],
+    ["const a = x?.Bun;"],
+    ['const a = globalThis["Bu" + "n"];'],
+    ["const a = globalThis[k];"],
+    ["const a = window[k];"],
+    ['const a = (function () {}).constructor("return Bun")();'],
+    ["const g = globalThis;"],
+    ["f(globalThis);"],
+    ["const g = { a: self };"],
+    ["return_(global);"],
+    ['const a = process["versions"].bun;'],
+    ["const { bun } = process.versions;"],
+    ["const { bun: b } = x;"],
+    ["const { x: { bun } } = y;"],
+    ["const v = process.versions; v.bun;"],
+    ["const v = process.versions;"],
+    ['const v = process["versions"];'],
+    ["const a = x.bun;"],
+    ['import { createRequire } from "node:module";'],
+    ['const r = module.require("x");'],
+    ["const r = require; r(n);"],
+    ["const r = require(name);"],
+    ["const r = typeof require;"],
+    ["const { createRequire } = m;"],
+    ["const a = m.createRequire(url);"],
 ];
 
 const BENIGN: [string, string?][] = [
@@ -88,8 +115,16 @@ const BENIGN: [string, string?][] = [
     ["const f = () => /Bun.x/.test(a);"],
     ["const a = { Bun: 1, bun: 2 };"],
     ["const a = c ? { Bun: 1 } : 2;"],
-    ["const h = x.Bun;"],
-    ["const h = x?.Bun;"],
+    ["const a = globalThis.fetch;"],
+    ["const a = x.fetch.bind(globalThis);"],
+    ["const a = typeof globalThis;"],
+    ['const a = globalThis["fetch"];'],
+    ["const a = globalThis.setTimeout(f, 1);"],
+    ["class C { Bun() {} Bun2 = 1; }"],
+    ["const v = process.versions.node;"],
+    ['const v = process["versions"].node;'],
+    ["const r = require('node:fs');"],
+    ["const a = err.constructor.name;"],
     ["interface Shape { Bun: string }"],
     ["const Bunny = 1; const bun = 2; Bunny.x;"],
     ["const a = import.meta.dirname;"],
@@ -143,6 +178,13 @@ describe("runtime-agnostic guard", () => {
     ])("fails closed on %s", (_what, text) => {
         const problems = scan("x.ts", text);
         expect(problems.some((p) => p.includes("cannot be scanned"))).toBe(true);
+    });
+
+    it("fails when a package has a src with no source file to scan", () => {
+        const dir = fixture({ "p/src/only.spec.ts": "export {};", "p/src/readme.md": "x" });
+        expect(checkRuntimeAgnostic(dir, ["p"])).toEqual([
+            expect.stringContaining("p/src has no source file to scan"),
+        ]);
     });
 
     it("scans every source file, not tests, and finds the line", () => {
