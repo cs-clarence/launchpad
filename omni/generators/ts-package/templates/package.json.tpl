@@ -8,7 +8,7 @@
     "private": {{ not inputs.published }},
     "license": "{{ inputs.package_license }}",
     {% if inputs.published %}
-    {% set repository_url = inputs.repository_url | default(value="https://github.com/launchpad-kit/launchpad") %}
+    {% set repository_url = "https://github.com/launchpad-kit/launchpad" %}
     "repository": {
         "type": "git",
         "url": "git+{{ repository_url }}.git",

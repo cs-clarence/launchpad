@@ -56,12 +56,6 @@ inputs:
         value: restricted
     default: public
 
-  - if: "{{ inputs.published }}"
-    name: repository_url
-    type: string
-    message: What is the URL of the GitHub repository (no .git, no trailing slash)?
-    default: "https://github.com/launchpad-kit/launchpad"
-
   - if: "{{ inputs.package_type == 'script' }}"
     name: script_can_be_used_as_lib
     type: boolean
