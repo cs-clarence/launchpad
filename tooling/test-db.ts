@@ -1,7 +1,7 @@
 // Starts or stops the disposable PostgreSQL that integration tests use. Bound to
 // 127.0.0.1 only, throwaway credentials, removed on stop. Run by
 // `omni run test:db:up` / `omni run test:db:down`.
-import { Command, CommanderError } from "commander";
+import { Command, CommanderError } from "@commander-js/extra-typings";
 
 const NAME = "launchpad-test-db";
 const IMAGE = "postgres:17-alpine";

@@ -1,7 +1,7 @@
 // Shared argument parsing for the tooling scripts: commander does the parsing, the script keeps
 // its own error class, wording and exit codes. Each script declares one option table; the same
 // table feeds commander, the flag lists the documentation tests read and the option list in HELP.
-import { Command, CommanderError } from "commander";
+import { Command, CommanderError } from "@commander-js/extra-typings";
 
 // `arg` set means the option takes a value; the rest are switches.
 export interface Opt {
@@ -61,7 +61,9 @@ export function optionHelp(options: Opt[], column: number): string {
 }
 
 export function parseOrFail(
-    program: Command,
+    // Any argument tuple: each script declares its own, and only the parsed options are read here.
+    // oxlint-disable-next-line typescript/no-explicit-any
+    program: Command<any[]>,
     argv: string[],
     fail: (message: string) => Error,
     policy: Policy,
@@ -100,5 +102,6 @@ export function parseOrFail(
             throw fail(`${argv[i - 1]} needs a value.`);
         }
     }
-    return program.opts<Parsed>();
+    // Safe: the option table that built `program` declares only string and boolean options.
+    return program.opts() as Parsed;
 }

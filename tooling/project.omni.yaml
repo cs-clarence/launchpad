@@ -120,8 +120,12 @@ tasks:
     description: The npm packages (contracts, sdk, cli, mcp, client-core) use no Bun-only API
     exec: sh -c 'cd "$(git rev-parse --show-toplevel)" && bun tooling/runtime-agnostic.ts'
 
+  check:imports:
+    description: No source imports the untyped commander; they use @commander-js/extra-typings
+    exec: sh -c 'cd "$(git rev-parse --show-toplevel)" && bun tooling/commander-imports.ts'
+
   check:
-    description: Types, lint, format, dependency, version and runtime consistency
+    description: Types, lint, format, dependency, version, runtime and import consistency
     exec: ""
     dependencies:
       - check:types
@@ -130,6 +134,7 @@ tasks:
       - check:deps
       - check:versions
       - check:runtime
+      - check:imports
 
   test:unit:
     description: Tests of the repository tooling

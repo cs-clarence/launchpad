@@ -18,7 +18,7 @@ import {
     writeFileSync,
 } from "node:fs";
 import path from "node:path";
-import { Command, CommanderError } from "commander";
+import { Command, CommanderError } from "@commander-js/extra-typings";
 import { build, checkListing, checkManifest, pack, stage, TARGETS } from "./package-clients";
 import { checkVersions, sharedWorkspaces } from "./versions";
 

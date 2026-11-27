@@ -6,10 +6,11 @@
 // The scan walks the syntax tree (TypeScript 6, the version of the compiler with a JavaScript API;
 // the `typescript` 7 package has none), so comments, string contents and regular expressions
 // are never mistaken for code. It leans towards false alarms: a missed Bun API is the failure.
-import { existsSync, readFileSync, readdirSync, realpathSync, statSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import ts from "@typescript/typescript6";
 import { TARGETS } from "./package-clients";
+import { scriptKind, syntaxProblems, walkSources } from "./ts-scan";
 
 export const PUBLISHED_DIRS = [...TARGETS.map((target) => target.dir), "packages/client-core"];
 
@@ -22,46 +23,30 @@ const IMPORT_META = new Set(["url", "dirname", "filename", "resolve"]);
 const GLOBAL_OBJECTS = new Set(["globalThis", "global", "window", "self"]);
 const BUN_STRING = /^(?:bun|Bun)$|^bun:/;
 
-const SOURCE = /\.(?:[cm]?[jt]sx?)$/;
 // Tests are not scanned because they are not published: `FORBIDDEN_PATH` in package-clients.ts
 // keeps `*.spec.*` and `__tests__/` out of every tarball (the allowlist admits only built
 // `.mjs`/`.d.ts` files, and `checkListing` rejects the rest).
 const TEST = /\.(?:spec|test)\.[cm]?[jt]sx?$/;
 
-function* sources(dir: string, problems: string[], seen = new Set<string>()): Generator<string> {
-    const real = realpathSync(dir);
-    if (seen.has(real)) return;
-    seen.add(real);
-    for (const entry of readdirSync(dir, { withFileTypes: true })) {
-        const file = path.join(dir, entry.name);
-        let stat;
-        try {
-            // Follows a symbolic link, so a linked file or directory is scanned like any other.
-            stat = statSync(file);
-        } catch {
-            problems.push(`${file}: cannot be read (a broken link?), so it is not trusted`);
-            continue;
-        }
-        if (stat.isDirectory()) {
-            if (entry.name !== "__tests__" && entry.name !== "node_modules") {
-                yield* sources(file, problems, seen);
-            }
-        } else if (SOURCE.test(entry.name) && !TEST.test(entry.name)) yield file;
+function* sources(dir: string, problems: string[]): Generator<string> {
+    for (const file of walkSources(
+        dir,
+        problems,
+        (name) => name === "__tests__" || name === "node_modules",
+    )) {
+        if (!TEST.test(file)) yield file;
     }
 }
 
-const kindOf = (file: string) =>
-    file.endsWith(".tsx")
-        ? ts.ScriptKind.TSX
-        : file.endsWith(".jsx")
-          ? ts.ScriptKind.JSX
-          : /\.[cm]?js$/.test(file)
-            ? ts.ScriptKind.JS
-            : ts.ScriptKind.TS;
-
 // Problems as "file:line: message" for one file's text.
 export function scan(file: string, text: string): string[] {
-    const sourceFile = ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true, kindOf(file));
+    const sourceFile = ts.createSourceFile(
+        file,
+        text,
+        ts.ScriptTarget.Latest,
+        true,
+        scriptKind(file),
+    );
     const problems: string[] = [];
     const lineOf = (position: number) =>
         sourceFile.getLineAndCharacterOfPosition(position).line + 1;
@@ -71,13 +56,7 @@ export function scan(file: string, text: string): string[] {
         );
 
     // A file that does not parse cannot be trusted: fail closed.
-    const syntax = (sourceFile as unknown as { parseDiagnostics: ts.Diagnostic[] })
-        .parseDiagnostics;
-    for (const diagnostic of syntax) {
-        problems.push(
-            `${file}:${lineOf(diagnostic.start ?? 0)}: ${ts.flattenDiagnosticMessageText(diagnostic.messageText, " ")}; the file cannot be scanned, so it is not trusted`,
-        );
-    }
+    problems.push(...syntaxProblems(sourceFile, file));
 
     const isStatic = (node: ts.Node | undefined): node is ts.StringLiteralLike =>
         node !== undefined && ts.isStringLiteralLike(node);
