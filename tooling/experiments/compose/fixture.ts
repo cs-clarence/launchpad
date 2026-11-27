@@ -58,6 +58,8 @@ export function planFixture(id: string, ports: readonly number[], socketGid: num
         LAUNCHPAD_AUTH_SECRET: randomBytes(32).toString("hex"),
         POSTGRES_PASSWORD: randomBytes(24).toString("hex"),
         DOCKER_SOCKET_GID: String(socketGid),
+        // Required by docker-compose.yaml; the image overrides name the images, so any tag works.
+        LAUNCHPAD_IMAGE_TAG: "test",
     };
     const override = {
         services: Object.fromEntries(
