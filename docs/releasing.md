@@ -75,7 +75,8 @@ omni -i run release:dry-run -p @launchpad-kit/tooling
 ```
 
 or run the manual **Release dry run** workflow. It checks that versions agree, packs the
-four client packages with the same allowlist checks as `test:packages` (the Node smoke runs in `test:packages`, not in the dry run), writes
+four client packages with the same allowlist checks as `test:packages` (the Node smoke runs in `test:packages`, not in the dry run),
+writes
 `packages/SHA256SUMS`, builds both images **without pushing them**, removes those images by
 exact name (Docker's build cache and pulled base images stay), and leaves everything in `.release-dry-run/` (kept 7 days as a workflow
 artifact). The workflow has read-only permissions, no secret and no write token, and a test

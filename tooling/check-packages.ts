@@ -51,6 +51,7 @@ async function main() {
         BUN_INSTALL_CACHE_DIR: path.join(work, "bun-cache"),
     };
     mkdirSync(scrubbed.HOME!, { recursive: true });
+    let server: ReturnType<typeof Bun.serve> | undefined;
     try {
         const tarballs: Record<string, string> = {};
         for (const target of TARGETS) {
@@ -127,7 +128,7 @@ async function main() {
         const bin = (file: string) => path.join(consumer, "node_modules", file);
 
         // The SDK against a tiny local server standing in for the controller.
-        const server = Bun.serve({
+        server = Bun.serve({
             hostname: "127.0.0.1",
             port: 0,
             async fetch(request) {
@@ -246,7 +247,6 @@ console.log("mcp ok: " + message.result.serverInfo.name);
                 );
             } else console.log(`${command} (bin) ok`);
         }
-        server.stop(true);
 
         // The declarations as a TypeScript user sees them: strict, and not skipping library files.
         writeFileSync(
@@ -283,6 +283,7 @@ void organizations; void seconds; void promote;
         if (tsc.code !== 0) fail(`types.ts does not type-check:\n${tsc.out}\n${tsc.err}`);
         else console.log("types ok");
     } finally {
+        server?.stop(true);
         rmSync(work, { recursive: true, force: true });
     }
 }

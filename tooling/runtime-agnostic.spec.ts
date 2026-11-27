@@ -46,6 +46,42 @@ describe("runtime-agnostic guard", () => {
         expect(checkRuntimeAgnostic(dir, ["p"])).toEqual([]);
     });
 
+    it("ignores mentions in comments, strings, templates and regular expressions", () => {
+        const text = [
+            "const a = 1; // Bun.file()",
+            "/* Bun.file() */ const b = 2;",
+            "/**",
+            " * Bun.x",
+            " */",
+            'const c = "Bun.file() and bun:sqlite";',
+            "const d = `Bun.file() ${a} Bun`;",
+            "const e = /Bun\\.x[/]/.test(c);",
+            "const f = { Bun: 1, bun: 2 };",
+            "const g = a ? { Bun: 1 } : 2;",
+            'const h = x.Bun + "bun";',
+            "const i = `${`Bun`} ${a ? 1 : 2}`;",
+            'const j = import.meta.dirname + "import.meta.dir";',
+        ].join("\n");
+        expect(scan("x.ts", text)).toEqual([]);
+    });
+
+    it("finds uses the old line scanner missed", () => {
+        expect(scan("x.ts", "/* c */ Bun.file('x');")).toHaveLength(1);
+        expect(scan("x.ts", "/*\n * ok\n */ const a = 1;\n * Bun.x\n")).toHaveLength(1);
+        expect(scan("x.ts", "const a = cond ? Bun : other;")).toHaveLength(1);
+        expect(scan("x.ts", "const a = { k: cond ? Bun : 1 };")).toHaveLength(1);
+        expect(scan("x.ts", "const a = `${Bun.version}`;")).toHaveLength(1);
+        expect(scan("x.ts", 'const m = await import("bun:sqlite");')).toHaveLength(1);
+        expect(scan("x.ts", 'const m = require("bun");')).toHaveLength(1);
+        expect(scan("x.ts", 'import "bun:test";')).toHaveLength(1);
+        expect(scan("x.ts", 'export { x } from "bun";')).toHaveLength(1);
+    });
+
+    it("keeps the line number across comments and templates", () => {
+        const text = "/*\n\n*/\nconst a = `\n\n`;\nBun.x;\n";
+        expect(scan("x.ts", text)).toEqual([expect.stringContaining("x.ts:7:")]);
+    });
+
     it("ignores tests", () => {
         const dir = fixture({
             "p/src/a.spec.ts": 'import { test } from "bun:test";',
