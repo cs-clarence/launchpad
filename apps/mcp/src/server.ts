@@ -114,9 +114,11 @@ export function createMcpServer(context: Context, options: ServerOptions = {}) {
                         defaultProfile: options.profile,
                         organization: input.organization,
                     });
-                    return toolResult(await run(workspace, values));
+                    return toolResult(await run(workspace, values), false, [
+                        ...(context.secrets ?? []),
+                    ]);
                 } catch (error) {
-                    return toolError(error);
+                    return toolError(error, [...(context.secrets ?? [])]);
                 }
             },
         );

@@ -584,3 +584,37 @@ describe("session worked examples (fake controller)", () => {
         expect(stale.prompts).toEqual([]);
     });
 });
+
+describe("redaction of the run's own key", () => {
+    it("hides the key in forms the key-shaped pattern misses, in error output", async () => {
+        const body = "kQ7xLm2Zp9Rt4VbN8cYd5HfJ3wSa6Ue";
+        const key = `lp_${body}`;
+        const forms = [
+            `plain ${body}`,
+            `shouting ${body.toUpperCase()} and ${body.toLowerCase()}`,
+            "header Bearer zzTopSecretToken123",
+            "cookie __Secure-better-auth.session_token=abc123.sig%2B",
+        ].join("; ");
+        const echo = (async () =>
+            json({ code: "forbidden", status: 403, title: forms }, 403)) as unknown as typeof fetch;
+        for (const json_ of [false, true]) {
+            const fake = fakeIo();
+            fake.io.context = createContext(
+                {
+                    LAUNCHPAD_CONFIG_DIR: dir,
+                    LAUNCHPAD_CONTROLLER: CONTROLLER,
+                    LAUNCHPAD_API_KEY: key,
+                },
+                { fetch: echo },
+            );
+            expect(await run(["whoami", ...(json_ ? ["--json"] : [])], fake.io)).toBe(
+                EXIT.unauthorized,
+            );
+            const text = fake.all().toLowerCase();
+            for (const leak of [body, "zztopsecrettoken123", "abc123.sig"]) {
+                expect(text).not.toContain(leak.toLowerCase());
+            }
+            expect(text).toContain("[redacted]");
+        }
+    });
+});

@@ -9,6 +9,8 @@ export interface Context {
     sessions: SessionStore;
     env: Record<string, string | undefined>;
     fetch?: typeof fetch;
+    // Secrets resolved during this run (API keys), for embedders to pass to `safeOutput`.
+    secrets?: Set<string>;
 }
 
 export function createContext(
@@ -20,6 +22,7 @@ export function createContext(
         store: new CredentialStore(directory),
         sessions: new SessionStore(directory),
         env,
+        secrets: new Set<string>(),
         ...options,
     };
 }
@@ -43,6 +46,7 @@ export async function resolve(ctx: Context, profileName?: string): Promise<Resol
         );
     }
     if (!profileName && controller && apiKey) {
+        ctx.secrets?.add(apiKey);
         return {
             profile: null,
             controller,
@@ -63,6 +67,7 @@ export async function resolve(ctx: Context, profileName?: string): Promise<Resol
                 : "Not logged in. Run: launchpad login",
         );
     }
+    ctx.secrets?.add(profile.apiKey);
     return {
         profile: name,
         controller: profile.controller,
@@ -96,6 +101,7 @@ export async function login(
         );
     }
     const controller = normalizeBaseUrl(input.controller);
+    ctx.secrets?.add(input.apiKey);
     const client = createClient({ baseUrl: controller, apiKey: input.apiKey, fetch: ctx.fetch });
     const key = await client.key.get(); // throws for an invalid, revoked or expired key
     await ctx.store.update((config) => {

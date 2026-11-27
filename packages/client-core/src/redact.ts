@@ -1,7 +1,10 @@
 // Replaces anything shaped like an API key, for text that may reach a terminal, a log
 // or an MCP response.
 export function redact(text: string): string {
-    return text.replace(/lp_[A-Za-z0-9_-]{8,}/g, "lp_[redacted]");
+    return text
+        .replace(/lp_[A-Za-z0-9_-]{8,}/g, "lp_[redacted]")
+        .replace(/\bBearer\s+(?!\[redacted\])[^\s"',;]+/gi, "Bearer [redacted]")
+        .replace(/__Secure-([A-Za-z0-9._-]+)=[^\s;,"']+/gi, "__Secure-$1=[redacted]");
 }
 
 // Values that are secret for this run only (a session cookie, a password), in the forms a server
@@ -12,6 +15,8 @@ export function redactSecrets(text: string, secrets: Iterable<string>): string {
     for (const secret of secrets) {
         if (secret.length < 8) continue;
         forms.add(secret);
+        // A key echoed without its prefix.
+        if (/^lp_/i.test(secret)) forms.add(secret.slice(3));
         forms.add(encodeURIComponent(secret));
         forms.add(JSON.stringify(secret).slice(1, -1));
         try {
@@ -24,7 +29,10 @@ export function redactSecrets(text: string, secrets: Iterable<string>): string {
     for (const form of [...forms]
         .filter((f) => f.length >= 8)
         .sort((a, b) => b.length - a.length)) {
-        out = out.split(form).join("[redacted]");
+        out = out.replace(
+            new RegExp(form.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "gi"),
+            "[redacted]",
+        );
     }
     return out;
 }

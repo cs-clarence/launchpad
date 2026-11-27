@@ -61,6 +61,8 @@ export function buildProgram(rawIo: Io, secrets: Set<string> = new Set()) {
     // Everything that reaches the terminal passes the redactor: names and other fields
     // come from the server and may contain key-shaped text. Redacting inside a JSON
     // document keeps it valid JSON.
+    // The run's own secrets plus any key resolved from the saved profile or the environment.
+    const held = () => [...secrets, ...(rawIo.context.secrets ?? [])];
     const io: Io = {
         get workingDir() {
             return rawIo.workingDir;
@@ -77,8 +79,8 @@ export function buildProgram(rawIo: Io, secrets: Set<string> = new Set()) {
         get signals() {
             return rawIo.signals;
         },
-        out: (t) => rawIo.out(safeOutput(t, secrets)),
-        err: (t) => rawIo.err(safeOutput(t, secrets)),
+        out: (t) => rawIo.out(safeOutput(t, held())),
+        err: (t) => rawIo.err(safeOutput(t, held())),
         readStdin: () => rawIo.readStdin(),
         readSecret: (prompt, options) => rawIo.readSecret(prompt, options),
         readPasswordFile: (path) => rawIo.readPasswordFile(path),
@@ -324,7 +326,7 @@ export async function run(argv: string[], io: Io): Promise<number> {
                           },
                       })
                     : `Error: ${failure.message}`,
-                secrets,
+                [...secrets, ...(io.context.secrets ?? [])],
             ),
         );
         return failure.exitCode;
