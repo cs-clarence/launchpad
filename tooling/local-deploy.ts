@@ -224,6 +224,8 @@ export function composeEnv(
         DOKKU_SSH_HOST_PORT: String(ports.ssh),
         PREVIEW_HTTPS_HOST_PORT: String(ports.https),
         LAUNCHPAD_VERSION: version,
+        // The override names project-local images; the variable only satisfies the required tag.
+        LAUNCHPAD_IMAGE_TAG: "local",
     };
 }
 

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { interpolate, loadRaw } from "../../compose-production";
+import { interpolate, loadRaw, requiredVariables } from "../../compose-production";
 import { fixtureProblems, planFixture } from "./fixture";
 
 const id = "1234567890abcdef12345678";
@@ -24,6 +24,14 @@ describe("disposable Compose fixture preflight", () => {
         expect(fixture.services.worker.environment.LAUNCHPAD_ALIASES).toBe("on");
         expect(fixture.services.worker.environment.LAUNCHPAD_DEPLOYMENTS).toBe("on");
         expect(plan.directory).toBe(`/tmp/opencode/${plan.project}`);
+    });
+
+    it("supplies every variable docker-compose.yaml requires", () => {
+        const missing = new Set<string>();
+        interpolate(loadRaw(), plan.env, missing);
+        expect([...missing]).toEqual([]);
+        expect(requiredVariables(loadRaw())).toContain("LAUNCHPAD_IMAGE_TAG");
+        expect(plan.env.LAUNCHPAD_IMAGE_TAG).toBe("test");
     });
 
     it("rejects non-fixture names and ambiguous ports", () => {

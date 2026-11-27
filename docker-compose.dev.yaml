@@ -62,10 +62,11 @@ services:
 
   dokku:
     build:
-      context: ./containers/dokku
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: containers/dokku/Dockerfile
       args:
         DOKKU_VERSION: ${DOKKU_VERSION:-0.38.34}
+        LAUNCHPAD_VERSION: ${LAUNCHPAD_VERSION:-unknown}
       labels:
         com.launchpad.dev-project: ${DEV_PROJECT:?set by dev:infra:up (generated)}
     image: ${DEV_PROJECT:?set by dev:infra:up (generated)}/dokku:local

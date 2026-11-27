@@ -58,6 +58,8 @@ export function planFixture(id: string, ports: readonly number[], socketGid: num
         LAUNCHPAD_AUTH_SECRET: randomBytes(32).toString("hex"),
         POSTGRES_PASSWORD: randomBytes(24).toString("hex"),
         DOCKER_SOCKET_GID: String(socketGid),
+        // Required by docker-compose.yaml; the image overrides name the images, so any tag works.
+        LAUNCHPAD_IMAGE_TAG: "test",
     };
     const override = {
         services: Object.fromEntries(
@@ -176,10 +178,10 @@ export function fixtureProblems(model: any, plan: Plan): string[] {
             problems.push(`Unsafe fixture build outputs or attachments: ${name}.`);
         if (build && plan.images[name]) {
             const root = dirname(COMPOSE_FILE);
-            const expectedContext = name === "dokku" ? join(root, "containers/dokku") : root;
+            const expectedContext = root;
             const expectedDockerfile =
                 name === "dokku"
-                    ? "Dockerfile"
+                    ? "containers/dokku/Dockerfile"
                     : `apps/${name === "admin" ? "controller" : name}/Dockerfile`;
             if (
                 typeof build.context !== "string" ||

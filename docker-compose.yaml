@@ -5,6 +5,10 @@
 #
 #   docker compose --env-file docker-compose.env -f docker-compose.yaml config --quiet
 #
+# Images: ghcr.io/launchpad-kit/launchpad-<name>:${LAUNCHPAD_IMAGE_TAG}. The tag is required and has
+# no default, so a stack never floats to whatever is newest. `build:` is for local builds only:
+# set LAUNCHPAD_IMAGE_TAG to a local tag and run `docker compose build`.
+#
 # Rules this file keeps (asserted by tooling/compose-production.ts):
 # - no `env_file`: every service gets an allowlisted `environment`, secrets are `${VAR:?}`;
 # - the database sits on an internal network and nothing but the controller, Dokku SSH, Dokku HTTP(S)
@@ -145,7 +149,7 @@ services:
       dockerfile: apps/controller/Dockerfile
       args:
         LAUNCHPAD_VERSION: ${LAUNCHPAD_VERSION:-unknown}
-    image: launchpad/controller:${LAUNCHPAD_IMAGE_TAG:-local}
+    image: ghcr.io/launchpad-kit/launchpad-controller:${LAUNCHPAD_IMAGE_TAG:?set LAUNCHPAD_IMAGE_TAG to the release version to run (for example 0.1.0), or to a local tag you built}
     restart: unless-stopped
     mem_limit: 512m
     cpus: 1.0
@@ -192,7 +196,7 @@ services:
       dockerfile: apps/worker/Dockerfile
       args:
         LAUNCHPAD_VERSION: ${LAUNCHPAD_VERSION:-unknown}
-    image: launchpad/worker:${LAUNCHPAD_IMAGE_TAG:-local}
+    image: ghcr.io/launchpad-kit/launchpad-worker:${LAUNCHPAD_IMAGE_TAG:?set LAUNCHPAD_IMAGE_TAG to the release version to run (for example 0.1.0), or to a local tag you built}
     # No setting names the worker: its owner id is a fresh UUID per process. The stable service
     # name and hostname identify it in logs.
     hostname: launchpad-worker
@@ -250,11 +254,12 @@ services:
 
   dokku:
     build:
-      context: ./containers/dokku
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: containers/dokku/Dockerfile
       args:
         DOKKU_VERSION: ${DOKKU_VERSION:-0.38.34}
-    image: launchpad/dokku:${DOKKU_VERSION:-0.38.34}
+        LAUNCHPAD_VERSION: ${LAUNCHPAD_VERSION:-unknown}
+    image: ghcr.io/launchpad-kit/launchpad-dokku:${LAUNCHPAD_IMAGE_TAG:?set LAUNCHPAD_IMAGE_TAG to the release version to run (for example 0.1.0), or to a local tag you built}
     restart: unless-stopped
     mem_limit: 1g
     cpus: 2.0
@@ -305,7 +310,7 @@ services:
       dockerfile: apps/router/Dockerfile
       args:
         LAUNCHPAD_VERSION: ${LAUNCHPAD_VERSION:-unknown}
-    image: launchpad/router:${LAUNCHPAD_IMAGE_TAG:-local}
+    image: ghcr.io/launchpad-kit/launchpad-router:${LAUNCHPAD_IMAGE_TAG:?set LAUNCHPAD_IMAGE_TAG to the release version to run (for example 0.1.0), or to a local tag you built}
     restart: unless-stopped
     mem_limit: 128m
     cpus: 0.5
@@ -361,7 +366,7 @@ services:
       target: admin
       args:
         LAUNCHPAD_VERSION: ${LAUNCHPAD_VERSION:-unknown}
-    image: launchpad/admin:${LAUNCHPAD_IMAGE_TAG:-local}
+    image: ghcr.io/launchpad-kit/launchpad-admin:${LAUNCHPAD_IMAGE_TAG:?set LAUNCHPAD_IMAGE_TAG to the release version to run (for example 0.1.0), or to a local tag you built}
     mem_limit: 512m
     cpus: 1.0
     pids_limit: 256

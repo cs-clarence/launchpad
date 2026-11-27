@@ -37,6 +37,8 @@ RUN apt-get update \
     && install -d -o launchpad -g launchpad -m 0700 /data
 WORKDIR /app
 ENV NODE_ENV=production HOST=0.0.0.0 PORT=3000 LAUNCHPAD_DATA_DIR=/data LAUNCHPAD_VERSION=${LAUNCHPAD_VERSION}
+# Licence and third-party notices (root-owned, read-only to the service user).
+COPY --from=build --chown=root:root /app/LICENSE /app/THIRD_PARTY_NOTICES.md /licenses/
 # Owned by root and read-only to the service user: the program cannot rewrite itself.
 COPY --from=build --chown=root:root /app/apps/controller/.output ./.output
 USER ${LAUNCHPAD_UID}:${LAUNCHPAD_UID}
@@ -48,17 +50,43 @@ VOLUME /data
 # admin command. Build it with `--target admin`.
 FROM base AS admin
 ARG LAUNCHPAD_UID=10001
+# OCI labels: the release build supplies the version, commit and time (`--build-arg`); a local build
+# leaves them `unknown` or empty.
+ARG LAUNCHPAD_VERSION=unknown
+ARG LAUNCHPAD_REVISION=
+ARG LAUNCHPAD_CREATED=
 USER root
 RUN apt-get update \
     && apt-get install -y --no-install-recommends postgresql-client-17 \
     && rm -rf /var/lib/apt/lists/*
 USER ${LAUNCHPAD_UID}:${LAUNCHPAD_UID}
+LABEL org.opencontainers.image.title="Launchpad admin" \
+      org.opencontainers.image.description="One-off operator commands for Launchpad (migrate, backup, restore) with PostgreSQL 17 client tools" \
+      org.opencontainers.image.source="https://github.com/launchpad-kit/launchpad" \
+      org.opencontainers.image.url="https://github.com/launchpad-kit/launchpad" \
+      org.opencontainers.image.documentation="https://github.com/launchpad-kit/launchpad/tree/main/docs" \
+      org.opencontainers.image.licenses="Apache-2.0" \
+      org.opencontainers.image.version="${LAUNCHPAD_VERSION}" \
+      org.opencontainers.image.revision="${LAUNCHPAD_REVISION}" \
+      org.opencontainers.image.created="${LAUNCHPAD_CREATED}"
 ENTRYPOINT ["bun", ".output/admin.mjs"]
 CMD ["--help"]
 
 # The controller image is the last stage, so a build without `--target` produces it.
 FROM base AS runtime
+ARG LAUNCHPAD_VERSION=unknown
+ARG LAUNCHPAD_REVISION=
+ARG LAUNCHPAD_CREATED=
 EXPOSE 3000
+LABEL org.opencontainers.image.title="Launchpad controller" \
+      org.opencontainers.image.description="Launchpad controller: the management API and dashboard" \
+      org.opencontainers.image.source="https://github.com/launchpad-kit/launchpad" \
+      org.opencontainers.image.url="https://github.com/launchpad-kit/launchpad" \
+      org.opencontainers.image.documentation="https://github.com/launchpad-kit/launchpad/tree/main/docs" \
+      org.opencontainers.image.licenses="Apache-2.0" \
+      org.opencontainers.image.version="${LAUNCHPAD_VERSION}" \
+      org.opencontainers.image.revision="${LAUNCHPAD_REVISION}" \
+      org.opencontainers.image.created="${LAUNCHPAD_CREATED}"
 HEALTHCHECK --interval=15s --timeout=5s --start-period=20s --retries=3 \
     CMD ["bun", "-e", "fetch('http://127.0.0.1:'+(process.env.PORT||3000)+'/api/health').then(r=>process.exit(r.ok?0:1),()=>process.exit(1))"]
 CMD ["bun", ".output/server/index.mjs"]

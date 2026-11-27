@@ -174,6 +174,15 @@ export function assertProduction(model: Json, env: Env): string[] {
         }
     }
 
+    // Published images: GHCR names, tag from the required LAUNCHPAD_IMAGE_TAG, never `latest`.
+    for (const name of IMAGE_SERVICES) {
+        const image = String(services[name]?.image ?? "");
+        const [repository, tag = ""] = image.split(":");
+        if (repository !== `ghcr.io/launchpad-kit/launchpad-${name}`)
+            fail(`${name} image "${image}" is not ghcr.io/launchpad-kit/launchpad-${name}.`);
+        if (tag === "" || tag === "latest") fail(`${name} image "${image}" has no explicit tag.`);
+    }
+
     // Measured resource limits (docs/production-compose.md, "Resource limits").
     for (const [name, service] of Object.entries(services)) {
         if (!service.mem_limit) fail(`${name} has no mem_limit.`);
@@ -443,6 +452,8 @@ export function assertProduction(model: Json, env: Env): string[] {
     return problems;
 }
 
+const IMAGE_SERVICES = ["controller", "worker", "router", "admin", "dokku"];
+
 const DIGEST = /@sha256:[0-9a-f]{64}\b/;
 
 /** Every external base image in our Dockerfiles is pinned by digest; the Dokku plugin by commit. */
@@ -464,6 +475,60 @@ export function assertDockerfiles(files: Record<string, string>): string[] {
         }
         if (/plugin:install/.test(text) && !/ARG DOKKU_HTTP_AUTH_COMMIT=[0-9a-f]{40}\n/.test(text))
             problems.push(`${file}: the Dokku plugin is not pinned to a 40-hex commit.`);
+    }
+    return problems;
+}
+
+const LABELS = [
+    "title",
+    "description",
+    "source",
+    "url",
+    "licenses",
+    "version",
+    "revision",
+    "created",
+];
+
+/**
+ * Every Dockerfile that produces a published image carries the OCI labels (the release workflow
+ * reads `version`; `version`, `revision` and `created` come from build arguments) and copies the
+ * licence and the third-party notices into /licenses. The controller file has two published
+ * targets, admin and runtime, so each final stage must carry them.
+ */
+export function assertImageMetadata(files: Record<string, string>): string[] {
+    const problems: string[] = [];
+    for (const [file, text] of Object.entries(files)) {
+        const stages = text.split(/^(?=FROM\s)/m).filter((stage) => /^FROM\s/.test(stage));
+        const published = file.includes("controller")
+            ? stages.filter((stage) => /\sAS\s+(admin|runtime)\b/i.test(stage.split("\n")[0]!))
+            : [stages[stages.length - 1]!];
+        if (published.length === 0) problems.push(`${file}: no published stage found.`);
+        for (const stage of published) {
+            for (const label of LABELS) {
+                if (!stage.includes(`org.opencontainers.image.${label}=`))
+                    problems.push(`${file}: missing label org.opencontainers.image.${label}.`);
+            }
+            if (
+                !/org\.opencontainers\.image\.source="https:\/\/github\.com\/launchpad-kit\/launchpad"/.test(
+                    stage,
+                )
+            )
+                problems.push(`${file}: the source label is not the repository URL.`);
+            if (!/org\.opencontainers\.image\.licenses="Apache-2\.0"/.test(stage))
+                problems.push(`${file}: the licenses label is not Apache-2.0.`);
+            if (!/org\.opencontainers\.image\.version="\$\{LAUNCHPAD_VERSION\}"/.test(stage))
+                problems.push(`${file}: the version label is not set from LAUNCHPAD_VERSION.`);
+        }
+        // The licence files are copied in the shared base stage of the controller file.
+        if (
+            !/COPY\b[^\n]*\bLICENSE\b[^\n]*\bTHIRD_PARTY_NOTICES\.md\b[^\n]* \/licenses\//.test(
+                text,
+            )
+        )
+            problems.push(
+                `${file}: LICENSE and THIRD_PARTY_NOTICES.md are not copied to /licenses.`,
+            );
     }
     return problems;
 }
@@ -512,6 +577,7 @@ export async function checkRendered(): Promise<string[]> {
             parseEnvFile(readFileSync(ENV_EXAMPLE, "utf8")),
         ),
         ...assertDockerfiles(readDockerfiles()),
+        ...assertImageMetadata(readDockerfiles()),
     ];
     // Required settings must fail closed when unset.
     const bare = await run([...base, "--env-file", "/dev/null", "config", "--quiet"], clean);

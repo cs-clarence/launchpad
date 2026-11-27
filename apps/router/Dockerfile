@@ -34,13 +34,29 @@ ARG LAUNCHPAD_UID=10001
 # The release version, recorded in the image. Pass it at build time
 # (`--build-arg LAUNCHPAD_VERSION=<version>`); an image built without it reports `unknown`.
 ARG LAUNCHPAD_VERSION=unknown
+# OCI metadata, supplied by the release build (`--build-arg LAUNCHPAD_REVISION=<commit>`,
+# `--build-arg LAUNCHPAD_CREATED=<RFC 3339 time>`); the version label is LAUNCHPAD_VERSION. Empty or
+# `unknown` in a local build.
+ARG LAUNCHPAD_REVISION=
+ARG LAUNCHPAD_CREATED=
 RUN groupadd --gid "${LAUNCHPAD_UID}" launchpad \
     && useradd --uid "${LAUNCHPAD_UID}" --gid launchpad --no-create-home --shell /usr/sbin/nologin launchpad \
     && install -d -o launchpad -g launchpad -m 0700 /state
 WORKDIR /app
 ENV NODE_ENV=production LAUNCHPAD_VERSION=${LAUNCHPAD_VERSION} \
     LAUNCHPAD_ROUTER_STATE_FILE=/state/routes.sqlite
+# Licence and third-party notices (root-owned, read-only to the service user).
+COPY --from=build --chown=root:root /app/LICENSE /app/THIRD_PARTY_NOTICES.md /licenses/
 COPY --from=build --chown=root:root /app/apps/router/dist ./dist
+LABEL org.opencontainers.image.title="Launchpad router" \
+      org.opencontainers.image.description="Launchpad alias router: routes stable alias hostnames to deployments" \
+      org.opencontainers.image.source="https://github.com/launchpad-kit/launchpad" \
+      org.opencontainers.image.url="https://github.com/launchpad-kit/launchpad" \
+      org.opencontainers.image.documentation="https://github.com/launchpad-kit/launchpad/tree/main/docs" \
+      org.opencontainers.image.licenses="Apache-2.0" \
+      org.opencontainers.image.version="${LAUNCHPAD_VERSION}" \
+      org.opencontainers.image.revision="${LAUNCHPAD_REVISION}" \
+      org.opencontainers.image.created="${LAUNCHPAD_CREATED}"
 USER ${LAUNCHPAD_UID}:${LAUNCHPAD_UID}
 VOLUME /state
 # Liveness of the routing state only: the control listener answers /healthz when the store does. It

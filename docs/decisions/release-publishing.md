@@ -437,8 +437,8 @@ My own list, because the review's list was not available to me. Each item is mar
       not copy `repository` from the source manifests, so the staging pipeline must emit these and
       `checkManifest`/`checkLibrary` must assert them (the exact `repository.url` trusted
       publishing needs).
-- [ ] OCI labels (`source`, `licenses`, `description`) and licence notices in the images.
-- [ ] Compose image references to the GHCR names.
+- [x] OCI labels (`source`, `licenses`, `description`) and licence notices in the images.
+- [x] Compose image references to the GHCR names (`LAUNCHPAD_IMAGE_TAG` required, no `latest` default).
 - [ ] Release notes.
 - [ ] `v0.1.0-rc.1` smoke release; confirm tarball provenance, `--tag next`, retag attestations and
       image tags.
