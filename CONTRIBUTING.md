@@ -200,7 +200,9 @@ Jobs restore the Omni cache (`.omni`) so unchanged projects are skipped; this is
 safe because every task's cache key names its inputs (see [tooling](docs/tooling.md)).
 The Omni version is pinned in `.github/actions/setup-workspace/action.yaml`: raise it
 together with the version you use locally. Bun comes from `packageManager` in
-`package.json`. Nothing is published or deployed from CI. The manual **Release dry run** workflow
+`package.json`. Nothing is published or deployed from CI today; the
+[release publishing decision](docs/decisions/release-publishing.md) permits exactly one gated
+release workflow, which does not exist yet. The manual **Release dry run** workflow
 (`omni -i run release:dry-run -p @launchpad-kit/tooling`) rehearses a release without publishing; see
 [releasing](docs/releasing.md) for versioning, compatibility rules and the release checklist.
 

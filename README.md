@@ -9,7 +9,7 @@ removed. Its replacement, the immutable app model, is switched off by default
 and an enabled worker. With aliases enabled separately, promote an existing deployment to a stable
 hostname without rebuilding it. See the [dashboard, CLI, MCP and API deployment guide](docs/deployments.md).
 Nothing is published or deployed from this
-repository's CI. A production-shaped Compose stack exists but has never run as production (see [production Compose](docs/production-compose.md)). See
+repository's CI today; the [release publishing decision](docs/decisions/release-publishing.md) permits exactly one gated release workflow, which does not exist yet. A production-shaped Compose stack exists but has never run as production (see [production Compose](docs/production-compose.md)). See
 [Controller](#controller) below, [the controller README](apps/controller/README.md) and
 [the worker README](apps/worker/README.md).
 
