@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import * as core from "./index";
 import type {
@@ -123,5 +124,47 @@ describe("redaction keeps JSON valid and prose readable", () => {
             expect(core.redact(text)).toBe(text);
         }
         expect(core.redact("Authorization: Bearer abc1")).toBe("Authorization: Bearer [redacted]");
+    });
+});
+
+describe("README Public API", () => {
+    const readme = readFileSync(new URL("../README.md", import.meta.url), "utf8");
+    const section = readme.split("## Public API")[1]!.split("\n## ")[0]!;
+    const publicPart = section.split("**Internal, unstable:**")[0]!;
+    const documented = new Set(
+        [...publicPart.matchAll(/`([A-Za-z][A-Za-z0-9_]*)`/g)].map((m) => m[1]!),
+    );
+    const source = readFileSync(new URL("./index.ts", import.meta.url), "utf8");
+    const internal = source.split("// @internal")[1] ?? "";
+    const exportedTypes = (text: string) =>
+        [...text.matchAll(/export type \{([^}]*)\}/g)].flatMap((m) =>
+            m[1]!
+                .split(",")
+                .map((n) => n.trim())
+                .filter(Boolean),
+        );
+
+    it("lists exactly the runtime names and types that index.ts exports publicly", () => {
+        const internalNames = new Set(["resolve", "clientFor"]);
+        const runtime = Object.keys(core).filter((n) => !internalNames.has(n));
+        const types = exportedTypes(source.split("// @internal")[0]!);
+        expect([...documented].sort()).toEqual([...runtime, ...types].sort());
+    });
+
+    it("names the internal exports, and the compile-time tuple covers the public types", () => {
+        for (const name of ["resolve", "clientFor", "Resolved"]) {
+            expect(internal).toContain(name);
+            expect(section).toContain(`\`${name}\``);
+        }
+        const spec = readFileSync(new URL("./index.spec.ts", import.meta.url), "utf8");
+        const tuple = spec.split("export type PublicTypes = [")[1]!.split("];")[0]!;
+        const tupled = tuple
+            .split(",")
+            .map((n) => n.trim())
+            .filter(Boolean);
+        const publicTypes = exportedTypes(source.split("// @internal")[0]!);
+        for (const t of publicTypes.filter((n) => n !== "ClientCoreErrorCode")) {
+            expect(tupled, t).toContain(t);
+        }
     });
 });

@@ -86,6 +86,18 @@ describe("checkLibrary", () => {
         expect(problems.join("\n")).toContain("tsconfig.json");
     });
 
+    it("rejects spec and test files and node_modules even with an allowed extension", () => {
+        expect(checkLibrary({ name: "x" }, [...clientCore, "index.spec.d.ts"])).toContainEqual(
+            "index.spec.d.ts: tests and dependencies are not packed",
+        );
+        expect(checkLibrary({ name: "x" }, [...clientCore, "foo.test.mjs"])).toContainEqual(
+            "foo.test.mjs: tests and dependencies are not packed",
+        );
+        expect(
+            checkLibrary({ name: "x" }, [...clientCore, "node_modules/a/index.mjs"]),
+        ).toContainEqual("node_modules/a/index.mjs: tests and dependencies are not packed");
+    });
+
     it("needs its entry points and README, and leaves executables to checkBin", () => {
         expect(checkLibrary({ name: "x" }, ["package.json"])).toHaveLength(3);
         expect(checkLibrary({ bin: { x: "./cli.mjs" } }, ["package.json", "cli.mjs"])).toEqual([]);

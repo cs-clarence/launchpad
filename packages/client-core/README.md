@@ -47,10 +47,14 @@ terminal, a log or an agent.
   saved profile on a shared machine.
 - **No secret logging.** Operations return data and never print. Errors carry no key or file
   contents. `resolve` and `clientFor` (internal) hold the raw key: do not log their results.
-- **Redaction.** `redact` hides key-shaped text, `Bearer` tokens and `__Secure-` cookies;
+- **Redaction.** `redact` hides key-shaped text, `Bearer` tokens and `__Secure-`/`__Host-` cookies;
   `safeOutput` also strips control characters and hides the secrets you pass. The context's
   `secrets` set collects the keys resolved in this run. An embedder must redact its own secrets
-  (a password, a cookie) with `redactSecrets` or `safeOutput(text, secrets)`.
+  (a password, a cookie) with `redactSecrets` or `safeOutput(text, secrets)`; the CLI and the
+  MCP server do. The pattern part of `redact` is best effort and does not catch a `Bearer` token
+  shorter than 8 characters without a digit or `. _ -`, a URL-encoded `Bearer%20<token>`, a token
+  containing an escaped character, or a plain (not `__Secure-`/`__Host-`) session cookie over
+  loopback HTTP. Pass every known secret value (API keys, cookie values) to `redactSecrets`.
 - **Transport.** The SDK accepts HTTPS, or HTTP to a loopback address only.
 - **POSIX only.** Owner and mode checks are skipped on Windows, which is unsupported.
 - **Packer.** `packDirectory` skips secret-looking names (`.env*`, keys, credentials files). The

@@ -300,6 +300,9 @@ export function checkLibrary(manifest: Record<string, unknown>, files: string[])
         if (!files.includes(required)) problems.push(`${required} is missing`);
     }
     for (const file of files) {
+        if (/\.(spec|test)\./.test(file) || /(^|\/)node_modules\//.test(file)) {
+            problems.push(`${file}: tests and dependencies are not packed`);
+        }
         if (file !== "package.json" && file !== "README.md" && !/\.(mjs|d\.ts)$/.test(file)) {
             problems.push(`${file}: a library package holds only built files and its README`);
         }
