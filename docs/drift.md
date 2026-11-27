@@ -35,6 +35,11 @@ before reopening after a restore.
   follow no redirects, and discard response bodies. An unreachable endpoint or
   unexpected HTTP status makes this source unavailable; an HTTP 404 means no
   deployment is served. Without the option, probes are reported as skipped.
+- `--format <json|text>`: output format, default `json`. `json` is the full
+  report and stays the default; `text` prints a human-readable summary (sources
+  with their status, findings by severity, then in-flight and ignored counts).
+  The text form shows source statuses only, not their reasons, and never changes
+  exit statuses. Any other value is a usage error with exit **2**.
 - Exit **0**: no stable findings among the sources read; inspect skipped and
   in-flight sources before interpreting it.
 - Exit **1**: stable findings.

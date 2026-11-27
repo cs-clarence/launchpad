@@ -7,9 +7,11 @@ import type { DriftDatabase, DriftDeployment, DriftReport } from "@launchpad-kit
 import {
     collectDrift,
     driftCommandExitCode,
+    parseDriftFormat,
     readDriftArchives,
     readDriftDokku,
     readDriftRouter,
+    renderDriftText,
 } from "./drift";
 
 const key = `artifacts/${"a".repeat(32)}/${"b".repeat(64)}.tar.gz`;
@@ -221,5 +223,67 @@ describe("source readers", () => {
         await expect(
             readDriftArchives(dir, database([{ ...deployment, artifactKey: "../outside" }])),
         ).rejects.toThrow("storage key");
+    });
+});
+
+describe("renderDriftText", () => {
+    const base: DriftReport = {
+        sources: { dokku: "ok", router: "skipped", probe: "unavailable", archives: "ok" },
+        inFlight: [],
+        findings: [],
+        ignoredAppCount: 0,
+    };
+
+    it("says so when there are no findings and lists every source", () => {
+        expect(renderDriftText(base)).toBe(
+            [
+                "Sources:",
+                "  archives: ok",
+                "  dokku: ok",
+                "  probe: unavailable",
+                "  router: skipped",
+                "Findings:",
+                "  No findings.",
+            ].join("\n"),
+        );
+    });
+
+    it("sorts by severity then code, one finding per line, and is deterministic", () => {
+        const report: DriftReport = {
+            ...base,
+            inFlight: [{ kind: "alias", id: "a1" }],
+            ignoredAppCount: 2,
+            findings: [
+                {
+                    code: "orphan-app",
+                    severity: "medium",
+                    resources: [{ kind: "dokku-app", id: "lp-x" }],
+                    action: "Identify the owner.",
+                },
+                {
+                    code: "archive-missing",
+                    severity: "high",
+                    resources: [{ kind: "archive", id: "k" }],
+                    action: "Restore it.",
+                    detail: "generation 3",
+                },
+            ],
+        };
+        const text = renderDriftText(report);
+        expect(text).toBe(renderDriftText({ ...report, findings: [...report.findings].reverse() }));
+        expect(text.split("\n").slice(6)).toEqual([
+            "  high archive-missing archive:k (generation 3): Restore it.",
+            "  medium orphan-app dokku-app:lp-x: Identify the owner.",
+            "1 in-flight resource(s) were not compared.",
+            "2 Dokku app(s) outside the name pattern were ignored.",
+        ]);
+    });
+});
+
+describe("parseDriftFormat", () => {
+    it("accepts json and text only", () => {
+        expect(parseDriftFormat("json")).toBe("json");
+        expect(parseDriftFormat("text")).toBe("text");
+        expect(() => parseDriftFormat("yaml")).toThrow("--format must be json or text.");
     });
 });

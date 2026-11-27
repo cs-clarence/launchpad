@@ -241,3 +241,45 @@ export function driftCommandExitCode(report: DriftReport): 0 | 1 | 2 {
     const code = driftExitCode(report);
     return code === 3 ? 0 : code;
 }
+
+const SEVERITY_ORDER = { high: 0, medium: 1 } as const;
+const compareText = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
+
+// Plain-text view of a report for operators; the JSON report stays the default and the contract.
+// It prints only what the report holds (source statuses, identifiers, advice), so it adds no
+// secrets or raw error text, and the same report always renders the same lines.
+export function renderDriftText(report: DriftReport): string {
+    const lines = [
+        "Sources:",
+        ...Object.entries(report.sources)
+            .toSorted(([a], [b]) => compareText(a, b))
+            .map(([name, status]) => `  ${name}: ${status}`),
+        "Findings:",
+    ];
+    const resources = (f: DriftReport["findings"][number]) =>
+        f.resources.map((r) => `${r.kind}:${r.id}`).join(", ");
+    const findings = report.findings.toSorted(
+        (a, b) =>
+            SEVERITY_ORDER[a.severity] - SEVERITY_ORDER[b.severity] ||
+            compareText(a.code, b.code) ||
+            compareText(resources(a), resources(b)),
+    );
+    if (findings.length === 0) lines.push("  No findings.");
+    for (const f of findings) {
+        lines.push(
+            `  ${f.severity} ${f.code} ${resources(f)}${f.detail ? ` (${f.detail})` : ""}: ${f.action}`,
+        );
+    }
+    if (report.inFlight.length > 0) {
+        lines.push(`${report.inFlight.length} in-flight resource(s) were not compared.`);
+    }
+    if (report.ignoredAppCount > 0) {
+        lines.push(`${report.ignoredAppCount} Dokku app(s) outside the name pattern were ignored.`);
+    }
+    return lines.join("\n");
+}
+
+export function parseDriftFormat(value: string): "json" | "text" {
+    if (value === "json" || value === "text") return value;
+    throw new Error("--format must be json or text.");
+}
