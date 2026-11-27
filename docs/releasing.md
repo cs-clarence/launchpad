@@ -43,6 +43,52 @@ and availability have **not** been verified, and no package has been published.
 Packed READMEs are still developer documentation and the manifests have no
 `license` or `repository`; the licence and final product naming remain release gates.
 
+## The npm packages stay runtime agnostic
+
+`@launchpad-kit/contracts`, `sdk`, `cli` and `mcp` are published to npm, and `client-core` is
+bundled into the CLI and the MCP server. They must run on Node (engines `>=22.12`) as well as
+Bun, so their `src` may not use a Bun-only API: the `Bun` global, `globalThis.Bun`, `"bun"` or
+`"bun:*"` imports, `process.versions.bun`, and any `import.meta` member other than `url`,
+`dirname`, `filename` and `resolve` (so `dir`, `file`, `path`, `require` and `main`, which Node
+only has from 24.2, are rejected). Code bundled into the Docker images
+(controller, worker, router, database, services, ...) may use Bun APIs freely.
+
+Two gates enforce it:
+
+- `omni -i run check:runtime` (part of `check`) scans those packages' `src`, ignoring
+  `*.spec.ts` and `__tests__`, and fails with `file:line`. The package list comes from
+  `TARGETS` in `tooling/package-clients.ts` plus `client-core` (`tooling/runtime-agnostic.ts`).
+  It parses each file with TypeScript 6 and leans towards false alarms. It flags: any `Bun`
+  identifier or `.Bun` property access, whatever the receiver (only a declared key or member
+  such as `{ Bun: 1 }` or `interface { Bun: string }` is harmless); any `.bun` access or
+  destructured `bun`; any string that is exactly `bun`, `Bun` or starts with `bun:`;
+  `globalThis`, `global`, `window` or `self` used as a value (allowed: as the receiver of a
+  named member or a string key, under `typeof`, and as the argument of `.bind(globalThis)`) or
+  with a computed key; `process.versions` read other than `.node`; `import.meta` members
+  other than `url`, `dirname`, `filename` and `resolve`; `createRequire`, `.require`, and
+  `require` not called with a string literal; `eval`, `Function` and `.constructor(...)` calls;
+  a dynamic `import()` or `require()` whose specifier is not a plain string. A file that does
+  not parse, a broken symbolic link, or a `src` with no source file fails; linked files and
+  directories are scanned. Spec files and `__tests__` are skipped because they are not
+  published (`tooling/package-clients.ts` admits only built `.mjs` and `.d.ts` files and rejects
+  `*.spec.*` and `__tests__/`). This is a guardrail against accidents, not a defence against
+  deliberate evasion (a computed key on an aliased object, say, is not caught): the packages'
+  `@types/node` typings and the Node smoke test are the other layers. A real need for one of
+  these in a published package means changing the rule here, in review.
+  for one of these in a published package means changing the rule here, in review.
+- `test:packages` installs the packed tarballs outside the workspace and runs them under Bun
+  **and** Node: `--version`, `--help`, importing `contracts` and `sdk`, an SDK call, an MCP
+  handshake and the installed `bin` links. Choose the Node with `LAUNCHPAD_NODE=/path/to/node`
+  (default: `node` on the `PATH`). Without Node the Node runs are skipped with a message
+  locally and fail when `CI` is set. CI runs the job on Node 22.12 and the current release.
+  Only the runs of the packed files use that Node: the builds run under Bun (`bun --bun run
+  build`), so they do not depend on it (Node before 22.18 cannot load the TypeScript vite config).
+
+The development entry points (`#!/usr/bin/env bun`, `bun build --target=bun` in
+`apps/cli` and `apps/mcp`) are local-only: `package-clients.ts` rebuilds with `--target=node`
+and writes a `node` shebang for the packed files, so the published bundles do not depend on them.
+The five packages use `@types/node`, not `@types/bun`; tests still run under Bun.
+
 ## Rehearse a release
 
 ```sh
@@ -50,7 +96,8 @@ omni -i run release:dry-run -p @launchpad-kit/tooling
 ```
 
 or run the manual **Release dry run** workflow. It checks that versions agree, packs the
-four client packages with the same allowlist checks as `test:packages`, writes
+four client packages with the same allowlist checks as `test:packages` (the Node smoke runs in `test:packages`, not in the dry run),
+writes
 `packages/SHA256SUMS`, builds both images **without pushing them**, removes those images by
 exact name (Docker's build cache and pulled base images stay), and leaves everything in `.release-dry-run/` (kept 7 days as a workflow
 artifact). The workflow has read-only permissions, no secret and no write token, and a test

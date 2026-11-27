@@ -13,6 +13,7 @@ import {
     readFileSync,
     readdirSync,
     rmSync,
+    symlinkSync,
     writeFileSync,
 } from "node:fs";
 import path from "node:path";
@@ -33,6 +34,32 @@ export const TARGETS: Target[] = [
 ];
 
 const root = path.resolve(import.meta.dirname, "..");
+
+// An absolute path to the Node named by `selected` (a path, or a bare name looked up on `searchPath`),
+// or null when there is none.
+export function findNode(selected: string, searchPath: string | undefined): string | null {
+    return selected.includes("/")
+        ? existsSync(selected)
+            ? selected
+            : null
+        : Bun.which(selected, { PATH: searchPath });
+}
+
+// A directory holding a `node` link to `executable`, for the front of a child's PATH: a bin's
+// `#!/usr/bin/env node` finds the selected Node even when it is not called `node`.
+export function nodeShim(executable: string, dir: string): string {
+    mkdirSync(dir, { recursive: true });
+    symlinkSync(executable, path.join(dir, "node"));
+    return dir;
+}
+
+// The Node the smoke runs under: LAUNCHPAD_NODE, else `node` looked up on the PATH. A value with a
+// slash is a path and is made absolute against `cwd` (the caller's directory, not a temporary
+// one); a bare name stays a PATH lookup.
+export function resolveNode(value: string | undefined, cwd: string): string {
+    if (!value) return "node";
+    return value.includes("/") ? path.resolve(cwd, value) : value;
+}
 
 interface Manifest {
     name: string;
@@ -99,7 +126,9 @@ async function run(command: string[], cwd: string) {
 }
 
 export async function build(target: Target) {
-    await run(["bun", "run", "build"], path.join(root, target.dir));
+    // `--bun` makes the build scripts' `#!/usr/bin/env node` tools (vite, tsc) run on Bun, so a
+    // build never depends on the Node on the PATH (22.12 cannot load the TypeScript vite config).
+    await run(["bun", "--bun", "run", "build"], path.join(root, target.dir));
 }
 
 // The declarations are emitted with extensionless relative imports (`from "./client"`), which

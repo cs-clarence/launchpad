@@ -62,8 +62,8 @@ between `test:db:up` and `test:db:down` **on Linux** (Docker host networking).
 `test:integration` runs the host-built variant on other platforms; it does not
 exercise the image. The image and packaged-client checks are `omni -i run test:images
 -p @launchpad-kit/tooling` (Docker, disposable database) and `omni -i run
-test:packages -p @launchpad-kit/tooling` (network, Node and Bun). These build,
-inspect and exercise local artifacts, never publish them. The operator
+test:packages -p @launchpad-kit/tooling` (network, Node and Bun;
+`LAUNCHPAD_NODE` picks the Node). These build, inspect and exercise local artifacts, never publish them. The operator
 [restore drill](docs/restore.md) is the no-Dokku automated check.
 
 The alias router's integration suite likewise opens loopback listeners (and needs `openssl`) but no

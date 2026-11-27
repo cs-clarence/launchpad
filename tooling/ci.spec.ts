@@ -105,6 +105,18 @@ describe("CI workflow", () => {
         ).toBe(true);
     });
 
+    it("runs the packages job on the Node floor and the current Node", () => {
+        const job = ci.jobs.packages as Job & { strategy?: { matrix: { node: string[] } } };
+        expect(job.strategy?.matrix.node).toEqual(["22.12", "current"]);
+        const setup = job.steps!.find((s) => s.uses?.endsWith("setup-workspace"));
+        expect(setup?.with?.["node-version"]).toBe("${{ matrix.node }}");
+        const action = Bun.YAML.parse(
+            readFileSync(path.join(root, ".github/actions/setup-workspace/action.yaml"), "utf8"),
+        ) as { runs: { steps: Step[] } };
+        const node = action.runs.steps.find((s) => s.uses?.startsWith("actions/setup-node@"));
+        expect(node?.with?.["node-version"]).toBe("${{ inputs.node-version }}");
+    });
+
     it("pins the Omni version used by the setup action", () => {
         const action = Bun.YAML.parse(
             readFileSync(path.join(root, ".github/actions/setup-workspace/action.yaml"), "utf8"),
