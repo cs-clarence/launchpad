@@ -42,8 +42,14 @@ following.
 - Package tags (`core-v0.1.0`, `@launchpad-kit/sdk-v0.1.0`) do not match, because the pattern is
   anchored at the start with `v`.
 - The first job is a **mandatory guard** that validates `github.ref_name` against
-  `^v[0-9]+\.[0-9]+\.[0-9]+(-[A-Za-z0-9.]+)?$` (accepts `v0.1.0` and `v0.1.0-rc.1`) and fails
-  otherwise. Every later job declares `needs:` on it. The dedicated spec asserts both the glob and
+  the SemVer 2.0.0 grammar (the `SEMVER` pattern in `tooling/versions.ts`) prefixed by `v`, without
+  build metadata:
+  `^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-((0|[1-9][0-9]*)|[0-9]*[A-Za-z-][0-9A-Za-z-]*)(\.((0|[1-9][0-9]*)|[0-9]*[A-Za-z-][0-9A-Za-z-]*))*)?$`.
+  It accepts `v0.1.0`, `v0.1.0-rc.1` and `v1.2.3-rc-1` (hyphens inside pre-release identifiers) and
+  rejects `v1.2.3+build.5`, `v01.2.3` and `v1.2.3garbage`. Release tags carry **no** build
+  metadata: npm ignores it in version precedence, so two tags differing only by `+build` would be
+  the same release. The glob is a superset of the guard (it also lets `+build` and garbage
+  through), and the guard decides. It fails otherwise. Every later job declares `needs:` on it. The dedicated spec asserts both the glob and
   the guard and the `needs:` edges.
 - Never `pull_request`, `pull_request_target`, `schedule`, `workflow_dispatch` or `workflow_call`.
   (npm validates the calling workflow's name when `workflow_call` or `workflow_dispatch` is used
@@ -60,7 +66,29 @@ on a package keeps `--auto` from raising the global version [S6]. So the global 
 from the `core` lockstep version when tooling packages change. Which packages get `public_api =
 false`, or whether the tag is created by hand, is decided in the `cog.toml` follow-up; whether
 today's tooling packages would cause a mismatch is **unverified** (not inspected here).
-`check:versions` fails a tag that differs from the manifests, so a mismatch fails safe.
+The explicit tag-to-manifest comparison (see Verify before publishing) fails a mismatched tag, so
+a mismatch fails safe.
+
+### Bump commit and CI
+
+Cocogitto's `skip_ci` setting is a string added to the commits that `bump` and `commit` create,
+default `[skip ci]` (<https://docs.cocogitto.io/reference/config.html>); `cog.toml` uses the
+default. GitHub skips push and pull request workflows for such a commit, so the bump commit would
+never get `CI Passed`. The process, in the follow-up slice:
+
+1. The bump is made on a release branch and opened as a **release pull request**; the bump commit
+   must not carry the skip marker. The setting is changed in `cog.toml`; that an empty `skip_ci`
+   removes the marker is **unverified** (the reference documents only the default), so the slice
+   confirms it, or strips the marker another way.
+2. Required checks (`CI Passed`) run on the pull request, and it is **merged** into `main`.
+   Nothing is tagged on the pull request branch. The merge commit must also not carry the marker
+   (check the squash or merge message).
+3. Only then is the `v<semver>` tag pushed, on the merge commit on `main` whose `CI Passed` is
+   green. A tag is never pushed on a commit without a green `CI Passed`; the workflow's check
+   enforces it.
+
+Until then `docs/releasing.md` still describes the `[skip ci]` flow and says it changes with the
+follow-up.
 
 ### Approval and tag integrity
 
@@ -77,7 +105,10 @@ today's tooling packages would cause a mismatch is **unverified** (not inspected
 
 The workflow first checks that:
 
-- the tag equals the lockstep version in every manifest (`check:versions`);
+- the tag equals the version: `github.ref_name` must equal `v` + the root `package.json` version
+  and `v` + the version of every published manifest, else fail. `check:versions` alone is not
+  enough: it compares the workspace versions with the root version, not with the tag
+  (`tooling/versions.ts`). Both run, and the spec asserts the explicit comparison;
 - the tagged commit is on `main`: `git merge-base --is-ancestor "$GITHUB_SHA" origin/main` after a
   `fetch-depth: 0` checkout and fetch;
 - the commit's `CI Passed` check succeeded: `gh api repos/{owner}/{repo}/commits/$GITHUB_SHA/check-runs`
@@ -100,7 +131,9 @@ The workflow first checks that:
 ### npm
 
 - Trusted publishing (OIDC) needs npm CLI >= 11.5.1 and Node >= 22.14.0 [S1]. The repository floor
-  is Node 22.12, which is lower, so the publish job uses Node 24 or installs `npm@^11.5.1`.
+  is Node 22.12, which is lower, so the publish job uses Node 24 (or >= 22.14) **and** an npm
+  >= 11.5.1 (Node 24 ships a new enough npm; the job checks `npm --version`). It never runs
+  trusted publishing on Node 22.12 with an upgraded npm. The spec asserts both minimums.
 - It needs GitHub-hosted runners, `id-token: write`, a `package.json` `repository.url` that
   exactly matches the GitHub repository, and a trusted publisher whose workflow file name
   (including `.yaml`) and optional environment name match exactly; all fields are case-sensitive
@@ -141,7 +174,11 @@ The workflow first checks that:
 - buildx with `provenance: mode=max` and `sbom: true`. Each image is smoked **before** any exact
   version tag is pushed.
 - GHCR does not enforce tag immutability (**unverified** in the pages checked, stated as a design
-  assumption), so the workflow does: skip any image whose `X.Y.Z` tag already exists.
+  assumption), so the workflow does. If `X.Y.Z` already exists (an earlier run pushed it and
+  failed before moving `X.Y` and `latest`), the retry skips **only** the immutable push, after
+  verifying that the existing `X.Y.Z` digest equals the digest built and smoke-tested in this
+  run; a different digest fails the run. It then continues and moves the floating tags using that
+  verified image.
 - `X.Y.Z` is immutable. `X.Y` and `latest` move only after smoke passes and only for stable
   releases. A pre-release gets only its exact tag.
 
@@ -204,9 +241,17 @@ Around the first publish:
 - [ ] `release.yaml` and its dedicated spec. Extend `tooling/ci.spec.ts` so every workflow except
       `release.yaml` is checked for publish, login, tag and registry-push commands and for secrets,
       matching commands in command position (not trigger keys such as `on: push`).
+- [ ] Bump CI: the Cocogitto bump commit carries `[skip ci]` (`skip_ci` in `cog.toml`), so GitHub
+      skips its workflows and it cannot supply `CI Passed`. See "Bump commit and CI". Change
+      `skip_ci` and update `docs/releasing.md` in the same slice.
 - [ ] `cog.toml`: `generate_mono_repository_global_tag = true`; decide `public_api = false` on the
       tooling packages or tagging by hand.
-- [ ] `publishConfig.access` and `repository` fields on the five package manifests.
+- [ ] Package metadata: `publishConfig.access` and, in the **packed** manifests, `repository`
+      (type `git`, url `git+https://github.com/launchpad-kit/launchpad.git`, `directory` per
+      package), `homepage` and `bugs`. `tooling/package-clients.ts` builds new manifests and does
+      not copy `repository` from the source manifests, so the staging pipeline must emit these and
+      `checkManifest`/`checkLibrary` must assert them (the exact `repository.url` trusted
+      publishing needs).
 - [ ] OCI labels (`source`, `licenses`, `description`) and licence notices in the images.
 - [ ] Compose image references to the GHCR names.
 - [ ] Release notes.

@@ -25,7 +25,7 @@ number), except the shared tooling packages (`@launchpad-kit/tsconfig`, `vite-co
   Run `cog bump` only on a clean checkout of the commit you mean to release, review the
   result, and **do not push** the commit or tag until the release is authorized. The commit
   message carries `[skip ci]`, so CI will not check it: run the local checks before bumping **and**
-  again on the bump commit (checklist step 7).
+  again on the bump commit (checklist step 7). The [release publishing decision](decisions/release-publishing.md#bump-commit-and-ci) changes this: the bump will go through a release pull request with CI, in a later slice.
 - Three version strings are written in source (the CLI's `--version`, the MCP server info and
   the OpenAPI `info.version`); `sync core` rewrites them and `check:versions` compares them.
 - `from_latest_tag = false`: with no earlier tag the first changelog covers all history.
