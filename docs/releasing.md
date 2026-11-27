@@ -4,7 +4,7 @@ For a maintainer preparing a release. **Nothing in this repository publishes, pu
 tags or releases by itself.** The rehearsal below is read-only; real publishing needs a
 separate, explicit authorization and a workflow that does not exist yet. The
 [release publishing decision](decisions/release-publishing.md) defines the one gated workflow
-that may publish.
+that may publish. This sentence is revisited when that workflow lands.
 
 ## Versions
 
