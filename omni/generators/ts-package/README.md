@@ -2,7 +2,8 @@
 
 Copied from [Pureform](https://github.com/pureform-design/pureform), commit
 `70232808fa9190da9733510d4efc0d272fa2abe6`, `omni/generators/ts-package`.
-The upstream MIT notice is in `LICENSE`. This is a project-owned derivative,
+The upstream MIT notice is in `LICENSE`; it stays as third-party attribution for the
+derived scaffold, while generated packages default to `Apache-2.0` (`package_license`). This is a project-owned derivative,
 not an automatically updated vendor snapshot.
 
 Launchpad changes: default scope/version/runtime, private workspace manifests,

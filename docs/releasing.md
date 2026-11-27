@@ -40,8 +40,11 @@ number), except the shared tooling packages (`@launchpad-kit/tsconfig`, `vite-co
 
 The workspace scope is `@launchpad-kit`, selected on 2026-11-19. Registry ownership
 and availability have **not** been verified, and no package has been published.
-Packed READMEs are still developer documentation and the manifests have no
-`license` or `repository`; the licence and final product naming remain release gates.
+The licence is Apache-2.0 (root `LICENSE`). Every packed tarball carries `LICENSE` and a
+manifest `license` of `Apache-2.0`, and the package checks refuse one that does not. Packed
+READMEs are still developer documentation and the manifests have no `repository`,
+`homepage` or `bugs` (a separate item, pending the repository location); repository
+metadata and the final product naming remain release gates.
 
 ## The npm packages stay runtime agnostic
 
@@ -208,8 +211,9 @@ A release is a person's decision. Work through this in order and stop at the fir
    version increment fits them. Security-relevant changes have a release note.
 4. Licence, npm scope and product name are decided and recorded; the packed READMEs and
    manifests carry `license` and `repository`; **registry ownership of the name is verified
-   with an authenticated account**. (The source scope is selected; ownership,
-   licence and final product naming are not yet settled.)
+   with an authenticated account**. (The licence is decided, Apache-2.0, and packed;
+   the source scope is selected; ownership, repository metadata and final product
+   naming are not yet settled.)
 5. Base images in `apps/{controller,worker,router}/Dockerfile` and `containers/dokku/Dockerfile`, and
    `postgres` in `docker-compose.yaml`, are pinned by tag **and** digest (asserted by
    `check:compose`; digests are verified with `docker buildx imagetools inspect`, see
