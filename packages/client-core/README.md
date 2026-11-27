@@ -6,8 +6,7 @@ This is a public package so the CLI and the MCP server can import it instead of 
 it is not a general client: other users should use `@launchpad-kit/sdk`. Every name in the
 [Public API](#public-api) is part of the package's interface under the `0.x` rule in
 [docs/releasing.md](../../docs/releasing.md), and the files it writes (`credentials.json`,
-`session.json`, format `version: 1`) are never rewritten in another format. Nothing is published
-yet, and publishing waits for a security review of this package.
+`session.json`, format `version: 1`) are never rewritten in another format.
 
 - `CredentialStore` keeps profiles in `credentials.json` under `$LAUNCHPAD_CONFIG_DIR`, `$XDG_CONFIG_HOME/launchpad` or `~/.config/launchpad`: a mode-700 directory, a mode-600 file replaced atomically under a lock. It refuses a symlink, a file others can read or a file of another owner, and never rewrites a corrupt or newer-format file, so credentials are not lost silently.
 - Operations (`login`, `logout`, `whoami`, `useProfile`, `useOrganization`, `listProjects`, ...) take a `Context` and return plain data. `login` verifies the key with the controller before saving it; a key belongs to one organization, which login selects.
@@ -32,6 +31,30 @@ list changes by accident.
 CLI needs them. They are marked `@internal`, may change in any release, and their results hold
 the raw API key: never log, print or serialize them. Other helpers (for example
 `MAX_WORKSPACE_CONFIG_BYTES`, `ownedByCurrentUser`) are not exported.
+
+## Security model
+
+Assets: API keys in `credentials.json`, kept-session cookies in `session.json`, and the same
+secrets in memory and in the environment. The adversary is another local user, a malicious or
+buggy controller response, and untrusted text (server names, error bodies) that reaches a
+terminal, a log or an agent.
+
+- **Stores.** `CredentialStore` and `SessionStore` take an arbitrary directory. On read they refuse
+  a directory or file that the current user does not own or whose mode is not `0700`/`0600`
+  (and any symlink); on write they repair the mode, replacing the file atomically under a lock.
+- **Environment.** `LAUNCHPAD_API_KEY` and the other `LAUNCHPAD_*` overrides are visible in
+  `/proc/<pid>/environ` to the same user (and root) and are inherited by child processes. Prefer a
+  saved profile on a shared machine.
+- **No secret logging.** Operations return data and never print. Errors carry no key or file
+  contents. `resolve` and `clientFor` (internal) hold the raw key: do not log their results.
+- **Redaction.** `redact` hides key-shaped text, `Bearer` tokens and `__Secure-` cookies;
+  `safeOutput` also strips control characters and hides the secrets you pass. The context's
+  `secrets` set collects the keys resolved in this run. An embedder must redact its own secrets
+  (a password, a cookie) with `redactSecrets` or `safeOutput(text, secrets)`.
+- **Transport.** The SDK accepts HTTPS, or HTTP to a loopback address only.
+- **POSIX only.** Owner and mode checks are skipped on Windows, which is unsupported.
+- **Packer.** `packDirectory` skips secret-looking names (`.env*`, keys, credentials files). The
+  list is best effort, not a guarantee: review what you upload.
 
 ## Lock recovery
 
