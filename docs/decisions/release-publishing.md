@@ -23,7 +23,9 @@ The repository is `launchpad-kit/launchpad` (transferred 2026-11-27) and the npm
 `sdk`, `client-core`, `cli`, `mcp`; the `core` group in `cog.toml`) and five images
 (`controller`, `worker`, `router`, `admin`, `dokku`, built as `launchpad/*`, pushed to
 `ghcr.io/launchpad-kit/launchpad-*`). Until now nothing publishes from CI, and
-`tooling/ci.spec.ts` rejects any publish, push, tag or login command in every workflow. A local
+`tooling/ci.spec.ts` rejects any publish, push, tag or login command or secret in
+`release-dry-run.yaml` (the other workflows are checked only for Bun, Vitest, TypeScript and Oxc
+commands). A local
 publish cannot carry npm provenance and depends on a long-lived token on a personal machine.
 
 ## Decision
@@ -124,7 +126,9 @@ The workflow first checks that:
   npm >= 11.21.0 and the separate "Allow npm dist-tag" permission [S1]); the rc.1 smoke confirms
   it, and the fallback is enabling that permission.
 - **Order and idempotence.** `contracts`, `sdk`, `client-core`, then `cli` and `mcp`. Before each
-  publish run `npm view name@version version`; skip if it exists. Never overwrite a version.
+  publish run `npm view name@version version`; skip if it exists. Never overwrite a version. This no-overwrite rule applies only to npm
+  versions and immutable `X.Y.Z` image tags; floating image tags (`latest`, `X.Y`) are not
+  covered and move after smoke as described under Images.
 - **Partial publish.** Publishing five packages is not atomic. If it stops part-way, some
   versions are public and some are not. Re-running completes the missing ones (idempotence above);
   if a published package is wrong, deprecate it and fix forward with a new version.
@@ -144,8 +148,8 @@ The workflow first checks that:
 ## What stays forbidden
 
 Publish, push, login or tag commands in any other workflow. The Release dry run workflow stays
-manual, read-only and secret-free. `tooling/ci.spec.ts` keeps enforcing this for every workflow
-except the single named release workflow, which gets its own spec asserting: the tag glob and the
+manual, read-only and secret-free. When the release workflow lands, `tooling/ci.spec.ts` is
+extended to enforce this for every workflow except the single named release workflow, which gets its own spec asserting: the tag glob and the
 guard job with its `needs:` edges, the `release` environment, per-job permissions, no secrets beyond
 `GITHUB_TOKEN`, no cache restore in the publish job, and **full-commit-SHA action pins with the
 version in a comment** (stricter than the other workflows on purpose). This change does not touch
@@ -197,7 +201,9 @@ Around the first publish:
 
 ## Follow-ups
 
-- [ ] `release.yaml` and its dedicated spec; exempt only that file in `tooling/ci.spec.ts`.
+- [ ] `release.yaml` and its dedicated spec. Extend `tooling/ci.spec.ts` so every workflow except
+      `release.yaml` is checked for publish, login, tag and registry-push commands and for secrets,
+      matching commands in command position (not trigger keys such as `on: push`).
 - [ ] `cog.toml`: `generate_mono_repository_global_tag = true`; decide `public_api = false` on the
       tooling packages or tagging by hand.
 - [ ] `publishConfig.access` and `repository` fields on the five package manifests.
