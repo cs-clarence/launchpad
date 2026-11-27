@@ -62,6 +62,8 @@ Two gates enforce it:
   handshake and the installed `bin` links. Choose the Node with `LAUNCHPAD_NODE=/path/to/node`
   (default: `node` on the `PATH`). Without Node the Node runs are skipped with a message
   locally and fail when `CI` is set. CI runs the job on Node 22.12 and the current release.
+  Only the runs of the packed files use that Node: the builds run under Bun (`bun --bun run
+  build`), so they do not depend on it (Node before 22.18 cannot load the TypeScript vite config).
 
 The development entry points (`#!/usr/bin/env bun`, `bun build --target=bun` in
 `apps/cli` and `apps/mcp`) are local-only: `package-clients.ts` rebuilds with `--target=node`

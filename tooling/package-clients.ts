@@ -99,7 +99,9 @@ async function run(command: string[], cwd: string) {
 }
 
 export async function build(target: Target) {
-    await run(["bun", "run", "build"], path.join(root, target.dir));
+    // `--bun` makes the build scripts' `#!/usr/bin/env node` tools (vite, tsc) run on Bun, so a
+    // build never depends on the Node on the PATH (22.12 cannot load the TypeScript vite config).
+    await run(["bun", "--bun", "run", "build"], path.join(root, target.dir));
 }
 
 // The declarations are emitted with extensionless relative imports (`from "./client"`), which
