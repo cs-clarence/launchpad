@@ -76,3 +76,32 @@ describe("redact", () => {
         expect(core.redact("lp_abcdefgh12 stays")).toBe("lp_[redacted] stays");
     });
 });
+
+describe("redaction keeps JSON valid and prose readable", () => {
+    const cases = [
+        { b: 'Bearer abc"}' },
+        { b: 'Bearer abcdefghij1234"; x="y' },
+        { b: "Bearer abc\\u0041def and more\nBearer tok.en-1\\" },
+        { nested: JSON.stringify({ h: 'Bearer abcdefghij"', c: '__Secure-a.b=v4lue; Path=/"' }) },
+        { c: '__Host-sid=abc123\\"; HttpOnly; Secure' },
+        { c: "set-cookie: __Secure-better-auth.session_token=tok.sig%2B; Max-Age=60; Secure" },
+        { "Bearer abcdefghij": 'k="__Secure-x=y1234567"' },
+    ];
+
+    it.each(cases)("parses after safeOutput: %j", (value) => {
+        const out = core.safeOutput(JSON.stringify(value), ["secretvalue1"]);
+        expect(() => JSON.parse(out)).not.toThrow();
+        expect(out).not.toMatch(/abcdefghij|tok\.sig|v4lue|abc123/);
+    });
+
+    it("leaves ordinary prose about bearer tokens alone", () => {
+        for (const text of [
+            "the Bearer token is invalid",
+            "Bearer auth failed",
+            "a bearer of news",
+        ]) {
+            expect(core.redact(text)).toBe(text);
+        }
+        expect(core.redact("Authorization: Bearer abc1")).toBe("Authorization: Bearer [redacted]");
+    });
+});

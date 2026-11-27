@@ -169,7 +169,7 @@ export interface TransportConfig {
 export function scrub(text: string, secrets: readonly string[]): string {
     let out = text;
     for (const secret of secrets) {
-        if (secret.length > 0) {
+        if (secret.length >= 8) {
             out = out.replace(
                 new RegExp(secret.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "gi"),
                 "[redacted]",
