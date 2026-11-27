@@ -52,6 +52,15 @@ following. Where a choice was made for the single-maintainer situation, the alte
   two tags differing only by `+build` would be the same release. The glob is a superset of the
   guard, and the guard decides. Every later job declares `needs:` on it. The dedicated spec asserts
   the glob, the guard and the `needs:` edges.
+- **Length.** The guard also fails when the version (the tag without the `v`) is longer than 128
+  characters. A version becomes an image tag, and an OCI tag matches
+  `[a-zA-Z0-9_][a-zA-Z0-9._-]{0,127}`, at most 128 characters
+  (<https://raw.githubusercontent.com/opencontainers/distribution-spec/main/spec.md>, "Pulling
+  manifests"), so `v1.2.3-` plus 123 letters would pass the regex but fail at the image step after
+  npm had already published. npm publishes first, so the check runs in `guard`, before anything is
+  published. npm's own version length limit is **unverified** (the 128-character bound is
+  stricter than the 256 that `node-semver` uses, also unverified here). The spec asserts the
+  length check.
 - Never `pull_request`, `pull_request_target`, `schedule`, `workflow_dispatch` or `workflow_call`.
   (npm validates the calling workflow's name when `workflow_call` or `workflow_dispatch` is used
   [S1], another reason to exclude them.)
@@ -218,7 +227,13 @@ publishes. A tarball is never rebuilt after `build`.
   Packing with `bun pm pack` is fine because Bun rewrites `workspace:` and `catalog:` specifiers
   [S7]. That provenance is attached when publishing a pre-built tarball is **unverified**; the
   rc.1 smoke release confirms it.
-- **Dist-tags.** `--tag next` for pre-releases and `latest` for stable versions. That
+- **Dist-tags.** A tag is always passed explicitly with `--tag`, because `npm publish` without
+  `--tag` defaults to `latest` (<https://docs.npmjs.com/cli/v12/commands/npm-publish/>; not
+  re-fetched here, so the default is **unverified**). `--tag next` for pre-releases. For a stable
+  version, `latest` is set **per package** only if the version being published is greater than that
+  package's current `latest` (`npm view <name> dist-tags.latest`); otherwise the package is
+  published with `--tag retry` and the release is fixed forward. This stops a retry of an older
+  partial release from moving `latest` backwards, so packages never disagree. That
   `npm publish --tag` sets the tag at publish time without a separate dist-tag step is
   **unverified** in the docs checked (they describe `npm dist-tag` commands, which under OIDC need
   npm >= 11.21.0 and the separate "Allow npm dist-tag" permission [S1]); the rc.1 smoke confirms
@@ -230,6 +245,10 @@ publishes. A tarball is never rebuilt after `build`.
   otherwise **fail**. A package that was published by hand without provenance must not be skipped
   silently. That these two commands expose the attestation exactly as needed is **unverified**;
   the rc.1 smoke confirms it.
+- **No new stable release on a partial one.** The `verify` job refuses to start a new stable
+  release while the previous stable release is partial: any of the five packages missing the
+  previous release version, or any of its image tags missing. The previous release is resolved
+  first (re-run it). The spec asserts this rule.
 - **Partial publish.** Publishing five packages is not atomic. If it stops part-way, some
   versions are public and some are not. Re-running completes the missing ones; if a published
   package is wrong, deprecate it and fix forward with a new version.
@@ -243,8 +262,11 @@ publishes. A tarball is never rebuilt after `build`.
   `provenance: mode=max` and `sbom: true`. Attestations cannot be added when loading the build
   into the runner's local image store (`load: true`, or the docker exporter) [S9], so the image
   is pushed to the registry, not loaded. `stage` pushes the attested image by digest under a
-  single staging tag `sha-<GITHUB_SHA>` (pushed once; skipped if it already exists). `smoke` pulls
-  that exact digest and smokes it. `X.Y.Z`, `X.Y` and `latest` are **retag-only** operations on
+  single staging tag `sha-<GITHUB_SHA>`. If `sha-<GITHUB_SHA>` already exists (a re-run of `stage`
+  or of the whole workflow), `stage` **skips the build and the push** and reuses the digest of
+  that existing tag as the source of truth; it never rebuilds it, because a rebuild would produce
+  a different attested index digest (the provenance includes build data). `smoke` pulls that
+  exact digest and smokes it. `X.Y.Z`, `X.Y` and `latest` are **retag-only** operations on
   that digest (`docker buildx imagetools create` or equivalent); nothing is rebuilt. That
   retagging keeps the attestations is **unverified**; confirm with `gh attestation verify` in
   `post-verify` on the first release. A rebuilt or locally loaded image would have a different
