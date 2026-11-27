@@ -19,6 +19,8 @@ import {
     checkLibrary,
     checkListing,
     checkManifest,
+    REPOSITORY_URL,
+    repositoryFields,
     checkBareImports,
     checkBin,
     checkClosure,
@@ -134,13 +136,17 @@ describe("checkLibrary", () => {
 
     it("refuses a client-core manifest that cannot install from the registry", () => {
         expect(
-            checkManifest({
-                name: "@launchpad-kit/client-core",
-                version: "0.1.0",
-                license: "Apache-2.0",
-                private: true,
-                dependencies: { "@launchpad-kit/sdk": "workspace:^", zod: "catalog:" },
-            }),
+            checkManifest(
+                {
+                    name: "@launchpad-kit/client-core",
+                    version: "0.1.0",
+                    license: "Apache-2.0",
+                    ...repositoryFields("packages/client-core"),
+                    private: true,
+                    dependencies: { "@launchpad-kit/sdk": "workspace:^", zod: "catalog:" },
+                },
+                "packages/client-core",
+            ),
         ).toHaveLength(3);
     });
 });
@@ -150,28 +156,77 @@ describe("checkManifest", () => {
         name: "@x/y",
         version: "1.0.0",
         license: "Apache-2.0",
+        ...repositoryFields("packages/y"),
         dependencies: { zod: "^4.0.0" },
     };
+    const dir = "packages/y";
 
     it("refuses a missing or different license", () => {
-        expect(checkManifest({ ...good, license: undefined })).toEqual([
+        expect(checkManifest({ ...good, license: undefined }, dir)).toEqual([
             'license must be "Apache-2.0"',
         ]);
-        expect(checkManifest({ ...good, license: "MIT" })).toHaveLength(1);
+        expect(checkManifest({ ...good, license: "MIT" }, dir)).toHaveLength(1);
+    });
+
+    it("states the repository, homepage and bugs under the one constant", () => {
+        expect(REPOSITORY_URL).toBe("https://github.com/launchpad-kit/launchpad");
+        expect(repositoryFields("apps/cli")).toEqual({
+            repository: {
+                type: "git",
+                url: "git+https://github.com/launchpad-kit/launchpad.git",
+                directory: "apps/cli",
+            },
+            homepage: "https://github.com/launchpad-kit/launchpad#readme",
+            bugs: { url: "https://github.com/launchpad-kit/launchpad/issues" },
+        });
+    });
+
+    it("refuses a missing repository, homepage or bugs", () => {
+        expect(checkManifest({ ...good, repository: undefined }, dir)).toEqual([
+            "repository is missing",
+        ]);
+        expect(checkManifest({ ...good, homepage: undefined }, dir)).toHaveLength(1);
+        expect(checkManifest({ ...good, bugs: undefined }, dir)).toHaveLength(1);
+    });
+
+    it("refuses a repository url that is not exactly the repository (trusted publishing)", () => {
+        const repo = (url: string) => ({ ...good, repository: { ...good.repository, url } });
+        for (const url of [
+            "git+https://github.com/cs-clarence/launchpad.git",
+            "http://github.com/launchpad-kit/launchpad.git",
+            "https://github.com/launchpad-kit/launchpad.git",
+            "git+https://github.com/launchpad-kit/launchpad",
+        ]) {
+            expect(checkManifest(repo(url), dir)).toHaveLength(1);
+        }
+    });
+
+    it("refuses a repository directory that is not the package's", () => {
+        expect(checkManifest(good, "packages/other")).toContainEqual(
+            'repository.directory must be "packages/other"',
+        );
     });
 
     it("accepts a registry-installable manifest", () => {
-        expect(checkManifest(good)).toEqual([]);
+        expect(checkManifest(good, dir)).toEqual([]);
     });
 
     it("refuses specifiers that only work inside the repository, private, and dev dependencies", () => {
         expect(
-            checkManifest({
-                ...good,
-                private: true,
-                dependencies: { a: "workspace:^", b: "catalog:", c: "file:../c", e: "github:x/y" },
-                devDependencies: { d: "^1.0.0" },
-            }),
+            checkManifest(
+                {
+                    ...good,
+                    private: true,
+                    dependencies: {
+                        a: "workspace:^",
+                        b: "catalog:",
+                        c: "file:../c",
+                        e: "github:x/y",
+                    },
+                    devDependencies: { d: "^1.0.0" },
+                },
+                dir,
+            ),
         ).toHaveLength(6);
     });
 });
@@ -402,18 +457,22 @@ describe("checkBin", () => {
 
 describe("checkManifest fields that must not be packed", () => {
     it("refuses bundled dependencies, publishConfig, scripts, workspaces, overrides and optional protocol ranges", () => {
-        const problems = checkManifest({
-            name: "@x/y",
-            version: "1.0.0",
-            license: "Apache-2.0",
-            bundledDependencies: ["a"],
-            bundleDependencies: ["a"],
-            publishConfig: { access: "public" },
-            scripts: {},
-            workspaces: [],
-            overrides: {},
-            optionalDependencies: { a: "workspace:^" },
-        });
+        const problems = checkManifest(
+            {
+                name: "@x/y",
+                version: "1.0.0",
+                license: "Apache-2.0",
+                ...repositoryFields("packages/y"),
+                bundledDependencies: ["a"],
+                bundleDependencies: ["a"],
+                publishConfig: { access: "public" },
+                scripts: {},
+                workspaces: [],
+                overrides: {},
+                optionalDependencies: { a: "workspace:^" },
+            },
+            "packages/y",
+        );
         expect(problems).toHaveLength(7);
     });
 });

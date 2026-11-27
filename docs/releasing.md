@@ -42,9 +42,15 @@ The workspace scope is `@launchpad-kit`, selected on 2026-11-19. Registry owners
 and availability have **not** been verified, and no package has been published.
 The licence is Apache-2.0 (root `LICENSE`). Every packed tarball carries `LICENSE` and a
 manifest `license` of `Apache-2.0`, and the package checks refuse one that does not. Packed
-READMEs are still developer documentation and the manifests have no `repository`,
-`homepage` or `bugs` (a separate item, pending the repository location); repository
-metadata and the final product naming remain release gates.
+READMEs are still developer documentation. The repository is
+<https://github.com/launchpad-kit/launchpad> (transferred 2026-11-27) and every packed manifest
+carries `repository` (`type`, the exact URL `git+https://github.com/launchpad-kit/launchpad.git`
+and the package's `directory`), `homepage` (the repository README) and `bugs` (its issues). `stage()`
+builds these from the one constant `REPOSITORY_URL` in `tooling/package-clients.ts` because the pack
+writes a new manifest and does not copy the source one; npm trusted publishing requires
+`repository.url` to match the GitHub repository exactly. `checkManifest` refuses a packed
+manifest whose fields differ, and `check-packages.ts` does the same for the source manifests. The
+final product naming remains a release gate.
 A package is packed only if it is in `TARGETS` in `tooling/package-clients.ts`; that is also
 where it gets its `LICENSE` (the root file is copied in), so a generated package needs no
 `LICENSE` of its own.
@@ -214,9 +220,10 @@ A release is a person's decision. Work through this in order and stop at the fir
    version increment fits them. Security-relevant changes have a release note.
 4. Licence, npm scope and product name are decided and recorded; the packed READMEs and
    manifests carry `license` and `repository`; **registry ownership of the name is verified
-   with an authenticated account**. (The licence is decided, Apache-2.0, and packed;
-   the source scope is selected; ownership, repository metadata and final product
-   naming are not yet settled.)
+   with an authenticated account**. (Done: the licence, Apache-2.0, and the repository
+   metadata. Remaining: the user verifies ownership of the npm organization for the
+   `@launchpad-kit` scope, the package names are confirmed available, trusted publishers
+   are configured for them, and the final product naming is settled.)
 5. Base images in `apps/{controller,worker,router}/Dockerfile` and `containers/dokku/Dockerfile`, and
    `postgres` in `docker-compose.yaml`, are pinned by tag **and** digest (asserted by
    `check:compose`; digests are verified with `docker buildx imagetools inspect`, see

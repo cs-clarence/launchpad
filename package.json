@@ -2,7 +2,15 @@
     "name": "@launchpad-kit/root",
     "version": "0.0.0",
     "private": true,
+    "homepage": "https://github.com/launchpad-kit/launchpad#readme",
+    "bugs": {
+        "url": "https://github.com/launchpad-kit/launchpad/issues"
+    },
     "license": "Apache-2.0",
+    "repository": {
+        "type": "git",
+        "url": "git+https://github.com/launchpad-kit/launchpad.git"
+    },
     "workspaces": [
         "packages/*",
         "apps/*",

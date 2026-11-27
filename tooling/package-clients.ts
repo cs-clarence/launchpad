@@ -39,6 +39,20 @@ export const TARGETS: Target[] = [
     { dir: "apps/mcp", bin: { name: "launchpad-mcp", file: "mcp.mjs" } },
 ];
 
+// The one place the repository's address is written. npm trusted publishing compares the packed
+// manifest's `repository.url` with the GitHub repository exactly, so a move edits this line (and
+// the source manifests, which `check-packages.ts` compares).
+export const REPOSITORY_URL = "https://github.com/launchpad-kit/launchpad";
+
+// The `repository`, `homepage` and `bugs` of a package in `directory`, as packed.
+export function repositoryFields(directory: string) {
+    return {
+        repository: { type: "git", url: `git+${REPOSITORY_URL}.git`, directory },
+        homepage: `${REPOSITORY_URL}#readme`,
+        bugs: { url: `${REPOSITORY_URL}/issues` },
+    };
+}
+
 export const SHEBANG = "#!/usr/bin/env node";
 
 const root = path.resolve(import.meta.dirname, "..");
@@ -195,6 +209,7 @@ export async function stage(target: Target, outDir: string): Promise<string> {
         version: manifest.version,
         description: manifest.description,
         license: LICENSE_ID,
+        ...repositoryFields(target.dir),
         type: "module",
         // commander 15 (the CLI and the MCP server) and tar (client-core) need Node 22.12 or newer.
         engines: { node: ">=22.12" },
@@ -327,9 +342,33 @@ export function checkLibrary(manifest: Record<string, unknown>, files: string[])
     return problems;
 }
 
-// Problems with a packed manifest.
-export function checkManifest(manifest: Record<string, unknown>): string[] {
+// Problems with the repository fields of a packed manifest for the package in `directory`.
+export function checkRepository(manifest: Record<string, unknown>, directory: string): string[] {
+    const expected = repositoryFields(directory);
     const problems: string[] = [];
+    const repository = manifest.repository as Record<string, unknown> | undefined;
+    if (typeof repository !== "object" || repository === null) {
+        problems.push("repository is missing");
+    } else {
+        if (repository.type !== "git") problems.push('repository.type must be "git"');
+        if (repository.url !== expected.repository.url) {
+            problems.push(`repository.url must be exactly "${expected.repository.url}"`);
+        }
+        if (repository.directory !== directory) {
+            problems.push(`repository.directory must be "${directory}"`);
+        }
+    }
+    if (manifest.homepage !== expected.homepage) {
+        problems.push(`homepage must be "${expected.homepage}"`);
+    }
+    const bugs = manifest.bugs as Record<string, unknown> | undefined;
+    if (bugs?.url !== expected.bugs.url) problems.push(`bugs.url must be "${expected.bugs.url}"`);
+    return problems;
+}
+
+// Problems with a packed manifest for the package in `directory`.
+export function checkManifest(manifest: Record<string, unknown>, directory: string): string[] {
+    const problems: string[] = checkRepository(manifest, directory);
     if (manifest.private === true) problems.push("the manifest is private");
     if (!manifest.name || !manifest.version) problems.push("name or version is missing");
     if (manifest.license !== LICENSE_ID) problems.push(`license must be "${LICENSE_ID}"`);
