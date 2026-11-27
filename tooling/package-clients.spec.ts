@@ -40,12 +40,15 @@ import {
 
 describe("checkListing", () => {
     it("accepts what a published package holds", () => {
-        expect(checkListing(["package.json", "README.md", "cli.mjs", "index.d.ts"])).toEqual([]);
+        expect(
+            checkListing(["package.json", "README.md", "LICENSE", "cli.mjs", "index.d.ts"]),
+        ).toEqual([]);
     });
 
     it("refuses env files, sources, tests, source maps and nested modules", () => {
         const problems = checkListing([
             "package.json",
+            "LICENSE",
             ".env",
             ".env.local",
             "src/index.ts",
@@ -57,17 +60,35 @@ describe("checkListing", () => {
         ]);
         expect(problems).toHaveLength(8);
         expect(
-            checkListing(["package.json", ".npmrc", "key.pem", "stray.tgz", "x.ts", "dist/a.mjs"]),
+            checkListing([
+                "package.json",
+                "LICENSE",
+                ".npmrc",
+                "key.pem",
+                "stray.tgz",
+                "x.ts",
+                "dist/a.mjs",
+            ]),
         ).toHaveLength(5);
     });
 
-    it("needs a package.json", () => {
-        expect(checkListing(["index.mjs"])).toEqual(["package.json is missing"]);
+    it("needs a package.json and the LICENSE", () => {
+        expect(checkListing(["index.mjs"])).toEqual([
+            "package.json is missing",
+            "LICENSE is missing",
+        ]);
     });
 });
 
 describe("checkLibrary", () => {
-    const clientCore = ["package.json", "README.md", "index.mjs", "index.d.ts", "store.d.ts"];
+    const clientCore = [
+        "package.json",
+        "README.md",
+        "LICENSE",
+        "index.mjs",
+        "index.d.ts",
+        "store.d.ts",
+    ];
 
     it("accepts the files of a packed client-core", () => {
         expect(checkLibrary({ name: "@x/y" }, clientCore)).toEqual([]);
@@ -108,6 +129,7 @@ describe("checkLibrary", () => {
             checkManifest({
                 name: "@launchpad-kit/client-core",
                 version: "0.1.0",
+                license: "Apache-2.0",
                 private: true,
                 dependencies: { "@launchpad-kit/sdk": "workspace:^", zod: "catalog:" },
             }),
@@ -116,7 +138,19 @@ describe("checkLibrary", () => {
 });
 
 describe("checkManifest", () => {
-    const good = { name: "@x/y", version: "1.0.0", dependencies: { zod: "^4.0.0" } };
+    const good = {
+        name: "@x/y",
+        version: "1.0.0",
+        license: "Apache-2.0",
+        dependencies: { zod: "^4.0.0" },
+    };
+
+    it("refuses a missing or different license", () => {
+        expect(checkManifest({ ...good, license: undefined })).toEqual([
+            'license must be "Apache-2.0"',
+        ]);
+        expect(checkManifest({ ...good, license: "MIT" })).toHaveLength(1);
+    });
 
     it("accepts a registry-installable manifest", () => {
         expect(checkManifest(good)).toEqual([]);
@@ -363,6 +397,7 @@ describe("checkManifest fields that must not be packed", () => {
         const problems = checkManifest({
             name: "@x/y",
             version: "1.0.0",
+            license: "Apache-2.0",
             bundledDependencies: ["a"],
             bundleDependencies: ["a"],
             publishConfig: { access: "public" },
