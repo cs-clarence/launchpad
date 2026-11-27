@@ -839,7 +839,7 @@ export const DB_QUERY = [
     "psql",
     "-X",
     "-v",
-    "VERBOSITY=sqlstate",
+    "VERBOSITY=verbose",
     "-U",
     "launchpad",
     "-d",

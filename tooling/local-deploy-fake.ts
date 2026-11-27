@@ -701,7 +701,10 @@ export class FakeHost {
         if (!c || c.state !== "running") return fail("service not running");
         if (service === "postgres" && rest[1] === "psql") {
             if (!this.dbUp) return fail("could not connect", 2);
-            if (!this.dbSchema) return fail('ERROR:  42P01 relation "deployment" does not exist');
+            if (!this.dbSchema)
+                return fail(
+                    'ERROR:  42P01: relation "deployment" does not exist\nLINE 1: select id, app_name, desired_state from deployment\n                                              ^\nLOCATION:  parserOpenTable, parse_relation.c:1449',
+                );
             return ok(this.deployments.map((d) => `${d.id} ${d.app} ${d.state}`).join("\n"));
         }
         if (service === "dokku") {
