@@ -3,6 +3,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import path from "node:path";
 import {
+    checkTags,
     checkVersions,
     covered,
     independentPackages,
@@ -174,6 +175,15 @@ describe("lockfile and strictness", () => {
             `{\n    "name": "@t/root",\n    "version": "1.2.3",\n    "workspaces": ["packages/extra/sdk"]\n}\n`,
         );
         expect(() => checkVersions(root)).toThrow("Unsupported workspace entry");
+    });
+});
+
+describe("checkTags", () => {
+    it("passes for equal, older or no tags and fails for a newer one", () => {
+        const root = repository();
+        const version = sharedWorkspaces(root)[0]!.version;
+        expect(checkTags(root, ["", `v${version}`, "v0.0.0-old", "core-v9.0.0"])).toEqual([]);
+        expect(checkTags(root, ["v99.0.0"])).toHaveLength(1);
     });
 });
 

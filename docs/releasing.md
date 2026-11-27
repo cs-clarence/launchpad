@@ -20,7 +20,12 @@ number), except the shared tooling packages (`@launchpad-kit/tsconfig`, `vite-co
 - `bun tooling/versions.ts sync <core|package> <version>` rewrites the manifests and
   refreshes `bun.lock`. You do not run it by hand: Cocogitto's `pre_package_bump_hook` in
   `cog.toml` does, so the bump commit holds manifests, lockfile and changelog together.
-- The hook was proven in a throwaway clone: `cog bump --auto` produced one
+- **Bump only with `cog bump --version X.Y.Z --include-packages`.** `cog bump --auto` after a
+  tooling-only change (for example a `fix:` under `packages/tsconfig`) makes a changelog-only
+  bump and tag `v0.1.1` without `sync core`, leaving the manifests at the old version.
+  Plain `--version X.Y.Z` does the same. `check:versions` fails when a `v` tag is newer than the
+  manifests. The explicit form also sets the three tooling packages to `X.Y.Z`.
+- The hook was proven in a throwaway clone: `cog bump --version 0.2.0 --include-packages` produced one
   commit with every manifest, `bun.lock` and `CHANGELOG.md`, and the global tag `v<version>`
   (`cog.toml` sets `generate_mono_repository_global_tag = true`, package tags off; in the clone the only tag was `v0.1.0`).
   Run `cog bump` only on a clean checkout of the commit you mean to release, review the
@@ -234,7 +239,7 @@ A release is a person's decision. Work through this in order and stop at the fir
    [production Compose](production-compose.md#images-and-pins)). Refresh them deliberately.
 6. Run the [dry run](#rehearse-a-release); inspect the tarball listings, `SHA256SUMS` and the
    image notes. No `.env`, key, source map or workspace specifier in any tarball.
-7. `cog bump` on a clean checkout, then review the bump commit, changelog and tag locally.
+7. `cog bump --version X.Y.Z --include-packages` on a clean checkout, then review the bump commit, changelog and tag locally.
    The bump commit rewrites manifests, source version strings and `bun.lock`, and does not
    carry `[skip ci]`, so CI validates it. On that commit rerun step 6's dry run and use the
    checksums from **that** run. The ones from before the bump

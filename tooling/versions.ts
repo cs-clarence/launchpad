@@ -145,6 +145,26 @@ export function checkVersions(root: string): string[] {
     return problems;
 }
 
+const triple = (v: string) => v.split(/[-+]/)[0]!.split(".").map(Number);
+
+// A `v<semver>` tag newer than the manifests means a bump moved the tag without running
+// `sync core` (a tooling-only `cog bump --auto`). A bump commit not yet tagged is fine.
+export function checkTags(root: string, tags: string[]): string[] {
+    const current = sharedWorkspaces(root)[0]?.version;
+    if (!current || !SEMVER.test(current)) return [];
+    const [a, b, c] = triple(current);
+    return tags
+        .filter((tag) => SEMVER.test(tag.slice(1)) && tag.startsWith("v"))
+        .filter((tag) => {
+            const [x, y, z] = triple(tag.slice(1));
+            return x! > a! || (x === a && (y! > b! || (y === b && z! > c!)));
+        })
+        .map(
+            (tag) =>
+                `${tag} is newer than the manifests (${current}); bump with \`cog bump --version <X.Y.Z> --include-packages\``,
+        );
+}
+
 function setVersion(file: string, version: string) {
     const text = readFileSync(file, "utf8");
     if (!VERSION_LINE.test(text)) throw new Error(`${file} has no "version" line`);
@@ -190,6 +210,11 @@ if (import.meta.main) {
         .allowExcessArguments()
         .action(() => {
             const problems = checkVersions(root);
+            const tags = spawnSync("git", ["tag", "--list", "v*", "--merged", "HEAD"], {
+                cwd: root,
+                encoding: "utf8",
+            });
+            if (tags.status === 0) problems.push(...checkTags(root, tags.stdout.split("\n")));
             for (const problem of problems) console.error(problem);
             if (problems.length > 0) process.exit(1);
             console.log("Versions agree.");

@@ -75,32 +75,35 @@ following. Where a choice was made for the single-maintainer situation, the alte
 
 ### Cocogitto, tags and the bump commit
 
-Originally `cog.toml` had `generate_mono_repository_global_tag = false` and created package tags such as
-`core-v0.1.0`. The release slice decides the global version as below.
+`cog.toml` sets `generate_mono_repository_global_tag = true` and
+`generate_mono_repository_package_tags = false`, so `cog bump` creates one local `v<semver>` tag.
 
-- A `v<semver>` global tag is wanted [S6]. Cocogitto calculates the global version from the package
-  versions and from commits outside any package, and `public_api = false` on a package keeps
-  `--auto` from raising it [S6]. So the global version can differ from the `core` lockstep
-  version when tooling packages change. Whether today's tooling packages cause a mismatch is
-  **unverified**. The explicit tag-to-manifest comparison (below) fails a mismatched tag, so a
-  mismatch fails safe.
-- **`cog bump` creates tags locally on the bump commit on the release branch**, and that commit is
-  not the commit that ends up on `main` after a squash or rebase merge. So the release slice must
-  not push any Cocogitto tag. `cog bump --help` lists a way to skip the bump commit
-  (`--disable-bump-commit`) but no flag to skip tags [S11]; `cog.toml` has
-  `generate_mono_repository_global_tag` and `generate_mono_repository_package_tags` switches [S6
-  config reference], and whether setting both to `false` creates no tag at all is **unverified**.
-  The release slice therefore either turns them off after verifying that, or deletes every local
-  tag the bump created (`core-v*`, `v*`, tooling package tags) before anything is pushed.
-- The maintainer then creates `v<semver>` **by hand on the merge commit on `main`**, after that
-  commit's `CI Passed` is green. Because the tag is created on `main`, squash and rebase merges
-  are fine.
+- Verified in a throwaway clone: `cog bump --auto` after a tooling-only commit (`fix:` under
+  `packages/tsconfig`) created `v0.1.1` and a changelog-only bump **without** running
+  `sync core`, so the manifests stayed at `0.1.0` and the global tag diverged from the lockstep
+  version. `cog bump --version X.Y.Z` alone behaves the same (changelog only, manifests
+  untouched). `cog bump --package core --version X.Y.Z` syncs the manifests but creates
+  `core-vX.Y.Z`, not `v`.
+- Verified: `cog bump --version X.Y.Z --include-packages` runs the hooks including
+  `sync core`, rewrites every manifest, `bun.lock` and the source version strings, and creates
+  only `vX.Y.Z`. It also sets the independent tooling packages to `X.Y.Z`. **This is the only
+  supported way to bump.** `cog bump --auto` is not used.
+- Guard: `omni run check:versions` (`checkTags` in `tooling/versions.ts`) fails when a reachable
+  `v<semver>` tag is newer than the manifests. An untagged bump commit passes, because the tag
+  is made after the merge. The guard cannot catch a diverged bump before it is tagged; the
+  release checklist covers that. In CI without tags it does nothing.
+- `cog bump` creates the tag locally on the bump commit on the release branch, which is not the
+  commit that lands on `main` after a squash or rebase merge. Do not push that tag. The
+  maintainer deletes it and creates `v<semver>` **by hand on the merge commit on `main`**, after
+  that commit's `CI Passed` is green and pushes it, as approved.
+- Verified: with `skip_ci = ""` and both switches as above, the bump commit has no marker and
+  only `vX.Y.Z` exists.
 
 ### Bump commit and CI
 
 Cocogitto's `skip_ci` setting is a string added to the commits that `bump` and `commit` create,
-default `[skip ci]` (<https://docs.cocogitto.io/reference/config.html>); `cog.toml` uses the
-default, and `cog bump` has `--skip-ci` and `--skip-ci-override` options [S11]. GitHub skips push
+default `[skip ci]` (<https://docs.cocogitto.io/reference/config.html>); `cog.toml` sets it to
+`""`, and `cog bump` has `--skip-ci` and `--skip-ci-override` options [S11]. GitHub skips push
 and pull request workflows for such a commit, so the bump commit would never get `CI Passed`. The
 process, in the follow-up slice:
 
@@ -380,9 +383,8 @@ My own list, because the review's list was not available to me. Each item is mar
 - `imagetools create` retagging keeps the attestations.
 - The check-runs JSON field that identifies the GitHub Actions app.
 - The three-tag limit applies to `push` events, not only `create` and `delete`.
-- Setting both `generate_mono_repository_*_tag` switches to `false` creates no tag; an empty
-  `skip_ci` removes the marker.
-- Whether today's tooling packages make the global version differ from the lockstep version.
+- Whether setting both `generate_mono_repository_*_tag` switches to `false` creates no tag
+  (the configuration chosen keeps the global tag on).
 - Whether the reviewer approves multiple `release` jobs together.
 - The exact ruleset UI selector for the maintainer bypass actor.
 - GitHub runs the workflow file from the tagged commit (stated by the review; not re-fetched here).
@@ -393,7 +395,7 @@ My own list, because the review's list was not available to me. Each item is mar
   environment approval and deployment-tag restriction, tag ruleset, minimal per-job permissions,
   no stored tokens, no cache, pinned actions, provenance. With one maintainer, approval is not a
   second-person control (see Approval).
-- The repository gains a global `v<semver>` tag beside package tags, created by hand on `main`.
+- The repository gains a global `v<semver>` tag (the only tag; package tags are off), created by `cog bump --version X.Y.Z --include-packages` locally and pushed by hand from `main`.
 - Rollback: npm versions cannot be freely unpublished; deprecate the bad version
   (`npm deprecate`) and fix forward with a new version. `X.Y.Z` image tags are never rewritten;
   move `X.Y` and `latest` back to the last good image.
@@ -426,11 +428,9 @@ My own list, because the review's list was not available to me. Each item is mar
 - [ ] Post-publish verification job (`gh attestation verify`, `npm audit signatures`).
 - [ ] Bootstrap procedure for the five packages (placeholder version, `bootstrap` tag, token
       revoked), then trusted publishers and disallow-tokens.
-- [ ] Bump CI: the Cocogitto bump commit carries `[skip ci]` (`skip_ci` in `cog.toml`), so GitHub
-      skips its workflows and it cannot supply `CI Passed`. See "Bump commit and CI". Change
-      `skip_ci` and update `docs/releasing.md` in the same slice.
-- [ ] `cog.toml`: decide the tag switches (Cocogitto tags are never pushed; the global `v<semver>` tag is made by hand on `main`) and `public_api = false` on the
-      tooling packages or tagging by hand.
+- [x] Bump CI: `skip_ci = ""`, so the bump commit has no `[skip ci]` and CI runs on it.
+- [x] `cog.toml`: one global `v<semver>` tag, no package tags; bump only with
+      `cog bump --version X.Y.Z --include-packages`; the tag is pushed by hand from `main`.
 - [ ] Package metadata: `publishConfig.access` and, in the **packed** manifests, `repository`
       (type `git`, url `git+https://github.com/launchpad-kit/launchpad.git`, `directory` per
       package), `homepage` and `bugs`. `tooling/package-clients.ts` builds new manifests and does
