@@ -132,7 +132,7 @@ inputs:
   - name: package_license
     type: string
     message: What is the license of your package?
-    default: MIT
+    default: Apache-2.0
 
 targets:
   cog_config: "@workspace/cog.toml"

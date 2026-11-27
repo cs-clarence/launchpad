@@ -3,6 +3,7 @@
     "version": "0.0.0",
     "private": true,
     "description": "Local stdio MCP adapter for Launchpad",
+    "license": "Apache-2.0",
     "bin": {
         "launchpad-mcp": "./dist/mcp.mjs"
     },

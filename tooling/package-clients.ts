@@ -194,12 +194,14 @@ export async function stage(target: Target, outDir: string): Promise<string> {
         name: manifest.name,
         version: manifest.version,
         description: manifest.description,
+        license: LICENSE_ID,
         type: "module",
         // commander 15 (the CLI and the MCP server) and tar (client-core) need Node 22.12 or newer.
         engines: { node: ">=22.12" },
     };
     const readme = path.join(source, "README.md");
     if (existsSync(readme)) cpSync(readme, path.join(stageDir, "README.md"));
+    cpSync(path.join(root, "LICENSE"), path.join(stageDir, "LICENSE"));
 
     const dependencies = packedDependencies(
         manifest,
@@ -222,7 +224,7 @@ export async function stage(target: Target, outDir: string): Promise<string> {
                 {
                     ...common,
                     bin: { [bin.name]: `./${bin.file}` },
-                    files: [bin.file, "README.md"],
+                    files: [bin.file, "README.md", "LICENSE"],
                     dependencies,
                 },
                 null,
@@ -246,7 +248,7 @@ export async function stage(target: Target, outDir: string): Promise<string> {
                         },
                     },
                     sideEffects: false,
-                    files: ["*.mjs", "*.d.ts", "**/*.d.ts", "README.md"],
+                    files: ["*.mjs", "*.d.ts", "**/*.d.ts", "README.md", "LICENSE"],
                     dependencies,
                 },
                 null,
@@ -266,11 +268,15 @@ export async function pack(stageDir: string, destination: string): Promise<strin
     return path.join(destination, path.basename(name));
 }
 
-// A package holds its manifest, its README and built files, nothing else: an allowlist, so a file
+// The licence every package is published under (SPDX identifier), with the text in the root LICENSE.
+export const LICENSE_ID = "Apache-2.0";
+
+// A package holds its manifest, its README, its LICENSE and built files, nothing else: an allowlist, so a file
 // nobody thought of (a key, an npmrc, a stray archive) is refused rather than shipped.
 const ALLOWED_PATH = [
     /^package\.json$/,
     /^README\.md$/,
+    /^LICENSE$/,
     /^[A-Za-z0-9_-]+\.mjs$/,
     /^([A-Za-z0-9_-]+\/)*[A-Za-z0-9_.-]+\.d\.ts$/,
 ];
@@ -288,6 +294,7 @@ export function checkListing(files: string[]): string[] {
         }
     }
     if (!files.includes("package.json")) problems.push("package.json is missing");
+    if (!files.includes("LICENSE")) problems.push("LICENSE is missing");
     return problems;
 }
 
@@ -303,7 +310,12 @@ export function checkLibrary(manifest: Record<string, unknown>, files: string[])
         if (/\.(spec|test)\./.test(file) || /(^|\/)node_modules\//.test(file)) {
             problems.push(`${file}: tests and dependencies are not packed`);
         }
-        if (file !== "package.json" && file !== "README.md" && !/\.(mjs|d\.ts)$/.test(file)) {
+        if (
+            file !== "package.json" &&
+            file !== "README.md" &&
+            file !== "LICENSE" &&
+            !/\.(mjs|d\.ts)$/.test(file)
+        ) {
             problems.push(`${file}: a library package holds only built files and its README`);
         }
         if (
@@ -320,6 +332,7 @@ export function checkManifest(manifest: Record<string, unknown>): string[] {
     const problems: string[] = [];
     if (manifest.private === true) problems.push("the manifest is private");
     if (!manifest.name || !manifest.version) problems.push("name or version is missing");
+    if (manifest.license !== LICENSE_ID) problems.push(`license must be "${LICENSE_ID}"`);
     for (const key of DEPENDENCY_KEYS) {
         const deps = (manifest[key] ?? {}) as Record<string, string>;
         for (const [name, spec] of Object.entries(deps)) {

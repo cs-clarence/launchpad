@@ -3,6 +3,7 @@
     "version": "0.0.0",
     "private": true,
     "description": "The launchpad command-line client",
+    "license": "Apache-2.0",
     "bin": {
         "launchpad": "./dist/cli.mjs"
     },

@@ -6,6 +6,7 @@
     "description": "{{ inputs.package_description }}",
     "version": "{{ inputs.package_version }}",
     "private": {{ not inputs.published }},
+    "license": "{{ inputs.package_license }}",
     "scripts": {
         "build": "vite build",
         "check:types": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.node.json"

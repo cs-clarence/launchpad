@@ -92,7 +92,7 @@ Turn this example into integration/e2e fixtures over the milestones.
    password resets explicitly revoke affected sessions. See the
    [decision record](../decisions/configurable-identity-provisioning.md).
 
-The user owns these choices. Namespace, license, runtime support and final
+The user owns these choices. Namespace, runtime support and final
 quotas/visibility policies are release gates, not blockers to the compatibility
 spike. Queue library selection is a spike outcome, not left to an implementation
 agent to guess mid-feature.
@@ -176,7 +176,7 @@ See [deployment and routing design](../design/deployment-modes.md).
 
 ### 6. A clean user can install, back up and upgrade v1
 
-**Depends on:** milestones 1–5, namespace/license decisions.
+**Depends on:** milestones 1–5, namespace decision (the licence is decided: Apache-2.0).
 
 - Explicit Compose services/profiles for controller, worker, PostgreSQL and
   Dokku. Document socket privilege and container/host path mapping. Preserve
@@ -330,7 +330,7 @@ at integrated release milestones. Record skipped checks and remaining risks.
       worker image, and bounded progress through the intended ingress (before
       milestone 3).
 - [x] Independent review of the milestone 0 results; findings applied.
-- [ ] Product license and authenticated registry ownership verified before release.
+- [ ] Authenticated registry ownership verified before release.
 
 Milestones 0 to 5 are implemented (milestone 6 is next); the notes above record their state
 when they were written. The design is not approval to implement the whole roadmap. Preserve

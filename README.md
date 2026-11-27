@@ -125,3 +125,7 @@ Dokku); see the controller and worker READMEs for configuration and first run.
 See [CONTRIBUTING.md](CONTRIBUTING.md), [tooling](docs/tooling.md), and
 [package patterns](docs/patterns/README.md), and [deployments](docs/deployments.md). Keep these docs current when setup
 or boundaries change.
+
+## License
+
+Launchpad is licensed under the [Apache License 2.0](LICENSE).
