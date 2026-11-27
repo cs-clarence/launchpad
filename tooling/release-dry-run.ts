@@ -24,6 +24,7 @@ import {
     checkClosure,
     checkUnbundled,
     checkBin,
+    checkLibrary,
     checkListing,
     checkManifest,
     pack,
@@ -160,6 +161,7 @@ async function rehearse(out: string, version: string, skipImages: boolean) {
         const { listing, text } = await readPacked(tarball);
         const found = [
             ...checkListing(listing),
+            ...checkLibrary(manifest, listing),
             ...checkManifest(manifest),
             ...checkBin(manifest, listing),
             ...checkUnbundled(manifest, text),

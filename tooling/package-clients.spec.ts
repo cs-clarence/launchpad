@@ -16,6 +16,7 @@ import {
     findNode,
     nodeShim,
     resolveNode,
+    checkLibrary,
     checkListing,
     checkManifest,
     checkBareImports,
@@ -62,6 +63,43 @@ describe("checkListing", () => {
 
     it("needs a package.json", () => {
         expect(checkListing(["index.mjs"])).toEqual(["package.json is missing"]);
+    });
+});
+
+describe("checkLibrary", () => {
+    const clientCore = ["package.json", "README.md", "index.mjs", "index.d.ts", "store.d.ts"];
+
+    it("accepts the files of a packed client-core", () => {
+        expect(checkLibrary({ name: "@x/y" }, clientCore)).toEqual([]);
+    });
+
+    it("refuses sources, specs, tsconfig and other development files", () => {
+        const problems = checkLibrary({ name: "@x/y" }, [
+            ...clientCore,
+            "src/index.ts",
+            "index.spec.d.ts",
+            "tsconfig.json",
+            "vite.config.ts",
+            "project.omni.yaml",
+        ]);
+        expect(problems.length).toBeGreaterThanOrEqual(5);
+        expect(problems.join("\n")).toContain("tsconfig.json");
+    });
+
+    it("needs its entry points and README, and leaves executables to checkBin", () => {
+        expect(checkLibrary({ name: "x" }, ["package.json"])).toHaveLength(3);
+        expect(checkLibrary({ bin: { x: "./cli.mjs" } }, ["package.json", "cli.mjs"])).toEqual([]);
+    });
+
+    it("refuses a client-core manifest that cannot install from the registry", () => {
+        expect(
+            checkManifest({
+                name: "@launchpad-kit/client-core",
+                version: "0.1.0",
+                private: true,
+                dependencies: { "@launchpad-kit/sdk": "workspace:^", zod: "catalog:" },
+            }),
+        ).toHaveLength(3);
     });
 });
 
