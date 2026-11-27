@@ -19,19 +19,19 @@ to deploy to an immutable preview URL and separately choose whether to promote.
     ```sh
     version="$(sed -n 's/^ *"version": *"\([^"]*\)".*/\1/p' package.json | head -n 1)"
     [ -n "$version" ] || { echo "could not read the version from package.json" >&2; false; }
-    docker build --build-arg LAUNCHPAD_VERSION="$version" -f apps/controller/Dockerfile -t launchpad/controller:local .
-    docker build --build-arg LAUNCHPAD_VERSION="$version" -f apps/worker/Dockerfile -t launchpad/worker:local .
-    docker build --target admin --build-arg LAUNCHPAD_VERSION="$version" -f apps/controller/Dockerfile -t launchpad/admin:local .
+    docker build --build-arg LAUNCHPAD_VERSION="$version" -f apps/controller/Dockerfile -t ghcr.io/launchpad-kit/launchpad-controller:local .
+    docker build --build-arg LAUNCHPAD_VERSION="$version" -f apps/worker/Dockerfile -t ghcr.io/launchpad-kit/launchpad-worker:local .
+    docker build --target admin --build-arg LAUNCHPAD_VERSION="$version" -f apps/controller/Dockerfile -t ghcr.io/launchpad-kit/launchpad-admin:local .
     ```
 
     The third image is the one-off **operator image**: the controller's program and user plus
     the PostgreSQL 17 client tools that `backup` and `restore` need. Run it with
-    `docker run --rm --env DATABASE_URL ... launchpad/admin:local migrate --status`; it is never a service.
+    `docker run --rm --env DATABASE_URL ... ghcr.io/launchpad-kit/launchpad-admin:local migrate --status`; it is never a service.
     The build argument records the version in backups and in the operator status; an image
     built without it reports `unknown`.
 
-    These are local tags, not published images. (The Compose stack names its images
-    `ghcr.io/launchpad-kit/launchpad-<name>:$LAUNCHPAD_IMAGE_TAG`; see
+    These are local tags, not published images. (These names are the ones the Compose stack uses: with
+    `LAUNCHPAD_IMAGE_TAG=local` it finds them; see
     [production Compose](production-compose.md#images-pull-a-release-or-build-locally).) Both images run as uid/gid 10001.
     Mount the **same** durable `/data` into both; a bind mount must be owned by
     10001:10001. Without an explicit mount, each gets a separate anonymous volume.

@@ -116,6 +116,10 @@ tasks:
     description: Every shipped package has the same version and is watched by cog.toml
     exec: sh -c 'cd "$(git rev-parse --show-toplevel)" && bun tooling/versions.ts check'
 
+  check:notices:
+    description: THIRD_PARTY_NOTICES.md matches the installed runtime dependencies (needs bun install)
+    exec: sh -c 'cd "$(git rev-parse --show-toplevel)" && bun tooling/third-party-notices.ts --check'
+
   check:runtime:
     description: The npm packages (contracts, sdk, cli, mcp, client-core) use no Bun-only API
     exec: sh -c 'cd "$(git rev-parse --show-toplevel)" && bun tooling/runtime-agnostic.ts'
@@ -133,6 +137,7 @@ tasks:
       - check:format
       - check:deps
       - check:versions
+      - check:notices
       - check:runtime
       - check:imports
 
