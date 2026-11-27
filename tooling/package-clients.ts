@@ -295,7 +295,7 @@ export function checkManifest(manifest: Record<string, unknown>): string[] {
     const problems: string[] = [];
     if (manifest.private === true) problems.push("the manifest is private");
     if (!manifest.name || !manifest.version) problems.push("name or version is missing");
-    for (const key of ["dependencies", "devDependencies", "peerDependencies"]) {
+    for (const key of DEPENDENCY_KEYS) {
         const deps = (manifest[key] ?? {}) as Record<string, string>;
         for (const [name, spec] of Object.entries(deps)) {
             if (/^(workspace|catalog|link|file|git|github|http|https|npm):|^git\+/.test(spec)) {
@@ -306,6 +306,121 @@ export function checkManifest(manifest: Record<string, unknown>): string[] {
         }
     }
     if (manifest.devDependencies) problems.push("devDependencies must not be packed");
+    // Source-manifest fields that would change resolution or install behaviour, or bundle code.
+    for (const key of [
+        "bundledDependencies",
+        "bundleDependencies",
+        "publishConfig",
+        "scripts",
+        "workspaces",
+        "overrides",
+    ]) {
+        if (key in manifest) problems.push(`${key} must not be packed`);
+    }
+    return problems;
+}
+
+const DEPENDENCY_KEYS = [
+    "dependencies",
+    "devDependencies",
+    "peerDependencies",
+    "optionalDependencies",
+];
+
+// What the published set must look like as a whole: one version, every internal reference the
+// caret range of it (so a 0.x install allows patch drift only), every third-party package at one
+// range, and nothing but the five packages under our scope.
+export function checkClosure(manifests: Record<string, unknown>[]): string[] {
+    const problems: string[] = [];
+    const names = new Set(manifests.map((m) => String(m.name)));
+    const versions = new Set(manifests.map((m) => String(m.version)));
+    if (versions.size > 1) {
+        problems.push(`the packages carry different versions: ${[...versions].join(", ")}`);
+    }
+    const lockstep = [...versions][0];
+    const ranges = new Map<string, Map<string, string[]>>();
+    for (const manifest of manifests) {
+        for (const key of DEPENDENCY_KEYS) {
+            const deps = (manifest[key] ?? {}) as Record<string, string>;
+            for (const [name, spec] of Object.entries(deps)) {
+                if (WORKSPACE.test(name)) {
+                    if (!names.has(name)) {
+                        problems.push(
+                            `${manifest.name}: ${key}.${name} is not a published package`,
+                        );
+                    } else if (spec !== `^${lockstep}`) {
+                        problems.push(
+                            `${manifest.name}: ${key}.${name} is "${spec}", not "^${lockstep}"`,
+                        );
+                    }
+                } else {
+                    const bySpec = ranges.get(name) ?? new Map<string, string[]>();
+                    bySpec.set(spec, [...(bySpec.get(spec) ?? []), String(manifest.name)]);
+                    ranges.set(name, bySpec);
+                }
+            }
+        }
+    }
+    for (const [name, bySpec] of ranges) {
+        if (bySpec.size > 1) {
+            const shown = [...bySpec].map(([spec, who]) => `${spec} (${who.join(", ")})`);
+            problems.push(
+                `${name} has different ranges in the published packages: ${shown.join("; ")}`,
+            );
+        }
+    }
+    return problems;
+}
+
+// A string only the implementation of each dependency holds: if one turns up in a package that is
+// not that dependency, the dependency was bundled into it. A spec checks each is still in the
+// dependency, so a stale marker fails loudly.
+export const MARKERS: Record<string, string> = {
+    "@launchpad-kit/client-core": "A field is nested too deeply.",
+    "@launchpad-kit/contracts": "contains control characters",
+    "@launchpad-kit/sdk": "it has an encoded separator",
+    "@elastic/micro-jq": "PeggySyntaxError",
+    "@modelcontextprotocol/sdk": "already registered",
+    commander: "commander.invalidArgument",
+    picomatch: "Expected pattern to be a non-empty string",
+    tar: "Unrecognized archive format",
+    zod: "$ZodStringFormat",
+};
+
+// The most `.mjs` bytes an executable may hold: its measured size plus 25 %. An inlined
+// dependency is far larger than the headroom; real growth raises the number in review.
+export const SIZE_BUDGETS: Record<string, number> = {
+    "@launchpad-kit/cli": 80_000,
+    "@launchpad-kit/mcp": 12_000,
+};
+
+// Everything that shows a package bundles what it should import: an import of a package it does
+// not declare (`.mjs` and `.d.ts`), a size over its budget, or a dependency's marker in its files.
+export function checkUnbundled(
+    manifest: { name?: string; dependencies?: Record<string, string> },
+    files: Record<string, string>,
+    markers: Record<string, string> = MARKERS,
+): string[] {
+    const problems = checkBareImports(manifest, files);
+    const budget = manifest.name ? SIZE_BUDGETS[manifest.name] : undefined;
+    if (budget !== undefined) {
+        const size = Object.entries(files)
+            .filter(([file]) => file.endsWith(".mjs"))
+            .reduce((sum, [, text]) => sum + Buffer.byteLength(text), 0);
+        if (size > budget) {
+            problems.push(
+                `${size} bytes of .mjs is over the budget of ${budget}: is a dependency bundled?`,
+            );
+        }
+    }
+    for (const [file, text] of Object.entries(files)) {
+        if (!/\.(mjs|d\.ts)$/.test(file)) continue;
+        for (const [name, marker] of Object.entries(markers)) {
+            if (name !== manifest.name && text.includes(marker)) {
+                problems.push(`${file} contains code of ${name}: it must be imported, not bundled`);
+            }
+        }
+    }
     return problems;
 }
 
@@ -348,8 +463,8 @@ export function specifiers(
 
 const BUILTINS = new Set(builtinModules.filter((name) => !name.startsWith("bun")));
 
-// A built file imports only Node, itself and what its package declares: anything else was
-// inlined or is missing from the manifest (`files` maps a path in the package to its text).
+// A built file (`.mjs` or `.d.ts`) imports only Node, itself and what its package declares:
+// anything else was inlined or is missing from the manifest (`files` maps a path in the package to its text).
 export function checkBareImports(
     manifest: {
         name?: string;
@@ -363,7 +478,7 @@ export function checkBareImports(
     );
     const problems: string[] = [];
     for (const [file, text] of Object.entries(files)) {
-        if (!file.endsWith(".mjs")) continue;
+        if (!/\.(mjs|d\.ts)$/.test(file)) continue;
         const scanned = specifiers(file, text);
         problems.push(...scanned.problems);
         for (const specifier of new Set(scanned.specifiers)) {

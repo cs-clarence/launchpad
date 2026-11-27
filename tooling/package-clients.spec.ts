@@ -1,5 +1,13 @@
 import { afterEach, describe, expect, it } from "bun:test";
-import { mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
+import {
+    mkdtempSync,
+    readFileSync,
+    readdirSync,
+    rmSync,
+    statSync,
+    symlinkSync,
+    writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import {
@@ -10,6 +18,10 @@ import {
     checkManifest,
     checkBareImports,
     checkBin,
+    checkClosure,
+    checkUnbundled,
+    MARKERS,
+    SIZE_BUDGETS,
     packedDependencies,
     SHEBANG,
     stageExecutable,
@@ -279,5 +291,182 @@ describe("checkBin", () => {
                 files,
             ),
         ).toHaveLength(3);
+    });
+});
+
+describe("checkManifest fields that must not be packed", () => {
+    it("refuses bundled dependencies, publishConfig, scripts, workspaces, overrides and optional protocol ranges", () => {
+        const problems = checkManifest({
+            name: "@x/y",
+            version: "1.0.0",
+            bundledDependencies: ["a"],
+            bundleDependencies: ["a"],
+            publishConfig: { access: "public" },
+            scripts: {},
+            workspaces: [],
+            overrides: {},
+            optionalDependencies: { a: "workspace:^" },
+        });
+        expect(problems).toHaveLength(7);
+    });
+});
+
+describe("checkClosure", () => {
+    const pkg = (name: string, dependencies: Record<string, string> = {}, version = "0.1.0") => ({
+        name,
+        version,
+        dependencies,
+    });
+    const good = () => [
+        pkg("@launchpad-kit/sdk", { zod: "^4.0.0" }),
+        pkg("@launchpad-kit/cli", { "@launchpad-kit/sdk": "^0.1.0", zod: "^4.0.0" }),
+    ];
+
+    it("accepts one version, caret internal ranges and one range per third-party package", () => {
+        expect(checkClosure(good())).toEqual([]);
+    });
+
+    it("refuses another version, an exact or protocol range and a package that is not published", () => {
+        const [sdk, cli] = good();
+        expect(checkClosure([pkg("@launchpad-kit/sdk", {}, "0.1.1"), cli!])).not.toEqual([]);
+        for (const spec of ["0.1.0", "~0.1.0", "*", "workspace:^", "^0.2.0"]) {
+            const problems = checkClosure([
+                sdk!,
+                pkg("@launchpad-kit/cli", { "@launchpad-kit/sdk": spec }),
+            ]);
+            expect(problems, spec).toHaveLength(1);
+        }
+        expect(
+            checkClosure([sdk!, pkg("@launchpad-kit/cli", { "@launchpad-kit/other": "^0.1.0" })]),
+        ).toEqual([
+            "@launchpad-kit/cli: dependencies.@launchpad-kit/other is not a published package",
+        ]);
+    });
+
+    it("checks every dependency section", () => {
+        const [sdk] = good();
+        const cli = {
+            ...pkg("@launchpad-kit/cli"),
+            peerDependencies: { "@launchpad-kit/sdk": "0.1.0" },
+        };
+        expect(checkClosure([sdk!, cli])).toHaveLength(1);
+    });
+
+    it("refuses a third-party package at two ranges", () => {
+        const [sdk] = good();
+        const problems = checkClosure([sdk!, pkg("@launchpad-kit/cli", { zod: "^4.1.0" })]);
+        expect(problems).toHaveLength(1);
+        expect(problems[0]).toContain("zod has different ranges");
+    });
+});
+
+describe("checkUnbundled", () => {
+    const cli = { name: "@launchpad-kit/cli", dependencies: { "@launchpad-kit/sdk": "^0.1.0" } };
+
+    it("accepts an executable under its budget that imports what it declares", () => {
+        expect(
+            checkUnbundled(cli, { "cli.mjs": 'import "@launchpad-kit/sdk";\nconsole.log(1);' }),
+        ).toEqual([]);
+    });
+
+    it("checks declarations as well as modules", () => {
+        const lib = { name: "@launchpad-kit/sdk", dependencies: { zod: "^4.0.0" } };
+        expect(
+            checkUnbundled(lib, {
+                "index.d.ts": 'import { z } from "zod";\nexport type A = z.ZodType;',
+            }),
+        ).toEqual([]);
+        expect(
+            checkUnbundled(lib, { "index.d.ts": 'import type { X } from "undeclared";' }),
+        ).toHaveLength(1);
+        expect(
+            checkUnbundled(lib, { "index.d.ts": '/// <reference types="undeclared" />' }),
+        ).toHaveLength(1);
+    });
+
+    it("fails an executable over its size budget", () => {
+        const big = `import "@launchpad-kit/sdk";\n${"x".repeat(SIZE_BUDGETS["@launchpad-kit/cli"]!)}`;
+        expect(checkUnbundled(cli, { "cli.mjs": big }).join()).toContain("over the budget");
+    });
+
+    it("fails a file that holds the code of another package", () => {
+        for (const [name, marker] of Object.entries(MARKERS)) {
+            const problems = checkUnbundled(cli, { "cli.mjs": `// ${marker}` });
+            expect(problems.join(), name).toContain(`code of ${name}`);
+        }
+        const own = { name: "@launchpad-kit/sdk" };
+        expect(checkUnbundled(own, { "index.mjs": `// ${MARKERS["@launchpad-kit/sdk"]}` })).toEqual(
+            [],
+        );
+    });
+});
+
+// The directory a package is installed in, found the way Node finds it from `from`.
+function installed(name: string, from: string): string {
+    for (let dir = from; ; dir = path.dirname(dir)) {
+        const candidate = path.join(dir, "node_modules", name);
+        if (statSync(candidate, { throwIfNoEntry: false })?.isDirectory()) return candidate;
+        if (dir === path.dirname(dir)) throw new Error(`${name} is not installed above ${from}`);
+    }
+}
+
+function sourcesIn(dir: string): string {
+    let text = "";
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+        const file = path.join(dir, entry.name);
+        if (entry.isDirectory()) {
+            if (entry.name !== "node_modules" && entry.name !== "__tests__")
+                text += sourcesIn(file);
+        } else if (/\.[cm]?[jt]s$/.test(entry.name) && !/\.(spec|test)\./.test(entry.name)) {
+            text += readFileSync(file, "utf8");
+        }
+    }
+    return text;
+}
+
+describe("markers", () => {
+    const root = path.resolve(import.meta.dirname, "..");
+    const where: Record<string, string> = {
+        "@launchpad-kit/client-core": "packages/client-core",
+        "@launchpad-kit/contracts": "packages/contracts",
+        "@launchpad-kit/sdk": "packages/sdk",
+    };
+    const users: Record<string, string> = {
+        "@elastic/micro-jq": "apps/cli",
+        "@modelcontextprotocol/sdk": "apps/mcp",
+        commander: "apps/cli",
+        picomatch: "packages/client-core",
+        tar: "packages/client-core",
+        zod: "apps/mcp",
+    };
+
+    for (const [name, marker] of Object.entries(MARKERS)) {
+        it(`${name}: the marker is still in the package`, () => {
+            const dir = where[name]
+                ? path.join(root, where[name], "src")
+                : installed(name, path.join(root, users[name]!));
+            expect(sourcesIn(dir)).toContain(marker);
+        });
+    }
+
+    it("has a marker for every dependency a published package imports", () => {
+        for (const target of TARGETS) {
+            const manifest = JSON.parse(
+                readFileSync(path.join(root, target.dir, "package.json"), "utf8"),
+            );
+            for (const name of Object.keys(manifest.dependencies)) {
+                if (name === "@commander-js/extra-typings") continue;
+                expect(MARKERS, `${manifest.name} -> ${name}`).toHaveProperty([name]);
+            }
+        }
+    });
+});
+
+describe("budgets", () => {
+    it("cover the executables with 25 % over the measured size", () => {
+        expect(SIZE_BUDGETS).toEqual({
+            "@launchpad-kit/cli": 80_000,
+            "@launchpad-kit/mcp": 12_000,
+        });
     });
 });

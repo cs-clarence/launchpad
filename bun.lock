@@ -21,7 +21,7 @@
       "name": "@launchpad-kit/cli",
       "version": "0.0.0",
       "bin": {
-        "launchpad": "./src/index.ts",
+        "launchpad": "./dist/cli.mjs",
       },
       "dependencies": {
         "@commander-js/extra-typings": "catalog:",
@@ -88,7 +88,7 @@
       "name": "@launchpad-kit/mcp",
       "version": "0.0.0",
       "bin": {
-        "launchpad-mcp": "./src/index.ts",
+        "launchpad-mcp": "./dist/mcp.mjs",
       },
       "dependencies": {
         "@commander-js/extra-typings": "catalog:",
@@ -188,6 +188,7 @@
       "name": "@launchpad-kit/client-core",
       "version": "0.0.0",
       "dependencies": {
+        "@launchpad-kit/contracts": "workspace:^",
         "@launchpad-kit/sdk": "workspace:^",
         "picomatch": "catalog:",
         "tar": "catalog:",

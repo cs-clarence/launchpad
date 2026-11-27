@@ -21,7 +21,8 @@ import path from "node:path";
 import { Command, CommanderError } from "@commander-js/extra-typings";
 import {
     build,
-    checkBareImports,
+    checkClosure,
+    checkUnbundled,
     checkBin,
     checkListing,
     checkManifest,
@@ -150,6 +151,7 @@ async function rehearse(out: string, version: string, skipImages: boolean) {
     mkdirSync(tarballs, { recursive: true });
 
     const checked: string[] = [];
+    const manifests: Record<string, unknown>[] = [];
     for (const target of TARGETS) {
         await build(target);
         const staged = await stage(target, out);
@@ -160,14 +162,17 @@ async function rehearse(out: string, version: string, skipImages: boolean) {
             ...checkListing(listing),
             ...checkManifest(manifest),
             ...checkBin(manifest, listing),
-            ...checkBareImports(manifest, text),
+            ...checkUnbundled(manifest, text),
             ...(manifest.version === version
                 ? []
                 : [`version ${manifest.version} is not the release version ${version}`]),
         ];
         if (found.length > 0) throw new Error(`${manifest.name}:\n${found.join("\n")}`);
         checked.push(`${manifest.name}@${manifest.version}`);
+        manifests.push(manifest);
     }
+    const closure = checkClosure(manifests);
+    if (closure.length > 0) throw new Error(`The published set:\n${closure.join("\n")}`);
     // The staging directories are scratch; only tarballs and checksums are the result.
     rmSync(path.join(out, "stage"), { recursive: true, force: true });
     writeFileSync(

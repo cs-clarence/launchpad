@@ -299,16 +299,28 @@ export function check(root: string): string[] {
             }
         }
 
-        // 2. Versions come from the catalog or the workspace, nowhere else.
+        // 2. Versions come from the catalog or the workspace, nowhere else; an owned package is
+        // always `workspace:^`, which packing turns into a caret range of the lockstep version.
         for (const [dep, spec] of Object.entries(declared)) {
-            if (spec === "catalog:") {
+            const owned = workspaceNames.has(dep);
+            if (owned) {
+                if (spec !== "workspace:^") {
+                    errors.push(
+                        spec.startsWith("workspace:")
+                            ? `${label}: ${dep} is "${spec}"; use workspace:^`
+                            : `${label}: ${dep} is "${spec}"; owned packages are referenced as workspace:^, not catalog: or a version`,
+                    );
+                }
+            } else if (spec.startsWith("workspace:")) {
+                errors.push(`${label}: ${dep} is "${spec}" but is not a workspace package`);
+            } else if (spec === "catalog:") {
                 catalogUsed.add(dep);
                 if (!(dep in catalog))
                     errors.push(
                         `${label}: ${dep} uses catalog: but is missing from the root catalog`,
                     );
-            } else if (!spec.startsWith("workspace:")) {
-                errors.push(`${label}: ${dep} is pinned to "${spec}"; use catalog: or workspace:^`);
+            } else {
+                errors.push(`${label}: ${dep} is pinned to "${spec}"; use catalog:`);
             }
         }
 

@@ -23,6 +23,7 @@
         "test:unit": "vitest run --config vitest.config.unit.ts"
     },
     "dependencies": {
+        "@launchpad-kit/contracts": "workspace:^",
         "@launchpad-kit/sdk": "workspace:^",
         "picomatch": "catalog:",
         "tar": "catalog:",

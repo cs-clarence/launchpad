@@ -13,7 +13,8 @@ import {
     resolveNode,
     checkListing,
     checkManifest,
-    checkBareImports,
+    checkClosure,
+    checkUnbundled,
     checkBin,
     pack,
     readPacked,
@@ -70,19 +71,22 @@ async function main() {
     let server: ReturnType<typeof Bun.serve> | undefined;
     try {
         const tarballs: Record<string, string> = {};
+        const manifests: Record<string, unknown>[] = [];
         for (const target of TARGETS) {
             await build(target);
             const staged = await stage(target, work);
             const tarball = await pack(staged, path.join(work, "tarballs"));
             const manifest = JSON.parse(readFileSync(path.join(staged, "package.json"), "utf8"));
             tarballs[manifest.name] = tarball;
+            manifests.push(manifest);
             const { listing, text } = await readPacked(tarball);
             for (const p of checkListing(listing)) fail(`${manifest.name}: ${p}`);
             for (const p of checkManifest(manifest)) fail(`${manifest.name}: ${p}`);
             for (const p of checkBin(manifest, listing)) fail(`${manifest.name}: ${p}`);
-            for (const p of checkBareImports(manifest, text)) fail(`${manifest.name}: ${p}`);
+            for (const p of checkUnbundled(manifest, text)) fail(`${manifest.name}: ${p}`);
             console.log(`${manifest.name}: ${listing.join(", ")}`);
         }
+        for (const p of checkClosure(manifests)) fail(p);
         if (problems.length > 0) return;
 
         // A user's project, outside the workspace. The registry has no @launchpad-kit packages of

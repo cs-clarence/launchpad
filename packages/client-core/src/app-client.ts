@@ -1,3 +1,6 @@
+// The inferred declaration of `AppClient` names the contracts' schemas, so a user of the
+// published package needs them installed: this keeps them a declared dependency.
+import type {} from "@launchpad-kit/contracts";
 import { ClientCoreError } from "./errors";
 import { clientFor, resolve, type Context } from "./operations";
 
