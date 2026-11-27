@@ -855,9 +855,7 @@ export type DbQueryState = "ok" | "no-schema" | "unreachable";
 
 export function classifyDbQuery(result: RunResult): DbQueryState {
     if (result.code === 0) return "ok";
-    return /\b42P01\b|relation "deployment" does not exist/.test(result.output)
-        ? "no-schema"
-        : "unreachable";
+    return /relation "deployment" does not exist/.test(result.output) ? "no-schema" : "unreachable";
 }
 
 export async function readInventoryFile(c: Ctx): Promise<Site[]> {
