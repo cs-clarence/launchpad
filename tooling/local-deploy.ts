@@ -26,6 +26,7 @@ import {
     composePrefix as composePrefixFor,
     compose,
     conflictsWithoutRecord,
+    classifyDbQuery,
     DB_QUERY,
     DeployError,
     docker,
@@ -836,7 +837,14 @@ export async function status(d: Deps, options: UpOptions = {}): Promise<void> {
     );
     d.log(`CLI profile: ${PROFILE}`);
     const query = await compose(c, DB_QUERY);
-    if (query.code !== 0) {
+    const dbState = classifyDbQuery(query);
+    if (dbState === "no-schema") {
+        d.log(
+            "PostgreSQL is running but the schema has not been migrated yet (up has not completed); the recorded inventory was kept as it is. Run `up` again.",
+        );
+        return;
+    }
+    if (dbState === "unreachable") {
         d.log("The database is not reachable; the recorded inventory was kept as it is.");
         return;
     }

@@ -154,7 +154,10 @@ omni -i run dev:infra:up
 omni -i run dev:infra:destroy
 ```
 
-- `dev:infra:status` prints each service's health, the ports and the deployed sites.
+- `dev:infra:status` prints each service's health, the ports and the deployed sites. If PostgreSQL
+  runs but the `deployment` table does not exist yet (before the first migration), it says the schema
+  has not been migrated, points to `dev:infra:seed`, and keeps the recorded inventory. If the database
+  cannot be reached at all it says so and also keeps the inventory.
 - `dev:infra:down` stops the services and the Dokku site containers (they live outside the Compose
   project and would otherwise keep running and block removal of the network) and keeps the database,
   Dokku state, credentials and images. `dev:infra:up` starts it again; Dokku restarts the sites.

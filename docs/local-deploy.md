@@ -128,7 +128,8 @@ Builds and deployed sites run in the host engine, outside the memory limits.
     ```
 
     `status` prints each service's health, the ports and the profile, and refreshes the recorded
-    list of deployments. `stop` keeps everything; `up` starts it again. `<project>` is the name `up`
+    list of deployments. If the database is unreachable, or PostgreSQL runs but the schema is not
+    migrated yet (`up` has not completed), it says so and keeps the recorded list. `stop` keeps everything; `up` starts it again. `<project>` is the name `up`
     printed (`launchpad-local-` and eight hex characters taken from the checkout's path, so two
     checkouts never collide); run the command from the repository root, because the paths are relative to it.
 

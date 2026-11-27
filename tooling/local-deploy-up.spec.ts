@@ -750,6 +750,23 @@ describe("status", () => {
         expect(host.logs.join("\n")).toContain("not reachable");
     });
 
+    it("says the schema is not migrated and keeps the inventory", async () => {
+        await up(deps());
+        host.deploySite(project, {
+            id: "0f8fad5b-d9cb-469f-a165-70867728950e",
+            app: "lp-abcdefghij",
+            state: "running",
+        });
+        await status(deps());
+        const before = host.text(`${host.dir}/inventory.json`);
+        host.dbSchema = false;
+        host.deployments = [];
+        host.logs.length = 0;
+        await status(deps());
+        expect(host.text(`${host.dir}/inventory.json`)).toBe(before);
+        expect(host.logs.join("\n")).toContain("schema has not been migrated yet");
+    });
+
     it("needs a record", async () => {
         expect(await fails(status(deps()))).toContain("run up first");
     });

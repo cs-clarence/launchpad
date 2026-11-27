@@ -838,6 +838,8 @@ export const DB_QUERY = [
     "postgres",
     "psql",
     "-X",
+    "-v",
+    "VERBOSITY=sqlstate",
     "-U",
     "launchpad",
     "-d",
@@ -848,6 +850,15 @@ export const DB_QUERY = [
     "-c",
     "select id, app_name, desired_state from deployment",
 ];
+
+export type DbQueryState = "ok" | "no-schema" | "unreachable";
+
+export function classifyDbQuery(result: RunResult): DbQueryState {
+    if (result.code === 0) return "ok";
+    return /\b42P01\b|relation "deployment" does not exist/.test(result.output)
+        ? "no-schema"
+        : "unreachable";
+}
 
 export async function readInventoryFile(c: Ctx): Promise<Site[]> {
     const text = await c.d.fs.readFile(c.layout.file("inventory.json"));
