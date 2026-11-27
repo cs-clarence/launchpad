@@ -45,6 +45,9 @@ manifest `license` of `Apache-2.0`, and the package checks refuse one that does 
 READMEs are still developer documentation and the manifests have no `repository`,
 `homepage` or `bugs` (a separate item, pending the repository location); repository
 metadata and the final product naming remain release gates.
+A package is packed only if it is in `TARGETS` in `tooling/package-clients.ts`; that is also
+where it gets its `LICENSE` (the root file is copied in), so a generated package needs no
+`LICENSE` of its own.
 
 ## The npm packages stay runtime agnostic
 

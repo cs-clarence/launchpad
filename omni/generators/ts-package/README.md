@@ -24,6 +24,10 @@ from a generated manifest instead (see `docs/releasing.md`). The CLI template im
 `@commander-js/extra-typings`; `commander` is declared as its peer and never imported
 (`omni -i run check:imports`). The template reads `package.json` with a JSON import, which a
 bundler inlines whole into the output: do not copy that into a published CLI.
+A generated package has no `LICENSE` file of its own (the generator's MIT `LICENSE` is attribution
+for the scaffold and is never copied). It becomes publishable only by adding it to `TARGETS` in
+`tooling/package-clients.ts`, which copies the root Apache-2.0 `LICENSE` into its tarball and
+fails the pack without it; `package_license` only sets the manifest field.
 App scaffolds requesting unit tests also receive the example module those tests
 import.
 
