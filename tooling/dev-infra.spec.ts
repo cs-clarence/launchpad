@@ -707,24 +707,14 @@ describe("status and logs", () => {
 
     it("classifies a database query result", () => {
         const r = (code: number, output: string) => ({ code, output, stdout: "" });
+        const verbose = (relation: string) =>
+            `ERROR:  42P01: relation "${relation}" does not exist\nLOCATION:  parserOpenTable, parse_relation.c:1449`;
         expect(classifyDbQuery(r(0, ""))).toBe("ok");
-        expect(classifyDbQuery(r(
-                    1,
-                    'ERROR:  42P01: relation "deployment" does not exist\nLOCATION:  parserOpenTable, parse_relation.c:1449',
-                ),
-            ))).toBe(
-            "no-schema",
-        );
+        expect(classifyDbQuery(r(1, verbose("deployment")))).toBe("no-schema");
         expect(classifyDbQuery(r(1, 'ERROR: relation "deployment" does not exist'))).toBe(
             "no-schema",
         );
-        expect(classifyDbQuery(r(
-                    1,
-                    'ERROR:  42P01: relation "other" does not exist\nLOCATION:  parserOpenTable, parse_relation.c:1449',
-                ),
-            ))).toBe(
-            "unreachable",
-        );
+        expect(classifyDbQuery(r(1, verbose("other")))).toBe("unreachable");
         expect(classifyDbQuery(r(2, "could not connect to server"))).toBe("unreachable");
         expect(classifyDbQuery(r(1, "ERROR: 42501 permission denied"))).toBe("unreachable");
         expect(classifyDbQuery(r(1, "service not running"))).toBe("unreachable");
