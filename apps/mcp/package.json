@@ -3,7 +3,16 @@
     "version": "0.0.0",
     "private": true,
     "description": "Local stdio MCP adapter for Launchpad",
+    "homepage": "https://github.com/launchpad-kit/launchpad#readme",
+    "bugs": {
+        "url": "https://github.com/launchpad-kit/launchpad/issues"
+    },
     "license": "Apache-2.0",
+    "repository": {
+        "type": "git",
+        "url": "git+https://github.com/launchpad-kit/launchpad.git",
+        "directory": "apps/mcp"
+    },
     "bin": {
         "launchpad-mcp": "./dist/mcp.mjs"
     },

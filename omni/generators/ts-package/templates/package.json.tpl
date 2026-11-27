@@ -7,6 +7,18 @@
     "version": "{{ inputs.package_version }}",
     "private": {{ not inputs.published }},
     "license": "{{ inputs.package_license }}",
+    {% if inputs.published %}
+    {% set repository_url = "https://github.com/launchpad-kit/launchpad" %}
+    "repository": {
+        "type": "git",
+        "url": "git+{{ repository_url }}.git",
+        "directory": "{{ vars.generated_dir }}"
+    },
+    "homepage": "{{ repository_url }}#readme",
+    "bugs": {
+        "url": "{{ repository_url }}/issues"
+    },
+    {% endif %}
     "scripts": {
         "build": "vite build",
         "check:types": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.node.json"

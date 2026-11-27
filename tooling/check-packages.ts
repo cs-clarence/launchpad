@@ -15,6 +15,7 @@ import {
     checkLibrary,
     checkListing,
     checkManifest,
+    checkRepository,
     checkClosure,
     checkLock,
     checkLs,
@@ -88,6 +89,12 @@ async function main() {
         const manifests: Record<string, unknown>[] = [];
         for (const target of TARGETS) {
             await build(target);
+            const source = JSON.parse(
+                readFileSync(path.join(root, target.dir, "package.json"), "utf8"),
+            );
+            for (const p of checkRepository(source, target.dir)) {
+                fail(`${target.dir}/package.json: ${p}`);
+            }
             const staged = await stage(target, work);
             const tarball = await pack(staged, path.join(work, "tarballs"));
             const manifest = JSON.parse(readFileSync(path.join(staged, "package.json"), "utf8"));
@@ -96,7 +103,7 @@ async function main() {
             const { listing, text } = await readPacked(tarball);
             for (const p of checkListing(listing)) fail(`${manifest.name}: ${p}`);
             for (const p of checkLibrary(manifest, listing)) fail(`${manifest.name}: ${p}`);
-            for (const p of checkManifest(manifest)) fail(`${manifest.name}: ${p}`);
+            for (const p of checkManifest(manifest, target.dir)) fail(`${manifest.name}: ${p}`);
             for (const p of checkBin(manifest, listing)) fail(`${manifest.name}: ${p}`);
             for (const p of checkUnbundled(manifest, text)) fail(`${manifest.name}: ${p}`);
             console.log(`${manifest.name}: ${listing.join(", ")}`);

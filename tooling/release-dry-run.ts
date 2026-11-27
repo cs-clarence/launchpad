@@ -162,7 +162,7 @@ async function rehearse(out: string, version: string, skipImages: boolean) {
         const found = [
             ...checkListing(listing),
             ...checkLibrary(manifest, listing),
-            ...checkManifest(manifest),
+            ...checkManifest(manifest, target.dir),
             ...checkBin(manifest, listing),
             ...checkUnbundled(manifest, text),
             ...(manifest.version === version
