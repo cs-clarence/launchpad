@@ -1,10 +1,13 @@
-// Stages and packs the client packages that users install: the SDK (with its contracts) as
-// libraries, and the CLI and the MCP server as one bundled file each. Nothing here publishes
-// or registers anything: the output is tarballs in a directory the caller names.
+// Stages and packs the client packages that users install: contracts, the SDK and client-core as
+// libraries, and the CLI and the MCP server as executables (one built file each). No package
+// bundles another or any dependency: every dependency is declared and installed from the
+// registry. Nothing here publishes or registers anything: the output is tarballs in a directory
+// the caller names.
 //
 // The workspace packages stay private, with `exports` that point at source for development.
 // What is packed is a separate, generated manifest that points at built files, so the source
 // tree never has to be shaped for the registry. See docs/releasing.md.
+import { builtinModules } from "node:module";
 import {
     chmodSync,
     cpSync,
@@ -17,21 +20,25 @@ import {
     writeFileSync,
 } from "node:fs";
 import path from "node:path";
+import ts from "@typescript/typescript6";
+import { scriptKind, syntaxProblems } from "./ts-scan";
 
 export interface Target {
     dir: string;
-    kind: "library" | "bundle";
-    // bundle only: the command name and the file it runs
+    // An executable: the command name and the built file (in `dist`) it runs. Without it, a library.
     bin?: { name: string; file: string };
 }
 
-// Order matters: a library's tarball is needed by the ones that depend on it.
+// Order matters: a package's tarball is needed by the ones that depend on it.
 export const TARGETS: Target[] = [
-    { dir: "packages/contracts", kind: "library" },
-    { dir: "packages/sdk", kind: "library" },
-    { dir: "apps/cli", kind: "bundle", bin: { name: "launchpad", file: "cli.mjs" } },
-    { dir: "apps/mcp", kind: "bundle", bin: { name: "launchpad-mcp", file: "mcp.mjs" } },
+    { dir: "packages/contracts" },
+    { dir: "packages/sdk" },
+    { dir: "packages/client-core" },
+    { dir: "apps/cli", bin: { name: "launchpad", file: "cli.mjs" } },
+    { dir: "apps/mcp", bin: { name: "launchpad-mcp", file: "mcp.mjs" } },
 ];
+
+export const SHEBANG = "#!/usr/bin/env node";
 
 const root = path.resolve(import.meta.dirname, "..");
 
@@ -75,41 +82,12 @@ const catalog = () =>
         .catalog;
 const WORKSPACE = /^@launchpad-kit\//;
 
-// What a package needs at run time from outside this repository, following workspace packages
-// that get bundled into it. Versions come from the root catalog.
-export function thirdPartyDependencies(
-    dir: string,
-    resolveWorkspace: (name: string) => Manifest,
-): Record<string, string> {
-    const versions = catalog();
-    const found: Record<string, string> = {};
-    const seen = new Set<string>();
-    const visit = (manifest: Manifest) => {
-        for (const [name, spec] of Object.entries(manifest.dependencies ?? {})) {
-            if (WORKSPACE.test(name)) {
-                if (!seen.has(name)) {
-                    seen.add(name);
-                    visit(resolveWorkspace(name));
-                }
-            } else {
-                const version = spec === "catalog:" ? versions[name] : spec;
-                if (!version) throw new Error(`${name} has no version in the root catalog.`);
-                found[name] = version;
-            }
-        }
-    };
-    visit(readJson(path.join(root, dir, "package.json")));
-    return found;
-}
-
 const byName = (name: string): Manifest => {
     for (const target of TARGETS) {
         const manifest = readJson(path.join(root, target.dir, "package.json"));
         if (manifest.name === name) return manifest;
     }
-    // A workspace package that is bundled into an app but not published itself (client-core).
-    const dir = path.join(root, "packages", name.replace(WORKSPACE, ""));
-    return readJson(path.join(dir, "package.json"));
+    throw new Error(`${name} is not one of the packed packages.`);
 };
 
 async function run(command: string[], cwd: string) {
@@ -128,6 +106,7 @@ async function run(command: string[], cwd: string) {
 export async function build(target: Target) {
     // `--bun` makes the build scripts' `#!/usr/bin/env node` tools (vite, tsc) run on Bun, so a
     // build never depends on the Node on the PATH (22.12 cannot load the TypeScript vite config).
+    // Only the runs of the packed files use the selected Node.
     await run(["bun", "--bun", "run", "build"], path.join(root, target.dir));
 }
 
@@ -169,9 +148,39 @@ function copyLibraryDist(from: string, to: string) {
     }
 }
 
-// Everything that must stay out of a bundle because it is installed from the registry instead.
-export function externalsFor(dependencies: Record<string, string>): string[] {
-    return Object.keys(dependencies).flatMap((name) => [name, `${name}/*`]);
+// Copies the built executable byte for byte, after checking it starts with the Node shebang (the
+// build keeps the one in the source), and makes it executable: the build writes mode 644.
+export function stageExecutable(from: string, to: string) {
+    const text = readFileSync(from, "utf8");
+    if (text.split("\n", 1)[0] !== SHEBANG) {
+        throw new Error(`${from} must start with "${SHEBANG}" on its first line.`);
+    }
+    mkdirSync(path.dirname(to), { recursive: true });
+    cpSync(from, to);
+    chmodSync(to, 0o755);
+}
+
+// What a package needs at run time: its own dependencies, with a workspace package as a caret
+// range of the version it is packed at and the rest from the root catalog.
+export function packedDependencies(
+    manifest: Manifest,
+    packed: (name: string) => Manifest | undefined,
+    versions: Record<string, string>,
+): Record<string, string> {
+    const dependencies: Record<string, string> = {};
+    for (const [name, spec] of Object.entries(manifest.dependencies ?? {})) {
+        if (WORKSPACE.test(name)) {
+            const other = packed(name);
+            if (!other)
+                throw new Error(`${manifest.name} depends on ${name}, which is not packed.`);
+            dependencies[name] = `^${other.version}`;
+            continue;
+        }
+        const version = spec === "catalog:" ? versions[name] : spec;
+        if (!version) throw new Error(`${name} has no version in the root catalog.`);
+        dependencies[name] = version;
+    }
+    return dependencies;
 }
 
 export async function stage(target: Target, outDir: string): Promise<string> {
@@ -185,32 +194,42 @@ export async function stage(target: Target, outDir: string): Promise<string> {
         version: manifest.version,
         description: manifest.description,
         type: "module",
-        // The bundles depend on commander 15, which needs Node 22.12 or newer.
+        // commander 15 (the CLI and the MCP server) and tar (client-core) need Node 22.12 or newer.
         engines: { node: ">=22.12" },
     };
     const readme = path.join(source, "README.md");
     if (existsSync(readme)) cpSync(readme, path.join(stageDir, "README.md"));
 
-    if (target.kind === "library") {
-        copyLibraryDist(path.join(source, "dist"), stageDir);
-        // The workspace dependency is the other published library; the rest is from the registry.
-        const dependencies: Record<string, string> = {};
-        for (const [name, spec] of Object.entries(manifest.dependencies ?? {})) {
-            if (WORKSPACE.test(name)) {
-                if (
-                    !TARGETS.some(
-                        (t) => readJson(path.join(root, t.dir, "package.json")).name === name,
-                    )
-                ) {
-                    throw new Error(`${manifest.name} depends on ${name}, which is not packed.`);
-                }
-                dependencies[name] = `^${byName(name).version}`;
-                continue;
+    const dependencies = packedDependencies(
+        manifest,
+        (name) => {
+            try {
+                return byName(name);
+            } catch {
+                return undefined;
             }
-            const version = spec === "catalog:" ? catalog()[name] : spec;
-            if (!version) throw new Error(`${name} has no version in the root catalog.`);
-            dependencies[name] = version;
-        }
+        },
+        catalog(),
+    );
+    if (target.bin) {
+        const bin = target.bin;
+        stageExecutable(path.join(source, "dist", bin.file), path.join(stageDir, bin.file));
+        // No `main`, `types` or `exports`: an executable is run, not imported.
+        writeFileSync(
+            path.join(stageDir, "package.json"),
+            `${JSON.stringify(
+                {
+                    ...common,
+                    bin: { [bin.name]: `./${bin.file}` },
+                    files: [bin.file, "README.md"],
+                    dependencies,
+                },
+                null,
+                2,
+            )}\n`,
+        );
+    } else {
+        copyLibraryDist(path.join(source, "dist"), stageDir);
         writeFileSync(
             path.join(stageDir, "package.json"),
             `${JSON.stringify(
@@ -227,37 +246,6 @@ export async function stage(target: Target, outDir: string): Promise<string> {
                     },
                     sideEffects: false,
                     files: ["*.mjs", "*.d.ts", "**/*.d.ts", "README.md"],
-                    dependencies,
-                },
-                null,
-                2,
-            )}\n`,
-        );
-    } else {
-        const bin = target.bin!;
-        const dependencies = thirdPartyDependencies(target.dir, byName);
-        const args = [
-            "bun",
-            "build",
-            "src/index.ts",
-            "--target=node",
-            "--format=esm",
-            "--env=disable",
-            `--outfile=${path.join(stageDir, bin.file)}`,
-            ...externalsFor(dependencies).flatMap((name) => ["--external", name]),
-        ];
-        await run(args, source);
-        const file = path.join(stageDir, bin.file);
-        const text = readFileSync(file, "utf8").replace(/^#!.*\n/, "");
-        writeFileSync(file, `#!/usr/bin/env node\n${text}`);
-        chmodSync(file, 0o755);
-        writeFileSync(
-            path.join(stageDir, "package.json"),
-            `${JSON.stringify(
-                {
-                    ...common,
-                    bin: { [bin.name]: `./${bin.file}` },
-                    files: [bin.file, "README.md"],
                     dependencies,
                 },
                 null,
@@ -285,7 +273,7 @@ const ALLOWED_PATH = [
     /^[A-Za-z0-9_-]+\.mjs$/,
     /^([A-Za-z0-9_-]+\/)*[A-Za-z0-9_.-]+\.d\.ts$/,
 ];
-const FORBIDDEN_PATH = [/\.spec\./, /(^|\/)__tests__\//];
+const FORBIDDEN_PATH = [/\.spec\./, /(^|\/)__tests__\//, /\.map$/, /(^|\/)node_modules\//];
 
 // Problems with what a tarball contains (file paths relative to the package root).
 export function checkListing(files: string[]): string[] {
@@ -318,5 +306,116 @@ export function checkManifest(manifest: Record<string, unknown>): string[] {
         }
     }
     if (manifest.devDependencies) problems.push("devDependencies must not be packed");
+    return problems;
+}
+
+// The package a bare specifier names: `@scope/name` or `name`, without a subpath.
+const packageOf = (specifier: string) =>
+    specifier.startsWith("@")
+        ? specifier.split("/").slice(0, 2).join("/")
+        : specifier.split("/", 1)[0]!;
+
+// Every module specifier a built file refers to: `import ... from`, `import "x"`, `import("x")`,
+// `export ... from`, `import x = require("x")`, `require("x")` and `/// <reference types>`.
+export function specifiers(
+    file: string,
+    text: string,
+): { specifiers: string[]; problems: string[] } {
+    const source = ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true, scriptKind(file));
+    const found: string[] = source.typeReferenceDirectives.map((d) => d.fileName);
+    const add = (node: ts.Node | undefined) => {
+        if (node && ts.isStringLiteralLike(node)) found.push(node.text);
+    };
+    const visit = (node: ts.Node) => {
+        if (ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) add(node.moduleSpecifier);
+        else if (ts.isImportEqualsDeclaration(node)) {
+            if (ts.isExternalModuleReference(node.moduleReference))
+                add(node.moduleReference.expression);
+        } else if (ts.isImportTypeNode(node)) {
+            if (ts.isLiteralTypeNode(node.argument)) add(node.argument.literal);
+        } else if (
+            ts.isCallExpression(node) &&
+            (node.expression.kind === ts.SyntaxKind.ImportKeyword ||
+                (ts.isIdentifier(node.expression) && node.expression.text === "require"))
+        ) {
+            add(node.arguments[0]);
+        }
+        ts.forEachChild(node, visit);
+    };
+    visit(source);
+    return { specifiers: found, problems: syntaxProblems(source, file) };
+}
+
+const BUILTINS = new Set(builtinModules.filter((name) => !name.startsWith("bun")));
+
+// A built file imports only Node, itself and what its package declares: anything else was
+// inlined or is missing from the manifest (`files` maps a path in the package to its text).
+export function checkBareImports(
+    manifest: {
+        name?: string;
+        dependencies?: Record<string, string>;
+        peerDependencies?: Record<string, string>;
+    },
+    files: Record<string, string>,
+): string[] {
+    const declared = new Set(
+        Object.keys({ ...manifest.dependencies, ...manifest.peerDependencies }),
+    );
+    const problems: string[] = [];
+    for (const [file, text] of Object.entries(files)) {
+        if (!file.endsWith(".mjs")) continue;
+        const scanned = specifiers(file, text);
+        problems.push(...scanned.problems);
+        for (const specifier of new Set(scanned.specifiers)) {
+            if (/^(\.{0,2}\/|\.{1,2}$)/.test(specifier)) continue;
+            if (specifier.startsWith("node:")) continue;
+            const name = packageOf(specifier);
+            if (BUILTINS.has(specifier) || BUILTINS.has(name)) continue;
+            if (!declared.has(name)) {
+                problems.push(
+                    `${file} imports "${specifier}", which ${manifest.name ?? "the package"} does not declare`,
+                );
+            }
+        }
+    }
+    return problems;
+}
+
+// What a tarball holds: its files (relative to the package root), its manifest and the text of
+// every built `.mjs` and `.d.ts` file.
+export async function readPacked(tarball: string) {
+    const listing = (await run(["tar", "tzf", tarball], path.dirname(tarball)))
+        .split("\n")
+        .filter(Boolean)
+        .map((line) => line.replace(/^package\//, ""));
+    const text: Record<string, string> = {};
+    for (const file of listing) {
+        if (/\.(mjs|d\.ts)$/.test(file) || file === "package.json") {
+            text[file] = await run(
+                ["tar", "xzOf", tarball, `package/${file}`],
+                path.dirname(tarball),
+            );
+        }
+    }
+    return { listing, manifest: JSON.parse(text["package.json"] ?? "{}") as Manifest, text };
+}
+
+// An executable's manifest names its commands as an object that points at packed files, and it
+// is not importable: no `main`, `types` or `exports`. A library has no `bin`.
+export function checkBin(manifest: Record<string, unknown>, files: string[]): string[] {
+    const problems: string[] = [];
+    const bin = manifest.bin;
+    if (bin === undefined) return problems;
+    if (typeof bin !== "object" || bin === null || Array.isArray(bin)) {
+        return ["bin must be an object of command names"];
+    }
+    for (const [name, file] of Object.entries(bin)) {
+        if (typeof file !== "string" || !files.includes(file.replace(/^\.\//, ""))) {
+            problems.push(`bin.${name} is not a packed file`);
+        }
+    }
+    for (const key of ["main", "types", "exports"]) {
+        if (key in manifest) problems.push(`an executable has no "${key}"`);
+    }
     return problems;
 }

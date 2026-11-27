@@ -16,7 +16,7 @@ Point your MCP client's stdio configuration at the built executable:
     "mcpServers": {
         "launchpad": {
             "command": "bun",
-            "args": ["/absolute/path/to/launchpad/apps/mcp/dist/index.js", "--shared"]
+            "args": ["/absolute/path/to/launchpad/apps/mcp/dist/mcp.mjs", "--shared"]
         }
     }
 }

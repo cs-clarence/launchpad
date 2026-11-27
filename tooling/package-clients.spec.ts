@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from "bun:test";
-import { mkdtempSync, rmSync, symlinkSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import {
@@ -8,8 +8,12 @@ import {
     resolveNode,
     checkListing,
     checkManifest,
-    externalsFor,
-    thirdPartyDependencies,
+    checkBareImports,
+    checkBin,
+    packedDependencies,
+    SHEBANG,
+    stageExecutable,
+    TARGETS,
     withExtensions,
 } from "./package-clients";
 
@@ -80,29 +84,134 @@ describe("withExtensions", () => {
     });
 });
 
-describe("dependencies of a bundle", () => {
-    it("lists the third-party dependencies of the app and of the workspace packages it bundles", () => {
-        const found = thirdPartyDependencies("apps/cli", (name) => {
-            const dependencies: Record<string, string> =
-                name === "@launchpad-kit/client-core"
-                    ? { tar: "catalog:", "@launchpad-kit/sdk": "workspace:^" }
-                    : { zod: "catalog:" };
-            return { name, version: "0.0.0", dependencies };
-        });
-        expect(Object.keys(found).toSorted()).toEqual(
-            [
-                "@commander-js/extra-typings",
-                "@elastic/micro-jq",
-                "commander",
-                "tar",
-                "zod",
-            ].toSorted(),
-        );
-        expect(Object.values(found).every((v) => !v.includes(":"))).toBe(true);
+describe("TARGETS", () => {
+    it("packs the three libraries and the two executables, dependencies first", () => {
+        expect(TARGETS.map((t) => t.dir)).toEqual([
+            "packages/contracts",
+            "packages/sdk",
+            "packages/client-core",
+            "apps/cli",
+            "apps/mcp",
+        ]);
+        expect(TARGETS.filter((t) => t.bin).map((t) => t.bin)).toEqual([
+            { name: "launchpad", file: "cli.mjs" },
+            { name: "launchpad-mcp", file: "mcp.mjs" },
+        ]);
     });
 
-    it("keeps every one external, with its subpaths", () => {
-        expect(externalsFor({ zod: "^4" })).toEqual(["zod", "zod/*"]);
+    it("builds under Bun whatever Node is on the PATH (the vite config is TypeScript)", () => {
+        const source = readFileSync(path.join(import.meta.dirname, "package-clients.ts"), "utf8");
+        expect(source).toContain('["bun", "--bun", "run", "build"]');
+    });
+});
+
+describe("packedDependencies", () => {
+    const packed = (name: string) =>
+        name === "@launchpad-kit/sdk" ? { name, version: "0.1.0" } : undefined;
+
+    it("turns a workspace package into a caret range and takes the rest from the catalog", () => {
+        expect(
+            packedDependencies(
+                {
+                    name: "@launchpad-kit/cli",
+                    version: "0.1.0",
+                    dependencies: {
+                        "@launchpad-kit/sdk": "workspace:^",
+                        zod: "catalog:",
+                        tar: "^7.0.0",
+                    },
+                },
+                packed,
+                { zod: "^4.0.0" },
+            ),
+        ).toEqual({ "@launchpad-kit/sdk": "^0.1.0", zod: "^4.0.0", tar: "^7.0.0" });
+    });
+
+    it("refuses a workspace package that is not packed and a name missing from the catalog", () => {
+        const manifest = (dependencies: Record<string, string>) => ({
+            name: "x",
+            version: "0.1.0",
+            dependencies,
+        });
+        expect(() =>
+            packedDependencies(manifest({ "@launchpad-kit/other": "workspace:^" }), packed, {}),
+        ).toThrow("not packed");
+        expect(() => packedDependencies(manifest({ zod: "catalog:" }), packed, {})).toThrow(
+            "catalog",
+        );
+    });
+});
+
+describe("stageExecutable", () => {
+    const dirs: string[] = [];
+    afterEach(() => {
+        for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
+    });
+    const temp = () => {
+        const dir = mkdtempSync(path.join(tmpdir(), "stage-exe-"));
+        dirs.push(dir);
+        return dir;
+    };
+
+    it("copies the file byte for byte, executable, with the node shebang on line 1", () => {
+        const dir = temp();
+        const from = path.join(dir, "cli.mjs");
+        writeFileSync(from, `${SHEBANG}\nconsole.log("x");\n`, { mode: 0o644 });
+        const to = path.join(dir, "stage", "cli.mjs");
+        stageExecutable(from, to);
+        expect(readFileSync(to, "utf8")).toBe(readFileSync(from, "utf8"));
+        expect(statSync(to).mode & 0o777).toBe(0o755);
+    });
+
+    it("refuses a missing or another shebang", () => {
+        const dir = temp();
+        for (const first of ["", "#!/usr/bin/env bun\n", "\n#!/usr/bin/env node\n"]) {
+            const from = path.join(dir, "x.mjs");
+            writeFileSync(from, `${first}console.log(1);\n`);
+            expect(
+                () => stageExecutable(from, path.join(dir, "out.mjs")),
+                JSON.stringify(first),
+            ).toThrow("must start with");
+        }
+    });
+});
+
+describe("checkBareImports", () => {
+    const manifest = {
+        name: "@x/app",
+        dependencies: { "@x/lib": "^1.0.0", zod: "^4.0.0" },
+        peerDependencies: { commander: "^15.0.0" },
+    };
+
+    it("accepts Node, relative, declared and subpath imports", () => {
+        const text = [
+            'import { a } from "node:fs";',
+            'import path from "path";',
+            'import b from "fs/promises";',
+            'import { c } from "@x/lib";',
+            'import { d } from "zod/v4";',
+            'export * from "./local.mjs";',
+            'const e = await import("commander");',
+        ].join("\n");
+        expect(checkBareImports(manifest, { "app.mjs": text })).toEqual([]);
+    });
+
+    it("reports an undeclared package in every import form", () => {
+        const text = [
+            'import "left-pad";',
+            'import x from "tar";',
+            'export { y } from "@y/other/sub";',
+            'const z = await import("picomatch");',
+            'import w = require("micro");',
+        ].join("\n");
+        const problems = checkBareImports(manifest, { "app.mjs": text });
+        expect(problems).toHaveLength(5);
+        expect(problems.join("\n")).toContain('"@y/other/sub"');
+    });
+
+    it("fails closed on a file that does not parse and ignores non-module files", () => {
+        expect(checkBareImports(manifest, { "app.mjs": "import {{{" }).length).toBeGreaterThan(0);
+        expect(checkBareImports(manifest, { "README.md": 'import "left-pad"' })).toEqual([]);
     });
 });
 
@@ -150,5 +259,25 @@ describe("the node link for the child PATH", () => {
             env: { PATH: shim },
         });
         expect(out.stdout.toString()).toStartWith(`${path.join(shim, "node")}\n`);
+    });
+});
+
+describe("checkBin", () => {
+    const files = ["package.json", "cli.mjs"];
+
+    it("accepts an object that points at a packed file, and a library without bin", () => {
+        expect(checkBin({ bin: { launchpad: "./cli.mjs" } }, files)).toEqual([]);
+        expect(checkBin({ main: "./index.mjs", exports: {} }, files)).toEqual([]);
+    });
+
+    it("refuses a string, a missing file and an importable executable", () => {
+        expect(checkBin({ bin: "./cli.mjs" }, files)).toHaveLength(1);
+        expect(checkBin({ bin: { launchpad: "./gone.mjs" } }, files)).toHaveLength(1);
+        expect(
+            checkBin(
+                { bin: { launchpad: "./cli.mjs" }, main: "x", types: "y", exports: {} },
+                files,
+            ),
+        ).toHaveLength(3);
     });
 });

@@ -1,15 +1,16 @@
-import { createConfig } from "@launchpad-kit/vite-config/app";
+import { createConfig } from "@launchpad-kit/vite-config/script";
 
 import packageJson from "./package.json" with { type: "json" };
 
 export default createConfig({
     package: packageJson,
+    generateTypes: false,
 
     overrides: {
         build: {
             lib: {
                 entry: {
-                    index: "src/index.ts",
+                    mcp: "src/index.ts",
                 },
                 formats: ["es"],
                 fileName: (format, entryName) =>

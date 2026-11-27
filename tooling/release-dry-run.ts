@@ -19,7 +19,17 @@ import {
 } from "node:fs";
 import path from "node:path";
 import { Command, CommanderError } from "@commander-js/extra-typings";
-import { build, checkListing, checkManifest, pack, stage, TARGETS } from "./package-clients";
+import {
+    build,
+    checkBareImports,
+    checkBin,
+    checkListing,
+    checkManifest,
+    pack,
+    readPacked,
+    stage,
+    TARGETS,
+} from "./package-clients";
 import { checkVersions, sharedWorkspaces } from "./versions";
 
 const root = path.resolve(import.meta.dirname, "..");
@@ -145,13 +155,12 @@ async function rehearse(out: string, version: string, skipImages: boolean) {
         const staged = await stage(target, out);
         const tarball = await pack(staged, tarballs);
         const manifest = JSON.parse(readFileSync(path.join(staged, "package.json"), "utf8"));
-        const listing = (await exec(["tar", "tzf", tarball]))
-            .split("\n")
-            .filter(Boolean)
-            .map((line) => line.replace(/^package\//, ""));
+        const { listing, text } = await readPacked(tarball);
         const found = [
             ...checkListing(listing),
             ...checkManifest(manifest),
+            ...checkBin(manifest, listing),
+            ...checkBareImports(manifest, text),
             ...(manifest.version === version
                 ? []
                 : [`version ${manifest.version} is not the release version ${version}`]),

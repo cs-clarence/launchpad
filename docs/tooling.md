@@ -16,13 +16,15 @@ when tools, generators, or their commands change.
   required by declaration tooling, as in Pureform.
 - Vite builds libraries and the controller; Nitro's `bun` preset emits the
   controller's `.output/`. No custom HTTP/static-file server is maintained.
-- The CLI and the separate local MCP app use Bun executable builds. Build MCP with
-  `omni -i run build -p @launchpad-kit/mcp`; it emits `apps/mcp/dist/index.js`.
+- The CLI and the separate local MCP app are built with Vite into one ES module each
+  (`apps/cli/dist/cli.mjs`, `apps/mcp/dist/mcp.mjs`, with a `#!/usr/bin/env node` line taken from the
+  source) that imports its dependencies instead of bundling them. Build MCP with
+  `omni -i run build -p @launchpad-kit/mcp`.
   MCP uses the official MIT-licensed `@modelcontextprotocol/sdk` (pinned in the
   catalog at 1.32.2) for stdio framing, capability negotiation and tool schemas,
   not a custom protocol implementation. Only stdio modules are imported.
   The controller's integration tests build the MCP and CLI first and run their built
-  files (also copied alone into an empty directory) over stdio against the built controller.
+  files over stdio against the built controller.
 - Vitest, Oxfmt, and Oxlint provide tests, formatting, and linting. Commands are
   in [CONTRIBUTING.md](../CONTRIBUTING.md).
 
@@ -176,7 +178,7 @@ Rules that keep the graph correct:
 ## Stale build output
 
 Omni 0.21.0 restores only missing outputs on a cache hit and does not overwrite an existing
-file. A stale, git-ignored `dist/` (for example `apps/cli/dist/index.js` lacking newer commands)
+file. A stale, git-ignored `dist/` (for example `apps/cli/dist/index.js`, the name before Vite built the apps, or a `dist/cli.mjs` lacking newer commands)
 survives `omni -i run build`, and the cache is shared across checkouts. Run
 `omni -i run build -f all`, or delete the project's `dist/` and rebuild.
 

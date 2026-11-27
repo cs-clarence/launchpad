@@ -13,7 +13,10 @@ import {
     resolveNode,
     checkListing,
     checkManifest,
+    checkBareImports,
+    checkBin,
     pack,
+    readPacked,
     stage,
 } from "./package-clients";
 
@@ -73,12 +76,11 @@ async function main() {
             const tarball = await pack(staged, path.join(work, "tarballs"));
             const manifest = JSON.parse(readFileSync(path.join(staged, "package.json"), "utf8"));
             tarballs[manifest.name] = tarball;
-            const listing = (await exec(["tar", "tzf", tarball], work)).out
-                .split("\n")
-                .filter(Boolean)
-                .map((line) => line.replace(/^package\//, ""));
+            const { listing, text } = await readPacked(tarball);
             for (const p of checkListing(listing)) fail(`${manifest.name}: ${p}`);
             for (const p of checkManifest(manifest)) fail(`${manifest.name}: ${p}`);
+            for (const p of checkBin(manifest, listing)) fail(`${manifest.name}: ${p}`);
+            for (const p of checkBareImports(manifest, text)) fail(`${manifest.name}: ${p}`);
             console.log(`${manifest.name}: ${listing.join(", ")}`);
         }
         if (problems.length > 0) return;

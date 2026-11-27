@@ -2,7 +2,7 @@
 name: "@launchpad-kit/mcp"
 
 extends:
-  - "@workspace/omni/presets/ts-vite-app.omni.yaml"
+  - "@workspace/omni/presets/ts-vite-script.omni.yaml"
 
 dependencies:
   append:
