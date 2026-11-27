@@ -75,7 +75,7 @@ following. Where a choice was made for the single-maintainer situation, the alte
 
 ### Cocogitto, tags and the bump commit
 
-`cog.toml` has `generate_mono_repository_global_tag = false` and creates package tags such as
+Originally `cog.toml` had `generate_mono_repository_global_tag = false` and created package tags such as
 `core-v0.1.0`. The release slice decides the global version as below.
 
 - A `v<semver>` global tag is wanted [S6]. Cocogitto calculates the global version from the package
@@ -114,8 +114,8 @@ process, in the follow-up slice:
    above). A tag is never created on a commit without a green `CI Passed`; the workflow's check
    enforces it.
 
-Until then `docs/releasing.md` still describes the `[skip ci]` flow and says it changes with the
-follow-up.
+`cog.toml` now sets `skip_ci = ""` (verified: the bump commit carries no marker) and
+`tooling/cog-config.spec.ts` asserts it.
 
 ### Approval and tag integrity
 

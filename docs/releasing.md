@@ -20,12 +20,14 @@ number), except the shared tooling packages (`@launchpad-kit/tsconfig`, `vite-co
 - `bun tooling/versions.ts sync <core|package> <version>` rewrites the manifests and
   refreshes `bun.lock`. You do not run it by hand: Cocogitto's `pre_package_bump_hook` in
   `cog.toml` does, so the bump commit holds manifests, lockfile and changelog together.
-- The hook was proven in a throwaway clone: `cog bump --auto --package core` produced one
-  commit with every manifest, `bun.lock` and `CHANGELOG.md`, and the tag `core-v<version>`.
+- The hook was proven in a throwaway clone: `cog bump --auto` produced one
+  commit with every manifest, `bun.lock` and `CHANGELOG.md`, and the global tag `v<version>`
+  (`cog.toml` sets `generate_mono_repository_global_tag = true`, package tags off; in the clone the only tag was `v0.1.0`).
   Run `cog bump` only on a clean checkout of the commit you mean to release, review the
-  result, and **do not push** the commit or tag until the release is authorized. The commit
-  message carries `[skip ci]`, so CI will not check it: run the local checks before bumping **and**
-  again on the bump commit (checklist step 7). The [release publishing decision](decisions/release-publishing.md#bump-commit-and-ci) changes this: the bump will go through a release pull request with CI, in a later slice.
+  result, and **do not push** the commit or tag until the release is authorized. `skip_ci` is
+  empty, so the bump commit does not carry `[skip ci]` and CI runs on it. Per the
+  [release publishing decision](decisions/release-publishing.md#bump-commit-and-ci) the bump
+  goes through a release pull request; the tag `v<semver>` is created on the merge commit.
 - Three version strings are written in source (the CLI's `--version`, the MCP server info and
   the OpenAPI `info.version`); `sync core` rewrites them and `check:versions` compares them.
 - `from_latest_tag = false`: with no earlier tag the first changelog covers all history.
@@ -233,9 +235,9 @@ A release is a person's decision. Work through this in order and stop at the fir
 6. Run the [dry run](#rehearse-a-release); inspect the tarball listings, `SHA256SUMS` and the
    image notes. No `.env`, key, source map or workspace specifier in any tarball.
 7. `cog bump` on a clean checkout, then review the bump commit, changelog and tag locally.
-   The bump commit rewrites manifests, source version strings and `bun.lock` and carries
-   `[skip ci]`, so CI does **not** validate it: on that commit rerun step 1's local gate and
-   step 6's dry run, and use the checksums from **that** run. The ones from before the bump
+   The bump commit rewrites manifests, source version strings and `bun.lock`, and does not
+   carry `[skip ci]`, so CI validates it. On that commit rerun step 6's dry run and use the
+   checksums from **that** run. The ones from before the bump
    are for a different version.
 8. Obtain explicit authorization to publish. Publishing uses a least-privilege identity,
    provenance attestation, and pinned image tags and digests; it is a separate workflow
