@@ -31,12 +31,12 @@ number), except the shared tooling packages (`@launchpad-kit/tsconfig`, `vite-co
 
 ## What a release contains
 
-| Artifact                                                  | Built by                                     | Checked by                         |
-| --------------------------------------------------------- | -------------------------------------------- | ---------------------------------- |
-| `@launchpad-kit/contracts`, `sdk`, `cli`, `mcp` tarballs  | `tooling/package-clients.ts`                 | `test:packages`, the dry run       |
-| Controller, worker, operator (admin) and router images    | `apps/{controller,worker,router}/Dockerfile` | `test:images`, the dry run (build) |
-| Database migrations (forward-only, bundled in the images) | `packages/database/src/migrations`           | `test:integration`, `test:upgrade` |
-| Operator documentation                                    | `docs/`                                      | review                             |
+| Artifact                                                                | Built by                                     | Checked by                         |
+| ----------------------------------------------------------------------- | -------------------------------------------- | ---------------------------------- |
+| `@launchpad-kit/contracts`, `sdk`, `client-core`, `cli`, `mcp` tarballs | `tooling/package-clients.ts`                 | `test:packages`, the dry run       |
+| Controller, worker, operator (admin) and router images                  | `apps/{controller,worker,router}/Dockerfile` | `test:images`, the dry run (build) |
+| Database migrations (forward-only, bundled in the images)               | `packages/database/src/migrations`           | `test:integration`, `test:upgrade` |
+| Operator documentation                                                  | `docs/`                                      | review                             |
 
 The workspace scope is `@launchpad-kit`, selected on 2026-11-19. Registry ownership
 and availability have **not** been verified, and no package has been published.
@@ -45,8 +45,9 @@ Packed READMEs are still developer documentation and the manifests have no
 
 ## The npm packages stay runtime agnostic
 
-`@launchpad-kit/contracts`, `sdk`, `cli` and `mcp` are published to npm, and `client-core` is
-bundled into the CLI and the MCP server. They must run on Node (engines `>=22.12`) as well as
+`@launchpad-kit/contracts`, `sdk`, `client-core`, `cli` and `mcp` are the five published npm
+packages, and none of them bundles a dependency: each declares what it imports and the registry
+installs it. They must run on Node (engines `>=22.12`) as well as
 Bun, so their `src` may not use a Bun-only API: the `Bun` global, `globalThis.Bun`, `"bun"` or
 `"bun:*"` imports, `process.versions.bun`, and any `import.meta` member other than `url`,
 `dirname`, `filename` and `resolve` (so `dir`, `file`, `path`, `require` and `main`, which Node
@@ -57,7 +58,7 @@ Two gates enforce it:
 
 - `omni -i run check:runtime` (part of `check`) scans those packages' `src`, ignoring
   `*.spec.ts` and `__tests__`, and fails with `file:line`. The package list comes from
-  `TARGETS` in `tooling/package-clients.ts` plus `client-core` (`tooling/runtime-agnostic.ts`).
+  `TARGETS` in `tooling/package-clients.ts` (`tooling/runtime-agnostic.ts`).
   It parses each file with TypeScript 6 and leans towards false alarms. It flags: any `Bun`
   identifier or `.Bun` property access, whatever the receiver (only a declared key or member
   such as `{ Bun: 1 }` or `interface { Bun: string }` is harmless); any `.bun` access or
@@ -75,18 +76,52 @@ Two gates enforce it:
   deliberate evasion (a computed key on an aliased object, say, is not caught): the packages'
   `@types/node` typings and the Node smoke test are the other layers. A real need for one of
   these in a published package means changing the rule here, in review.
-  for one of these in a published package means changing the rule here, in review.
-- `test:packages` installs the packed tarballs outside the workspace and runs them under Bun
-  **and** Node: `--version`, `--help`, importing `contracts` and `sdk`, an SDK call, an MCP
-  handshake and the installed `bin` links. Choose the Node with `LAUNCHPAD_NODE=/path/to/node`
+- `test:packages` installs the packed tarballs outside the workspace twice, with Bun and with the
+  real `npm` that ships with the selected Node, and runs them under Bun **and** Node:
+  `--version`, `--help`, importing `contracts` and `sdk`, an SDK call, a `client-core` credential
+  store read, an MCP handshake and the installed `bin` links. The npm install makes the five
+  owned packages direct `file:` dependencies pinned by `$name` overrides (so npm never looks one
+  up by name), points the `@launchpad-kit` scope at a dead address, allows 120 seconds and checks
+  the installed manifests, the lockfile (`resolved` is the local tarball, `integrity` its SHA-512),
+  `npm ls --all --json` and that each package is installed once. Choose the Node with `LAUNCHPAD_NODE=/path/to/node`
   (default: `node` on the `PATH`). Without Node the Node runs are skipped with a message
   locally and fail when `CI` is set. CI runs the job on Node 22.12 and the current release.
   Only the runs of the packed files use that Node: the builds run under Bun (`bun --bun run
   build`), so they do not depend on it (Node before 22.18 cannot load the TypeScript vite config).
 
-The development entry points (`#!/usr/bin/env bun`, `bun build --target=bun` in
-`apps/cli` and `apps/mcp`) are local-only: `package-clients.ts` rebuilds with `--target=node`
-and writes a `node` shebang for the packed files, so the published bundles do not depend on them.
+## No published package bundles its dependencies
+
+The CLI and the MCP server are built with Vite (`vite build`, preset `ts-vite-script`) into one
+ES module each, `dist/cli.mjs` and `dist/mcp.mjs`, that imports every declared dependency
+(`@launchpad-kit/*` included) instead of inlining it. The `#!/usr/bin/env node` line is in
+`src/index.ts` and survives the build; staging copies the built file unchanged and makes it
+executable, and fails if line 1 is not that shebang. Running the source with Bun ignores the
+line. `package-clients.ts` packs a generated manifest per package (the source manifests stay
+private), and three gates run on every tarball, in `test:packages` and the dry run:
+
+- **Closure** (`checkClosure`): no `workspace:`, `catalog:`, `file:`, `link:`, git or URL
+  specifier in any dependency section; no `bundledDependencies`, `publishConfig`, `scripts`,
+  `workspaces` or `overrides`; all five carry one version and refer to each other as
+  `^<that version>`; a third-party package has one range across the five.
+- **Bare imports** (`checkBareImports`): every bare specifier in a `.mjs` or `.d.ts` is a
+  Node module or a dependency the package declares.
+- **No inlining** (`checkUnbundled`): a size budget per executable (cli 80 kB, mcp 12 kB, 25 %
+  over the measured size; raise it in review when growth is real) and a marker string of every
+  dependency that must be absent from the other packages' files. `tooling/vite-config.spec.ts`
+  checks the apps' build config externalizes dependencies and emits `cli.mjs`/`mcp.mjs`.
+
+Source manifests reference every owned package as `workspace:^` (`check:deps` requires exactly
+that). Packing writes `^<version>`, so in `0.x` an install may differ from the others by a patch
+only; a fix in `client-core` reaches an installed CLI when npm next resolves it. A development
+`dist/cli.mjs` needs `omni -i run build`; an old `dist/index.js` may remain beside it (see
+[Stale build output](tooling.md#stale-build-output)). The generator rule is in
+`omni/generators/ts-package/README.md`. Windows is not supported (`client-core` checks file
+modes and owners on POSIX only) and untested. The decision is
+[npm apps do not bundle](decisions/npm-apps-do-not-bundle.md).
+
+**Publishing is blocked** until the pre-publish security review of `client-core` (it handles API
+keys and session cookies and is now public) is done; nothing here publishes anything.
+
 The five packages use `@types/node`, not `@types/bun`; tests still run under Bun.
 
 ## Rehearse a release
@@ -96,8 +131,8 @@ omni -i run release:dry-run -p @launchpad-kit/tooling
 ```
 
 or run the manual **Release dry run** workflow. It checks that versions agree, packs the
-four client packages with the same allowlist checks as `test:packages` (the Node smoke runs in `test:packages`, not in the dry run),
-writes
+five client packages with the same allowlist, closure and no-bundling checks as `test:packages`
+(the Node and npm smoke runs in `test:packages`, not in the dry run), writes
 `packages/SHA256SUMS`, builds both images **without pushing them**, removes those images by
 exact name (Docker's build cache and pulled base images stay), and leaves everything in `.release-dry-run/` (kept 7 days as a workflow
 artifact). The workflow has read-only permissions, no secret and no write token, and a test
@@ -125,6 +160,16 @@ types and the schemas' accepted and produced shapes are the interface. Breaking:
 or renaming an export, narrowing a parameter type, widening a returned type a caller
 narrows on, changing an error class a caller catches. Adding exports and optional fields is
 compatible. A change to a schema that the REST API uses follows the REST rule too.
+
+**client-core** (`@launchpad-kit/client-core`). A public package for the CLI and the MCP
+server; other users should use `@launchpad-kit/sdk`. Its interface is every name exported by
+`src/index.ts` under the `0.x` rule above. The files it writes, `credentials.json` and
+`session.json`, are format `version: 1`: a different version is refused and never rewritten, so
+a format change needs a reader for the previous version (the CLI and the MCP server share the
+files). It supports POSIX only (permission and owner checks are skipped on Windows, which is
+untested) and Node `>=22.12`. All five packages carry one version and refer to each other as
+`^<version>`; in `0.x` that allows patch differences only, and from `1.0.0` minors, which these
+rules already treat as compatible.
 
 **MCP tool list** (`apps/mcp/src/server.ts`). Tool names, their input schemas and the shape
 of their results are the interface an agent depends on. Breaking: renaming or removing a

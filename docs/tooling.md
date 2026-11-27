@@ -58,12 +58,16 @@ Rules that keep the graph correct:
 - **Runtime.** `check:runtime` (part of `check`) fails when a published npm
   package's source uses a Bun-only API; see `docs/releasing.md`.
 - **Packaging.** `omni -i run test:packages -p @launchpad-kit/tooling` builds the SDK, contracts, CLI and
-  MCP server, packs them (`tooling/package-clients.ts`: a generated manifest per package, the SDK
-  and contracts as libraries, the CLI and MCP as one bundled file each), installs the tarballs in a
-  clean project outside the workspace and runs them under Bun and, when it is on the PATH, Node
-  (CLI and MCP `--help`, an MCP handshake, an SDK call against a local server, and a strict
-  TypeScript check of the declarations). It also checks the tarballs hold no `.env`, source, tests
-  or `workspace:`/`catalog:` specifiers. It needs the network and publishes nothing; the package
+  MCP server and client-core, packs the five packages (`tooling/package-clients.ts`: a generated
+  manifest per package; contracts, SDK and client-core as libraries, the CLI and MCP as executables
+  whose dependencies are external), installs the tarballs in clean projects outside the workspace
+  with Bun and with the real npm of the selected Node, and runs them under Bun and, when it is on
+  the PATH, Node (CLI and MCP `--help`, an MCP handshake, an SDK call against a local server, a
+  credential store read and a strict TypeScript check of the declarations). It also checks the
+  tarballs hold no `.env`, source, tests, source maps or `workspace:`/`catalog:` specifiers, that
+  the five form a closed set at one version, and that nothing is bundled (bare-import allowlist,
+  size budgets, marker strings); see `docs/releasing.md`. The `ts-package` generator follows the
+  same rule: a published CLI externalizes its dependencies. It needs the network and publishes nothing; the package
   names are placeholders until the product name is decided. CI runs it as the `Packages` job.
 - **`test` is unit tests only.** `test:integration` is explicit. Auth, services and
   controller integration need disposable PostgreSQL (`omni -i run test:db:up`).

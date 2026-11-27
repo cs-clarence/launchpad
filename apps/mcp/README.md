@@ -22,9 +22,11 @@ Point your MCP client's stdio configuration at the built executable:
 }
 ```
 
-Build from the repository with `omni -i run build -p @launchpad-kit/mcp`. The built file is
-self-contained: it runs from an empty directory with only Bun installed (tested).
-This internal Bun build is not a published npm package.
+Build from the repository with `omni -i run build -p @launchpad-kit/mcp`. The built file
+imports its dependencies (the SDK, client-core, the MCP SDK, zod, commander) instead of
+bundling them, so it runs from the workspace or from an install of the packed
+`@launchpad-kit/mcp` package, which declares them. The package is prepared for npm
+(`launchpad-mcp`, Node `>=22.12` or Bun, POSIX only) but nothing is published yet.
 
 - **Single mode** (default): the launch directory is the default context.
 - **Shared mode** (`--shared`): one client connection can operate on many project
