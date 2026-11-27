@@ -76,12 +76,7 @@ export function checkOutput(out: string, repository = root): string | null {
 export const IMAGE_TAG = "dry-run";
 
 async function exec(command: string[], cwd = root) {
-    const proc = Bun.spawn(command, {
-        cwd,
-        stdout: "pipe",
-        stderr: "pipe",
-        stdin: "ignore",
-    });
+    const proc = Bun.spawn(command, { cwd, stdout: "pipe", stderr: "pipe", stdin: "ignore" });
     const [out, err, code] = await Promise.all([
         new Response(proc.stdout).text(),
         new Response(proc.stderr).text(),
@@ -99,11 +94,7 @@ async function main() {
         .option("--skip-images")
         .option("--help")
         .allowExcessArguments()
-        .configureOutput({
-            writeOut: () => {},
-            writeErr: () => {},
-            outputError: () => {},
-        });
+        .configureOutput({ writeOut: () => {}, writeErr: () => {}, outputError: () => {} });
     try {
         program.parse(process.argv.slice(2), { from: "user" });
     } catch (error) {

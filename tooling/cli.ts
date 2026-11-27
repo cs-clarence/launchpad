@@ -24,11 +24,7 @@ export function toolCommand(name: string, options: Opt[]): Command {
         .exitOverride()
         .helpOption(false)
         .allowExcessArguments()
-        .configureOutput({
-            writeOut: () => {},
-            writeErr: () => {},
-            outputError: () => {},
-        });
+        .configureOutput({ writeOut: () => {}, writeErr: () => {}, outputError: () => {} });
     for (const option of options) {
         program.option(option.arg ? `${option.flag} <${option.arg}>` : option.flag, option.help);
     }
@@ -65,6 +61,7 @@ export function optionHelp(options: Opt[], column: number): string {
 }
 
 export function parseOrFail(
+    // Any argument tuple: each script declares its own, and only the parsed options are read here.
     // oxlint-disable-next-line typescript/no-explicit-any
     program: Command<any[]>,
     argv: string[],
@@ -105,5 +102,6 @@ export function parseOrFail(
             throw fail(`${argv[i - 1]} needs a value.`);
         }
     }
+    // Safe: the option table that built `program` declares only string and boolean options.
     return program.opts() as Parsed;
 }
