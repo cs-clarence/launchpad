@@ -3,8 +3,8 @@
 Profiles, credentials and operations shared by the CLI and the local MCP server. Node (`>=22.12`) and Bun, ESM only, **POSIX only** (the permission and owner checks are skipped on Windows, which is unsupported and untested).
 
 This is a public package so the CLI and the MCP server can import it instead of bundling it, but
-it is not a general client: other users should use `@launchpad-kit/sdk`. Every name exported by
-`src/index.ts` is part of the package's interface under the `0.x` rule in
+it is not a general client: other users should use `@launchpad-kit/sdk`. Every name in the
+[Public API](#public-api) is part of the package's interface under the `0.x` rule in
 [docs/releasing.md](../../docs/releasing.md), and the files it writes (`credentials.json`,
 `session.json`, format `version: 1`) are never rewritten in another format. Nothing is published
 yet, and publishing waits for a security review of this package.
@@ -15,6 +15,23 @@ yet, and publishing waits for a security review of this package.
 - `redact` hides anything shaped like a key, for text that reaches a terminal, a log or an MCP response.
 
 Depends on `@launchpad-kit/contracts`, `@launchpad-kit/sdk`, `picomatch`, `tar` and `zod`.
+
+## Public API
+
+The interface is exactly the names exported by `src/index.ts`; `src/index.spec.ts` fails if the
+list changes by accident.
+
+- Errors and redaction: `ClientCoreError`, `ClientCoreErrorCode`, `redact`, `redactSecrets`, `safeOutput`.
+- Stores: `CredentialStore`, `SessionStore`, `configDirectory`, `normalizeEmail`, types `Config`, `Profile`, `SessionEntry`.
+- Operations: `createContext`, `login`, `logout`, `listProfiles`, `useProfile`, `whoami`, `useOrganization`, `listOrganizations`, `listProjects`, `resolveProject`, type `Context`.
+- Packing: `packDirectory`, `readArchive`, `checkLocation`, `compileSelection`, `DEFAULT_PACK_LIMITS`, types `FileSelection`, `PackLimits`, `Packed`.
+- Workspace and apps: `readWorkspace`, `workspaceContext`, `appClient`, `checkedApp`, `requireConfirmation`, type `AppClient`.
+- Fields: `parseFields`, `fieldsToQuery`, types `FieldInput`, `FieldSources`.
+
+**Internal, unstable:** `resolve`, `clientFor` and type `Resolved` are exported only because the
+CLI needs them. They are marked `@internal`, may change in any release, and their results hold
+the raw API key: never log, print or serialize them. Other helpers (for example
+`MAX_WORKSPACE_CONFIG_BYTES`, `ownedByCurrentUser`) are not exported.
 
 ## Lock recovery
 
