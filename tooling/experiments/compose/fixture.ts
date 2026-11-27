@@ -176,10 +176,10 @@ export function fixtureProblems(model: any, plan: Plan): string[] {
             problems.push(`Unsafe fixture build outputs or attachments: ${name}.`);
         if (build && plan.images[name]) {
             const root = dirname(COMPOSE_FILE);
-            const expectedContext = name === "dokku" ? join(root, "containers/dokku") : root;
+            const expectedContext = root;
             const expectedDockerfile =
                 name === "dokku"
-                    ? "Dockerfile"
+                    ? "containers/dokku/Dockerfile"
                     : `apps/${name === "admin" ? "controller" : name}/Dockerfile`;
             if (
                 typeof build.context !== "string" ||

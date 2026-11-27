@@ -30,7 +30,9 @@ to deploy to an immutable preview URL and separately choose whether to promote.
     The build argument records the version in backups and in the operator status; an image
     built without it reports `unknown`.
 
-    These are local tags, not published images. Both images run as uid/gid 10001.
+    These are local tags, not published images. (The Compose stack names its images
+    `ghcr.io/launchpad-kit/launchpad-<name>:$LAUNCHPAD_IMAGE_TAG`; see
+    [production Compose](production-compose.md#images-pull-a-release-or-build-locally).) Both images run as uid/gid 10001.
     Mount the **same** durable `/data` into both; a bind mount must be owned by
     10001:10001. Without an explicit mount, each gets a separate anonymous volume.
     See [tooling](tooling.md#configuration-and-containers) for image caveats.

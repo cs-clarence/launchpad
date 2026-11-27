@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import {
     ENV_EXAMPLE,
     assertDockerfiles,
+    assertImageMetadata,
     assertProduction,
     interpolate,
     loadRaw,
@@ -38,6 +39,47 @@ describe("docker-compose.yaml", () => {
         ).toContain("40-hex commit");
     });
 
+    it("labels every published image and copies the licence files into it", () => {
+        const files = readDockerfiles();
+        expect(assertImageMetadata(files)).toEqual([]);
+        const worker = files["apps/worker/Dockerfile"]!;
+        expect(
+            assertImageMetadata({
+                "apps/worker/Dockerfile": worker.replace(
+                    /org\.opencontainers\.image\.licenses=/,
+                    "x=",
+                ),
+            }).join("\n"),
+        ).toContain("image.licenses");
+        expect(
+            assertImageMetadata({
+                "apps/worker/Dockerfile": worker.replace("/licenses/", "/elsewhere/"),
+            }).join("\n"),
+        ).toContain("/licenses");
+        const controller = files["apps/controller/Dockerfile"]!;
+        expect(
+            assertImageMetadata({
+                "apps/controller/Dockerfile": controller.replace(
+                    /(AS admin[\s\S]*?)org\.opencontainers\.image\.version=/,
+                    "$1x=",
+                ),
+            }).join("\n"),
+        ).toContain("image.version");
+    });
+
+    it("references the published images with a required tag", () => {
+        const raw = loadRaw();
+        expect(requiredVariables(raw)).toContain("LAUNCHPAD_IMAGE_TAG");
+        const model = render();
+        for (const name of ["controller", "worker", "router", "admin", "dokku"]) {
+            expect(model.services[name].image).toBe(
+                `ghcr.io/launchpad-kit/launchpad-${name}:${example.LAUNCHPAD_IMAGE_TAG}`,
+            );
+        }
+        const latest = render({ ...example, LAUNCHPAD_IMAGE_TAG: "latest" });
+        expect(assertProduction(latest, example).join("\n")).toContain("no explicit tag");
+    });
+
     it("requires every secret, identity, domain and host path", () => {
         expect(requiredVariables(loadRaw())).toEqual([
             "DOCKER_SOCKET_GID",
@@ -49,6 +91,7 @@ describe("docker-compose.yaml", () => {
             "LAUNCHPAD_BASE_URL",
             "LAUNCHPAD_DOKKU_KNOWN_HOSTS_FILE",
             "LAUNCHPAD_DOKKU_SSH_KEY_FILE",
+            "LAUNCHPAD_IMAGE_TAG",
             "LAUNCHPAD_ROUTER_EPOCH_FILE",
             "LAUNCHPAD_ROUTER_TLS_CA_FILE",
             "LAUNCHPAD_ROUTER_TLS_CERT_FILE",

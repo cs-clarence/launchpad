@@ -336,7 +336,7 @@ credentials into an image.
 
 `apps/controller/Dockerfile` and `apps/worker/Dockerfile` are multistage Bun image
 recipes, kept beside the app they build (`containers/` is reserved for images of external software, such as
-the Dokku image, `containers/dokku/Dockerfile`, which Compose builds from its own directory), built from the monorepo root (each has a Dockerfile-specific ignore file that excludes local
+the Dokku image, `containers/dokku/Dockerfile`, which Compose builds with the repository root as context, so the licence files are in it), built from the monorepo root (each has a Dockerfile-specific ignore file that excludes local
 env files, state, dependencies and agent context):
 
 ```sh

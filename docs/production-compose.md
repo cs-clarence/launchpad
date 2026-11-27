@@ -86,14 +86,25 @@ Check that no port is occupied before use; never stop whatever owns a port.
     [tested combination](plans/production-fresh-host-recovery.md#repeat-the-rehearsal);
     older Compose versions can fail the mount checks.
 
-## Build
+## Images: pull a release or build locally
 
-From the repository root, with BuildKit. These are local tags; nothing is pushed:
+The five Launchpad services run `ghcr.io/launchpad-kit/launchpad-<name>` (`controller`, `worker`,
+`router`, `admin`, `dokku`). `LAUNCHPAD_IMAGE_TAG` is **required** and has no default, and
+`latest` is rejected by `check:compose`: set it to the release version you mean to run, for
+example `LAUNCHPAD_IMAGE_TAG=0.1.0`. No release image is published yet (see
+[releasing](releasing.md)), so until one is, build locally. The `build:` sections are for that
+only. From the repository root, with BuildKit, using a local tag (nothing is pushed):
 
 ```sh
 export LAUNCHPAD_VERSION="$(sed -n 's/^ *"version": *"\([^"]*\)".*/\1/p' package.json | head -n 1)"
+export LAUNCHPAD_IMAGE_TAG=local
 docker compose --env-file docker-compose.env -f docker-compose.yaml --profile admin build
 ```
+
+This tags the images `ghcr.io/launchpad-kit/launchpad-<name>:local`. Every image carries the OCI
+labels (`org.opencontainers.image.source`, `licenses`, `version`, ...) and `/licenses/LICENSE` and
+`/licenses/THIRD_PARTY_NOTICES.md`; the notices are regenerated with
+`bun tooling/third-party-notices.ts`.
 
 ## First start, in order
 
