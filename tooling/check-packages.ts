@@ -2,13 +2,14 @@
 // and runs them under Bun and Node (LAUNCHPAD_NODE, else `node` on the PATH; a missing Node skips
 // the Node runs locally and fails when CI is set). Needs the network for the
 // registry dependencies (zod, commander, ...). Publishes nothing. Run by `omni run test:packages`.
-import { dirname } from "node:path";
 import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import {
     TARGETS,
     build,
+    findNode,
+    nodeShim,
     resolveNode,
     checkListing,
     checkManifest,
@@ -44,14 +45,20 @@ async function exec(command: string[], cwd: string, extra: Record<string, string
 // Resolved before anything changes directory, so a relative LAUNCHPAD_NODE means what it says.
 const NODE = resolveNode(process.env.LAUNCHPAD_NODE, process.cwd());
 
+const NODE_EXECUTABLE = findNode(NODE, process.env.PATH);
+
 const problems: string[] = [];
 const fail = (message: string) => problems.push(message);
 
 async function main() {
     const work = mkdtempSync(path.join(tmpdir(), "launchpad-packages-"));
     scrubbed = {
-        // The directory of the chosen Node first, so a bin's `#!/usr/bin/env node` finds it too.
-        PATH: [...(NODE.includes("/") ? [dirname(NODE)] : []), process.env.PATH ?? ""].join(":"),
+        // A `node` link to the chosen Node first, so a bin's `#!/usr/bin/env node` finds it too,
+        // whatever the executable is called. It lives in `work`, which the finally removes.
+        PATH: [
+            ...(NODE_EXECUTABLE ? [nodeShim(NODE_EXECUTABLE, path.join(work, "node-shim"))] : []),
+            process.env.PATH ?? "",
+        ].join(":"),
         HOME: path.join(work, "home"),
         // Not the shared package cache: nothing this job installs may reach a cache that is saved.
         BUN_INSTALL_CACHE_DIR: path.join(work, "bun-cache"),
@@ -120,7 +127,7 @@ async function main() {
             }
         }
 
-        const nodeBin = NODE;
+        const nodeBin = NODE_EXECUTABLE ?? NODE;
         const nodeVersion = await exec([nodeBin, "--version"], work).catch(() => null);
         const hasNode = nodeVersion?.code === 0;
         if (!hasNode) {

@@ -1,5 +1,10 @@
-import { describe, expect, it } from "bun:test";
+import { afterEach, describe, expect, it } from "bun:test";
+import { mkdtempSync, rmSync, symlinkSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import {
+    findNode,
+    nodeShim,
     resolveNode,
     checkListing,
     checkManifest,
@@ -112,5 +117,38 @@ describe("resolveNode", () => {
         expect(resolveNode("./node-tools/node", "/work")).toBe("/work/node-tools/node");
         expect(resolveNode("../bin/node", "/work/sub")).toBe("/work/bin/node");
         expect(resolveNode("/opt/node/bin/node", "/work")).toBe("/opt/node/bin/node");
+    });
+});
+
+describe("the node link for the child PATH", () => {
+    const dirs: string[] = [];
+    afterEach(() => {
+        for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
+    });
+    const temp = () => {
+        const dir = mkdtempSync(path.join(tmpdir(), "node-shim-"));
+        dirs.push(dir);
+        return dir;
+    };
+
+    it("finds an executable by path or by bare name, and reports a missing one", () => {
+        const dir = temp();
+        const fake = path.join(dir, "node22");
+        symlinkSync(process.execPath, fake);
+        expect(findNode(fake, "")).toBe(fake);
+        expect(findNode("node22", dir)).toBe(fake);
+        expect(findNode("node22", "")).toBeNull();
+        expect(findNode(path.join(dir, "missing"), dir)).toBeNull();
+    });
+
+    it("makes `node` resolve to an executable that is named something else", () => {
+        const dir = temp();
+        const fake = path.join(dir, "node22");
+        symlinkSync(process.execPath, fake);
+        const shim = nodeShim(fake, path.join(dir, "shim"));
+        const out = Bun.spawnSync(["/bin/sh", "-c", "command -v node && node --version"], {
+            env: { PATH: shim },
+        });
+        expect(out.stdout.toString()).toStartWith(`${path.join(shim, "node")}\n`);
     });
 });

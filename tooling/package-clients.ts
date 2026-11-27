@@ -13,6 +13,7 @@ import {
     readFileSync,
     readdirSync,
     rmSync,
+    symlinkSync,
     writeFileSync,
 } from "node:fs";
 import path from "node:path";
@@ -33,6 +34,24 @@ export const TARGETS: Target[] = [
 ];
 
 const root = path.resolve(import.meta.dirname, "..");
+
+// An absolute path to the Node named by `selected` (a path, or a bare name looked up on `searchPath`),
+// or null when there is none.
+export function findNode(selected: string, searchPath: string | undefined): string | null {
+    return selected.includes("/")
+        ? existsSync(selected)
+            ? selected
+            : null
+        : Bun.which(selected, { PATH: searchPath });
+}
+
+// A directory holding a `node` link to `executable`, for the front of a child's PATH: a bin's
+// `#!/usr/bin/env node` finds the selected Node even when it is not called `node`.
+export function nodeShim(executable: string, dir: string): string {
+    mkdirSync(dir, { recursive: true });
+    symlinkSync(executable, path.join(dir, "node"));
+    return dir;
+}
 
 // The Node the smoke runs under: LAUNCHPAD_NODE, else `node` looked up on the PATH. A value with a
 // slash is a path and is made absolute against `cwd` (the caller's directory, not a temporary

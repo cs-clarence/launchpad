@@ -82,6 +82,31 @@ export function scan(file: string, text: string): string[] {
     const isStatic = (node: ts.Node | undefined): node is ts.StringLiteralLike =>
         node !== undefined && ts.isStringLiteralLike(node);
 
+    const isWrapper = (
+        node: ts.Node,
+    ): node is
+        | ts.ParenthesizedExpression
+        | ts.AsExpression
+        | ts.TypeAssertion
+        | ts.NonNullExpression
+        | ts.SatisfiesExpression =>
+        ts.isParenthesizedExpression(node) ||
+        ts.isAsExpression(node) ||
+        ts.isTypeAssertionExpression(node) ||
+        ts.isNonNullExpression(node) ||
+        ts.isSatisfiesExpression(node);
+    // `((globalThis as any))` is `globalThis`: look through parentheses, assertions and `!`.
+    const unwrap = (node: ts.Expression): ts.Expression => {
+        let current = node;
+        while (isWrapper(current)) current = current.expression;
+        return current;
+    };
+    const outermost = (node: ts.Node): ts.Node => {
+        let current = node;
+        while (current.parent && isWrapper(current.parent)) current = current.parent;
+        return current;
+    };
+
     const visit = (node: ts.Node): void => {
         if (ts.isIdentifier(node)) {
             const name = node.text;
@@ -119,18 +144,20 @@ export function scan(file: string, text: string): string[] {
                     ts.isCallExpression(parent.parent) && parent.parent.expression === parent;
                 if (name === "require" || call) report(node, `.${name}(), which cannot be checked`);
             } else if (GLOBAL_OBJECTS.has(name) && !declared && !accessed) {
+                const top = outermost(node);
+                const user = top.parent;
                 const receiver =
-                    (ts.isPropertyAccessExpression(parent) && parent.expression === node) ||
-                    (ts.isElementAccessExpression(parent) &&
-                        parent.expression === node &&
-                        isStatic(parent.argumentExpression)) ||
-                    ts.isTypeOfExpression(parent) ||
-                    ts.isTypeQueryNode(parent) ||
+                    (ts.isPropertyAccessExpression(user) && user.expression === top) ||
+                    (ts.isElementAccessExpression(user) &&
+                        user.expression === top &&
+                        isStatic(user.argumentExpression)) ||
+                    ts.isTypeOfExpression(user) ||
+                    ts.isTypeQueryNode(user) ||
                     // The one shape the sources use: `globalThis.fetch.bind(globalThis)`.
-                    (ts.isCallExpression(parent) &&
-                        ts.isPropertyAccessExpression(parent.expression) &&
-                        parent.expression.name.text === "bind" &&
-                        parent.arguments[0] === node);
+                    (ts.isCallExpression(user) &&
+                        ts.isPropertyAccessExpression(user.expression) &&
+                        user.expression.name.text === "bind" &&
+                        user.arguments[0] === top);
                 if (!receiver)
                     report(node, `${name} used as a value (it could alias the Bun global)`);
             } else if ((name === "eval" || name === "Function") && !accessed) {
@@ -140,8 +167,8 @@ export function scan(file: string, text: string): string[] {
             // `process.versions`: only `.node` may be read from it.
             if (
                 node.name.text === "versions" &&
-                ts.isIdentifier(node.expression) &&
-                node.expression.text === "process"
+                ts.isIdentifier(unwrap(node.expression)) &&
+                (unwrap(node.expression) as ts.Identifier).text === "process"
             ) {
                 const use = node.parent;
                 const node_ = ts.isPropertyAccessExpression(use) && use.name.text === "node";
@@ -149,16 +176,13 @@ export function scan(file: string, text: string): string[] {
             }
         } else if (ts.isElementAccessExpression(node)) {
             const key = node.argumentExpression;
-            if (
-                ts.isIdentifier(node.expression) &&
-                GLOBAL_OBJECTS.has(node.expression.text) &&
-                !isStatic(key)
-            ) {
-                report(node, `${node.expression.text}[computed key], which could be "Bun"`);
+            const target = unwrap(node.expression);
+            if (ts.isIdentifier(target) && GLOBAL_OBJECTS.has(target.text) && !isStatic(key)) {
+                report(node, `${target.text}[computed key], which could be "Bun"`);
             }
             if (
-                ts.isIdentifier(node.expression) &&
-                node.expression.text === "process" &&
+                ts.isIdentifier(target) &&
+                target.text === "process" &&
                 isStatic(key) &&
                 key.text === "versions"
             ) {
