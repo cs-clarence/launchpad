@@ -36,11 +36,13 @@ import { createBackup, verifyBackup } from "./backup";
 import {
     collectDrift,
     driftCommandExitCode,
+    parseDriftFormat,
     readDriftArchives,
     readDriftDokku,
     readDriftProbes,
     readDriftRouter,
     readRepublishProbe,
+    renderDriftText,
     readUnservableProbe,
 } from "./drift";
 import { recoveryAnchorNotice, routerAnchorFromEnv, routerSessionFromEnv } from "./router-view";
@@ -553,8 +555,17 @@ program
         "--probe",
         "also check served deployment identities through the configured proxy origins",
     )
+    .option("--format <format>", "output format: json (default) or text", "json")
     .action(async (options) => {
         const env = process.env;
+        let format: "json" | "text";
+        try {
+            format = parseDriftFormat(options.format);
+        } catch (error) {
+            console.error((error as Error).message);
+            process.exitCode = 2;
+            return;
+        }
         try {
             const report = await withDatabase(async (db) => {
                 await assertReadyForCheck(db);
@@ -608,7 +619,9 @@ program
                     },
                 });
             });
-            console.log(JSON.stringify(report, null, 2));
+            console.log(
+                format === "text" ? renderDriftText(report) : JSON.stringify(report, null, 2),
+            );
             process.exitCode = driftCommandExitCode(report);
         } catch (error) {
             console.error(
