@@ -1085,15 +1085,21 @@ export interface TeardownHooks {
     afterImages?(c: Ctx, record: State | null): Promise<void>;
 }
 
-// Removes everything the tool created for this checkout; see the module comment. Every removal is
-// gated by a label check or an exact name derived from the recorded project.
 // The way out when Compose cannot be used: the remove command refuses, so name each resource.
-export const recoveryByHand = (layout: Layout, project: string): string =>
-    `To recover by hand, remove the project's resources by exact name ` +
-    `(docker ps -a --filter label=${LABEL_PROJECT}=${project}, then docker rm -f, docker volume rm, ` +
+export const recoveryByHand = (layout: Layout, project?: string): string =>
+    `To recover by hand, ${
+        project
+            ? ""
+            : `find the project name (it is derived from this checkout's path; docker ps -a --filter ` +
+              `label=${LABEL_PROJECT} --format '{{.Label "${LABEL_PROJECT}"}}' lists the names, and ` +
+              "the one starting with the dev prefix and matching this checkout is yours), then "
+    }remove the project's resources by exact name ` +
+    `(docker ps -a --filter label=${LABEL_PROJECT}=${project ?? "<project>"}, then docker rm -f, docker volume rm, ` +
     `docker network rm and docker image rm on what it lists), then delete ${layout.dir} ` +
     "(its dokku/ child is root-owned: sudo rm -rf).";
 
+// Removes everything the tool created for this checkout; see the module comment. Every removal is
+// gated by a label check or an exact name derived from the recorded project.
 export async function teardown(
     d: BaseDeps,
     profile: Profile,

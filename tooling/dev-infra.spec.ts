@@ -727,4 +727,24 @@ describe("up refusals before any write", () => {
         };
         expect(await fails(up(deps()))).toContain("is another up running? Nothing was changed.");
     });
+
+    it("does not call a non-EEXIST write failure a race", async () => {
+        const realWrite = host.fs.writeFile;
+        host.fs.writeFile = async (p, data, mode, exclusive) => {
+            if (p.endsWith("/state.json"))
+                throw Object.assign(new Error("EACCES"), { code: "EACCES" });
+            return realWrite(p, data, mode, exclusive);
+        };
+        await expect(up(deps())).rejects.toThrow("EACCES");
+    });
+
+    it("recovery text for a corrupt record uses --project, or does not guess a name", async () => {
+        await up(deps());
+        host.addFile(`${host.dir}/state.json`, "{not json");
+        const named = await fails(up(deps(), { project: "launchpad-dev-abcd1234" }));
+        expect(named).toContain("label=com.docker.compose.project=launchpad-dev-abcd1234");
+        const unnamed = await fails(up(deps()));
+        expect(unnamed).toContain("<project>");
+        expect(unnamed).not.toContain(project);
+    });
 });

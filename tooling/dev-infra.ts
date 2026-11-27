@@ -469,7 +469,7 @@ export interface Summary {
 }
 
 // destroy reads the same record and refuses it too, so it is not the way out.
-const unreadableMessage = (layout: Layout, project: string) =>
+const unreadableMessage = (layout: Layout, project?: string) =>
     `${layout.file("state.json")} is unreadable. Restore it. ${recoveryByHand(layout, project)}`;
 
 async function ensureIgnored(d: BaseDeps, layout: Layout): Promise<void> {
@@ -496,6 +496,10 @@ async function ensureIgnored(d: BaseDeps, layout: Layout): Promise<void> {
     }
 }
 
+const isExists = (error: unknown) =>
+    (error as { code?: unknown } | null)?.code === "EEXIST" ||
+    (error instanceof Error && error.message === "EEXIST");
+
 const raceMessage = (layout: Layout) =>
     `${layout.file("state.json")} appeared while starting: is another up running? Nothing was changed.`;
 
@@ -504,8 +508,7 @@ export async function up(d: Deps, options: UpOptions = {}): Promise<Summary> {
     const preset = options.preset ?? "app";
     const aliases = options.aliases ?? true;
     const first = await readState({ d, layout, project: "", profile: DEV_PROFILE });
-    if (first.kind === "corrupt")
-        throw new DeployError(unreadableMessage(layout, projectNameFor(d.repo)));
+    if (first.kind === "corrupt") throw new DeployError(unreadableMessage(layout, options.project));
     const project = checkProject(options.project ?? first.state?.project ?? projectNameFor(d.repo));
     const c: Ctx = { d, layout, project, profile: DEV_PROFILE };
     await checkDocker(d);
@@ -513,7 +516,9 @@ export async function up(d: Deps, options: UpOptions = {}): Promise<Summary> {
 
     const dirStat = await checkDirectory(c);
     const record = await readState(c);
-    if (record.kind === "corrupt") throw new DeployError(unreadableMessage(layout, project));
+    if (record.kind === "corrupt") {
+        throw new DeployError(unreadableMessage(layout, options.project ?? first.state?.project));
+    }
     if (record.kind === "ok") checkRecord(c, record.state!);
     else if (dirStat && (await d.fs.readdir(layout.dir)).length > 0) {
         throw new DeployError(
@@ -531,7 +536,7 @@ export async function up(d: Deps, options: UpOptions = {}): Promise<Summary> {
         try {
             await d.fs.mkdir(layout.dir, 0o700);
         } catch (error) {
-            if (!/EEXIST/.test(String(error instanceof Error ? error.message : error))) throw error;
+            if (!isExists(error)) throw error;
             throw new DeployError(raceMessage(layout));
         }
     }
@@ -544,7 +549,8 @@ export async function up(d: Deps, options: UpOptions = {}): Promise<Summary> {
                 0o600,
                 true,
             );
-        } catch {
+        } catch (error) {
+            if (!isExists(error)) throw error;
             throw new DeployError(raceMessage(layout));
         }
     }
@@ -642,7 +648,7 @@ async function loadContext(d: BaseDeps, options: { project?: string }) {
     const layout = layoutFor(d.repo);
     const record = await readState({ d, layout, project: "", profile: DEV_PROFILE });
     if (record.kind === "corrupt")
-        throw new DeployError(unreadableMessage(layout, projectNameFor(d.repo)));
+        throw new DeployError(unreadableMessage(layout, options.project));
     const project = checkProject(
         options.project ?? record.state?.project ?? projectNameFor(d.repo),
     );
