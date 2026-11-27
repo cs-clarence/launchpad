@@ -35,7 +35,7 @@ import {
     type Deps,
     type Preset,
 } from "./dev-infra";
-import { appsNetwork, DeployError, parseEnv } from "./local-docker";
+import { appsNetwork, classifyDbQuery, DeployError, parseEnv } from "./local-docker";
 
 let host: DevHost;
 let project: string;
@@ -664,6 +664,60 @@ describe("status and logs", () => {
         expect(
             await fails(down(deps()).then(() => status(deps({ repo: "/nowhere" })))),
         ).toBeTruthy();
+    });
+
+    describe("when the database cannot be read", () => {
+        const kept = async () => {
+            await up(deps());
+            host.deploySite(project, site);
+            await status(deps());
+            const before = host.text(`${host.dir}/inventory.json`);
+            host.logs.length = 0;
+            return before;
+        };
+
+        it("says the schema is not migrated and keeps the inventory", async () => {
+            const before = await kept();
+            host.dbSchema = false;
+            host.deployments = [];
+            await status(deps());
+            expect(host.text(`${host.dir}/inventory.json`)).toBe(before);
+            expect(host.logs.join("\n")).toContain("schema has not been migrated yet");
+            expect(host.logs.join("\n")).not.toContain("not reachable");
+        });
+
+        it("says the database is not reachable after a connection failure", async () => {
+            const before = await kept();
+            host.dbUp = false;
+            await status(deps());
+            expect(host.text(`${host.dir}/inventory.json`)).toBe(before);
+            expect(host.logs.join("\n")).toContain("The database is not reachable");
+        });
+
+        it("says the database is not reachable when postgres is not running", async () => {
+            const before = await kept();
+            for (const c of host.containers) {
+                if (c.labels["com.docker.compose.service"] === "postgres") c.state = "exited";
+            }
+            await status(deps());
+            expect(host.text(`${host.dir}/inventory.json`)).toBe(before);
+            expect(host.logs.join("\n")).toContain("The database is not reachable");
+        });
+    });
+
+    it("classifies a database query result", () => {
+        const r = (code: number, output: string) => ({ code, output, stdout: "" });
+        const verbose = (relation: string) =>
+            `ERROR:  42P01: relation "${relation}" does not exist\nLOCATION:  parserOpenTable, parse_relation.c:1449`;
+        expect(classifyDbQuery(r(0, ""))).toBe("ok");
+        expect(classifyDbQuery(r(1, verbose("deployment")))).toBe("no-schema");
+        expect(classifyDbQuery(r(1, 'ERROR: relation "deployment" does not exist'))).toBe(
+            "no-schema",
+        );
+        expect(classifyDbQuery(r(1, verbose("other")))).toBe("unreachable");
+        expect(classifyDbQuery(r(2, "could not connect to server"))).toBe("unreachable");
+        expect(classifyDbQuery(r(1, "ERROR: 42501 permission denied"))).toBe("unreachable");
+        expect(classifyDbQuery(r(1, "service not running"))).toBe("unreachable");
     });
 
     it("builds the logs command from the same project and env file", () => {

@@ -29,6 +29,7 @@ import {
     composeHint as composeHintFor,
     composePrefix as composePrefixFor,
     conflictsWithoutRecord,
+    classifyDbQuery,
     DB_QUERY,
     DeployError,
     docker,
@@ -686,7 +687,14 @@ export async function status(d: Deps, options: { project?: string } = {}): Promi
             `Dokku SSH ${ports.ssh}, HTTP ${ports.http}, router ${ports.routerData}/${ports.routerControl}`,
     );
     const query = await compose(c, DB_QUERY);
-    if (query.code !== 0) {
+    const dbState = classifyDbQuery(query);
+    if (dbState === "no-schema") {
+        d.log(
+            "PostgreSQL is running but the schema has not been migrated yet; the recorded inventory was kept as it is. Run `omni -i run dev:infra:seed`.",
+        );
+        return;
+    }
+    if (dbState === "unreachable") {
         d.log("The database is not reachable; the recorded inventory was kept as it is.");
         return;
     }

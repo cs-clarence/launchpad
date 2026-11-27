@@ -171,6 +171,13 @@ Rules that keep the graph correct:
 - **Task output** is shown only on failure; `--arg` is `KEY=value` templating for task
   `args:`, not positional passthrough, and piped stdin is not forwarded to a task.
 
+## Stale build output
+
+Omni 0.21.0 restores only missing outputs on a cache hit and does not overwrite an existing
+file. A stale, git-ignored `dist/` (for example `apps/cli/dist/index.js` lacking newer commands)
+survives `omni -i run build`, and the cache is shared across checkouts. Run
+`omni -i run build -f all`, or delete the project's `dist/` and rebuild.
+
 ## CI
 
 `.github/workflows/ci.yaml` and `.github/actions/setup-workspace` are adapted from

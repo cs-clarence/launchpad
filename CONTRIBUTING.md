@@ -24,6 +24,11 @@ Use both for a fresh run that does not populate the cache. `-d` prints what woul
 The `bun run <name>` scripts in the root `package.json` are only aliases for the
 same Omni tasks; package-level scripts are the commands Omni executes.
 
+A cache hit restores only missing outputs and does not overwrite an existing one (Omni 0.21.0).
+A stale, git-ignored `dist/` (for example `apps/cli/dist/index.js` without newer commands) therefore
+survives `omni -i run build`. The cache is shared across checkouts, so another checkout's build can
+cause this. Run `omni -i run build -f all`, or delete the project's `dist/` and rebuild.
+
 These tasks need no server, Docker, PostgreSQL or Dokku:
 
 | Command                        | Coverage                                                                                   |
