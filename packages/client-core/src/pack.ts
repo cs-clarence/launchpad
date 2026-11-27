@@ -167,7 +167,7 @@ export function compileSelection(include: string[], exclude: string[]) {
 }
 
 export interface Packed {
-    archive: Buffer;
+    archive: Uint8Array;
     files: number;
     bytes: number;
 }

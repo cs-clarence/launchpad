@@ -8,6 +8,7 @@
 // What is packed is a separate, generated manifest that points at built files, so the source
 // tree never has to be shaped for the registry. See docs/releasing.md.
 import { builtinModules } from "node:module";
+import { createHash } from "node:crypto";
 import {
     chmodSync,
     cpSync,
@@ -533,4 +534,95 @@ export function checkBin(manifest: Record<string, unknown>, files: string[]): st
         if (key in manifest) problems.push(`an executable has no "${key}"`);
     }
     return problems;
+}
+
+// The npm side of an install of the packed tarballs. `lock` is the package-lock.json npm wrote,
+// `expected` what was packed: each owned package must be recorded as the local tarball (a
+// `file:` path) with the SHA-512 of that exact file, never a name resolved from a registry.
+export function checkLock(
+    lock: {
+        packages?: Record<string, { version?: string; resolved?: string; integrity?: string }>;
+    },
+    expected: { name: string; version: string; file: string; bytes: Uint8Array }[],
+): string[] {
+    const problems: string[] = [];
+    for (const { name, version, file, bytes } of expected) {
+        const entry = lock.packages?.[`node_modules/${name}`];
+        if (!entry) {
+            problems.push(`${name}: not in the lockfile`);
+            continue;
+        }
+        if (entry.version !== version) {
+            problems.push(`${name}: locked at ${entry.version}, packed at ${version}`);
+        }
+        if (!entry.resolved?.startsWith("file:") || !entry.resolved.endsWith(path.basename(file))) {
+            problems.push(`${name}: resolved to ${entry.resolved}, not the local tarball`);
+        }
+        const integrity = `sha512-${createHash("sha512").update(bytes).digest("base64")}`;
+        if (entry.integrity !== integrity) {
+            problems.push(`${name}: integrity ${entry.integrity} is not that of the tarball`);
+        }
+    }
+    return problems;
+}
+
+interface LsNode {
+    invalid?: unknown;
+    missing?: unknown;
+    problems?: string[];
+    dependencies?: Record<string, LsNode>;
+}
+
+// Problems `npm ls --all --json` reports (it is parsed even when npm exits non-zero).
+export function checkLs(tree: LsNode): string[] {
+    const problems: string[] = [];
+    const visit = (node: LsNode, trail: string) => {
+        if (node.invalid) problems.push(`${trail} is invalid`);
+        if (node.missing) problems.push(`${trail} is missing`);
+        for (const p of node.problems ?? []) problems.push(`${trail}: ${p}`);
+        for (const [name, child] of Object.entries(node.dependencies ?? {})) {
+            visit(child, `${trail} > ${name}`);
+        }
+    };
+    visit(tree, "consumer");
+    return problems;
+}
+
+// Every place under `nodeModules` where a package of our scope is installed, by name: more than
+// one for a name is two copies in one tree.
+export function installedCopies(nodeModules: string): Record<string, string[]> {
+    const found: Record<string, string[]> = {};
+    const walk = (dir: string) => {
+        for (const entry of readdirSync(dir, { withFileTypes: true })) {
+            if (!entry.isDirectory()) continue;
+            const full = path.join(dir, entry.name);
+            if (entry.name === "@launchpad-kit") {
+                for (const own of readdirSync(full, { withFileTypes: true })) {
+                    const name = `@launchpad-kit/${own.name}`;
+                    (found[name] ??= []).push(path.join(full, own.name));
+                    const nested = path.join(full, own.name, "node_modules");
+                    if (existsSync(nested)) walk(nested);
+                }
+            } else if (entry.name.startsWith("@") || entry.name === "node_modules") {
+                walk(full);
+            } else if (existsSync(path.join(full, "node_modules"))) {
+                walk(path.join(full, "node_modules"));
+            }
+        }
+    };
+    walk(nodeModules);
+    return found;
+}
+
+// An absolute path to npm: the one beside the selected Node (a Node and its npm are one
+// release), else the first on the PATH, else null.
+export function findNpm(
+    nodeExecutable: string | null,
+    searchPath: string | undefined,
+): string | null {
+    if (nodeExecutable) {
+        const beside = path.join(path.dirname(nodeExecutable), "npm");
+        if (existsSync(beside)) return beside;
+    }
+    return Bun.which("npm", { PATH: searchPath });
 }

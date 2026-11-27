@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it } from "bun:test";
 import {
+    mkdirSync,
     mkdtempSync,
     readFileSync,
     readdirSync,
@@ -9,6 +10,7 @@ import {
     writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
+import { createHash } from "node:crypto";
 import path from "node:path";
 import {
     findNode,
@@ -19,6 +21,10 @@ import {
     checkBareImports,
     checkBin,
     checkClosure,
+    checkLock,
+    checkLs,
+    findNpm,
+    installedCopies,
     checkUnbundled,
     MARKERS,
     SIZE_BUDGETS,
@@ -468,5 +474,84 @@ describe("budgets", () => {
             "@launchpad-kit/cli": 80_000,
             "@launchpad-kit/mcp": 12_000,
         });
+    });
+});
+
+describe("checkLock", () => {
+    const bytes = new TextEncoder().encode("tarball");
+    const integrity = `sha512-${createHash("sha512").update(bytes).digest("base64")}`;
+    const expected = [
+        { name: "@x/sdk", version: "0.1.0", file: "/w/tarballs/x-sdk-0.1.0.tgz", bytes },
+    ];
+    const lock = (entry: Record<string, string>) => ({
+        packages: { "node_modules/@x/sdk": entry },
+    });
+
+    it("accepts the local tarball with its own digest", () => {
+        const entry = { version: "0.1.0", resolved: "file:../tarballs/x-sdk-0.1.0.tgz", integrity };
+        expect(checkLock(lock(entry), expected)).toEqual([]);
+    });
+
+    it("refuses a registry resolution, another digest, another version and a missing entry", () => {
+        const good = { version: "0.1.0", resolved: "file:../tarballs/x-sdk-0.1.0.tgz", integrity };
+        expect(
+            checkLock(
+                lock({ ...good, resolved: "https://registry.npmjs.org/@x/sdk/-/sdk-0.1.0.tgz" }),
+                expected,
+            ),
+        ).toHaveLength(1);
+        expect(checkLock(lock({ ...good, integrity: "sha512-other" }), expected)).toHaveLength(1);
+        expect(checkLock(lock({ ...good, version: "0.1.9" }), expected)).toHaveLength(1);
+        expect(checkLock({ packages: {} }, expected)).toEqual(["@x/sdk: not in the lockfile"]);
+    });
+});
+
+describe("checkLs", () => {
+    it("accepts a clean tree and names invalid and missing packages", () => {
+        expect(checkLs({ dependencies: { a: { dependencies: { b: {} } } } })).toEqual([]);
+        expect(
+            checkLs({
+                dependencies: { a: { invalid: "x", dependencies: { b: { missing: true } } } },
+            }),
+        ).toEqual(["consumer > a is invalid", "consumer > a > b is missing"]);
+        expect(checkLs({ problems: ["missing: a@1"] })).toEqual(["consumer: missing: a@1"]);
+    });
+});
+
+describe("installedCopies", () => {
+    const dirs: string[] = [];
+    afterEach(() => {
+        for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
+    });
+
+    it("finds one copy per name, and a second one nested in another package", () => {
+        const dir = mkdtempSync(path.join(tmpdir(), "copies-"));
+        dirs.push(dir);
+        const make = (...parts: string[]) =>
+            mkdirSync(path.join(dir, ...parts), { recursive: true });
+        make("@launchpad-kit", "sdk");
+        make("@launchpad-kit", "cli");
+        make("zod");
+        expect(Object.values(installedCopies(dir)).every((found) => found.length === 1)).toBe(true);
+        make("zod", "node_modules", "@launchpad-kit", "sdk");
+        make("@scope", "pkg", "node_modules", "@launchpad-kit", "cli");
+        const copies = installedCopies(dir);
+        expect(copies["@launchpad-kit/sdk"]).toHaveLength(2);
+        expect(copies["@launchpad-kit/cli"]).toHaveLength(2);
+    });
+});
+
+describe("findNpm", () => {
+    it("prefers the npm beside the selected Node, then the PATH, else null", () => {
+        const dir = mkdtempSync(path.join(tmpdir(), "npm-"));
+        try {
+            const node = path.join(dir, "node");
+            expect(findNpm(node, "")).toBeNull();
+            writeFileSync(path.join(dir, "npm"), "");
+            expect(findNpm(node, "")).toBe(path.join(dir, "npm"));
+            expect(findNpm(null, "")).toBeNull();
+        } finally {
+            rmSync(dir, { recursive: true, force: true });
+        }
     });
 });
