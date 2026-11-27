@@ -104,8 +104,9 @@ export class FakeHost {
             .map((k) => k.slice(dir.length + 1))
             .sort();
     }
+    stateDirName = ".local-deploy";
     get dir() {
-        return `${this.repo}/.local-deploy`;
+        return `${this.repo}/${this.stateDirName}`;
     }
     text(p: string) {
         const n = this.nodes.get(p);
@@ -353,7 +354,7 @@ export class FakeHost {
                 return this.inspect(args.slice(1));
             case "stop": {
                 const id = args[args.length - 1]!;
-                const c = this.containers.find((x) => x.id === id);
+                const c = this.containers.find((x) => x.id === id || x.name === id);
                 if (!c) return fail("No such container");
                 c.state = "exited";
                 return ok(id);
@@ -409,6 +410,14 @@ export class FakeHost {
         if (format === "{{.Ports}}") {
             if (!args.includes("-a")) found = found.filter((c) => c.state === "running");
             return ok(found.map((c) => c.ports).join("\n"));
+        }
+        if (format === "{{.ID}}") {
+            return ok(
+                found
+                    .filter((c) => c.state === "running")
+                    .map((c) => c.id)
+                    .join("\n"),
+            );
         }
         if (format !== PS_FORMAT) return fail("unexpected format", 125);
         return ok(
@@ -470,7 +479,7 @@ export class FakeHost {
         );
     }
 
-    private image(args: string[]): RunResult {
+    protected image(args: string[]): RunResult {
         if (args[0] === "ls") {
             const ref = args[args.indexOf("--filter") + 1]!.replace("reference=", "");
             if (args[args.indexOf("--format") + 1] !== IMAGE_FORMAT) return fail("format", 125);
@@ -583,7 +592,7 @@ export class FakeHost {
         return fail("unexpected helper", 125);
     }
 
-    private composeCmd(all: string[], input?: string): RunResult {
+    protected composeCmd(all: string[], input?: string): RunResult {
         // -p P --env-file E -f F -f O --profile admin <sub...>
         const project = all[all.indexOf("-p") + 1]!;
         const envFile = all[all.indexOf("--env-file") + 1]!;
@@ -682,7 +691,7 @@ export class FakeHost {
         return new RegExp(`${key}=(\\d+)`).exec(this.text(envFile) ?? "")?.[1];
     }
 
-    private composeExec(project: string, args: string[]): RunResult {
+    protected composeExec(project: string, args: string[]): RunResult {
         const rest = args.filter((a) => a !== "-T");
         const service = rest[0]!;
         const c = this.containers.find(

@@ -6,6 +6,12 @@ everything the run created. It extends [run Launchpad on your machine](local-qui
 runs only the controller and deploys nothing, and uses the stack described in
 [production Compose](production-compose.md).
 
+Developing the apps themselves rather than looking at the whole system? This guide runs everything,
+the controller and worker included, in Docker. To run the controller, worker and CLI on the host from
+your checkout, with only PostgreSQL, Mailpit, Dokku and the router in Docker, use
+[develop against local infrastructure](local-dev-infra.md) instead; run one of the two at a time,
+since each starts its own Dokku.
+
 ## Read this first
 
 - This mounts the host Docker socket into the worker and into Dokku. That is **root-equivalent on

@@ -152,6 +152,18 @@ Rules that keep the graph correct:
   Its tests use a fake runner, file system and `fetch` (`tooling/local-deploy-fake.ts`); the guide
   ([deploy a site on your machine](local-deploy.md)) is guarded by `tooling/local-deploy-docs.spec.ts`.
   The real-Docker proof is recorded in [the plan](plans/local-deploy-quickstart.md#status).
+- **Local dev infrastructure.** `omni -i run dev:infra:up` (`tooling/dev-infra.ts`; `status`, `down`,
+  `destroy`, `logs` and `seed` are the other tasks) runs `docker-compose.dev.yaml` (PostgreSQL, Mailpit,
+  Dokku, the alias router; all on `127.0.0.1`) under a project named `launchpad-dev-<8 hex>` so that
+  the controller, worker and CLI run on the host. It writes the host apps' settings to
+  `.dev-infra/env/` (git-ignored, mode 700) and never to an app's `.env.local`. `down` keeps the data,
+  `destroy` removes everything by exact name through the same ownership-checked teardown as
+  `local:deploy`: both tools share `tooling/local-docker.ts`, parameterised by a profile. The file is
+  rendered and checked by `tooling/compose-dev.ts` (part of `check:compose`, with the production file's
+  Dokku, PostgreSQL and router parts compared to it). The tests use the fake machine of
+  `tooling/dev-infra-fake.ts`, and the generated settings must pass the real config parsers; the guide
+  ([develop against local infrastructure](local-dev-infra.md)) is guarded by
+  `tooling/dev-infra-docs.spec.ts`.
 - **Omni loads `.env.local`** from the repository root and the project into task
   environments without expanding variables, and task `env.vars` override the shell. For
   a default that the shell may override, apply it in the command

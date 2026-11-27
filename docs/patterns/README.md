@@ -82,6 +82,14 @@ functions (names, ports, env, inventory validation) and `up`, `status` and `down
 `docs/local-deploy.md`, guarded by `tooling/local-deploy-docs.spec.ts` with helpers in
 `tooling/docs-check.ts`.
 
+The local dev infrastructure is `docker-compose.dev.yaml` (next to the production `docker-compose.yaml`,
+standalone, with its own pins) and `tooling/dev-infra.ts` (`omni -i run dev:infra:up`). The Docker,
+state-directory and teardown code it shares with `local:deploy` is `tooling/local-docker.ts`: a
+`Profile` (state directory, project prefix, children, images, services, Compose files) selects what
+differs, and the deletion code is the same for both. Its tests run against `tooling/dev-infra-fake.ts`
+and never start Docker; the guide is `docs/local-dev-infra.md`, guarded by
+`tooling/dev-infra-docs.spec.ts`; `tooling/compose-dev.ts` checks the Compose file.
+
 Scripts and apps that take arguments parse them with commander (`apps/cli`, the controller's `admin`,
 `apps/mcp`, `apps/router` and the tooling scripts through `tooling/cli.ts`); tooling uses the root
 `devDependencies`, and every other manifest that imports commander declares it itself

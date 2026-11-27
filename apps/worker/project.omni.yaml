@@ -37,6 +37,13 @@ tasks:
   build:
     enabled: true
 
+  dev:
+    description: Run the worker on the host with --watch (needs a configured environment in .env.local)
+    exec: bun --watch src/index.ts
+    persistent: true
+    cache:
+      enabled: false
+
   publish:
     enabled: false
 

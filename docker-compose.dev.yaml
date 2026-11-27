@@ -1,0 +1,147 @@
+# Development infrastructure for running the controller, worker and CLI on the host: PostgreSQL,
+# Mailpit, Dokku and the alias router, all published on 127.0.0.1 only. Not a production template
+# (docker-compose.yaml is); see docs/local-dev-infra.md.
+#
+# Use it through `omni -i run dev:infra:up`: the first start needs generated credentials, a pinned
+# Dokku host key and a router init that Compose cannot do. After that, with the generated env file:
+#
+#   docker compose -p <project> --env-file .dev-infra/compose.env -f docker-compose.dev.yaml ps
+#
+# Rules this file keeps (asserted by tooling/compose-dev.ts):
+# - the services are exactly postgres, mailpit, dokku and router; every published port is on 127.0.0.1;
+# - no `env_file`; every external image is pinned by digest; built images are `${DEV_PROJECT}/<service>:local`;
+# - only Dokku holds the host Docker socket, which is root-equivalent on this host;
+# - the Dokku block, PostgreSQL pin and Dokku healthcheck equal docker-compose.yaml's.
+
+name: launchpad-dev
+
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "5"
+
+services:
+  postgres:
+    image: ${POSTGRES_IMAGE:-postgres:17-alpine@sha256:526f86d93c6ea08fd3f1fe5605650cacc781b2c6013169a0ad8f42c7d3d84f32}
+    mem_limit: 512m
+    environment:
+      POSTGRES_USER: launchpad
+      POSTGRES_DB: launchpad
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set by dev:infra:up (generated)}
+    ports:
+      - "127.0.0.1:${DEV_POSTGRES_PORT:-35432}:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    networks: [backend]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U launchpad -d launchpad"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 30s
+    logging: *logging
+
+  # Tag v1.29, index digest read with `docker buildx imagetools inspect` on 2026-11-27. Change them
+  # together. Mail is kept in memory only: it is gone after `dev:infra:down`.
+  mailpit:
+    image: axllent/mailpit:v1.29@sha256:757f22b56c1da03570afdb3d259effe5091018008a81bbedc8158cee7e16fdbc
+    environment:
+      MP_MAX_MESSAGES: "500"
+    ports:
+      - "127.0.0.1:${DEV_SMTP_PORT:-31025}:1025"
+      - "127.0.0.1:${DEV_MAILPIT_UI_PORT:-38025}:8025"
+    networks: [backend]
+    healthcheck:
+      test: ["CMD", "/mailpit", "readyz"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 5s
+    logging: *logging
+
+  dokku:
+    build:
+      context: ./containers/dokku
+      dockerfile: Dockerfile
+      args:
+        DOKKU_VERSION: ${DOKKU_VERSION:-0.38.34}
+      labels:
+        com.launchpad.dev-project: ${DEV_PROJECT:?set by dev:infra:up (generated)}
+    image: ${DEV_PROJECT:?set by dev:infra:up (generated)}/dokku:local
+    mem_limit: 1g
+    environment:
+      DOKKU_HOSTNAME: ${LAUNCHPAD_APPS_DOMAIN:?set the apps domain}
+      # Host-visible paths of the bind below, so the host engine mounts the right sources.
+      DOKKU_HOST_ROOT: ${DOKKU_DATA_DIR:?set by dev:infra:up (generated)}/home/dokku
+      DOKKU_LIB_HOST_ROOT: ${DOKKU_DATA_DIR}/var/lib/dokku
+    ports:
+      - "127.0.0.1:${DEV_DOKKU_SSH_PORT:-33222}:22"
+      - "127.0.0.1:${DEV_DOKKU_HTTP_PORT:-33181}:80"
+    volumes:
+      - type: bind
+        source: ${DOKKU_DATA_DIR}
+        target: /mnt/dokku
+        bind:
+          create_host_path: false
+      # Grants Dokku host-level Docker control; trusted use on a development machine only.
+      - type: bind
+        source: ${DOCKER_SOCKET_PATH:-/var/run/docker.sock}
+        target: /var/run/docker.sock
+        bind:
+          create_host_path: false
+    # `apps` is where Dokku puts the app containers it creates (`network:set --global
+    # initial-network`, a first-start step), so its nginx can reach them.
+    networks: [backend, apps]
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - test -s /etc/ssh/ssh_host_ed25519_key.pub && dokku version && ss -ltn | grep -q ':80 '
+      interval: 15s
+      timeout: 10s
+      retries: 6
+      start_period: 6m
+    logging: *logging
+
+  router:
+    build:
+      context: .
+      dockerfile: apps/router/Dockerfile
+      args:
+        LAUNCHPAD_VERSION: ${LAUNCHPAD_VERSION:-unknown}
+      labels:
+        com.launchpad.dev-project: ${DEV_PROJECT:?set by dev:infra:up (generated)}
+    image: ${DEV_PROJECT:?set by dev:infra:up (generated)}/router:local
+    mem_limit: 128m
+    environment:
+      LAUNCHPAD_ROUTER_STATE_FILE: /state/routes.sqlite
+      LAUNCHPAD_ROUTER_INSTANCE_ID: ${LAUNCHPAD_ALIAS_INSTANCE_ID:?set by dev:infra:up (generated)}
+      LAUNCHPAD_APPS_DOMAIN: ${LAUNCHPAD_APPS_DOMAIN}
+      LAUNCHPAD_APPS_PROXY_URL: http://dokku:80
+      LAUNCHPAD_ROUTER_CONTROL_LISTEN: 0.0.0.0:3081
+      LAUNCHPAD_ROUTER_CONTROL_PRIVATE_NETWORK: "1"
+      LAUNCHPAD_ROUTER_DATA_LISTEN: 0.0.0.0:3080
+    # The control plane is plain HTTP and published on loopback for the host worker only.
+    ports:
+      - "127.0.0.1:${DEV_ROUTER_DATA_PORT:-33182}:3080"
+      - "127.0.0.1:${DEV_ROUTER_CONTROL_PORT:-33183}:3081"
+    volumes:
+      - router-state:/state
+    networks: [backend]
+    healthcheck:
+      test: ["CMD", "bun", "dist/index.js", "healthcheck"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    logging: *logging
+
+volumes:
+  postgres-data:
+  router-state:
+
+networks:
+  backend:
+  # The fixed name is what Dokku's `initial-network` setting refers to.
+  apps:
+    name: ${LAUNCHPAD_APPS_NETWORK:-launchpad-dev-apps}

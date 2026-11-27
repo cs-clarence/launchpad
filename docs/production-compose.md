@@ -14,6 +14,8 @@ Dokku-only file: the project and default ports changed, and existing Dokku data
 is not adopted automatically. Leave legacy state in place pending a separate cutover.
 To try the same stack on your own machine, [deploy a site locally](local-deploy.md); that tool is a
 developer convenience with generated throwaway credentials and is not the production procedure.
+`docker-compose.dev.yaml` is a separate development file for running the apps on the host
+([develop against local infrastructure](local-dev-infra.md)); it is not a template for production.
 
 ## What it defines
 
@@ -298,6 +300,10 @@ state under a live database; follow the [recovery procedure](restore.md) for
 generation and epoch handling.
 
 ## Images and pins
+
+The development file `docker-compose.dev.yaml` has its own pins (PostgreSQL, Mailpit and the Dokku and
+router builds); `tooling/compose-dev.ts` asserts that they are digest-pinned and that its PostgreSQL
+image and the Dokku and router parts equal this file's.
 
 Base images are pinned by tag **and** index digest; `check:compose` fails on an unpinned
 `FROM`, a malformed digest, a Dokku plugin that is not a 40-hex commit, or an unpinned
