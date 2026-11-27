@@ -3,12 +3,15 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import path from "node:path";
 import {
+    checkTags,
+    compareSemver,
     checkVersions,
     covered,
     independentPackages,
     SOURCE_VERSIONS,
     sharedWorkspaces,
     syncVersions,
+    tagProblems,
 } from "./versions";
 
 const dirs: string[] = [];
@@ -174,6 +177,91 @@ describe("lockfile and strictness", () => {
             `{\n    "name": "@t/root",\n    "version": "1.2.3",\n    "workspaces": ["packages/extra/sdk"]\n}\n`,
         );
         expect(() => checkVersions(root)).toThrow("Unsupported workspace entry");
+    });
+});
+
+describe("checkTags", () => {
+    it("passes for equal, older or no tags and fails for a newer one", () => {
+        const root = repository();
+        const version = sharedWorkspaces(root)[0]!.version;
+        expect(checkTags(root, ["", `v${version}`, "v0.0.0-old", "core-v9.0.0"])).toEqual([]);
+        expect(checkTags(root, ["v99.0.0"])).toHaveLength(1);
+    });
+});
+
+describe("compareSemver", () => {
+    it("follows SemVer 2.0.0 precedence and ignores build metadata", () => {
+        const ordered = [
+            "1.0.0-alpha",
+            "1.0.0-alpha.1",
+            "1.0.0-alpha.beta",
+            "1.0.0-beta",
+            "1.0.0-beta.2",
+            "1.0.0-beta.11",
+            "1.0.0-rc.1",
+            "1.0.0",
+            "1.0.1",
+            "1.2.0",
+            "2.0.0",
+            "10.0.0",
+        ];
+        for (let i = 1; i < ordered.length; i++) {
+            expect(compareSemver(ordered[i - 1]!, ordered[i]!)).toBe(-1);
+            expect(compareSemver(ordered[i]!, ordered[i - 1]!)).toBe(1);
+        }
+        expect(compareSemver("1.0.0-rc.9007199254740992", "1.0.0-rc.9007199254740993")).toBe(-1);
+        expect(compareSemver("1.0.0-rc.9007199254740993", "1.0.0-rc.9007199254740992")).toBe(1);
+        expect(compareSemver("1.0.0-rc.9007199254740993", "1.0.0-rc.9007199254740993")).toBe(0);
+        expect(compareSemver("9007199254740993.0.0", "9007199254740992.0.0")).toBe(1);
+        expect(compareSemver("1.9007199254740992.0", "1.9007199254740993.0")).toBe(-1);
+        expect(compareSemver("1.0.9007199254740993", "1.0.9007199254740992")).toBe(1);
+        expect(compareSemver("1.0.0+a", "1.0.0+b")).toBe(0);
+        expect(compareSemver("1.0.0-rc.1+x", "1.0.0-rc.1")).toBe(0);
+    });
+
+    it("lets checkTags fail only a tag newer than the manifests", () => {
+        const root = repository();
+        const version = sharedWorkspaces(root)[0]!.version;
+        expect(checkTags(root, [`v${version}+build.5`])).toEqual([]);
+        expect(checkTags(root, [`v${version}-rc.1`])).toEqual([]);
+        expect(checkTags(root, [`v${version}`])).toEqual([]);
+        expect(checkTags(root, ["v99.0.0-rc.1"])).toHaveLength(1);
+    });
+});
+
+describe("tagProblems", () => {
+    const ok = { status: 0, stdout: "", stderr: "" };
+    it("accepts a successful query with no tags", () => {
+        expect(tagProblems(repository(), ok)).toEqual([]);
+    });
+    it("skips when git or the repository is absent", () => {
+        const root = repository();
+        expect(
+            tagProblems(root, {
+                ...ok,
+                status: null,
+                error: Object.assign(new Error("spawn git ENOENT"), { code: "ENOENT" }),
+            }),
+        ).toEqual([]);
+        expect(
+            tagProblems(root, {
+                ...ok,
+                status: 128,
+                stderr: "fatal: not a git repository (or any of the parent directories): .git",
+            }),
+        ).toEqual([]);
+    });
+    it("reports any other failure with its diagnostic", () => {
+        const problems = tagProblems(repository(), {
+            ...ok,
+            status: 128,
+            stderr: "fatal: bad object HEAD\n",
+        });
+        expect(problems).toHaveLength(1);
+        expect(problems[0]).toContain("bad object HEAD");
+    });
+    it("still reports a newer tag from a successful query", () => {
+        expect(tagProblems(repository(), { ...ok, stdout: "v99.0.0\n" })).toHaveLength(1);
     });
 });
 
