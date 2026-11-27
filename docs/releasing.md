@@ -105,10 +105,11 @@ private), and three gates run on every tarball, in `test:packages` and the dry r
   `^<that version>`; a third-party package has one range across the five.
 - **Bare imports** (`checkBareImports`): every bare specifier in a `.mjs` or `.d.ts` is a
   Node module or a dependency the package declares.
-- **No inlining** (`checkUnbundled`): a size budget per executable (cli 79 kB, mcp 11 kB: measured size plus 25 %, rounded up to the next kB;
-  over the measured size; raise it in review when growth is real) and a marker string of every
-  dependency that must be absent from the other packages' files. `tooling/vite-config.spec.ts`
-  checks the apps' build config externalizes dependencies and emits `cli.mjs`/`mcp.mjs`.
+- **No inlining** (`checkUnbundled`): a size budget per executable (cli 79 kB, mcp 11 kB: the
+  measured size plus 25 %, rounded up to the next kB; raise the pinned measured size
+  (`MEASURED_SIZES` in `tooling/package-clients.ts`) in review when growth is real) and a marker
+  string of every dependency that must be absent from the other packages' files.
+  `tooling/vite-config.spec.ts` checks the apps' build config externalizes dependencies and emits `cli.mjs`/`mcp.mjs`.
 
 Source manifests reference every owned package as `workspace:^` (`check:deps` requires exactly
 that). Packing writes `^<version>`, so in `0.x` an install may differ from the others by a patch
