@@ -1,6 +1,8 @@
 // Builds, packs and installs the client packages the way a user would, outside the workspace,
-// and runs them under Bun and (when it is on the PATH) Node. Needs the network for the
+// and runs them under Bun and Node (LAUNCHPAD_NODE, else `node` on the PATH; a missing Node skips
+// the Node runs locally and fails when CI is set). Needs the network for the
 // registry dependencies (zod, commander, ...). Publishes nothing. Run by `omni run test:packages`.
+import { dirname } from "node:path";
 import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -37,7 +39,13 @@ const fail = (message: string) => problems.push(message);
 async function main() {
     const work = mkdtempSync(path.join(tmpdir(), "launchpad-packages-"));
     scrubbed = {
-        PATH: process.env.PATH ?? "",
+        // The directory of the chosen Node first, so a bin's `#!/usr/bin/env node` finds it too.
+        PATH: [
+            ...(process.env.LAUNCHPAD_NODE?.includes("/")
+                ? [dirname(process.env.LAUNCHPAD_NODE)]
+                : []),
+            process.env.PATH ?? "",
+        ].join(":"),
         HOME: path.join(work, "home"),
         // Not the shared package cache: nothing this job installs may reach a cache that is saved.
         BUN_INSTALL_CACHE_DIR: path.join(work, "bun-cache"),
@@ -105,12 +113,16 @@ async function main() {
             }
         }
 
-        const runtimes = [
-            "bun",
-            ...((await exec(["node", "--version"], work).catch(() => null))?.code === 0
-                ? ["node"]
-                : []),
-        ];
+        const nodeBin = process.env.LAUNCHPAD_NODE || "node";
+        const nodeVersion = await exec([nodeBin, "--version"], work).catch(() => null);
+        const hasNode = nodeVersion?.code === 0;
+        if (!hasNode) {
+            if (process.env.CI)
+                return fail(`Node (${nodeBin}) is required in CI and was not found.`);
+            console.warn(`SKIPPED the Node runs: ${nodeBin} not found (set LAUNCHPAD_NODE).`);
+        } else console.log(`node: ${nodeBin} ${nodeVersion.out.trim()}`);
+        const runtimes = ["bun", ...(hasNode ? ["node"] : [])];
+        const runner = (runtime: string) => (runtime === "node" ? nodeBin : runtime);
         console.log(`runtimes: ${runtimes.join(", ")}`);
         const bin = (file: string) => path.join(consumer, "node_modules", file);
 
@@ -184,19 +196,35 @@ console.log("mcp ok: " + message.result.serverInfo.name);
 `,
         );
         for (const runtime of runtimes) {
+            const run = runner(runtime);
+            const expectedVersion = JSON.parse(
+                readFileSync(path.join(root, "package.json"), "utf8"),
+            ).version as string;
             for (const [label, args] of [
-                ["cli --help", [runtime, bin("@launchpad-kit/cli/cli.mjs"), "--help"]],
-                ["mcp --help", [runtime, bin("@launchpad-kit/mcp/mcp.mjs"), "--help"]],
-                ["sdk", [runtime, "smoke.mjs"]],
+                ["cli --version", [run, bin("@launchpad-kit/cli/cli.mjs"), "--version"]],
+                [
+                    "contracts and sdk import",
+                    [
+                        run,
+                        "--input-type=module",
+                        "-e",
+                        'await import("@launchpad-kit/contracts"); await import("@launchpad-kit/sdk");',
+                    ],
+                ],
+                ["cli --help", [run, bin("@launchpad-kit/cli/cli.mjs"), "--help"]],
+                ["mcp --help", [run, bin("@launchpad-kit/mcp/mcp.mjs"), "--help"]],
+                ["sdk", [run, "smoke.mjs"]],
                 [
                     "mcp handshake",
-                    [runtime, "mcp-handshake.mjs", runtime, bin("@launchpad-kit/mcp/mcp.mjs")],
+                    [run, "mcp-handshake.mjs", run, bin("@launchpad-kit/mcp/mcp.mjs")],
                 ],
             ] as const) {
                 const result = await exec([...args], consumer);
-                const helpShown =
-                    label !== "mcp --help" || /launchpad-mcp/.test(`${result.out}${result.err}`);
-                if (result.code !== 0 || !helpShown) {
+                const output = `${result.out}${result.err}`;
+                const shown =
+                    (label !== "mcp --help" || /launchpad-mcp/.test(output)) &&
+                    (!label.endsWith("--version") || output.includes(expectedVersion));
+                if (result.code !== 0 || !shown) {
                     fail(
                         `${runtime}: ${label} failed (${result.code}):\n${result.out}\n${result.err}`,
                     );

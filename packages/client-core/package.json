@@ -32,7 +32,7 @@
         "@launchpad-kit/tsconfig": "workspace:^",
         "@launchpad-kit/vite-config": "workspace:^",
         "@launchpad-kit/vitest-config": "workspace:^",
-        "@types/bun": "catalog:",
+        "@types/node": "catalog:",
         "@types/picomatch": "catalog:",
         "typescript": "catalog:",
         "vite": "catalog:",

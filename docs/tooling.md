@@ -53,6 +53,7 @@ Rules that keep the graph correct:
   build first and their outputs change dependents' keys. A project that needs generated
   files (the controller's route tree) lists its `build` as a dependency and its
   generated files as build outputs.
+- **Runtime.** `check:runtime` (part of `check`) fails when a published npm package's source uses a Bun-only API; see `docs/releasing.md`.
 - **Packaging.** `omni -i run test:packages -p @launchpad-kit/tooling` builds the SDK, contracts, CLI and
   MCP server, packs them (`tooling/package-clients.ts`: a generated manifest per package, the SDK
   and contracts as libraries, the CLI and MCP as one bundled file each), installs the tarballs in a

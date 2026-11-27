@@ -29,7 +29,7 @@
         "@launchpad-kit/tsconfig": "workspace:^",
         "@launchpad-kit/vite-config": "workspace:^",
         "@launchpad-kit/vitest-config": "workspace:^",
-        "@types/bun": "catalog:",
+        "@types/node": "catalog:",
         "typescript": "catalog:",
         "vite": "catalog:",
         "vitest": "catalog:"

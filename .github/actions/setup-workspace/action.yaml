@@ -15,6 +15,10 @@ inputs:
     description: "Version of Omni to install; keep in step with the version used locally"
     required: false
     default: "0.21.0"
+  node-version:
+    description: "Node version to install (actions/setup-node syntax)"
+    required: false
+    default: "lts/*"
   github-token:
     description: "GitHub token for higher rate limit"
     required: false
@@ -37,7 +41,7 @@ runs:
     - name: Install Node
       uses: actions/setup-node@v4
       with:
-        node-version: lts/*
+        node-version: ${{ inputs.node-version }}
 
     - name: Cache Bun install
       uses: actions/cache@v5

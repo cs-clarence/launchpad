@@ -43,6 +43,31 @@ and availability have **not** been verified, and no package has been published.
 Packed READMEs are still developer documentation and the manifests have no
 `license` or `repository`; the licence and final product naming remain release gates.
 
+## The npm packages stay runtime agnostic
+
+`@launchpad-kit/contracts`, `sdk`, `cli` and `mcp` are published to npm, and `client-core` is
+bundled into the CLI and the MCP server. They must run on Node (engines `>=22.12`) as well as
+Bun, so their `src` may not use a Bun-only API: the `Bun` global, `globalThis.Bun`, `"bun"` or
+`"bun:*"` imports, `process.versions.bun`, or `import.meta.dir`, `.file` and `.path`
+(`import.meta.dirname` and `.filename` are fine). Code bundled into the Docker images
+(controller, worker, router, database, services, ...) may use Bun APIs freely.
+
+Two gates enforce it:
+
+- `omni -i run check:runtime` (part of `check`) scans those packages' `src`, ignoring
+  `*.spec.ts` and `__tests__`, and fails with `file:line`. The package list comes from
+  `TARGETS` in `tooling/package-clients.ts` plus `client-core` (`tooling/runtime-agnostic.ts`).
+- `test:packages` installs the packed tarballs outside the workspace and runs them under Bun
+  **and** Node: `--version`, `--help`, importing `contracts` and `sdk`, an SDK call, an MCP
+  handshake and the installed `bin` links. Choose the Node with `LAUNCHPAD_NODE=/path/to/node`
+  (default: `node` on the `PATH`). Without Node the Node runs are skipped with a message
+  locally and fail when `CI` is set. CI runs the job on Node 22.12 and the current release.
+
+The development entry points (`#!/usr/bin/env bun`, `bun build --target=bun` in
+`apps/cli` and `apps/mcp`) are local-only: `package-clients.ts` rebuilds with `--target=node`
+and writes a `node` shebang for the packed files, so the published bundles do not depend on them.
+The five packages use `@types/node`, not `@types/bun`; tests still run under Bun.
+
 ## Rehearse a release
 
 ```sh
@@ -50,7 +75,7 @@ omni -i run release:dry-run -p @launchpad-kit/tooling
 ```
 
 or run the manual **Release dry run** workflow. It checks that versions agree, packs the
-four client packages with the same allowlist checks as `test:packages`, writes
+four client packages with the same allowlist checks as `test:packages` (the Node smoke runs in `test:packages`, not in the dry run), writes
 `packages/SHA256SUMS`, builds both images **without pushing them**, removes those images by
 exact name (Docker's build cache and pulled base images stay), and leaves everything in `.release-dry-run/` (kept 7 days as a workflow
 artifact). The workflow has read-only permissions, no secret and no write token, and a test
