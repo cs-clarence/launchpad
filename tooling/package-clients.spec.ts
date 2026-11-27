@@ -72,6 +72,14 @@ describe("checkListing", () => {
         ).toHaveLength(5);
     });
 
+    it("accepts only a file named exactly LICENSE", () => {
+        for (const file of ["LICENSE.md", "LICENSE.txt", "sub/LICENSE"]) {
+            expect(checkListing(["package.json", "LICENSE", file])).toEqual([
+                `${file}: must not be packed`,
+            ]);
+        }
+    });
+
     it("needs a package.json and the LICENSE", () => {
         expect(checkListing(["index.mjs"])).toEqual([
             "package.json is missing",

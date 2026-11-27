@@ -231,7 +231,7 @@ npm:        @launchpadops/cli, @launchpadops/mcp, @launchpadops/sdk
 optional:   @launchpadops/contracts, @launchpadops/client-core
 Docker Hub: launchpadops/controller, launchpadops/worker
 optional:   launchpadops/dokku, launchpadops/mcp
-fallback:   ghcr.io/cs-clarence/launchpad-controller
+fallback:   ghcr.io/launchpad-kit/launchpad-controller
 ```
 
 Availability observations from public read-only checks, 2026-11-14:
@@ -246,8 +246,8 @@ Availability observations from public read-only checks, 2026-11-14:
 The user must confirm/register the selected namespaces through authenticated
 registry flows before release. The workspace rename was explicitly authorized;
 these old public checks do not establish availability. GitHub ownership does not confer npm or
-Docker Hub ownership. Confirm project license before any package publication;
-the copied generator's MIT notice is not a whole-project licensing decision.
+Docker Hub ownership. Licence: Apache-2.0 (root `LICENSE`); the copied generator's MIT notice is
+third-party attribution.
 
 Public npm packages need compiled JS/declarations and explicit export/file
 lists, not the scaffold's TypeScript source exports or `workspace:` references.
@@ -267,7 +267,7 @@ Before feature implementation: approve the deployment/trust topology. Configurab
 offline/SMTP provisioning is accepted as described above. The first compatibility
 spike resolves Elysia RC/auth mounts and the PostgreSQL queue choice.
 
-Before release: confirm namespace ownership, license, supported client/runtime
+Before release: confirm namespace ownership, supported client/runtime
 matrix, default quotas/TTL/retention, preview public/private defaults and operator
 backup/recovery policy. Suggested starting policy is explicit public preview
 opt-in and configurable finite TTLs; no values are hardcoded by this plan.
