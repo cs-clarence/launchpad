@@ -234,9 +234,13 @@ publishes. A tarball is never rebuilt after `build`.
 - **Dist-tags.** A tag is always passed explicitly with `--tag`, because `npm publish` without
   `--tag` defaults to `latest` (<https://docs.npmjs.com/cli/v12/commands/npm-publish/>; not
   re-fetched here, so the default is **unverified**). `--tag next` for pre-releases. For a stable
-  version, `latest` is set **per package** only if the version being published is greater than that
-  package's current `latest` (`npm view <name> dist-tags.latest`); otherwise the package is
-  published with `--tag retry` and the release is fixed forward. This stops a retry of an older
+  version, the tag is decided **per package** from the package's current `latest`
+  (`npm view <name> dist-tags.latest`), in three cases: (a) `latest` is **missing** (only
+  pre-releases or the `0.0.0-bootstrap.0` placeholder were published, so the first stable `0.1.0`
+  has nothing to resolve by default): the package is eligible for promotion and is published with
+  `--tag latest`; (b) the version is **lower** than the current `latest`: published with
+  `--tag retry` and the release is fixed forward; (c) the version is **higher or equal**:
+  `--tag latest`. Pre-releases never take `latest`. The spec asserts the missing case. This stops a retry of an older
   partial release from moving `latest` backwards, so packages never disagree. That
   `npm publish --tag` sets the tag at publish time without a separate dist-tag step is
   **unverified** in the docs checked (they describe `npm dist-tag` commands, which under OIDC need
@@ -250,9 +254,16 @@ publishes. A tarball is never rebuilt after `build`.
   silently. That these two commands expose the attestation exactly as needed is **unverified**;
   the rc.1 smoke confirms it.
 - **No new stable release on a partial one.** The `verify` job refuses to start a new stable
-  release while the previous stable release is partial: any of the five packages missing the
-  previous release version, or any of its image tags missing. The previous release is resolved
-  first (re-run it). The spec asserts this rule.
+  release while the previous stable release V is partial. "Complete" is checked on content, not on
+  whether tags exist, because floating tags from an older release still exist when V stopped
+  before moving them: every one of the five packages has V with matching integrity and
+  provenance, **and** the image tags `V`, `X.Y` (if V is the highest patch of its `X.Y`) and
+  `latest` (if V is the highest stable version) resolve to the **same digest** as `sha-<commit of
+  V>` (the staged digest; the commit is the one the tag `vV` points to), not merely exist. The
+  previous release is resolved first (re-run it). With no previous stable release (the first
+  `0.1.0`), there is nothing to check. The spec asserts this rule. Alternative, not chosen:
+  record completion per release as a final job step (a `release-complete` git note or GitHub
+  release object read by `verify`); it adds state that must itself be kept correct.
 - **Partial publish.** Publishing five packages is not atomic. If it stops part-way, some
   versions are public and some are not. Re-running completes the missing ones; if a published
   package is wrong, deprecate it and fix forward with a new version.
