@@ -91,7 +91,9 @@ following. Where a choice was made for the single-maintainer situation, the alte
 - Guard: `omni run check:versions` (`checkTags` in `tooling/versions.ts`) fails when a reachable
   `v<semver>` tag is newer than the manifests. An untagged bump commit passes, because the tag
   is made after the merge. The guard cannot catch a diverged bump before it is tagged; the
-  release checklist covers that. In CI without tags it does nothing.
+  release checklist covers that. It compares full SemVer 2.0.0 precedence (build metadata
+  ignored). With no git binary or no repository (a source tarball) it is skipped; any other
+  failure of the tag query fails the check with git's message; a checkout with no `v` tags passes.
 - `cog bump` creates the tag locally on the bump commit on the release branch, which is not the
   commit that lands on `main` after a squash or rebase merge. Do not push that tag. The
   maintainer deletes it and creates `v<semver>` **by hand on the merge commit on `main`**, after

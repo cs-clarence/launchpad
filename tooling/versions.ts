@@ -145,24 +145,69 @@ export function checkVersions(root: string): string[] {
     return problems;
 }
 
-const triple = (v: string) => v.split(/[-+]/)[0]!.split(".").map(Number);
+// SemVer 2.0.0 precedence (section 11): build metadata is ignored, a prerelease sorts before
+// its release, and prerelease identifiers compare numerically when both are numbers, otherwise
+// as text, with numbers below text and a shorter list below a longer one it prefixes.
+export function compareSemver(left: string, right: string): number {
+    const parse = (v: string) => {
+        const [core = "", pre] = v.split("+")[0]!.split(/-(.*)/s);
+        return {
+            core: core.split(".").map(Number),
+            pre: pre === undefined ? null : pre.split("."),
+        };
+    };
+    const a = parse(left);
+    const b = parse(right);
+    for (let i = 0; i < 3; i++) {
+        if (a.core[i]! !== b.core[i]!) return a.core[i]! < b.core[i]! ? -1 : 1;
+    }
+    if (a.pre === null || b.pre === null) {
+        return a.pre === b.pre ? 0 : a.pre === null ? 1 : -1;
+    }
+    for (let i = 0; i < Math.min(a.pre.length, b.pre.length); i++) {
+        const x = a.pre[i]!;
+        const y = b.pre[i]!;
+        if (x === y) continue;
+        const xn = /^\d+$/.test(x);
+        const yn = /^\d+$/.test(y);
+        if (xn && yn) return Number(x) < Number(y) ? -1 : 1;
+        if (xn !== yn) return xn ? -1 : 1;
+        return x < y ? -1 : 1;
+    }
+    return Math.sign(a.pre.length - b.pre.length);
+}
 
 // A `v<semver>` tag newer than the manifests means a bump moved the tag without running
 // `sync core` (a tooling-only `cog bump --auto`). A bump commit not yet tagged is fine.
 export function checkTags(root: string, tags: string[]): string[] {
     const current = sharedWorkspaces(root)[0]?.version;
     if (!current || !SEMVER.test(current)) return [];
-    const [a, b, c] = triple(current);
     return tags
-        .filter((tag) => SEMVER.test(tag.slice(1)) && tag.startsWith("v"))
-        .filter((tag) => {
-            const [x, y, z] = triple(tag.slice(1));
-            return x! > a! || (x === a && (y! > b! || (y === b && z! > c!)));
-        })
+        .filter((tag) => tag.startsWith("v") && SEMVER.test(tag.slice(1)))
+        .filter((tag) => compareSemver(tag.slice(1), current) > 0)
         .map(
             (tag) =>
                 `${tag} is newer than the manifests (${current}); bump with \`cog bump --version <X.Y.Z> --include-packages\``,
         );
+}
+
+export interface GitResult {
+    status: number | null;
+    stdout: string;
+    stderr: string;
+    error?: Error & { code?: string };
+}
+
+// Tag check from the outcome of `git tag --list 'v*' --merged HEAD`. No git binary or no
+// repository (a source tarball, a Docker build context) means there are no tags to compare, so
+// the check is skipped. Any other failure is reported rather than hiding the guard; a successful
+// query with no tags is valid.
+export function tagProblems(root: string, result: GitResult): string[] {
+    if (result.error?.code === "ENOENT") return [];
+    if (result.status === 0) return checkTags(root, result.stdout.split("\n"));
+    if (result.status !== null && /not a git repository/i.test(result.stderr)) return [];
+    const why = result.error ? String(result.error) : result.stderr.trim();
+    return [`could not list release tags (git exit ${result.status}): ${why}`];
 }
 
 function setVersion(file: string, version: string) {
@@ -214,7 +259,7 @@ if (import.meta.main) {
                 cwd: root,
                 encoding: "utf8",
             });
-            if (tags.status === 0) problems.push(...checkTags(root, tags.stdout.split("\n")));
+            problems.push(...tagProblems(root, tags));
             for (const problem of problems) console.error(problem);
             if (problems.length > 0) process.exit(1);
             console.log("Versions agree.");
