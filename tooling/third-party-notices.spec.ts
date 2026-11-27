@@ -2,7 +2,8 @@ import { describe, expect, it } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { isStale, render } from "./third-party-notices";
+import { readFileSync } from "node:fs";
+import { SHIPPED_DEV_ROOTS, collect, isStale, render } from "./third-party-notices";
 
 const script = path.join(import.meta.dirname, "third-party-notices.ts");
 const run = (...args: string[]) =>
@@ -17,6 +18,19 @@ describe("third-party notices", () => {
         expect(text).toContain("| a | 1.0.0 | MIT |");
         expect(text).toContain("| MIT | 1 |");
         expect(text).toContain("Bun");
+    });
+
+    it("lists the controller's shipped devDependencies and only those", () => {
+        const manifest = JSON.parse(
+            readFileSync(path.join(import.meta.dirname, "../apps/controller/package.json"), "utf8"),
+        );
+        const names = collect().map((entry) => entry.name);
+        for (const name of SHIPPED_DEV_ROOTS.controller!) {
+            expect(manifest.devDependencies[name]).toBeDefined();
+            expect(names).toContain(name);
+        }
+        for (const tool of ["vite", "typescript", "vitest", "@vitejs/plugin-react"])
+            expect(names).not.toContain(tool);
     });
 
     it("detects drift and a missing file, and accepts a current one", () => {
