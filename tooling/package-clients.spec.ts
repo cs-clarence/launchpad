@@ -1,5 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import {
+    resolveNode,
     checkListing,
     checkManifest,
     externalsFor,
@@ -97,5 +98,19 @@ describe("dependencies of a bundle", () => {
 
     it("keeps every one external, with its subpaths", () => {
         expect(externalsFor({ zod: "^4" })).toEqual(["zod", "zod/*"]);
+    });
+});
+
+describe("resolveNode", () => {
+    it("defaults to node on the PATH and keeps bare names as lookups", () => {
+        expect(resolveNode(undefined, "/work")).toBe("node");
+        expect(resolveNode("", "/work")).toBe("node");
+        expect(resolveNode("node22", "/work")).toBe("node22");
+    });
+
+    it("makes a path absolute against the caller's directory", () => {
+        expect(resolveNode("./node-tools/node", "/work")).toBe("/work/node-tools/node");
+        expect(resolveNode("../bin/node", "/work/sub")).toBe("/work/bin/node");
+        expect(resolveNode("/opt/node/bin/node", "/work")).toBe("/opt/node/bin/node");
     });
 });

@@ -82,6 +82,50 @@ describe("runtime-agnostic guard", () => {
         expect(scan("x.ts", text)).toEqual([expect.stringContaining("x.ts:7:")]);
     });
 
+    // [name, source, number of problems]: division versus regular expression contexts.
+    it.each([
+        ["division after a number", 'const size = 100 / Bun.file("x").size;', 1],
+        ["division after a float", "const s = 1.5 / Bun.size;", 1],
+        ["identifier named of", 'const of = 100;\nof / Bun.file("x").size;', 1],
+        ["property named return", "const a = x.return / Bun.size;", 1],
+        ["optional property named in", "const a = x?.in / Bun.size;", 1],
+        ["object key named of", "const a = { of: 1 }; const b = a.of / Bun.size;", 1],
+        ["division after call", "const a = f() / Bun.size;", 1],
+        ["division after index", "const a = xs[0] / Bun.size;", 1],
+        ["division after postfix", "const a = i++ / Bun.size;", 1],
+        ["division after a string", 'const a = "4" / Bun.size;', 1],
+        ["ASI makes this division", "const a = b\n/Bun/g.test(x);", 1],
+        ["division after }", "const a = {}\n/ Bun.size;", 1],
+        ["regex after =", "const re = /Bun.x/g;", 0],
+        ["regex after (", "x(/Bun.x/);", 0],
+        ["regex after return", "function f() { return /Bun.x/.test(a); }", 0],
+        ["regex after else", "if (a) b(); else /Bun.x/.test(c);", 0],
+        ["regex after if header", "if (ready) /Bun/.test(label);", 0],
+        ["regex after while header", "while (a) /Bun/.test(label);", 0],
+        ["regex after for header", "for (;;) /Bun/.test(label);", 0],
+        ["regex after for-of", "for (const x of /Bun/.exec(s)) {}", 0],
+        ["regex after typeof", "const a = typeof /Bun/;", 0],
+        ["regex after arrow", "const f = () => /Bun.x/.test(a);", 0],
+        ["regex with a slash in a class", "const re = /[/]Bun.x/;", 0],
+        ["regex with an escaped slash", "const re = /\\/Bun.x/;", 0],
+        ["division after a template", "const a = `${1}` / Bun.size;", 1],
+        ["real use after a regex", "const re = /x/; Bun.file(re);", 1],
+        ["real use after an if header", "if (a) Bun.file(x);", 1],
+    ])("%s", (_name, text, count) => {
+        expect(scan("x.ts", `${text}\n`)).toHaveLength(count);
+    });
+
+    it.each([
+        ["an unterminated block comment", "const a = 1; /* Bun.file()"],
+        ["an unterminated string literal", "const a = 'Bun.file();\nconst b = 1;"],
+        ["an unterminated template literal", "const a = `Bun.file()"],
+        ["an unterminated regular expression", "const a = /Bun.file();\nconst b = 1;"],
+    ])("fails closed on %s", (what, text) => {
+        const problems = scan("x.ts", text);
+        expect(problems).toHaveLength(1);
+        expect(problems[0]).toContain(what);
+    });
+
     it("ignores tests", () => {
         const dir = fixture({
             "p/src/a.spec.ts": 'import { test } from "bun:test";',

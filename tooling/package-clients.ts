@@ -34,6 +34,14 @@ export const TARGETS: Target[] = [
 
 const root = path.resolve(import.meta.dirname, "..");
 
+// The Node the smoke runs under: LAUNCHPAD_NODE, else `node` looked up on the PATH. A value with a
+// slash is a path and is made absolute against `cwd` (the caller's directory, not a temporary
+// one); a bare name stays a PATH lookup.
+export function resolveNode(value: string | undefined, cwd: string): string {
+    if (!value) return "node";
+    return value.includes("/") ? path.resolve(cwd, value) : value;
+}
+
 interface Manifest {
     name: string;
     version: string;

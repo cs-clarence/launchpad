@@ -21,28 +21,81 @@ function* sources(dir: string): Generator<string> {
 }
 
 interface Token {
-    kind: "id" | "str" | "punct";
+    kind: "id" | "num" | "str" | "punct";
     text: string;
     line: number;
+    // `)` only: it closes the header of an `if`, `while`, `for` or `with`.
+    controlClose?: boolean;
 }
 
-// Words after which a `/` starts a regular expression rather than dividing.
-const BEFORE_REGEX = new Set(["return", "typeof", "case", "in", "of", "delete", "void", "throw"]);
+export interface Tokens {
+    tokens: Token[];
+    // Text the tokenizer could not finish; the scan treats it as a failure, never as a pass.
+    errors: { line: number; what: string }[];
+}
+
+// Keywords after which a `/` starts a regular expression rather than dividing. (`of` is one only
+// as the separator of a `for` header; a word after `.` or `?.` is a property, not a keyword.)
+const BEFORE_REGEX = new Set([
+    "return",
+    "typeof",
+    "case",
+    "delete",
+    "void",
+    "throw",
+    "new",
+    "in",
+    "instanceof",
+    "yield",
+    "await",
+    "else",
+    "do",
+]);
+const CONTROL = new Set(["if", "while", "for", "with"]);
 const ID_START = /[\p{ID_Start}$_]/u;
 const ID_PART = /[\p{ID_Continue}$\u200c\u200d]/u;
+const COMPOUND = new Set(["?.", "??", "++", "--"]);
 
 // A small JavaScript/TypeScript tokenizer: comments are dropped, and the contents of string,
 // template and regular-expression literals are never tokens (only a plain string's text is kept,
 // so module specifiers can be checked). TypeScript 7 has no JavaScript API to use instead.
-export function tokenize(text: string): Token[] {
+//
+// A `/` is a regular expression after an operator, `(`, `,`, `;`, `=>` or a keyword, and a
+// division after a name, number, string, `]`, `}` or a `)` that is not a control header. After
+// `}` it is read as division on purpose: if that is wrong the regex body is scanned as code (a
+// possible false alarm), whereas the other mistake would hide real code inside a "regex".
+export function tokenize(text: string): Tokens {
     const tokens: Token[] = [];
+    const errors: Tokens["errors"] = [];
     // One entry per open template literal: the number of unclosed `{` inside its `${ }`.
     const templates: number[] = [];
+    // One entry per open `(`, `[` or `{`: what a `)` closing it means.
+    const brackets: { control: boolean; isFor: boolean }[] = [];
     let line = 1;
     let i = 0;
-    const push = (kind: Token["kind"], value: string) => tokens.push({ kind, text: value, line });
+    const push = (kind: Token["kind"], value: string, extra?: Partial<Token>) =>
+        tokens.push({ kind, text: value, line, ...extra });
+    const error = (at: number, what: string) => errors.push({ line: at, what });
+    const isProperty = (index: number) =>
+        tokens[index - 1]?.text === "." || tokens[index - 1]?.text === "?.";
+    const regexAllowed = () => {
+        const index = tokens.length - 1;
+        const previous = tokens[index];
+        if (!previous) return true;
+        if (previous.kind === "num" || previous.kind === "str") return false;
+        if (previous.kind === "id") {
+            if (isProperty(index)) return false;
+            if (previous.text === "of") {
+                return brackets[brackets.length - 1]?.isFor === true;
+            }
+            return BEFORE_REGEX.has(previous.text);
+        }
+        if (previous.text === ")") return previous.controlClose === true;
+        return !["]", "}"].includes(previous.text);
+    };
     const template = () => {
         // `i` is just after the opening backtick or the closing brace of a `${ }`.
+        const opened = line;
         while (i < text.length) {
             const c = text[i]!;
             if (c === "\n") line++;
@@ -54,6 +107,7 @@ export function tokenize(text: string): Token[] {
                 return;
             } else i++;
         }
+        error(opened, "an unterminated template literal");
     };
     while (i < text.length) {
         const c = text[i]!;
@@ -65,6 +119,7 @@ export function tokenize(text: string): Token[] {
             while (i < text.length && text[i] !== "\n") i++;
         } else if (c === "/" && text[i + 1] === "*") {
             const end = text.indexOf("*/", i + 2);
+            if (end < 0) error(line, "an unterminated block comment");
             const stop = end < 0 ? text.length : end + 2;
             for (const ch of text.slice(i, stop)) if (ch === "\n") line++;
             i = stop;
@@ -76,12 +131,14 @@ export function tokenize(text: string): Token[] {
                 value += text[i] ?? "";
                 i++;
             }
+            if (text[i] !== c) error(line, "an unterminated string literal");
             i++;
             push("str", value);
         } else if (c === "`") {
+            const opened = line;
             i++;
             template();
-            push("str", "");
+            tokens.push({ kind: "str", text: "", line: opened });
         } else if (c === "}" && templates.length > 0 && templates[templates.length - 1] === 0) {
             templates.pop();
             i++;
@@ -90,9 +147,13 @@ export function tokenize(text: string): Token[] {
             const start = i;
             while (i < text.length && ID_PART.test(text[i]!)) i++;
             push("id", text.slice(start, i));
-        } else if (/[0-9]/.test(c)) {
+        } else if (/[0-9]/.test(c) || (c === "." && /[0-9]/.test(text[i + 1] ?? ""))) {
+            const start = i;
+            i++;
             while (i < text.length && /[\w.]/.test(text[i]!)) i++;
-        } else if (c === "/" && regexAllowed(tokens[tokens.length - 1])) {
+            push("num", text.slice(start, i));
+        } else if (c === "/" && regexAllowed()) {
+            const opened = line;
             let inClass = false;
             i++;
             while (i < text.length && text[i] !== "\n" && (inClass || text[i] !== "/")) {
@@ -101,37 +162,53 @@ export function tokenize(text: string): Token[] {
                 else if (text[i] === "]") inClass = false;
                 i++;
             }
+            if (text[i] !== "/") error(opened, "an unterminated regular expression");
             i++;
             while (i < text.length && /[a-z]/i.test(text[i]!)) i++;
-            push("str", "");
+            tokens.push({ kind: "str", text: "", line: opened });
         } else {
             if (templates.length > 0) {
                 if (c === "{") templates[templates.length - 1]!++;
                 else if (c === "}") templates[templates.length - 1]!--;
             }
-            // `?.` and `??` are not the ternary `?`.
             const two = text.slice(i, i + 2);
-            const op = two === "?." || two === "??" ? two : c;
-            push("punct", op);
+            const op = COMPOUND.has(two) ? two : c;
+            if (c === "(") {
+                const previous = tokens[tokens.length - 1];
+                const index = tokens.length - 1;
+                const header =
+                    previous?.kind === "id" && !isProperty(index) && CONTROL.has(previous.text);
+                const forAwait =
+                    previous?.text === "await" &&
+                    tokens[index - 1]?.text === "for" &&
+                    !isProperty(index - 1);
+                brackets.push({
+                    control: header || forAwait,
+                    isFor: (header && previous?.text === "for") || forAwait,
+                });
+                push("punct", op);
+            } else if (c === "[" || c === "{") {
+                brackets.push({ control: false, isFor: false });
+                push("punct", op);
+            } else if (c === ")" || c === "]" || c === "}") {
+                const closed = brackets.pop();
+                push("punct", op, c === ")" ? { controlClose: closed?.control === true } : {});
+            } else push("punct", op);
             i += op.length;
         }
     }
-    return tokens;
-}
-
-function regexAllowed(previous: Token | undefined): boolean {
-    if (!previous) return true;
-    if (previous.kind === "id") return BEFORE_REGEX.has(previous.text);
-    if (previous.kind === "str") return false;
-    return ![")", "]", "}"].includes(previous.text);
+    return { tokens, errors };
 }
 
 // Problems as "file:line: message" for one file's text.
 export function scan(file: string, text: string): string[] {
-    const tokens = tokenize(text);
+    const { tokens, errors } = tokenize(text);
     const problems: string[] = [];
     const report = (line: number, what: string) =>
         problems.push(`${file}:${line}: ${what}; the npm packages must run on Node`);
+    for (const { line, what } of errors) {
+        problems.push(`${file}:${line}: ${what}; the file cannot be scanned, so it is not trusted`);
+    }
     const at = (index: number) => tokens[index]?.text;
     // Per open bracket, the `?` of a ternary still waiting for its `:`.
     const pending = [0];
