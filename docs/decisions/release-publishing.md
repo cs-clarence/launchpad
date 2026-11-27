@@ -161,16 +161,16 @@ follow-up.
 
 ### Job graph
 
-| Job             | `needs`         | `environment` | Permissions                                                                   | Purpose                                                                                                |
-| --------------- | --------------- | ------------- | ----------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------ |
-| `guard`         | none            | none          | none                                                                          | validate the tag from `env:`                                                                           |
-| `verify`        | `guard`         | none          | `contents: read`, `checks: read`                                              | checks above; no cache                                                                                 |
-| `build`         | `verify`        | none          | `contents: read`                                                              | build the tarballs once; upload them with `SHA256SUMS`; output the SHA-256 of `SHA256SUMS`             |
-| `stage`         | `build`         | `release`     | `contents: read`, `packages: write`, `id-token: write`, `attestations: write` | build each image once with attestations and push it by digest under the staging tag `sha-<GITHUB_SHA>` |
-| `smoke`         | `stage`         | none          | `contents: read`, `packages: read`                                            | pull the exact staged digest and smoke it; install and smoke the tarballs                              |
-| `npm-publish`   | `smoke`         | `release`     | `contents: read`, `id-token: write`                                           | publish the tarballs                                                                                   |
-| `image-publish` | `npm-publish`   | `release`     | `contents: read`, `packages: write`, `id-token: write`, `attestations: write` | retag the staged digest as `X.Y.Z`, `X.Y`, `latest`                                                    |
-| `post-verify`   | `image-publish` | none          | `contents: read`, `attestations: read`                                        | verify provenance of everything published                                                              |
+| Job             | `needs`         | `environment` | Permissions                                                                                               | Purpose                                                                                                                                      |
+| --------------- | --------------- | ------------- | --------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| `guard`         | none            | none          | none                                                                                                      | validate the tag from `env:`                                                                                                                 |
+| `verify`        | `guard`         | none          | `contents: read`, `checks: read`                                                                          | checks above; no cache                                                                                                                       |
+| `build`         | `verify`        | none          | `contents: read`                                                                                          | build the tarballs once; upload them with `SHA256SUMS`; output the SHA-256 of `SHA256SUMS`                                                   |
+| `stage`         | `build`         | `release`     | `contents: read`, `packages: write`, `id-token: write`, `attestations: write`, `artifact-metadata: write` | build each image once, push it by digest under the staging tag `sha-<GITHUB_SHA>`, then create the signed GitHub attestation for that digest |
+| `smoke`         | `stage`         | none          | `contents: read`, `packages: read`                                                                        | pull the exact staged digest and smoke it; install and smoke the tarballs                                                                    |
+| `npm-publish`   | `smoke`         | `release`     | `contents: read`, `id-token: write`                                                                       | publish the tarballs                                                                                                                         |
+| `image-publish` | `npm-publish`   | `release`     | `contents: read`, `packages: write`                                                                       | retag the staged digest as `X.Y.Z`, `X.Y`, `latest` (no new attestation: it is bound to the digest)                                          |
+| `post-verify`   | `image-publish` | none          | `contents: read`, `packages: read`                                                                        | verify the attestations and signatures of everything published                                                                               |
 
 - The workflow-level default is `permissions: {}`; each job states every permission it needs,
   including `contents: read` wherever it checks out code (a job that grants `checks: read` must
@@ -199,8 +199,12 @@ publishes. A tarball is never rebuilt after `build`.
 
 - No secrets other than the automatic `GITHUB_TOKEN`. No long-lived npm or registry token lives in
   the repository or the organisation.
-- `id-token: write` is granted only to `stage`, `npm-publish` and `image-publish`;
-  `packages: write` and `attestations: write` only to `stage` and `image-publish`.
+- `id-token: write` is granted only to `stage` and `npm-publish`; `attestations: write` and
+  `artifact-metadata: write` only to `stage`; `packages: write` only to `stage` and
+  `image-publish`. `post-verify` has `packages: read`, because GHCR creates the packages private on
+  the first push and it must read them before the maintainer flips visibility [S5];
+  `gh attestation verify` itself needs no write permission (**unverified**: confirm when writing
+  the job).
 
 ### npm
 
@@ -259,7 +263,19 @@ publishes. A tarball is never rebuilt after `build`.
   repository [S5]. The first push creates a **private** package [S5]; the maintainer flips
   visibility. `org.opencontainers.image.licenses` and `description` are also set [S5].
 - **Build once, push once, retag.** The `stage` job builds each image once with buildx
-  `provenance: mode=max` and `sbom: true`. Attestations cannot be added when loading the build
+  `provenance: mode=max` and `sbom: true`. These buildx settings attach BuildKit attestations to
+  the image; they are **not** the signed GitHub artifact attestation that `gh attestation verify`
+  checks. So `stage` also runs an explicit attestation step for each staged image digest:
+  `actions/attest` (`actions/attest-build-provenance` v4 is a wrapper around it) with
+  `subject-name` set to the fully qualified image name without a tag
+  (`ghcr.io/launchpad-kit/launchpad-<name>`), `subject-digest` set to the staged digest, and
+  `push-to-registry: true`, with `id-token: write`, `attestations: write` and
+  `artifact-metadata: write` (the permissions its README lists; the image push itself needs
+  `packages: write`) (<https://github.com/actions/attest>,
+  <https://github.com/actions/attest-build-provenance>). The storage record needs an
+  organisation-owned repository, which `launchpad-kit` is; whether the step still needs
+  `artifact-metadata: write` with `create-storage-record: false` is **unverified**. `post-verify`
+  verifies these attestations. Attestations cannot be added when loading the build
   into the runner's local image store (`load: true`, or the docker exporter) [S9], so the image
   is pushed to the registry, not loaded. `stage` pushes the attested image by digest under a
   single staging tag `sha-<GITHUB_SHA>`. If `sha-<GITHUB_SHA>` already exists (a re-run of `stage`
@@ -269,7 +285,8 @@ publishes. A tarball is never rebuilt after `build`.
   exact digest and smokes it. `X.Y.Z`, `X.Y` and `latest` are **retag-only** operations on
   that digest (`docker buildx imagetools create` or equivalent); nothing is rebuilt. That
   retagging keeps the attestations is **unverified**; confirm with `gh attestation verify` in
-  `post-verify` on the first release. A rebuilt or locally loaded image would have a different
+  `post-verify` on the first release (the attestation is bound to the digest, which retagging
+  does not change). A rebuilt or locally loaded image would have a different
   digest, so no claim is made that it matches.
 - GHCR does not enforce tag immutability (**unverified** in the pages checked, stated as a design
   assumption), so the workflow does. If `X.Y.Z` already exists (an earlier run pushed it and
@@ -277,9 +294,15 @@ publishes. A tarball is never rebuilt after `build`.
   digest of `sha-<GITHUB_SHA>`, which is stable across retries because the build is not repeated.
   If they are equal, skip only the `X.Y.Z` retag and continue to move the floating tags; if they
   differ, fail.
-- `X.Y.Z` is immutable. `X.Y` moves only after smoke passes and only for stable releases.
-  `latest` moves only for a stable version greater than the current latest stable (never
-  backwards). A pre-release gets only its exact tag and never moves a floating tag.
+- `X.Y.Z` is immutable. `X.Y` moves only after smoke passes, only for stable releases and only
+  when the version being released is greater than the version `X.Y` currently points to, so a
+  retry of 1.2.3 after 1.2.4 moved `1.2` does not move it backwards. Every image is built with the
+  label `org.opencontainers.image.version` set to its version; the job reads that label from the
+  image currently tagged `X.Y` (for example with `docker buildx imagetools inspect`; the exact
+  command and field are **unverified**) and compares the two as SemVer. If `X.Y` does not exist, it
+  is created. `latest` moves only for a stable version greater than the current latest stable
+  (never backwards), compared the same way. The partial-release rule (a new stable release is
+  refused while the previous one is partial) is the second guard. A pre-release gets only its exact tag and never moves a floating tag.
 - No-overwrite applies only to npm versions and immutable `X.Y.Z` image tags and the staging tag;
   floating tags move as described.
 
