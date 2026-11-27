@@ -37,6 +37,7 @@ import {
     generateSecrets,
     inspectLabel,
     InventoryError,
+    recoveryByHand,
     LABEL_APP,
     layoutFor as layoutForState,
     lines,
@@ -468,11 +469,8 @@ export interface Summary {
 }
 
 // destroy reads the same record and refuses it too, so it is not the way out.
-const unreadableMessage = (layout: Layout) =>
-    `${layout.file("state.json")} is unreadable. Restore it, or remove the project's resources by exact ` +
-    `name (docker ps -a --filter label=com.docker.compose.project=<project>, then docker rm -f, docker ` +
-    `volume rm, docker network rm and docker image rm on what you created), then delete ${layout.dir} ` +
-    "(its dokku/ child is root-owned: sudo rm -rf).";
+const unreadableMessage = (layout: Layout, project?: string) =>
+    `${layout.file("state.json")} is unreadable. Restore it. ${recoveryByHand(layout, project)}`;
 
 async function ensureIgnored(d: BaseDeps, layout: Layout): Promise<void> {
     const ignored = await d.run([
@@ -498,12 +496,19 @@ async function ensureIgnored(d: BaseDeps, layout: Layout): Promise<void> {
     }
 }
 
+const isExists = (error: unknown) =>
+    (error as { code?: unknown } | null)?.code === "EEXIST" ||
+    (error instanceof Error && error.message === "EEXIST");
+
+const raceMessage = (layout: Layout) =>
+    `${layout.file("state.json")} appeared while starting: is another up running? Nothing was changed.`;
+
 export async function up(d: Deps, options: UpOptions = {}): Promise<Summary> {
     const layout = layoutFor(d.repo);
     const preset = options.preset ?? "app";
     const aliases = options.aliases ?? true;
     const first = await readState({ d, layout, project: "", profile: DEV_PROFILE });
-    if (first.kind === "corrupt") throw new DeployError(unreadableMessage(layout));
+    if (first.kind === "corrupt") throw new DeployError(unreadableMessage(layout, options.project));
     const project = checkProject(options.project ?? first.state?.project ?? projectNameFor(d.repo));
     const c: Ctx = { d, layout, project, profile: DEV_PROFILE };
     await checkDocker(d);
@@ -511,7 +516,9 @@ export async function up(d: Deps, options: UpOptions = {}): Promise<Summary> {
 
     const dirStat = await checkDirectory(c);
     const record = await readState(c);
-    if (record.kind === "corrupt") throw new DeployError(unreadableMessage(layout));
+    if (record.kind === "corrupt") {
+        throw new DeployError(unreadableMessage(layout, options.project ?? first.state?.project));
+    }
     if (record.kind === "ok") checkRecord(c, record.state!);
     else if (dirStat && (await d.fs.readdir(layout.dir)).length > 0) {
         throw new DeployError(
@@ -520,8 +527,19 @@ export async function up(d: Deps, options: UpOptions = {}): Promise<Summary> {
     }
     if (record.kind !== "ok") await conflictsWithoutRecord(c);
 
+    // Refuse bad ports before anything is written.
+    const envText = await d.fs.readFile(layout.file("compose.env"));
+    const freshPorts = envText === null ? portsFrom(d.env) : null;
+
     // The record comes first: an interrupted up always leaves what destroy needs.
-    if (!dirStat) await d.fs.mkdir(layout.dir, 0o700);
+    if (!dirStat) {
+        try {
+            await d.fs.mkdir(layout.dir, 0o700);
+        } catch (error) {
+            if (!isExists(error)) throw error;
+            throw new DeployError(raceMessage(layout));
+        }
+    }
     if (record.kind !== "ok") {
         try {
             // Exclusive, so a concurrent up for another project cannot replace this record.
@@ -531,17 +549,15 @@ export async function up(d: Deps, options: UpOptions = {}): Promise<Summary> {
                 0o600,
                 true,
             );
-        } catch {
-            throw new DeployError(
-                `${layout.file("state.json")} appeared while starting: is another up running? Nothing was changed.`,
-            );
+        } catch (error) {
+            if (!isExists(error)) throw error;
+            throw new DeployError(raceMessage(layout));
         }
     }
 
-    const envText = await d.fs.readFile(layout.file("compose.env"));
     let ports: Ports;
     if (envText === null) {
-        ports = portsFrom(d.env);
+        ports = freshPorts!;
         await freePorts(c, ports, false);
         const env = composeEnv(layout, project, ports, generateSecrets(), d.version);
         await d.fs.writeFile(layout.file("compose.env"), renderEnv(env), 0o600, true);
@@ -631,7 +647,8 @@ function printSummary(d: BaseDeps, s: Summary): void {
 async function loadContext(d: BaseDeps, options: { project?: string }) {
     const layout = layoutFor(d.repo);
     const record = await readState({ d, layout, project: "", profile: DEV_PROFILE });
-    if (record.kind === "corrupt") throw new DeployError(unreadableMessage(layout));
+    if (record.kind === "corrupt")
+        throw new DeployError(unreadableMessage(layout, options.project));
     const project = checkProject(
         options.project ?? record.state?.project ?? projectNameFor(d.repo),
     );
@@ -646,7 +663,10 @@ export async function status(d: Deps, options: { project?: string } = {}): Promi
     if (!state) throw new DeployError(`No ${STATE_DIR}/state.json here: run up first.`);
     await checkDirectory(c);
     const envText = await d.fs.readFile(c.layout.file("compose.env"));
-    if (envText === null) throw new DeployError("compose.env is missing; run destroy, then up.");
+    if (envText === null)
+        throw new DeployError(
+            `compose.env is missing, so status cannot ask Compose. ${recoveryByHand(c.layout, c.project)}`,
+        );
     const ports = portsFromRecord(parseEnv(envText));
     d.log(`Project ${c.project}`);
     for (const service of SERVICES) {
@@ -717,7 +737,9 @@ export async function down(d: Deps, options: { project?: string } = {}): Promise
     }
     await checkDirectory(c);
     if ((await d.fs.stat(c.layout.file("compose.env"))) === null) {
-        throw new DeployError("compose.env is missing; run destroy.");
+        throw new DeployError(
+            `compose.env is missing, so Compose cannot stop the services and destroy refuses too. ${recoveryByHand(c.layout, c.project)}`,
+        );
     }
     const running = must(
         await docker(c, [

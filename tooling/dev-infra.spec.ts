@@ -514,7 +514,10 @@ describe("refusals remove nothing", () => {
     it("refuses a corrupt state.json in down and destroy", async () => {
         const before = await corrupt();
         expect(await fails(down(deps()))).toBeTruthy();
-        expect(await fails(destroy(deps()))).toContain("unreadable");
+        const message = await fails(destroy(deps()));
+        expect(message).toContain("unreadable");
+        expect(message).toContain("docker rm -f");
+        expect(message).toContain("sudo rm -rf");
         expect(host.snapshot()).toEqual(before);
         expect(host.nodes.has(`${host.dir}/credentials/token`)).toBe(true);
         expect(has("compose stop")).toEqual([]);
@@ -537,7 +540,11 @@ describe("refusals remove nothing", () => {
         await up(deps());
         host.nodes.delete(`${host.dir}/compose.env`);
         const before = host.snapshot();
-        expect(await fails(down(deps()))).toContain("compose.env is missing");
+        const message = await fails(down(deps()));
+        expect(message).toContain("compose.env is missing");
+        expect(message).not.toContain("run destroy");
+        expect(message).toContain("destroy refuses too");
+        expect(message).toContain("docker rm -f");
         expect(host.snapshot()).toEqual(before);
         expect(has("compose stop")).toEqual([]);
         expect(host.nodes.has(`${host.dir}/credentials/token`)).toBe(true);
@@ -615,7 +622,10 @@ describe("review findings", () => {
         host.deploySite(project, site);
         host.nodes.delete(`${host.dir}/compose.env`);
         const before = host.snapshot();
-        expect(await fails(destroy(deps()))).toContain("compose.env is missing");
+        const message = await fails(destroy(deps()));
+        expect(message).toContain("compose.env is missing");
+        expect(message).toContain("docker rm -f");
+        expect(message).toContain("sudo rm -rf");
         expect(host.snapshot()).toEqual(before);
         expect(has("apps:destroy")).toEqual([]);
     });
@@ -686,5 +696,55 @@ describe("seed", () => {
 
     it("asks for up first", async () => {
         expect(await fails(seedController(deps()))).toContain("run up first");
+    });
+});
+
+describe("up refusals before any write", () => {
+    it("leaves no state for a reserved port on a fresh up", async () => {
+        const before = host.snapshot();
+        const message = await fails(
+            up(deps({ env: { HOME: "/home/dev", DEV_POSTGRES_PORT: "5432" } })),
+        );
+        expect(message).toContain("reserved");
+        expect(host.snapshot()).toEqual(before);
+        expect(host.nodes.has(host.dir)).toBe(false);
+    });
+
+    it("tells the losing concurrent up apart when mkdir finds the directory", async () => {
+        const realMkdir = host.fs.mkdir;
+        host.fs.mkdir = async (p, mode) => {
+            host.addDir(p, 0o700);
+            return realMkdir(p, mode);
+        };
+        expect(await fails(up(deps()))).toContain("is another up running? Nothing was changed.");
+    });
+
+    it("tells the losing concurrent up apart when state.json appears first", async () => {
+        const realWrite = host.fs.writeFile;
+        host.fs.writeFile = async (p, data, mode, exclusive) => {
+            if (p.endsWith("/state.json")) host.addFile(p, "{}", 0o600);
+            return realWrite(p, data, mode, exclusive);
+        };
+        expect(await fails(up(deps()))).toContain("is another up running? Nothing was changed.");
+    });
+
+    it("does not call a non-EEXIST write failure a race", async () => {
+        const realWrite = host.fs.writeFile;
+        host.fs.writeFile = async (p, data, mode, exclusive) => {
+            if (p.endsWith("/state.json"))
+                throw Object.assign(new Error("EACCES"), { code: "EACCES" });
+            return realWrite(p, data, mode, exclusive);
+        };
+        await expect(up(deps())).rejects.toThrow("EACCES");
+    });
+
+    it("recovery text for a corrupt record uses --project, or does not guess a name", async () => {
+        await up(deps());
+        host.addFile(`${host.dir}/state.json`, "{not json");
+        const named = await fails(up(deps(), { project: "launchpad-dev-abcd1234" }));
+        expect(named).toContain("label=com.docker.compose.project=launchpad-dev-abcd1234");
+        const unnamed = await fails(up(deps()));
+        expect(unnamed).toContain("<project>");
+        expect(unnamed).not.toContain(project);
     });
 });

@@ -1085,6 +1085,19 @@ export interface TeardownHooks {
     afterImages?(c: Ctx, record: State | null): Promise<void>;
 }
 
+// The way out when Compose cannot be used: the remove command refuses, so name each resource.
+export const recoveryByHand = (layout: Layout, project?: string): string =>
+    `To recover by hand, ${
+        project
+            ? ""
+            : `find the project name (it is derived from this checkout's path; docker ps -a --filter ` +
+              `label=${LABEL_PROJECT} --format '{{.Label "${LABEL_PROJECT}"}}' lists the names, and ` +
+              "the one starting with the dev prefix and matching this checkout is yours), then "
+    }remove the project's resources by exact name ` +
+    `(docker ps -a --filter label=${LABEL_PROJECT}=${project ?? "<project>"}, then docker rm -f, docker volume rm, ` +
+    `docker network rm and docker image rm on what it lists), then delete ${layout.dir} ` +
+    "(its dokku/ child is root-owned: sudo rm -rf).";
+
 // Removes everything the tool created for this checkout; see the module comment. Every removal is
 // gated by a label check or an exact name derived from the recorded project.
 export async function teardown(
@@ -1122,7 +1135,8 @@ export async function teardown(
     }
     if (record.kind === "corrupt") {
         throw new DeployError(
-            `${layout.file("state.json")} is unreadable; ${profile.removeCommand} refuses to guess.`,
+            `${layout.file("state.json")} is unreadable; ${profile.removeCommand} refuses to guess. ` +
+                recoveryByHand(layout, project),
         );
     }
     if (record.kind === "none") {
@@ -1149,10 +1163,8 @@ export async function teardown(
     // not stuck half-way.
     if (hasResources && (await d.fs.stat(layout.file("compose.env"))) === null) {
         throw new DeployError(
-            `compose.env is missing, so Compose cannot remove project ${project}. Nothing was removed. ` +
-                `Remove its resources by exact name (docker ps -a --filter label=${LABEL_PROJECT}=${project}, ` +
-                "then docker rm -f, docker volume rm and docker network rm on what it lists), then run " +
-                `${profile.removeCommand} again.`,
+            `compose.env is missing, so Compose cannot remove project ${project} and ` +
+                `${profile.removeCommand} refuses. Nothing was removed. ${recoveryByHand(layout, project)}`,
         );
     }
     let dokku = resources.containers.find((x) => x.service === "dokku");
@@ -1241,7 +1253,9 @@ export async function teardown(
             must(await docker(c, ["rm", "-f", container.id]), "Removing a container");
         }
         if ((await d.fs.stat(layout.file("compose.env"))) === null) {
-            throw new DeployError("compose.env is missing, so Compose cannot remove the project.");
+            throw new DeployError(
+                `compose.env is missing, so Compose cannot remove project ${project}. ${recoveryByHand(layout, project)}`,
+            );
         }
         must(
             await compose(c, ["down", "--volumes", "--remove-orphans"]),
