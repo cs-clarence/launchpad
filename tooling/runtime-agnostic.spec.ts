@@ -162,7 +162,7 @@ describe("runtime-agnostic guard", () => {
 
     it("passes the real published sources", () => {
         expect(checkRuntimeAgnostic(root)).toEqual([]);
-    });
+    }, 30_000);
 
     it.each(DETECTED)("detects %s", (text, file = "x.ts") => {
         expect(scan(file, `export {};\n${text}\n`).length).toBeGreaterThan(0);

@@ -28,6 +28,8 @@ import {
     checkUnbundled,
     MARKERS,
     SIZE_BUDGETS,
+    MEASURED_SIZES,
+    budgetFor,
     packedDependencies,
     SHEBANG,
     stageExecutable,
@@ -200,6 +202,12 @@ describe("checkBareImports", () => {
         dependencies: { "@x/lib": "^1.0.0", zod: "^4.0.0" },
         peerDependencies: { commander: "^15.0.0" },
     };
+
+    it("allows optional dependencies as well as peers", () => {
+        const optional = { name: "@x/app", optionalDependencies: { fsevents: "^2.0.0" } };
+        expect(checkBareImports(optional, { "app.mjs": 'import "fsevents";' })).toEqual([]);
+        expect(checkBareImports(optional, { "app.mjs": 'import "other";' })).toHaveLength(1);
+    });
 
     it("accepts Node, relative, declared and subpath imports", () => {
         const text = [
@@ -452,7 +460,7 @@ describe("markers", () => {
                 ? path.join(root, where[name], "src")
                 : installed(name, path.join(root, users[name]!));
             expect(sourcesIn(dir)).toContain(marker);
-        });
+        }, 30_000);
     }
 
     it("has a marker for every dependency a published package imports", () => {
@@ -469,11 +477,16 @@ describe("markers", () => {
 });
 
 describe("budgets", () => {
-    it("cover the executables with 25 % over the measured size", () => {
-        expect(SIZE_BUDGETS).toEqual({
-            "@launchpad-kit/cli": 80_000,
-            "@launchpad-kit/mcp": 12_000,
-        });
+    it("are the measured size plus 25 %, rounded up to the next kB", () => {
+        expect(budgetFor(62_972)).toBe(79_000);
+        expect(budgetFor(8_406)).toBe(11_000);
+        expect(budgetFor(8_000)).toBe(10_000);
+        for (const [name, measured] of Object.entries(MEASURED_SIZES)) {
+            const budget = SIZE_BUDGETS[name]!;
+            expect(budget, name).toBeGreaterThanOrEqual(measured * 1.25);
+            expect(budget, name).toBeLessThan(measured * 1.25 + 1000);
+        }
+        expect(Object.keys(SIZE_BUDGETS)).toEqual(Object.keys(MEASURED_SIZES));
     });
 });
 

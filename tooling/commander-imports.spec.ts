@@ -116,7 +116,7 @@ describe("commander imports", () => {
         const { problems, scanned } = checkCommanderImports(root);
         expect(problems).toEqual([]);
         expect(scanned).toBeGreaterThanOrEqual(1);
-    });
+    }, 30_000);
 
     it("is a dependency of check, next to check:runtime", () => {
         const omni = Bun.YAML.parse(

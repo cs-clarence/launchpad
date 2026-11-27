@@ -388,12 +388,19 @@ export const MARKERS: Record<string, string> = {
     zod: "$ZodStringFormat",
 };
 
-// The most `.mjs` bytes an executable may hold: its measured size plus 25 %. An inlined
-// dependency is far larger than the headroom; real growth raises the number in review.
-export const SIZE_BUDGETS: Record<string, number> = {
-    "@launchpad-kit/cli": 80_000,
-    "@launchpad-kit/mcp": 12_000,
+// What each executable's `.mjs` measured when the budgets were set (bytes).
+export const MEASURED_SIZES: Record<string, number> = {
+    "@launchpad-kit/cli": 62_972,
+    "@launchpad-kit/mcp": 8_406,
 };
+
+// The rule: the measured size plus 25 %, rounded up to the next kB. An inlined dependency is far
+// larger than the headroom; real growth raises the measured size (and so the budget) in review.
+export const budgetFor = (measured: number) => Math.ceil((measured * 1.25) / 1000) * 1000;
+
+export const SIZE_BUDGETS: Record<string, number> = Object.fromEntries(
+    Object.entries(MEASURED_SIZES).map(([name, size]) => [name, budgetFor(size)]),
+);
 
 // Everything that shows a package bundles what it should import: an import of a package it does
 // not declare (`.mjs` and `.d.ts`), a size over its budget, or a dependency's marker in its files.
@@ -471,11 +478,16 @@ export function checkBareImports(
         name?: string;
         dependencies?: Record<string, string>;
         peerDependencies?: Record<string, string>;
+        optionalDependencies?: Record<string, string>;
     },
     files: Record<string, string>,
 ): string[] {
     const declared = new Set(
-        Object.keys({ ...manifest.dependencies, ...manifest.peerDependencies }),
+        Object.keys({
+            ...manifest.dependencies,
+            ...manifest.peerDependencies,
+            ...manifest.optionalDependencies,
+        }),
     );
     const problems: string[] = [];
     for (const [file, text] of Object.entries(files)) {

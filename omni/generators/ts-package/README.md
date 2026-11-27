@@ -15,7 +15,7 @@ automatic tag pushes. Version/lockfile synchronization must be added before
 using it to release packages.
 A published CLI never bundles its dependencies: a `script` with `published` set (or one that can
 be used as a library) externalizes every declared dependency, and is built as `dist/cli.mjs`,
-named by `bin_name` (an object `bin`, so the command is not the package name). A plain
+named by `bin_name`, else the package name (an object `bin`, so the command is not forced to be the package name). A published script always gets the `node` shebang: `published` is asked first, and `shebang_executor` is only asked for a script that is not published (a validator cannot see other inputs; the templates default it to `node`). A plain
 `script` that is not published may still bundle. A script that is not a library has no `index`
 entry. Set `published` only when a publish step exists: in this repository `published` makes the
 source manifest non-private, and the apps (`apps/cli`, `apps/mcp`) stay private and are packed
