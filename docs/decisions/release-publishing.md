@@ -132,8 +132,8 @@ The workflow first checks that:
 
 - Trusted publishing (OIDC) needs npm CLI >= 11.5.1 and Node >= 22.14.0 [S1]. The repository floor
   is Node 22.12, which is lower, so the publish job uses Node 24 (or >= 22.14) **and** an npm
-  >= 11.5.1 (Node 24 ships a new enough npm; the job checks `npm --version`). It never runs
-  trusted publishing on Node 22.12 with an upgraded npm. The spec asserts both minimums.
+    > = 11.5.1 (Node 24 ships a new enough npm; the job checks `npm --version`). It never runs
+    > trusted publishing on Node 22.12 with an upgraded npm. The spec asserts both minimums.
 - It needs GitHub-hosted runners, `id-token: write`, a `package.json` `repository.url` that
   exactly matches the GitHub repository, and a trusted publisher whose workflow file name
   (including `.yaml`) and optional environment name match exactly; all fields are case-sensitive
