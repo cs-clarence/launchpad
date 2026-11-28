@@ -98,7 +98,7 @@ describe("release PR workflow privilege split", () => {
         expect(wf.permissions).toEqual({});
         expect(prepare.permissions).toEqual({ contents: "read" });
         expect(push.permissions).toEqual({ contents: "write" });
-        expect(openPr.permissions).toEqual({ "pull-requests": "write", actions: "write" });
+        expect(openPr.permissions).toEqual({ "pull-requests": "write" });
         expect(prepare.environment).toBeUndefined();
         expect(push.environment).toBe("release-pr");
         expect(openPr.environment).toBe("release-pr");
@@ -141,7 +141,9 @@ describe("release PR workflow privilege split", () => {
 
     it("runs only these git subcommands in the push job, and nothing from the artifact as code", () => {
         const used = new Set<string>();
-        for (const m of runsOf(push).matchAll(/\bgit (?:-c "[^"]*" )?([a-z-]+)(?: ([a-z-]+))?/g)) {
+        for (const m of runsOf(push).matchAll(
+            /\bgit (?:-c "[^"]*" (?:\\\s*\n\s*)?)?([a-z-]+)(?: ([a-z-]+))?/g,
+        )) {
             used.add(m[1] === "bundle" ? `bundle ${m[2]}` : m[1]!);
         }
         expect([...used].toSorted()).toEqual(
@@ -162,14 +164,17 @@ describe("release PR workflow privilege split", () => {
     });
 
     it("pushes only the release branch, by an explicit refspec, and never a tag", () => {
-        const pushes = commandsOf(push).filter((c) => /\bpush\b/.test(c));
-        expect(pushes).toEqual([
-            'git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic $auth" push origin "$COMMIT:refs/heads/release/$VERSION"',
-        ]);
-        expect(code).not.toMatch(
-            /--tags|--force|--mirror|\+HEAD|--all|--delete|refs\/tags|git tag/,
+        // One create-only push of one explicit branch refspec, from the validated commit object.
+        const text = runsOf(push);
+        expect(text.match(/^\s*push\s/gm) ?? []).toHaveLength(1);
+        expect(text).toMatch(
+            /git -c "http\.https:\/\/github\.com\/\.extraheader=AUTHORIZATION: basic \$auth" \\\n\s+push --force-with-lease="refs\/heads\/release\/\$VERSION:" origin \\\n\s+"\$COMMIT:refs\/heads\/release\/\$VERSION"/,
         );
-        expect(code).not.toMatch(/push[^\n]*(--|\+)/);
+        expect(code).not.toMatch(
+            /--tags|--force(?!-with-lease)|--mirror|\+HEAD|--all|--delete|refs\/tags|git tag/,
+        );
+        // The lease is empty: it permits a create and refuses an existing branch.
+        expect(code).toContain('--force-with-lease="refs/heads/release/$VERSION:"');
     });
 
     it("gives the token to one step of push and two of open-pr, none elsewhere", () => {
@@ -177,7 +182,6 @@ describe("release PR workflow privilege split", () => {
         expect(holders.map(({ id, step }) => `${id}: ${step.name}`)).toEqual([
             "push: Push the release branch only",
             "open-pr: Open the pull request",
-            "open-pr: Start CI on the branch",
         ]);
         for (const job of Object.values(wf.jobs)) {
             expect(job.env?.GH_TOKEN).toBeUndefined();
@@ -203,15 +207,11 @@ describe("release PR workflow privilege split", () => {
         expect(commands).toContain(
             '--title "chore(release): v$VERSION" --body-file "$RUNNER_TEMP/data/body.md"',
         );
-        expect(stepOf(openPr, "Start CI").run).toBe(
-            'gh workflow run ci.yaml --repo "$GITHUB_REPOSITORY" --ref "release/$VERSION"',
-        );
-        expect(indexOf(openPr, "Open the pull request")).toBeLessThan(indexOf(openPr, "Start CI"));
-        for (const command of commandsOf(openPr).filter((c) => c.startsWith("gh "))) {
-            expect(command).toMatch(
-                /^gh (pr create --repo "\$GITHUB_REPOSITORY" --base main|workflow run ci\.yaml --repo)/,
-            );
-        }
+        // CI is not dispatched: the pull request's own run starts in the approval-required state
+        // and the maintainer approves it in the merge box.
+        expect(commandsOf(openPr).join("\n")).not.toContain("gh workflow run");
+        for (const command of commandsOf(openPr).filter((c) => c.startsWith("gh ")))
+            expect(command).toMatch(/^gh pr create --repo "\$GITHUB_REPOSITORY" --base main/);
     });
 
     it("checks the commit message and the title before anything is pushed", () => {

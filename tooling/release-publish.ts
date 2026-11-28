@@ -20,6 +20,7 @@ import {
     floatingMoves,
     npmDistTag,
     npmPublishAction,
+    parseDistTags,
     parseInspect,
     PUBLISH_ORDER,
     REGISTRY,
@@ -74,10 +75,21 @@ export function inspect(ref: string, exec: Runner = run): Inspected | null {
 
 export const imageRef = (name: string, tag: string) => `${REGISTRY}${name}:${tag}`;
 
-function tagOnNpm(name: string, tag: string): string | null {
-    const done = run("npm", ["view", name, `dist-tags.${tag}`]);
+// The whole dist-tag map, not `dist-tags.<tag>`: npm resolves a bare package spec through
+// `latest` first, so a package that has `next` but no `latest` (every package before its first
+// stable release) would look as if it had no tag at all.
+function npmDistTags(name: string): Record<string, string> {
+    const done = run("npm", ["view", name, "dist-tags", "--json"]);
     if (done.code !== 0) throw new Error(`npm view ${name} failed:\n${done.err}`);
-    return done.out.trim() || null;
+    try {
+        return parseDistTags(done.out);
+    } catch (error) {
+        throw new Error(`npm view ${name} dist-tags: ${(error as Error).message}`);
+    }
+}
+
+function tagOnNpm(name: string, tag: string): string | null {
+    return npmDistTags(name)[tag] ?? null;
 }
 
 export function publishNpm(dir: string, version: string) {

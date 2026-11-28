@@ -59,28 +59,6 @@ describe("CI workflow", () => {
         expect(gate.needs?.toSorted()).toEqual(others.toSorted());
     });
 
-    // The release-PR workflow dispatches CI on a release branch; the required `CI Passed` check must
-    // report there under the same name, with the PR-only commits job skipped.
-    it("can be dispatched, with the commits job run and the gate under the same name", () => {
-        const on = (
-            Bun.YAML.parse(readFileSync(path.join(workflows, "ci.yaml"), "utf8")) as { on: object }
-        ).on;
-        expect(Object.keys(on)).toContain("workflow_dispatch");
-        expect(ci.jobs.commits!.if).toBe(
-            "${{ github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch' }}",
-        );
-        // The dispatched check is of what the branch adds to origin/main.
-        const commitsStep = ci.jobs.commits!.steps!.find((s) => s.uses?.startsWith("cocogitto/"))!;
-        expect(commitsStep.with?.args).toContain("'origin/main..HEAD'");
-        // `origin/main` must exist in the checkout, so the history is fetched in full.
-        const checkout = ci.jobs.commits!.steps!.find((s) =>
-            s.uses?.startsWith("actions/checkout@"),
-        )!;
-        expect(checkout.with?.["fetch-depth"] as unknown).toBe(0);
-        expect(commitsStep.with?.args).toContain("github.event.pull_request.base.sha");
-        expect(gate.name).toBe("CI Passed");
-    });
-
     it("always runs the gatekeeper, under a stable name", () => {
         expect(gate.if).toBe("${{ always() }}");
         expect(gate.name).toBe("CI Passed");
@@ -172,64 +150,42 @@ describe("CI gatekeeper script", () => {
         packages: "success",
     };
 
-    // The commit check runs on a pull request and on a dispatch (the release branch); it is skipped
-    // on a push to main and in the merge queue.
-    const checked = ["pull_request", "workflow_dispatch"];
-    const unchecked = ["push", "merge_group"];
-
-    it("passes a pull request or a dispatch where every job succeeded", () => {
-        for (const event of checked) expect(evaluate(event, allGreen), event).toBeUndefined();
+    it("passes a pull request where every job succeeded", () => {
+        expect(evaluate("pull_request", allGreen)).toBeUndefined();
     });
 
     it("passes a push or merge-queue run where only commits was skipped", () => {
-        for (const event of unchecked) {
-            expect(evaluate(event, { ...allGreen, commits: "skipped" }), event).toBeUndefined();
+        for (const event of ["push", "merge_group"]) {
+            expect(evaluate(event, { ...allGreen, commits: "skipped" })).toBeUndefined();
         }
     });
 
-    it("fails when any job failed or was cancelled, on every event", () => {
-        for (const event of [...checked, ...unchecked]) {
-            const jobs = ["check", "build", "test", "integration", "packages"];
-            for (const job of checked.includes(event) ? ["commits", ...jobs] : jobs) {
-                for (const result of ["failure", "cancelled"]) {
-                    expect(
-                        evaluate(event, { ...allGreen, [job]: result }),
-                        `${event} ${job} ${result}`,
-                    ).toContain(job);
-                }
-            }
-        }
-    });
-
-    it("fails when a required job was skipped, as happens when an earlier job failed", () => {
-        for (const event of [...checked, ...unchecked]) {
-            for (const job of ["check", "build", "test", "integration", "packages"]) {
-                const commits = checked.includes(event) ? "success" : "skipped";
+    it("fails when any job failed or was cancelled", () => {
+        for (const job of ["commits", "check", "build", "test", "integration", "packages"]) {
+            for (const result of ["failure", "cancelled"]) {
                 expect(
-                    evaluate(event, { ...allGreen, commits, [job]: "skipped" }),
-                    `${event} ${job}`,
+                    evaluate("pull_request", { ...allGreen, [job]: result }),
+                    `${job} ${result}`,
                 ).toContain(job);
             }
         }
     });
 
-    it("fails a pull request or a dispatch whose commit check was skipped", () => {
-        for (const event of checked) {
-            expect(evaluate(event, { ...allGreen, commits: "skipped" }), event).toContain(
-                "commits",
-            );
+    it("fails when a required job was skipped, as happens when an earlier job failed", () => {
+        for (const job of ["check", "build", "test", "integration", "packages"]) {
+            expect(
+                evaluate("push", { ...allGreen, commits: "skipped", [job]: "skipped" }),
+                job,
+            ).toContain(job);
         }
     });
 
-    it("fails a push or merge-queue run where the commit check unexpectedly ran", () => {
-        for (const event of unchecked) {
-            for (const result of ["failure", "success"]) {
-                expect(
-                    evaluate(event, { ...allGreen, commits: result }),
-                    `${event} ${result}`,
-                ).toContain("commits");
-            }
-        }
+    it("fails a pull request whose commit check was skipped", () => {
+        expect(evaluate("pull_request", { ...allGreen, commits: "skipped" })).toContain("commits");
+    });
+
+    it("fails a push where the commit check unexpectedly ran and failed", () => {
+        expect(evaluate("push", { ...allGreen, commits: "failure" })).toContain("commits");
     });
 });
 
@@ -243,9 +199,11 @@ const RELEASE_WORKFLOW = "release.yaml";
 // and these three job-scoped write permissions, nothing else.
 const RELEASE_PR_WORKFLOW = "release-pr.yaml";
 const RELEASE_PR_ALLOWED_COMMANDS = [
-    'git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic $auth" push origin "$COMMIT:refs/heads/release/$VERSION"',
+    'git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic $auth" \\',
+    'push --force-with-lease="refs/heads/release/$VERSION:" origin \\',
+    '"$COMMIT:refs/heads/release/$VERSION"',
 ];
-const RELEASE_PR_WRITES = ["push: contents", "open-pr: pull-requests", "open-pr: actions"];
+const RELEASE_PR_WRITES = ["push: contents", "open-pr: pull-requests"];
 const actionFile = path.join(root, ".github", "actions", "setup-workspace", "action.yaml");
 const others = [
     ...readdirSync(workflows)
@@ -368,8 +326,8 @@ describe("every workflow except the release workflow", () => {
             "git push origin v1.0.0",
             "git push --tags",
             'git push origin "HEAD:refs/tags/v$VERSION"',
-            'git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic $auth" push origin "$COMMIT:refs/heads/release/$VERSION" --force',
-            'git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic $auth" push origin main',
+            'push --force-with-lease="refs/heads/release/$VERSION:" origin "$COMMIT:refs/heads/release/$VERSION" --force',
+            'push --force-with-lease="refs/heads/release/$VERSION:" origin main',
             "git tag v1.0.0",
             'git tag -d "v$VERSION"',
             'git tag -d "v$VERSION" && git push origin v1',

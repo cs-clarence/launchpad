@@ -236,17 +236,27 @@ jobs:
             rc=0
             out=$(diff "$work/old" "$work/new") || rc=$?
             [ "$rc" -le 1 ] || fail "diff failed for $file"
+            removed=0
+            added=0
             while IFS= read -r line; do
               case "$line" in
-                "< "*) [[ "${line:2}" =~ $re ]] || fail "$file: only the version line may change" ;;
+                "< "*)
+                  [[ "${line:2}" =~ $re ]] || fail "$file: only the version line may change"
+                  removed=$((removed + 1))
+                  ;;
                 "> "*)
                   [[ "${line:2}" =~ $re ]] || fail "$file: only the version line may change"
                   [[ "$line" == *\"$VERSION\"* ]] || fail "$file: the new version line is not $VERSION"
+                  added=$((added + 1))
                   ;;
                 [0-9]* | "---") ;;
                 *) fail "$file: unexpected diff output" ;;
               esac
             done <<< "$out"
+            # Every version line that goes out must be replaced: a removal without its
+            # replacement would pass otherwise. bun.lock holds one per workspace.
+            [ "$removed" -ge 1 ] && [ "$removed" -eq "$added" ] ||
+              fail "$file: version lines were removed without replacements (removed $removed, added $added)"
           done
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "commit=$commit" >> "$GITHUB_OUTPUT"
@@ -267,7 +277,11 @@ jobs:
             echo "::error::the branch release/$VERSION exists already, or the lookup failed (exit $rc)"
             exit 1
           fi
-          git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic $auth" push origin "$COMMIT:refs/heads/release/$VERSION"
+          # An empty lease makes this create-only: a branch that appeared after the lookup above
+          # is refused instead of fast-forwarded.
+          git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic $auth" \
+            push --force-with-lease="refs/heads/release/$VERSION:" origin \
+            "$COMMIT:refs/heads/release/$VERSION"
 
   open-pr:
     name: Open the pull request
@@ -277,7 +291,6 @@ jobs:
     timeout-minutes: 15
     permissions:
       pull-requests: write
-      actions: write
     env:
       VERSION: ${{ needs.push.outputs.version }}
     steps:
@@ -301,9 +314,6 @@ jobs:
           gh pr create --repo "$GITHUB_REPOSITORY" --base main --head "release/$VERSION" \
             --title "chore(release): v$VERSION" --body-file "$RUNNER_TEMP/data/body.md"
 
-      # A PR opened with the workflow token starts no pull_request run, so CI is dispatched on the
-      # branch; its `CI Passed` check lands on the head commit (unverified).
-      - name: Start CI on the branch
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: gh workflow run ci.yaml --repo "$GITHUB_REPOSITORY" --ref "release/$VERSION"
+      # A pull request opened with the workflow token starts its `pull_request` run in the
+      # approval-required state. A user with write access approves it in the merge box
+      # ("Approve workflows to run"); that run's `CI Passed` is the merge gate.

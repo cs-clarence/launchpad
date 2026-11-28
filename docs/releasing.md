@@ -302,19 +302,21 @@ publishes. Three jobs:
    is refused). Every blob is read with `git cat-file` and compared with `diff`, and a failing
    command stops the job. It then checks that `release/<version>` does not exist and pushes
    **only** `<validated commit>:refs/heads/release/<version>`; the data is never checked out.
-3. `open-pr` (`pull-requests` and `actions` write; runs no repository code): opens the PR
-   `chore(release): v<version>` and dispatches `ci.yaml` on the branch.
+3. `open-pr` (`pull-requests: write`; runs no repository code): opens the PR
+   `chore(release): v<version>`.
 
-Then you review the PR, wait for `CI Passed`, merge, and create the one tag `v<version>` by hand on
-the merge commit as in step 8; the tag starts the release workflow. The manual steps of the
-checklist (step 7) remain the fallback.
+Then you approve the PR's pending workflow run (**Approve workflows to run** in the merge box: a
+PR opened with the workflow token starts its run in the approval-required state), review the PR,
+wait for `CI Passed`, merge, and create the one tag `v<version>` by hand on the merge commit as in
+step 8; the tag starts the release workflow. The manual steps of the checklist (step 7) remain the
+fallback.
 
 **The PR body** (the changelog text, so mentions and closing keywords) comes from the `prepare`
-job and is accepted as it is, cut at 60,000 characters by the tooling and refused above 65,000 bytes
+job and is accepted as it is, cut at 60,000 bytes by the tooling and refused above 65,000 bytes
 by `open-pr`; treat it as text to read, not as instructions. `open-pr` holds only
-`pull-requests: write` and `actions: write`: `gh pr create` uses GraphQL, and the REST page for
-creating a pull request names no further permission, so `pull-requests: write` is expected to
-suffice, which is unverified (add `contents: read` if it does not).
+`pull-requests: write`: `gh pr create` uses GraphQL, and the REST page for creating a pull request
+names no further permission, so `pull-requests: write` is expected to suffice, which is unverified
+(add `contents: read` if it does not).
 
 **What to check in the PR.** The workflow validates the paths, but you are the reviewer: confirm
 that the diff touches only versions, the lockfile and changelogs (it should read as a version bump
@@ -327,20 +329,21 @@ its deployment branch policy limited to `main`, and **no required reviewers** be
 maintainer decision): `push` and `open-pr` each declare `environment: release-pr`, so a configured
 reviewer would have to approve twice per run. GitHub runs the workflow file from the branch it is
 dispatched on, so a branch with an edited `release-pr.yaml` is the trust boundary; with the policy
-the jobs that hold write scopes cannot run from such a branch.
+the jobs that hold write scopes cannot run from such a branch. The policy binds only jobs that
+still reference the environment, so a dispatched file that drops it is outside the policy: trust in
+who may dispatch, and in reviewed workflow changes, remains part of the boundary.
 
 **When it goes wrong.** If a run stops after the push, or the PR was closed without merging,
 delete the branch `release/<version>` and dispatch again (the workflow refuses an existing
 branch). A base lower than the latest tag (for example 1.5.0 when `v2.0.0-rc.1` exists) is
 accepted on purpose, for backports; the registry rules still apply.
 
-A PR opened with the workflow token starts no `pull_request` run, which is why the workflow
-dispatches CI itself. `ci.yaml` accepts `workflow_dispatch`, and under it the `commits` job checks
-the branch's commits against `origin/main`. That the dispatched run's `CI Passed` satisfies the
-ruleset on the PR is unverified, including when the PR's own `pull_request` run fails or is absent
-(two check runs with the same name on one commit); if it does not, close and reopen the PR. A
-compromised `prepare` job can write Actions cache entries scoped to `main`; this is accepted, as
-`ci.yaml` already does the same.
+A PR opened with the workflow token starts its `pull_request` run in the approval-required state;
+you start it with **Approve workflows to run**, and that run's `CI Passed` is the merge gate. The
+workflow no longer dispatches CI: a `workflow_dispatch` run is not a required status check the
+ruleset honours (unverified, but the reason the dispatch and its `actions: write` were removed), and
+the approval click is needed either way. A compromised `prepare` job can write Actions cache
+entries scoped to `main`; this is accepted, as `ci.yaml` already does the same.
 
 ## Release channels
 

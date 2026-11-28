@@ -307,9 +307,29 @@ describe("the bump commit's paths", () => {
 describe("the PR body limit", () => {
     it("cuts a long changelog below GitHub's limit and says so", () => {
         const body = prBody("0.1.0", "stable", "x".repeat(BODY_LIMIT + 5000));
+        expect(Buffer.byteLength(body)).toBeLessThanOrEqual(BODY_LIMIT);
         expect(body.length).toBeLessThan(65536);
         expect(body).toContain("The changelog is cut here");
         expect(prBody("0.1.0", "stable", "short")).not.toContain("cut here");
+    });
+
+    it("counts bytes, not characters, and never splits a character", () => {
+        // 40,000 `é` are 80,000 bytes: above the byte budget but below the character count.
+        const body = prBody("0.1.0", "stable", "é".repeat(40000));
+        expect(Buffer.byteLength(body)).toBeLessThanOrEqual(BODY_LIMIT);
+        expect(body).toContain("The changelog is cut here");
+        expect(body).not.toContain("\uFFFD");
+        expect(
+            body.endsWith(
+                "é" + "\n\n(The changelog is cut here; see CHANGELOG.md in this PR.)\n",
+            ) || body.includes("é\n\n(The changelog is cut here"),
+        ).toBe(true);
+    });
+
+    it("leaves a short unicode changelog whole", () => {
+        const body = prBody("0.1.0", "stable", "## v0.1.0\n- café ☕\n");
+        expect(body).toContain("café ☕");
+        expect(body).not.toContain("cut here");
     });
 });
 

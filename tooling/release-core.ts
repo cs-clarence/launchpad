@@ -41,6 +41,22 @@ export const xyOf = (version: string) => version.split(".").slice(0, 2).join("."
 // points at a greater version, publishing with it would move it backwards, so the version is
 // published with `retry` instead and the release is fixed forward. Trusted publishing covers
 // `npm publish` only, so there is no `npm dist-tag add`, hence no alias across channels.
+// The dist-tag map of `npm view <name> dist-tags --json`. Read whole, never `dist-tags.<tag>`:
+// npm resolves a bare spec through `latest` first, so a package with `next` but no `latest` would
+// otherwise look untagged.
+export function parseDistTags(out: string): Record<string, string> {
+    if (out.trim() === "") return {};
+    const parsed: unknown = JSON.parse(out);
+    if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed))
+        throw new Error(`dist-tags is not a map: ${out.slice(0, 200)}`);
+    const tags: Record<string, string> = {};
+    for (const [tag, version] of Object.entries(parsed)) {
+        if (typeof version !== "string") throw new Error(`dist-tag ${tag} is not a string`);
+        tags[tag] = version;
+    }
+    return tags;
+}
+
 export function npmDistTag(
     version: string,
     currentOnChannelTag: string | null | undefined,

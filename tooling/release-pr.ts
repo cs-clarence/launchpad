@@ -95,12 +95,24 @@ export function planRelease(
 export const BODY_LIMIT = 60000;
 
 // The PR description: what the PR is, what merging does not do, and the changelog.
+const CUT_NOTE = "\n\n(The changelog is cut here; see CHANGELOG.md in this PR.)";
+
+// Cuts on a code-point boundary, so a truncated body is still valid UTF-8 and never splits a
+// character (`BODY_LIMIT` is counted in bytes, which is what GitHub limits).
+function truncateUtf8(text: string, maxBytes: number): string {
+    let bytes = 0;
+    let end = 0;
+    for (const char of text) {
+        const size = Buffer.byteLength(char);
+        if (bytes + size > maxBytes) break;
+        bytes += size;
+        end += char.length;
+    }
+    return text.slice(0, end);
+}
+
 export function prBody(version: string, channel: string, changelog: string): string {
-    const log =
-        changelog.length > BODY_LIMIT
-            ? `${changelog.slice(0, BODY_LIMIT)}\n\n(The changelog is cut here; see CHANGELOG.md in this PR.)`
-            : changelog;
-    return [
+    const head = [
         `Release **v${version}** (${channel} channel), opened by the release PR workflow.`,
         "",
         "Merging this pull request does **not** publish anything. After it is merged and `CI Passed` is",
@@ -109,9 +121,11 @@ export function prBody(version: string, channel: string, changelog: string): str
         "",
         "## Changelog",
         "",
-        log.trim(),
-        "",
     ].join("\n");
+    const full = `${head}${changelog.trim()}\n`;
+    if (Buffer.byteLength(full) <= BODY_LIMIT) return full;
+    const budget = BODY_LIMIT - Buffer.byteLength(head) - Buffer.byteLength(CUT_NOTE) - 1;
+    return `${head}${truncateUtf8(changelog.trim(), Math.max(0, budget))}${CUT_NOTE}\n`;
 }
 
 // What the bump commit may touch. The push job of the workflow (which cannot run repository code)

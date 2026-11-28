@@ -158,19 +158,18 @@ from dependencies ever holds a token that can write:
   not exist and pushes **only** `<validated commit>:refs/heads/release/<version>` with an explicit
   refspec; the data is never checked out. It can write a branch under
   `release/`; `main` and `refs/tags/v*` are ruleset-protected, so it cannot touch them.
-- `open-pr` (`pull-requests: write` and `actions: write` only; `environment: release-pr`) runs no
-  repository code, has no checkout and installs nothing: `gh pr create` with the body as a file
-  (`--body-file`, never interpolated) and a title built from the validated version, then
-  `gh workflow run ci.yaml --ref release/<version>`. The "Allow GitHub Actions to create and
-  approve pull requests" setting therefore only ever matters to a job that runs no untrusted code.
+- `open-pr` (`pull-requests: write` only; `environment: release-pr`) runs no repository code, has
+  no checkout and installs nothing: `gh pr create` with the body as a file (`--body-file`, never
+  interpolated) and a title built from the validated version. The "Allow GitHub Actions to create
+  and approve pull requests" setting therefore only ever matters to a job that runs no untrusted
+  code. CI is not dispatched by this workflow (below).
   The PR body (mentions, closing keywords) comes from `prepare` and is accepted, size-capped
   (the tooling cuts it at 60,000 characters and `open-pr` refuses more than 65,000 bytes).
   `push` and `open-pr` each declare `environment: release-pr`, so a required reviewer on it would
   approve twice; the recommendation is the `main`-only branch policy and no required reviewers
   (a maintainer decision).
 
-`tooling/ci.spec.ts` carves out exactly the one push command line and the three job-scoped write
-scopes; `tooling/release-pr.spec.ts` asserts the rest, runs the real validation step against
+`tooling/ci.spec.ts` carves out exactly the one push command and the two job-scoped write scopes; `tooling/release-pr.spec.ts` asserts the rest, runs the real validation step against
 repositories built to be refused (changed workflow, extra line in a manifest, deletion, mode
 change, two commits, a merge commit, another message, wrong ref, wrong channel...) and compares
 the shell allowlist, version-line shapes and channel names with the repository's.
@@ -180,14 +179,18 @@ branch with an edited `release-pr.yaml` runs the edited file, with that file's p
 guard `refs/heads/main` in the first step is not a boundary against that. What limits it is who may
 push such a branch and dispatch it (the maintainer) and, recommended, the `release-pr`
 environment: set its deployment branch policy to `main` only (a maintainer step; the environment
-is created on first use with no protection). With that policy `push` and `open-pr`, the only jobs
-that hold write scopes, cannot run from another branch even if the file is edited.
+is created on first use with no protection). That policy protects only jobs that still reference
+the environment: a maintainer who dispatches an edited file that drops `environment:` is outside
+it, so trust in who may dispatch and in reviewed workflow changes is part of the boundary. With
+the policy in place, `push` and `open-pr`, the only jobs that hold write scopes, cannot run from
+another branch even if the file is edited.
 
-A PR created with the workflow token starts no `pull_request` run, so CI is dispatched on the
-branch (`workflow_dispatch` is exempt from that rule: documented behaviour, unverified here).
-`ci.yaml` accepts `workflow_dispatch`; under it the `commits` job runs against `origin/main..HEAD`
-(it is skipped only on a push to main and in the merge queue) and the gatekeeper expects `success`
-for pull requests and dispatches, `skipped` for pushes and the merge queue. A lower base than the
+A pull request created with the workflow token starts its `pull_request` run in the
+**approval-required** state (documented behaviour; [GitHub docs](https://docs.github.com/en/actions/how-tos/write-workflows/choose-when-workflows-run/trigger-a-workflow)).
+A user with write access approves it with "Approve workflows to run" in the merge box, and that
+run's `CI Passed` is the merge gate. CI is therefore **not** dispatched: a `workflow_dispatch` run
+would not be a required check the ruleset honours, and the extra `actions: write` scope it needed
+bought nothing. `ci.yaml` is unchanged from the normal pull request path. A lower base than the
 latest tag (1.5.0 when `v2.0.0-rc.1` exists) is **accepted on purpose**, for backports; the
 registry's rules and the no-regression rule still apply and the reviewer sees the version in the
 PR. A dead branch, or one whose PR was closed unmerged, is removed by deleting `release/<version>`
@@ -639,9 +642,11 @@ Where `release.yaml` is more specific than, or differs from, the text above:
   <range>` works with ranges `<prev>..v<new>` and `..v<new>` and needs no `cog.toml` remote
   setting; a range lists a section per tag inside it. Cocogitto (libgit2) reads `user.name` and
   `user.email` from git config files only (`GIT_AUTHOR_*` and `GIT_CONFIG_COUNT` were not
-  honoured), so the workflow sets them in its ephemeral checkout. Unverified: that the dispatched
-  CI run's `CI Passed` satisfies the ruleset on the PR; the `ci.yaml` jobs under a dispatch on a
-  `release/` branch (only the gatekeeper logic is tested); that the PR can be created with
+  honoured), so the workflow sets them in its ephemeral checkout. The CI dispatch was removed
+  (see the amendment): the approval-required `pull_request` run is the merge gate.
+  Unverified: that the approval-required run appears and that approving it satisfies the ruleset
+  on the PR; that `workflow_dispatch` check runs are not honoured by rulesets (the reason the
+  dispatch was removed); that the PR can be created with
   the setting on; the pre-release range and the remote changelog template on the real repository's
   history; `git push` with the `http.extraheader` form against GitHub; `jq` on the runner.
 - Release PR workflow, security review: the workflow is now three jobs (`prepare` read-only,
@@ -651,10 +656,8 @@ Where `release.yaml` is more specific than, or differs from, the text above:
   reported SC2209 on an unquoted `kind=patch` (quoted now) and SC2164 on a bare `cd` in two steps
   (left: `bash -e` stops on a failing `cd`, and the specs forbid `||` there). The commit-message
   check runs in `prepare` before anything is pushed and `push` re-checks the exact message.
-  Unverified, added: whether the dispatched `CI Passed` (a second check run with the same name on the
-  same SHA) behaves correctly with the ruleset when the PR's own `pull_request` run fails or is
-  absent; whether `open-pr` needs `contents: read` for `gh pr create` (only the two scopes the
-  decision names are granted); `git bundle verify`, `git fetch` from a bundle and
+  Unverified, added: whether `open-pr` needs `contents: read` for `gh pr create` (only
+  `pull-requests: write` is granted); `git bundle verify`, `git fetch` from a bundle and
   `ls-remote --exit-code` with the `http.extraheader` form on the runner (run here only against
   local repositories); that the `release-pr` environment is created automatically on first use.
 - Third review of the release PR workflow: the validation no longer fails open (blobs are read with
@@ -663,7 +666,8 @@ Where `release.yaml` is more specific than, or differs from, the text above:
   version, a changelog or any file above 2 MiB is refused, directory components are
   `[a-z0-9-]+` (crafted trees with `..` and `.git` entries are refused in the spec), the commit
   object is checked exactly, and `push` pushes the validated commit by SHA instead of checking out
-  the data. `open-pr` keeps only `pull-requests: write` and `actions: write`: `gh pr create` uses
+  the data. `open-pr` keeps only `pull-requests: write` (the CI dispatch and its `actions: write`
+  were removed): `gh pr create` uses
   GraphQL and the REST page for creating a pull request names no `contents` permission, so this is
   expected to suffice and is **unverified**. Added to the unverified list: the `diff` and `git
   cat-file` behaviour on a real runner beyond the local fixtures; that `ls-remote --exit-code`

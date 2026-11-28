@@ -17,6 +17,7 @@ import {
     IMAGES,
     labelVersion,
     npmDistTag,
+    parseDistTags,
     npmPublishAction,
     parseInspect,
     partialReleaseProblems,
@@ -76,6 +77,18 @@ describe("tag guard", () => {
         const base = "1.2.3-rc.1";
         expect(checkTag(`v${base}${"0".repeat(128 - base.length)}`)).toEqual([]);
         expect(checkTag(`v${base}${"0".repeat(129 - base.length)}`)[0]).toContain("128");
+    });
+});
+
+describe("the dist-tag map", () => {
+    it("reads the whole map, so `next` counts without a `latest`", () => {
+        expect(parseDistTags('{"next":"0.2.0-rc.2"}')).toEqual({ next: "0.2.0-rc.2" });
+        expect(parseDistTags("")).toEqual({});
+    });
+
+    it("refuses anything that is not a map of strings", () => {
+        for (const out of ['["a"]', '"x"', "3", '{"next":2}', '{"next":null}'])
+            expect(() => parseDistTags(out), out).toThrow();
     });
 });
 
