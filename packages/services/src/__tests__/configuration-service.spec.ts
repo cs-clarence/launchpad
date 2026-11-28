@@ -74,9 +74,12 @@ describe("the app_setting table", () => {
     });
 
     it("moves updated_at forward when a row changes", async () => {
+        // A fixed past timestamp, so the strict comparison cannot depend on two statements
+        // landing in different milliseconds.
+        const inserted = new Date("2000-01-01T00:00:00.000Z");
         await testDb.db
             .insertInto("app_setting")
-            .values({ key: "development", value: "false" })
+            .values({ key: "development", value: "false", updated_at: inserted })
             .execute();
         const before = await testDb.db
             .selectFrom("app_setting")
@@ -93,6 +96,7 @@ describe("the app_setting table", () => {
             .select("updated_at")
             .where("key", "=", "development")
             .executeTakeFirstOrThrow();
+        expect(before.updated_at.getTime()).toBe(inserted.getTime());
         expect(after.updated_at.getTime()).toBeGreaterThan(before.updated_at.getTime());
     });
 });
