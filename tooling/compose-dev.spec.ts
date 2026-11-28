@@ -117,6 +117,9 @@ describe("docker-compose.dev.yaml", () => {
         expect(problems).toContain("adminer needs a healthcheck");
         expect(problems).toContain("adminer needs a memory limit");
         expect(problems).toContain("adminer keeps no data");
+        const small = structuredClone(render());
+        small.services.adminer.mem_limit = "256m";
+        expect(assertDev(small).join("\n")).toContain("above 1 GiB");
     });
 
     it("keeps the PostgreSQL, Dokku and router parts equal to docker-compose.yaml", () => {

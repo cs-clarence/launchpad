@@ -102,7 +102,9 @@ describe("planning", () => {
         expect(portsFrom({ DEV_POSTGRES_PORT: "40000" }).postgres).toBe(40000);
         expect(() => portsFrom({ DEV_POSTGRES_PORT: "80" })).toThrow(/DEV_POSTGRES_PORT/);
         expect(() => portsFrom({ DEV_POSTGRES_PORT: "x" })).toThrow(/whole number/);
-        expect(() => portsFrom({ DEV_POSTGRES_PORT: "33181" })).toThrow(/different/);
+        expect(() => portsFrom({ DEV_POSTGRES_PORT: "33181" })).toThrow(
+            /DEV_POSTGRES_PORT and DEV_DOKKU_HTTP_PORT/,
+        );
         for (const reserved of ["3000", "5432", "55432", "32180", "32443"]) {
             expect(() => portsFrom({ DEV_POSTGRES_PORT: reserved })).toThrow(/reserved/);
         }
@@ -334,25 +336,80 @@ describe("up", () => {
         expect(has("network:set")).toEqual([]);
     });
 
-    it("upgrades a record written before a port existed, without destroying it", async () => {
-        await up(deps());
-        // A `compose.env` from before Adminer: drop its port key, as an older tool would have written it.
+    const stripPorts = (...keys: string[]) => {
         const recorded = parseEnv(host.text(`${host.dir}/compose.env`)!);
-        delete recorded.DEV_ADMINER_PORT;
+        for (const key of keys) delete recorded[key];
         const text = Object.entries(recorded)
             .map(([key, value]) => `${key}=${value}\n`)
             .join("");
-        host.addFile(`${host.dir}/compose.env`, text);
+        host.addFile(`${host.dir}/compose.env`, text, 0o600);
+        return recorded;
+    };
+
+    it("upgrades a record written before a port existed, without destroying it", async () => {
+        await up(deps());
+        // A `compose.env` from before Adminer: drop its port key, as an older tool would have written it.
+        const recorded = stripPorts("DEV_ADMINER_PORT");
         const token = host.text(`${host.dir}/credentials/token`);
+
+        // `status` works against the un-upgraded record and does not rewrite it.
+        await status(deps());
+        expect(parseEnv(host.text(`${host.dir}/compose.env`)!).DEV_ADMINER_PORT).toBeUndefined();
 
         await up(deps());
 
         const after = parseEnv(host.text(`${host.dir}/compose.env`)!);
         expect(after.DEV_ADMINER_PORT).toBe("38080");
         expect(after.POSTGRES_PASSWORD).toBe(recorded.POSTGRES_PASSWORD!);
+        expect(after.DEV_AUTH_SECRET).toBe(recorded.DEV_AUTH_SECRET!);
         expect(host.text(`${host.dir}/credentials/token`)).toBe(token);
-        // `status` reads the same record and must not need the key either.
-        await status(deps());
+        expect(host.text(`${host.dir}/compose.env.next`)).toBeNull();
+    });
+
+    it("upgrades a record missing more than one port key", async () => {
+        await up(deps());
+        const recorded = stripPorts("DEV_ADMINER_PORT", "DEV_DOKKU_SSH_PORT");
+        await up(deps());
+        const after = parseEnv(host.text(`${host.dir}/compose.env`)!);
+        expect(after.DEV_ADMINER_PORT).toBe("38080");
+        expect(after.DEV_DOKKU_SSH_PORT).toBe("33222");
+        expect(after.POSTGRES_PASSWORD).toBe(recorded.POSTGRES_PASSWORD!);
+    });
+
+    it("lets the environment choose a missing port, and keeps it in the record", async () => {
+        await up(deps());
+        stripPorts("DEV_ADMINER_PORT");
+        await up(deps({ env: { HOME: "/home/dev", DEV_ADMINER_PORT: "39090" } }));
+        expect(parseEnv(host.text(`${host.dir}/compose.env`)!).DEV_ADMINER_PORT).toBe("39090");
+    });
+
+    it("leaves the record alone when the upgrade's port is busy or clashes", async () => {
+        await up(deps());
+        stripPorts("DEV_ADMINER_PORT");
+        const before = host.text(`${host.dir}/compose.env`);
+        host.busyPorts.add(38080);
+        expect(await fails(up(deps()))).toContain("adminer port 38080");
+        expect(host.text(`${host.dir}/compose.env`)).toBe(before);
+
+        host.busyPorts.delete(38080);
+        const clashing = parseEnv(before!);
+        clashing.DEV_ROUTER_DATA_PORT = "38080";
+        host.addFile(
+            `${host.dir}/compose.env`,
+            Object.entries(clashing)
+                .map(([key, value]) => `${key}=${value}\n`)
+                .join(""),
+            0o600,
+        );
+        expect(await fails(up(deps()))).toContain("DEV_ADMINER_PORT and DEV_ROUTER_DATA_PORT");
+        expect(parseEnv(host.text(`${host.dir}/compose.env`)!).DEV_ADMINER_PORT).toBeUndefined();
+    });
+
+    it("refuses a truncated record instead of writing a ports-only one", async () => {
+        await up(deps());
+        host.addFile(`${host.dir}/compose.env`, "", 0o600);
+        expect(await fails(up(deps()))).toContain("looks truncated");
+        expect(host.text(`${host.dir}/compose.env`)).toBe("");
     });
 
     it("refuses a busy port before writing secrets", async () => {

@@ -31,6 +31,17 @@ export const DEV_EXAMPLE: Env = {
 };
 
 export const DEV_SERVICES = ["adminer", "dokku", "mailpit", "postgres", "router"];
+const bytesOfMemory = (value: unknown): number | undefined => {
+    const text = String(value ?? "")
+        .trim()
+        .toLowerCase();
+    const m = /^([0-9.]+)\s*([bkmg])?$/.exec(text);
+    if (!m) return undefined;
+    const unit = { b: 1, k: 1024, m: 1024 ** 2, g: 1024 ** 3 }[
+        (m[2] ?? "b") as "b" | "k" | "m" | "g"
+    ];
+    return Number(m[1]) * unit;
+};
 const LOOPBACK = "127.0.0.1";
 const DIGEST = /@sha256:[0-9a-f]{64}$/;
 const BUILT = ["dokku", "router"];
@@ -142,6 +153,13 @@ export function assertDev(model: Json, env: Env = DEV_EXAMPLE): string[] {
     for (const name of ["dokku", "postgres", "adminer"]) {
         if (!services[name]?.mem_limit) fail(`${name} needs a memory limit.`);
     }
+    // Above PHP's own memory_limit = 1G, so a dump import hits PHP's guard rather than the cgroup.
+    // The raw file says `1536m`; `docker compose config` renders bytes, so compare sizes.
+    const adminerMemory = bytesOfMemory(services.adminer?.mem_limit);
+    if (adminerMemory !== undefined && adminerMemory <= 1024 ** 3)
+        fail(
+            `adminer: mem_limit must be above 1 GiB (PHP's own memory_limit), not ${services.adminer?.mem_limit}.`,
+        );
     for (const name of Object.keys(model.networks ?? {})) {
         if (model.networks[name]?.internal) fail(`${name} is internal: the host must reach it.`);
     }

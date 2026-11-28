@@ -1318,6 +1318,7 @@ export async function teardown(
         "inventory.json",
         "inventory.json.next",
         "state.json.next",
+        "compose.env.next",
         "state.json",
     ]) {
         await d.fs.unlink(layout.file(name));

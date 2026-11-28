@@ -152,36 +152,93 @@ export function portsFrom(env: Record<string, string | undefined>): Ports {
     for (const name of Object.keys(PORT_KEYS) as (keyof Ports)[]) {
         ports[name] = checkPort(PORT_KEYS[name], env[PORT_KEYS[name]], PORT_DEFAULTS[name]);
     }
-    if (new Set(Object.values(ports)).size !== Object.values(ports).length) {
-        throw new DeployError("The host ports must all be different.");
+    return distinctPorts(ports);
+}
+
+// Two services on one port would make Compose fail to bind; name the keys rather than the numbers.
+function distinctPorts(ports: Ports): Ports {
+    const seen = new Map<number, string>();
+    const clashes: string[] = [];
+    for (const [name, port] of Object.entries(ports) as [keyof Ports, number][]) {
+        const key = PORT_KEYS[name];
+        const other = seen.get(port);
+        if (other) clashes.push(`${other} and ${key}`);
+        else seen.set(port, key);
+    }
+    if (clashes.length > 0) {
+        throw new DeployError(`Two services share a host port: ${clashes.join("; ")}.`);
     }
     return ports;
 }
 
 // A record written before a port existed keeps working: the missing key takes its default and `up`
 // writes it back. Anything else wrong is still an error, because the record is then untrustworthy.
-function portsFromRecord(env: Record<string, string>): Ports {
+function portsFromRecord(
+    recorded: Record<string, string>,
+    overrides: Record<string, string | undefined>,
+): Ports {
     const ports = {} as Ports;
     for (const name of Object.keys(PORT_KEYS) as (keyof Ports)[]) {
         const key = PORT_KEYS[name];
-        const raw = env[key];
+        const raw = recorded[key];
         if (raw === undefined || raw === "") {
-            ports[name] = PORT_DEFAULTS[name];
+            // An older record: the environment may still choose the new port, else take the default.
+            ports[name] = checkPort(key, overrides[key], PORT_DEFAULTS[name]);
             continue;
         }
         const n = Number(raw);
         if (!Number.isInteger(n) || n < 1024 || n > 65535) {
-            throw new DeployError(`compose.env has no valid ${key}; run destroy, then up again.`);
+            throw new DeployError(
+                `compose.env has no valid ${key}. Edit ${STATE_DIR}/compose.env (or run down first) and set a free port.`,
+            );
         }
         ports[name] = n;
     }
-    return ports;
+    return distinctPorts(ports);
 }
 
 export const missingPortKeys = (env: Record<string, string>): string[] =>
     Object.entries(PORT_KEYS)
         .filter(([, key]) => env[key] === undefined || env[key] === "")
         .map(([, key]) => key);
+
+// Keys no record may lose: without them the rendered settings are unusable, and a truncated file
+// must fail loudly instead of being "upgraded" into a ports-only record.
+export const RECORD_KEYS = [
+    "POSTGRES_PASSWORD",
+    "LAUNCHPAD_ALIAS_INSTANCE_ID",
+    "LAUNCHPAD_APPS_DOMAIN",
+    "LAUNCHPAD_APPS_NETWORK",
+    "DOKKU_DATA_DIR",
+    "DEV_PROJECT",
+    "LAUNCHPAD_VERSION",
+    "DEV_AUTH_SECRET",
+] as const;
+
+export function assertRecordSecrets(recorded: Record<string, string>): void {
+    const lost = RECORD_KEYS.filter((key) => !recorded[key]);
+    if (lost.length > 0)
+        throw new DeployError(
+            `${STATE_DIR}/compose.env is missing ${lost.join(", ")}; it looks truncated or hand-edited. ` +
+                `Run down, then up, or restore the file and run up again.`,
+        );
+}
+
+// Atomic: a kill leaves the old record or the complete new one, never a torn file.
+async function rewriteComposeEnv(
+    d: BaseDeps,
+    layout: Layout,
+    recorded: Record<string, string>,
+    ports: Ports,
+): Promise<void> {
+    const next = layout.file("compose.env.next");
+    const filled = withPortDefaults(recorded);
+    for (const name of Object.keys(PORT_KEYS) as (keyof Ports)[]) {
+        filled[PORT_KEYS[name]] = String(ports[name]);
+    }
+    await d.fs.writeFile(next, renderEnv(filled), 0o600, true);
+    await d.fs.rename(next, layout.file("compose.env"));
+}
 
 // Writes back any port key an older record lacks, so the file stays complete for later runs.
 export function withPortDefaults(env: Record<string, string>): Record<string, string> {
@@ -215,6 +272,7 @@ export const DEV_PROFILE: Profile = {
         "inventory.json",
         "inventory.json.next",
         "state.json.next",
+        "compose.env.next",
     ]),
     imageTags: (project) => Object.values(projectImages(project)),
     imageLabel: IMAGE_LABEL,
@@ -310,7 +368,7 @@ export function appEnv(
     aliases: boolean,
     baseImage = nginxBaseImage(),
 ): AppEnv {
-    const ports = portsFromRecord(compose);
+    const ports = portsFromRecord(compose, {});
     const common = {
         DATABASE_URL: `postgresql://launchpad:${compose.POSTGRES_PASSWORD}@127.0.0.1:${ports.postgres}/launchpad`,
         LAUNCHPAD_DATA_DIR: layout.file("data"),
@@ -590,17 +648,12 @@ export async function up(d: Deps, options: UpOptions = {}): Promise<Summary> {
         await d.fs.writeFile(layout.file("compose.env"), renderEnv(env), 0o600, true);
     } else {
         const recorded = parseEnv(envText);
-        ports = portsFromRecord(recorded);
-        if (missingPortKeys(recorded).length > 0) {
-            // An older record: keep its secrets, add the new default, and leave the file complete.
-            await d.fs.writeFile(
-                layout.file("compose.env"),
-                renderEnv(withPortDefaults(recorded)),
-                0o600,
-                false,
-            );
-        }
+        const missing = missingPortKeys(recorded);
+        if (missing.length > 0) assertRecordSecrets(recorded);
+        ports = portsFromRecord(recorded, d.env);
+        // Check the ports before writing, so a failed upgrade leaves the record as it was.
         await freePorts(c, ports, true);
+        if (missing.length > 0) await rewriteComposeEnv(d, layout, recorded, ports);
     }
     const key = await d.fs.stat(layout.file("credentials/id_ed25519"));
     const pub = await d.fs.stat(layout.file("credentials/id_ed25519.pub"));
@@ -705,7 +758,7 @@ export async function status(d: Deps, options: { project?: string } = {}): Promi
         throw new DeployError(
             `compose.env is missing, so status cannot ask Compose. ${recoveryByHand(c.layout, c.project)}`,
         );
-    const ports = portsFromRecord(parseEnv(envText));
+    const ports = portsFromRecord(parseEnv(envText), d.env);
     d.log(`Project ${c.project}`);
     for (const service of SERVICES) {
         let health: string;
