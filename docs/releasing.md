@@ -256,7 +256,8 @@ A release is a person's decision. Work through this in order and stop at the fir
    [production Compose](production-compose.md#images-and-pins)). Refresh them deliberately.
 6. Run the [dry run](#rehearse-a-release); inspect the tarball listings, `SHA256SUMS` and the
    image notes. No `.env`, key, source map or workspace specifier in any tarball.
-7. `cog bump --version X.Y.Z --include-packages` on a clean checkout, then review the bump commit, changelog and tag locally.
+7. (Done by the [release PR workflow](#opening-the-release-pr); the manual fallback is)
+   `cog bump --version X.Y.Z --include-packages` on a clean checkout, then review the bump commit, changelog and tag locally.
    The bump commit rewrites manifests, source version strings and `bun.lock`, and does not
    carry `[skip ci]`, so CI validates it. On that commit rerun step 6's dry run and use the
    checksums from **that** run. The ones from before the bump
@@ -274,6 +275,36 @@ Rolling back a published package is not possible: an npm version cannot be unpub
 safely once used, so a bad release is superseded by a fixed one and the bad version is
 deprecated. An image tag is never reused. Data is protected by the backup that the upgrade
 procedure requires first.
+
+## Opening the release PR
+
+`.github/workflows/release-pr.yaml` does the mechanical part of the checklist's step 7. In
+Actions, run **Release PR** from `main` (it fails on any other ref) with the base version `X.Y.Z`
+and a channel (`stable` or `rc`, the rows of the registry below). It never tags and never
+publishes. It:
+
+1. validates the inputs with the registry (the kind of release comes from the base, and the channel
+   must support it), computes the pre-release number itself from the existing `v<base>-<channel>.*`
+   tags, and refuses when the stable `X.Y.Z` already exists, the version would go backwards across
+   channels, or the branch `release/<version>` already exists;
+2. cuts `release/<version>` from `main` and runs `cog bump --version <version> --include-packages`,
+   then `check:versions`;
+3. writes the PR body from `cog changelog` (a stable release since the last stable tag, a
+   pre-release since the previous tag of any kind), deletes the local tag Cocogitto made, and pushes
+   **only** the branch, with the refspec `HEAD:refs/heads/release/<version>`;
+4. opens the PR `chore(release): v<version>` and dispatches `ci.yaml` on the branch.
+
+Then you review the PR, wait for `CI Passed`, merge, and create the one tag `v<version>` by hand on
+the merge commit as in step 8; the tag starts the release workflow. The manual steps of the
+checklist (step 7) remain the fallback. One-time maintainer setting: **Settings, Actions, General,
+"Allow GitHub Actions to create and approve pull requests"** must be on, or `gh pr create` fails.
+A pull request opened with the workflow token starts no `pull_request` run, which is why the
+workflow dispatches CI itself (`ci.yaml` accepts `workflow_dispatch`; its `commits` job is skipped
+under that event and `CI Passed` still reports). That the dispatched run's `CI Passed` check
+satisfies the ruleset on the PR is unverified; if it does not, run CI on the PR by closing and
+reopening it. The checkout never keeps the token and only the steps that call GitHub receive it,
+but the dependencies and Cocogitto hooks run in a job that holds `contents: write`; `main` and the
+`v*` tags are ruleset-protected, which is what limits what they could do.
 
 ## Release channels
 

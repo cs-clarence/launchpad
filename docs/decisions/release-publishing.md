@@ -122,6 +122,30 @@ process, in the follow-up slice:
 `cog.toml` now sets `skip_ci = ""` (verified: the bump commit carries no marker) and
 `tooling/cog-config.spec.ts` asserts it.
 
+### Amendment: the release PR workflow (maintainer-decided; implemented in `release-pr.yaml`)
+
+A second workflow may write, within a narrow limit: it may push a branch `release/<version>` and
+open a pull request, and it **never tags and never publishes**. Why it is allowed: the bump is
+mechanical and the manual steps invite mistakes (a wrong pre-release number, a diverged tag, a
+`[skip ci]` marker); the maintainer still reviews and merges the PR and still creates the tag by
+hand on the merge commit, so the approval and tag-integrity controls above are unchanged. It starts
+only by `workflow_dispatch` from `main`, holds exactly `contents: write`, `pull-requests: write`
+and `actions: write` (no `id-token`, no `packages`, no secrets, no cache), pins every action by
+SHA, and installs Omni and Cocogitto from pinned release assets with verified checksums. The
+inputs are a base `X.Y.Z` and a channel from a static list equal to the registry; the version and
+the pre-release number are computed from the registry and the existing tags, and the workflow
+refuses an existing branch. It pushes with an explicit refspec (`HEAD:refs/heads/release/<version>`)
+and deletes the local tag first; `tooling/ci.spec.ts` carves out exactly its two commands
+(`git tag -d` and that push) and its three write scopes, and `tooling/release-pr.spec.ts` asserts the
+rest. Risks: the dependencies and Cocogitto's hooks run in a job holding `contents: write` (the
+token is not kept in the checkout and reaches only the steps that call GitHub), and a compromised
+run could push or open PRs, but `main` and `refs/tags/v*` are ruleset-protected, a branch under
+`release/` is only a proposal, and the maintainer reviews the PR. Maintainer step: enable
+"Allow GitHub Actions to create and approve pull requests". A PR created with the workflow token
+starts no `pull_request` run, so CI is dispatched on the branch (`workflow_dispatch` is exempt
+from that rule: documented behaviour, unverified here); `ci.yaml` gained `workflow_dispatch`, under
+which the PR-only `commits` job is skipped and the gatekeeper expects that.
+
 ### Approval and tag integrity
 
 - **Who may create tags.** GitHub runs the workflow file from the tagged commit, so the gates in
@@ -387,7 +411,9 @@ stricter than the other workflows on purpose. The dedicated spec asserts it.
 
 ## What stays forbidden
 
-Publish, push, login or tag commands in any other workflow. The Release dry run workflow stays
+Publish, push, login or tag commands in any other workflow, except the one carve-out of the release PR
+workflow (a `git tag -d` of the local tag and a push of its `release/<version>` branch; see the
+amendment above). The Release dry run workflow stays
 manual, read-only and secret-free. When the release workflow lands, `tooling/ci.spec.ts` is
 extended to enforce this for every workflow except the single named release workflow, which gets
 its own spec asserting: the tag glob and the guard job with its `needs:` edges, the `release`
@@ -541,6 +567,24 @@ Where `release.yaml` is more specific than, or differs from, the text above:
   rule fires). Added to the unverified list: `npm view <name> dist-tags.<tag>` for a package with
   no versions at all (E404; publish-npm would stop, which the bootstrap placeholder avoids); the
   guard's `[a-z]` under the runner's locale (harmless: the channel name must equal a `case` arm).
+- Release PR workflow, findings from a throwaway clone with the real `cog.toml` (cog 7.0.0; the clone
+  had no earlier tags, so this is not the real tag history): `cog bump --version 0.1.0-rc.1
+  --include-packages` works (commit `chore(version): v0.1.0-rc.1`, tag `v0.1.0-rc.1`, every manifest,
+  the source version strings and `bun.lock` at the pre-release version; the three independent tooling
+  packages also get that version and a `CHANGELOG.md`). `versions.ts check` agrees with the tag
+  present and deleted. With the rc tag on the rc bump commit, `cog bump --version 0.1.0
+  --include-packages` also works and `check` agrees. The committed `CHANGELOG.md` shows each
+  release twice (`core-v…` and `v…` sections) and the stable section repeats the whole history
+  (cog's bump changelog starts at the last _stable_ tag, none here), so the PR body is generated
+  separately: `cog changelog --template remote --remote github.com --owner … --repository …
+  <range>` works with ranges `<prev>..v<new>` and `..v<new>` and needs no `cog.toml` remote
+  setting; a range lists a section per tag inside it. Cocogitto (libgit2) reads `user.name` and
+  `user.email` from git config files only (`GIT_AUTHOR_*` and `GIT_CONFIG_COUNT` were not
+  honoured), so the workflow sets them in its ephemeral checkout. Unverified: that the dispatched
+  CI run's `CI Passed` satisfies the ruleset on the PR; the `ci.yaml` jobs under a dispatch on a
+  `release/` branch (only the gatekeeper logic is tested); that the PR can be created with
+  the setting on; the pre-release range and the remote changelog template on the real repository's
+  history; `git push` with the `http.extraheader` form against GitHub; `jq` on the runner.
 - CodeRabbit review of PR #124: artifacts are kept 30 days, which is now the stated retry window
   (the record had none; GitHub's repository limit is 90 days; the 30 days a run can be re-run for
   is unverified). `setup-buildx` runs with `cache-binary: false` (the other cache-like inputs at the
