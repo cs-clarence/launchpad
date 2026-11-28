@@ -523,16 +523,27 @@ describe("abandoned releases", () => {
         }
     });
 
-    it("reject a version with no tag, or one not below the version being released", () => {
+    it("reject a version with no tag, or the version being released", () => {
         expect(abandonedProblems([entry("0.0.9")], tags, "0.3.0")).toEqual([
             expect.stringContaining("no v0.0.9 tag"),
         ]);
         expect(abandonedProblems([entry("0.2.0")], tags, "0.2.0")).toEqual([
-            expect.stringContaining("not below"),
+            expect.stringContaining("cannot also be abandoned"),
         ]);
-        expect(abandonedProblems([entry("0.2.0")], tags, "0.1.2")).toEqual([
-            expect.stringContaining("not below"),
+        expect(abandonedProblems([entry("0.2.0"), entry("0.1.1")], tags, "0.1.1")).toEqual([
+            expect.stringContaining("cannot also be abandoned"),
         ]);
+    });
+
+    it("accept a higher abandoned version, so a backport still releases", () => {
+        const all = ["v1.1.4", "v1.1.5", "v1.2.0"];
+        // 1.2.0 is abandoned; 1.1.5 is a backport released after it.
+        expect(abandonedProblems([entry("1.2.0")], all, "1.1.5")).toEqual([]);
+        expect(previousStable(all, "1.1.5", ["1.2.0"])).toBe("1.1.4");
+        // 1.3.0 after the abandoned 1.2.0 walks down to 1.1.x.
+        const withNew = [...all, "v1.3.0"];
+        expect(abandonedProblems([entry("1.2.0")], withNew, "1.3.0")).toEqual([]);
+        expect(previousStable(withNew, "1.3.0", ["1.2.0"])).toBe("1.1.5");
     });
 
     it("are read from a file that is validated against the tags", () => {
@@ -547,12 +558,16 @@ describe("abandoned releases", () => {
             "0.1.1",
         ]);
         expect(() => readAbandoned(tags, "0.3.0", write("{"))).toThrow();
-        expect(() => readAbandoned(tags, "0.3.0", write(JSON.stringify([entry("0.3.0")])))).toThrow(
-            /not below/,
-        );
+        expect(() =>
+            readAbandoned([...tags, "v0.3.0"], "0.3.0", write(JSON.stringify([entry("0.3.0")]))),
+        ).toThrow(/cannot also be abandoned/);
         expect(() => readAbandoned(tags, "0.3.0", write(JSON.stringify([entry("9.0.0")])))).toThrow(
-            /no v9.0.0 tag|not below/,
+            /no v9.0.0 tag/,
         );
+        // A higher abandoned version is fine: a backport releases while 0.2.0 is abandoned.
+        expect(readAbandoned(tags, "0.1.2", write(JSON.stringify([entry("0.2.0")])))).toEqual([
+            "0.2.0",
+        ]);
     });
 
     it("has a committed file of the right shape", () => {

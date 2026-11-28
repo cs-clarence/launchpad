@@ -277,8 +277,18 @@ publishes. A tarball is never rebuilt after `build`.
   be completed, the maintainer abandons it in a reviewed commit that adds `{ version, reason }` to
   `tooling/abandoned-releases.json`. The check skips abandoned versions and walks down to the
   next stable tag that is not abandoned. The file must be valid (stable SemVer, no duplicates, an
-  existing `v<version>` tag, strictly below the version being released) or `verify` fails. Its
-  published packages are deprecated by hand; its tag is never deleted. An abandoned version still
+  existing `v<version>` tag, and not equal to the version being released: it cannot be abandoned and
+  released at once) or `verify` fails. A higher abandoned version is valid and irrelevant to the
+  walk-down, which looks only below the version being released, so a backport (1.1.5 after an
+  abandoned 1.2.0) still releases; removing an entry is **not** the way to unblock it, because the
+  entry is right and its removal would make the check stop on the incomplete release again. Before
+  the abandonment commit the maintainer, by hand: restores npm `latest` for each package that still
+  points at the abandoned version (`npm dist-tag add <pkg>@<previous stable> latest`, the version the
+  walk-down selects; with no earlier stable version `npm dist-tag rm <pkg> latest`, so `latest` is
+  missing and the next stable takes it; the `0.0.0-bootstrap.0` placeholder is under `bootstrap`),
+  and runs `npm deprecate` on the published packages. These `npm dist-tag` commands need the
+  maintainer's credentials rather than trusted publishing, which is unverified. Its tag is never
+  deleted. An abandoned version still
   counts as a higher stable version when deciding whether the previous release must hold `X.Y` or
   `latest`, so the check stays lenient there.
 - **Partial publish.** Publishing five packages is not atomic. If it stops part-way, some

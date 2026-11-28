@@ -311,13 +311,26 @@ with. There are two ways, in this order:
    short reason to `tooling/abandoned-releases.json` in a reviewed commit, for example
    `[{ "version": "0.1.0", "reason": "npm stopped after sdk; the artifacts expired" }]`. The check
    then skips that version and walks down to the next stable tag that is not abandoned. The file
-   is validated every time the check runs: stable SemVer only, no duplicates, a `v<version>` tag
-   must exist, and the version must be below the one being released. Its tag stays, `npm
-   deprecate` the packages of it that were published (by hand, not automated), and move `X.Y`
-   and `latest` back by hand if they point at an unusable image. Then release a new version.
-   This is a lead-decided policy to confirm; see the record.
-   What the workflow could not verify is listed under "Written as fact but unverified" in the record;
-   the `v0.1.0-rc.1` release settles it.
+   is validated every time the check runs: stable SemVer only, a reason, no duplicates, and a
+   `v<version>` tag must exist. The only version refused for its value is the one being released
+   (it cannot be abandoned and released at once). A higher abandoned version is valid and simply
+   ignored, so a backport such as 1.1.5 still releases while 1.2.0 is abandoned. **Do not remove
+   an entry to unblock a backport**: the entry is correct, and removing it would make the check
+   stop on the incomplete release again. Its tag stays. **Do these by hand first, before the
+   abandonment commit** (they need the maintainer's npm credentials, not trusted publishing; that
+   `npm dist-tag` works for the maintainer here is unverified):
+    - For each package whose npm `latest` still points at the abandoned version, restore it with
+      `npm dist-tag add <package>@<previous stable> latest`, where `<previous stable>` is the
+      version the walk-down selects (the highest stable tag below the abandoned one that is not
+      abandoned). If the package has no earlier stable version, run `npm dist-tag rm <package>
+      latest` so `latest` is missing; the next stable release then takes it (the missing-`latest`
+      case). The `0.0.0-bootstrap.0` placeholder lives under the `bootstrap` tag, not `latest`.
+    - `npm deprecate` the packages of the abandoned version that were published.
+    - Move the image `X.Y` and `latest` tags back by hand if they point at an unusable image.
+
+    Then release a new version. This is a lead-decided policy to confirm; see the record.
+    What the workflow could not verify is listed under "Written as fact but unverified" in the record;
+    the `v0.1.0-rc.1` release settles it.
 
 Limits of the first version:
 

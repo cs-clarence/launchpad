@@ -325,15 +325,17 @@ export function abandonedFormatProblems(entries: unknown): string[] {
     return problems;
 }
 
-// The shape, and against the repository: each version has a v tag and is below the version being
-// released (a release never abandons itself or a newer one).
+// The shape, and against the repository: each version has a v tag, and none is the version being
+// released (a release cannot be abandoned and released at once). Higher versions are valid: they
+// are irrelevant to the walk-down, which only looks below the version being released, so a backport
+// (1.1.5 after an abandoned 1.2.0) still releases.
 export function abandonedProblems(entries: unknown, tags: string[], current: string): string[] {
     const problems = abandonedFormatProblems(entries);
     if (problems.length > 0) return problems;
     for (const { version } of entries as { version: string }[]) {
         if (!tags.includes(`v${version}`)) problems.push(`${version} has no v${version} tag`);
-        if (compareSemver(version, current) >= 0) {
-            problems.push(`${version} is not below the version being released (${current})`);
+        if (compareSemver(version, current) === 0) {
+            problems.push(`${version} is the version being released; it cannot also be abandoned`);
         }
     }
     return problems;
