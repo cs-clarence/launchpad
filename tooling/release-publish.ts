@@ -18,9 +18,9 @@ import {
     exactTagAction,
     existingVersion,
     floatingTags,
-    labelVersion,
     npmDistTag,
     npmPublishAction,
+    parseInspect,
     PUBLISH_ORDER,
     REGISTRY,
     sumsFiles,
@@ -29,7 +29,7 @@ import {
 
 const root = path.resolve(import.meta.dirname, "..");
 
-interface Result {
+export interface Result {
     code: number | null;
     out: string;
     err: string;
@@ -55,17 +55,21 @@ export interface Inspected {
     version: string | null;
 }
 
+export type Runner = (command: string, args: string[]) => Result;
+
 // null when the tag does not exist; any other failure throws, so a registry error never reads as
-// "absent" and never causes a rebuild or an overwrite.
-export function inspect(ref: string): Inspected | null {
-    const done = run("docker", ["buildx", "imagetools", "inspect", ref, "--format", "{{json .}}"]);
-    const kind = classifyInspect(done.code, done.err);
+// "absent" and never causes a rebuild or an overwrite. Existence is decided by `--raw` alone,
+// which resolves and reads only the manifest of the requested tag. The full inspection then also
+// fetches every child manifest and config; if that fails (even with a `: not found` for a child
+// descriptor) the tag exists but the image is unreadable, so it is an error, never "absent".
+export function inspect(ref: string, exec: Runner = run): Inspected | null {
+    const raw = exec("docker", ["buildx", "imagetools", "inspect", ref, "--raw"]);
+    const kind = classifyInspect(raw.code, raw.err);
     if (kind === "absent") return null;
-    if (kind === "error") throw new Error(`could not inspect ${ref}:\n${done.err}`);
-    const json = JSON.parse(done.out) as { Manifest?: { digest?: string }; Image?: unknown };
-    const digest = json.Manifest?.digest;
-    if (!digest) throw new Error(`no digest in the inspection of ${ref}`);
-    return { digest, version: labelVersion(json) };
+    if (kind === "error") throw new Error(`could not inspect ${ref}:\n${raw.err}`);
+    const full = exec("docker", ["buildx", "imagetools", "inspect", ref, "--format", "{{json .}}"]);
+    if (full.code !== 0) throw new Error(`${ref} exists but cannot be read:\n${full.err}`);
+    return parseInspect(full.out);
 }
 
 export const imageRef = (name: string, tag: string) => `${REGISTRY}${name}:${tag}`;

@@ -14,6 +14,7 @@ import {
     labelVersion,
     npmDistTag,
     npmPublishAction,
+    parseInspect,
     partialReleaseProblems,
     previousStable,
     type PreviousRelease,
@@ -376,5 +377,106 @@ describe("registry output", () => {
         const manifest = consumerManifest({ "@a/b": "/t/b.tgz" });
         expect(manifest.dependencies).toEqual({ "@a/b": "file:/t/b.tgz" });
         expect(manifest.overrides).toEqual(manifest.dependencies);
+    });
+});
+
+// Shaped like buildx v0.39.1's `imagetools inspect --format '{{json .}}'` (util/imagetools/printers.go):
+// lowercase `name`, `manifest` and `image`; the index is printed with a `digest` of its own, and
+// attestation manifests are index entries, not platforms, so a single-platform image has one `image`.
+describe("buildx inspect output", () => {
+    const digest = (c: string) => `sha256:${c.repeat(64)}`;
+    const image = (version?: string) => ({
+        created: "2026-11-28T10:00:00Z",
+        architecture: "amd64",
+        os: "linux",
+        config: {
+            User: "10001",
+            Env: ["PATH=/usr/bin"],
+            ...(version ? { Labels: { "org.opencontainers.image.version": version } } : {}),
+        },
+        rootfs: { type: "layers", diff_ids: [digest("1")] },
+    });
+    const index = {
+        schemaVersion: 2,
+        mediaType: "application/vnd.oci.image.index.v1+json",
+        digest: digest("a"),
+        size: 856,
+        manifests: [
+            {
+                mediaType: "application/vnd.oci.image.manifest.v1+json",
+                digest: digest("b"),
+                size: 1234,
+                platform: { architecture: "amd64", os: "linux" },
+            },
+            {
+                mediaType: "application/vnd.oci.image.manifest.v1+json",
+                digest: digest("c"),
+                size: 567,
+                annotations: {
+                    "vnd.docker.reference.digest": digest("b"),
+                    "vnd.docker.reference.type": "attestation-manifest",
+                },
+                platform: { architecture: "unknown", os: "unknown" },
+            },
+        ],
+    };
+
+    it("reads an index with attestation manifests and one platform", () => {
+        const text = JSON.stringify(
+            { name: "ghcr.io/x/y:sha-1", manifest: index, image: image("0.1.0") },
+            null,
+            2,
+        );
+        expect(parseInspect(text)).toEqual({ digest: digest("a"), version: "0.1.0" });
+    });
+
+    it("reads a single manifest", () => {
+        const manifest = {
+            mediaType: "application/vnd.oci.image.manifest.v1+json",
+            digest: digest("d"),
+            size: 700,
+        };
+        expect(
+            parseInspect(JSON.stringify({ name: "n", manifest, image: image("1.2.3") })),
+        ).toEqual({
+            digest: digest("d"),
+            version: "1.2.3",
+        });
+    });
+
+    it("reads an index of several platforms, one image per platform", () => {
+        const text = JSON.stringify({
+            name: "n",
+            manifest: index,
+            image: { "linux/amd64": image("0.1.0"), "linux/arm64": image("0.1.0") },
+        });
+        expect(parseInspect(text).version).toBe("0.1.0");
+        const disagree = JSON.stringify({
+            manifest: index,
+            image: { "linux/amd64": image("0.1.0"), "linux/arm64": image("0.2.0") },
+        });
+        expect(parseInspect(disagree).version).toBeNull();
+    });
+
+    it("gives no version for an image without the label, and accepts capitalised keys", () => {
+        expect(
+            parseInspect(JSON.stringify({ manifest: index, image: image() })).version,
+        ).toBeNull();
+        expect(parseInspect(JSON.stringify({ manifest: index })).version).toBeNull();
+        expect(parseInspect(JSON.stringify({ Manifest: index, Image: image("2.0.0") }))).toEqual({
+            digest: digest("a"),
+            version: "2.0.0",
+        });
+    });
+
+    it("refuses output without a manifest digest", () => {
+        for (const text of [
+            "{}",
+            JSON.stringify({ manifest: {} }),
+            JSON.stringify({ manifest: { digest: "x" } }),
+        ]) {
+            expect(() => parseInspect(text), text).toThrow(/no manifest digest/);
+        }
+        expect(() => parseInspect("not json")).toThrow();
     });
 });

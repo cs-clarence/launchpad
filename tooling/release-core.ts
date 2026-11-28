@@ -183,17 +183,44 @@ export function classifyInspect(code: number | null, stderr: string): "ok" | "ab
     return "error";
 }
 
-// The version label of an image from `imagetools inspect --format '{{json .}}'`: `.Image` is the
-// config of a single image or a map of platform to config for an index (unverified shape).
-export function labelVersion(inspected: { Image?: unknown }): string | null {
-    const image = inspected.Image as Record<string, unknown> | undefined;
-    if (!image) return null;
+// The version label of an image from `imagetools inspect --format '{{json .}}'`. The data buildx
+// executes the template with (util/imagetools/printers.go, v0.39.1) is `tplInput` or `tplInputs`,
+// serialised with lowercase keys: `name`, `manifest` and `image`. `image` is one OCI image
+// (`config.Labels`) when the image has a single platform (attestation manifests are linked to it
+// by annotation and are not platforms) and a map of platform to OCI image for several. Capitalised
+// keys are accepted too. Images that disagree, or carry no label, give null.
+export function labelVersion(inspected: { image?: unknown; Image?: unknown }): string | null {
+    const image = (inspected.image ?? inspected.Image) as
+        | Record<string, unknown>
+        | null
+        | undefined;
+    if (!image || typeof image !== "object") return null;
     const configs = "config" in image ? [image] : Object.values(image);
-    for (const config of configs) {
-        const labels = (config as { config?: { Labels?: Record<string, string> } }).config?.Labels;
-        if (labels?.[VERSION_LABEL]) return labels[VERSION_LABEL];
+    const versions = new Set<string>();
+    for (const entry of configs) {
+        const labels = (entry as { config?: { Labels?: Record<string, string> | null } } | null)
+            ?.config?.Labels;
+        const version = labels?.[VERSION_LABEL];
+        if (typeof version === "string" && version) versions.add(version);
     }
-    return null;
+    return versions.size === 1 ? [...versions][0]! : null;
+}
+
+// The digest and version label from the whole `{{json .}}` output. `manifest.digest` is the digest
+// of the requested tag: the descriptor of a single manifest, or the `digest` field buildx adds to
+// the index it prints. Missing means the output is not what was expected, so it throws.
+export function parseInspect(text: string): { digest: string; version: string | null } {
+    const json = JSON.parse(text) as {
+        manifest?: { digest?: string };
+        Manifest?: { digest?: string };
+        image?: unknown;
+        Image?: unknown;
+    };
+    const digest = (json.manifest ?? json.Manifest)?.digest;
+    if (typeof digest !== "string" || !/^sha256:[0-9a-f]{64}$/.test(digest)) {
+        throw new Error("the inspection has no manifest digest");
+    }
+    return { digest, version: labelVersion(json) };
 }
 
 // A consumer project that pins every package to its tarball, as check-packages.ts does.

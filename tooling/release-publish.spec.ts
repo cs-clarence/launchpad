@@ -4,7 +4,7 @@ import { createHash } from "node:crypto";
 import { mkdirSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { publishNpm } from "./release-publish";
+import { inspect, publishNpm } from "./release-publish";
 
 const NAMES = ["contracts", "sdk", "client-core", "cli", "mcp"].map((n) => `@launchpad-kit/${n}`);
 
@@ -68,5 +68,46 @@ describe("publishNpm refuses before it publishes", () => {
         expect(() => publishNpm(dir, "1.0.0")).toThrow();
         expect(readdirSync(dir).toSorted()).toEqual(before);
         expect(readFileSync(path.join(dir, "SHA256SUMS"), "utf8")).toContain("pkg-0.tgz");
+    });
+});
+
+describe("inspect", () => {
+    const digest = `sha256:${"a".repeat(64)}`;
+    const json = JSON.stringify({
+        name: "n",
+        manifest: { digest },
+        image: { config: { Labels: { "org.opencontainers.image.version": "1.0.0" } } },
+    });
+    const ok = (out: string) => ({ code: 0, out, err: "" });
+    const fail = (err: string) => ({ code: 1, out: "", err });
+    const fake = (raw: ReturnType<typeof ok>, full?: ReturnType<typeof ok>) => {
+        const calls: string[][] = [];
+        const exec = (_command: string, args: string[]) => {
+            calls.push(args);
+            return args.includes("--raw") ? raw : (full ?? ok(""));
+        };
+        return { exec, calls };
+    };
+
+    it("reads a tag whose manifest and children are present", () => {
+        const { exec, calls } = fake(ok("{}"), ok(json));
+        expect(inspect("ghcr.io/x/y:1.0.0", exec)).toEqual({ digest, version: "1.0.0" });
+        expect(calls).toHaveLength(2);
+    });
+
+    it("reads a tag that does not exist as absent, and never runs the full inspection", () => {
+        const { exec, calls } = fake(fail("ERROR: ghcr.io/x/y:sha-1: not found"));
+        expect(inspect("ghcr.io/x/y:sha-1", exec)).toBeNull();
+        expect(calls).toHaveLength(1);
+    });
+
+    it("fails when the tag exists but a child descriptor is not found", () => {
+        const { exec } = fake(ok("{}"), fail("ERROR: ghcr.io/x/y@sha256:bbbb: not found"));
+        expect(() => inspect("ghcr.io/x/y:1.0.0", exec)).toThrow(/exists but cannot be read/);
+    });
+
+    it("fails on a registry error instead of reading it as absent", () => {
+        const { exec } = fake(fail("dial tcp: lookup ghcr.io: no such host"));
+        expect(() => inspect("ghcr.io/x/y:1.0.0", exec)).toThrow(/could not inspect/);
     });
 });
