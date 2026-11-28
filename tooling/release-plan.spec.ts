@@ -17,7 +17,7 @@ import {
     IMAGES,
     labelVersion,
     npmDistTag,
-    parseDistTags,
+    parseDistTagList,
     npmPublishAction,
     parseInspect,
     partialReleaseProblems,
@@ -80,15 +80,19 @@ describe("tag guard", () => {
     });
 });
 
-describe("the dist-tag map", () => {
-    it("reads the whole map, so `next` counts without a `latest`", () => {
-        expect(parseDistTags('{"next":"0.2.0-rc.2"}')).toEqual({ next: "0.2.0-rc.2" });
-        expect(parseDistTags("")).toEqual({});
+describe("the dist-tag list", () => {
+    it("reads `next` for a package that has no `latest`", () => {
+        expect(parseDistTagList("next: 0.2.0-rc.2\n")).toEqual({ next: "0.2.0-rc.2" });
+        expect(parseDistTagList("latest: 1.2.3\nnext: 2.0.0-rc.1\n")).toEqual({
+            latest: "1.2.3",
+            next: "2.0.0-rc.1",
+        });
+        expect(parseDistTagList("")).toEqual({});
     });
 
-    it("refuses anything that is not a map of strings", () => {
-        for (const out of ['["a"]', '"x"', "3", '{"next":2}', '{"next":null}'])
-            expect(() => parseDistTags(out), out).toThrow();
+    it("refuses a line it cannot read instead of guessing", () => {
+        for (const out of ["next 1.0.0", "next:", ": 1.0.0", "next: a: b"])
+            expect(() => parseDistTagList(out), out).toThrow();
     });
 });
 

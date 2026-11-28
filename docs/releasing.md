@@ -328,10 +328,10 @@ untrusted code, uses it. (2) Recommended: the `release-pr` environment (created 
 its deployment branch policy limited to `main`, and **no required reviewers** beyond that (a
 maintainer decision): `push` and `open-pr` each declare `environment: release-pr`, so a configured
 reviewer would have to approve twice per run. GitHub runs the workflow file from the branch it is
-dispatched on, so a branch with an edited `release-pr.yaml` is the trust boundary; with the policy
-the jobs that hold write scopes cannot run from such a branch. The policy binds only jobs that
-still reference the environment, so a dispatched file that drops it is outside the policy: trust in
-who may dispatch, and in reviewed workflow changes, remains part of the boundary.
+dispatched on, so a branch with an edited `release-pr.yaml` is the trust boundary. The policy binds
+only jobs that still reference the environment: while they do, the two jobs that hold write scopes
+cannot run from another branch, but a dispatched file that drops `environment:` is outside it, so
+trust in who may dispatch, and in reviewed workflow changes, remains part of the boundary.
 
 **When it goes wrong.** If a run stops after the push, or the PR was closed without merging,
 delete the branch `release/<version>` and dispatch again (the workflow refuses an existing

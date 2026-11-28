@@ -85,7 +85,7 @@ meant to settle the first five.
 - That GitHub runs the workflow file from the tagged commit.
 - The `npm publish` default dist-tag, npm's version length limit, and whether `artifact-metadata: write` is needed with `create-storage-record: false`.
 - Added by the workflow (see the record's implementation notes): the `npm view` outputs for a missing `latest` or version, the `imagetools inspect` JSON shape, `gh attestation verify` permissions, whether each matrix leg needs its own `release` approval, and that the workflow was never run.
-- Added by the channel registry: that `actions/checkout` with `fetch-depth: 0` fetches every tag for the no-regression check, and `npm view <name> dist-tags.next` for the forward-only rc tag (settled by the rc run).
+- Added by the channel registry: that `actions/checkout` with `fetch-depth: 0` fetches every tag for the no-regression check, and `npm dist-tag ls` for the forward-only rc tag (settled by the rc run).
 - Not in the record: the packed tarballs and the image builds were not run for this plan.
 
 ## Open decisions (proposed, not decided)

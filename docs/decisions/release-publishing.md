@@ -181,9 +181,9 @@ push such a branch and dispatch it (the maintainer) and, recommended, the `relea
 environment: set its deployment branch policy to `main` only (a maintainer step; the environment
 is created on first use with no protection). That policy protects only jobs that still reference
 the environment: a maintainer who dispatches an edited file that drops `environment:` is outside
-it, so trust in who may dispatch and in reviewed workflow changes is part of the boundary. With
-the policy in place, `push` and `open-pr`, the only jobs that hold write scopes, cannot run from
-another branch even if the file is edited.
+it, so trust in who may dispatch and in reviewed workflow changes is part of the boundary. While
+the jobs still reference `release-pr`, that policy keeps `push` and `open-pr`, the only jobs that
+hold write scopes, from running on another branch.
 
 A pull request created with the workflow token starts its `pull_request` run in the
 **approval-required** state (documented behaviour; [GitHub docs](https://docs.github.com/en/actions/how-tos/write-workflows/choose-when-workflows-run/trigger-a-workflow)).
@@ -315,8 +315,9 @@ publishes. A tarball is never rebuilt after `build`.
 - **Dist-tags.** A tag is always passed explicitly with `--tag`, because `npm publish` without
   `--tag` defaults to `latest` (<https://docs.npmjs.com/cli/v12/commands/npm-publish/>; not
   re-fetched here, so the default is **unverified**). `--tag next` for pre-releases. For a stable
-  version, the tag is decided **per package** from the package's current `latest`
-  (`npm view <name> dist-tags.latest`), in three cases: (a) `latest` is **missing** (only
+  version, the tag is decided **per package** from the package's current `latest` and `next`
+  (`npm dist-tag ls <name>`; never `npm view`, which resolves a version through `latest` first and
+  prints nothing when it is missing), in three cases: (a) `latest` is **missing** (only
   pre-releases or the `0.0.0-bootstrap.0` placeholder were published, so the first stable `0.1.0`
   has nothing to resolve by default): the package is eligible for promotion and is published with
   `--tag latest`; (b) the version is **lower** than the current `latest`: published with
@@ -562,8 +563,8 @@ Where `release.yaml` is more specific than, or differs from, the text above:
   `launchpad --version`; it checks the exact staged digests by their labels and does not start the
   containers. `post-verify` installs the published packages from the registry for
   `npm audit signatures`.
-- Added to the unverified list: `npm view <name> dist-tags.latest` prints nothing (exit 0) for a
-  package without `latest`; `npm view <name>@<version> dist.integrity` fails with E404 or prints
+- Added to the unverified list: the exact `npm dist-tag ls` output for a package whose only tag is
+  `next` (the parser refuses any line it cannot read, so a difference fails closed); `npm view <name>@<version> dist.integrity` fails with E404 or prints
   nothing for a missing version; the `docker buildx imagetools inspect --format '{{json .}}'`
   shape (`Manifest.digest`, `Image` as a config or a platform map) and its "not found" wording;
   `gh attestation verify oci://...` needing only `packages: read`; whether each `stage` matrix leg
@@ -619,15 +620,15 @@ Where `release.yaml` is more specific than, or differs from, the text above:
   every kind. Mutating the registry (an unregistered channel, a rank, a reserved npm tag) or the
   guard fails the specs. Unverified: that `actions/checkout` with `fetch-depth: 0` fetches every
   tag (its documented behaviour, not run here); the first rc run settles the `next` tag
-  forward-only behaviour of `npm view <name> dist-tags.next`.
+  forward-only behaviour, read with `npm dist-tag ls`.
 - Review of the channel registry: `retag` takes its docker runner and is tested with a fake
   registry (an rc, a stable, forward-only moves, a re-run, a clash, an unreadable label), so the
   tags it creates are asserted exactly. The registry validation is tested one change at a time
   with the named problem. `verify` runs `no-regression --require-tag`, so a tag listing that
   lacks the tag being released (an empty or shallow fetch) fails closed. Re-running a pre-release
   after its stable shipped is refused, by design (the stable tag exists, so the no-regression
-  rule fires). Added to the unverified list: `npm view <name> dist-tags.<tag>` for a package with
-  no versions at all (E404; publish-npm would stop, which the bootstrap placeholder avoids); the
+  rule fires). Added to the unverified list: `npm dist-tag ls <name>` for a package with no
+  versions at all (E404; publish-npm would stop, which the bootstrap placeholder avoids); the
   guard's `[a-z]` under the runner's locale (harmless: the channel name must equal a `case` arm).
 - Release PR workflow, findings from a throwaway clone with the real `cog.toml` (cog 7.0.0; the clone
   had no earlier tags, so this is not the real tag history): `cog bump --version 0.1.0-rc.1

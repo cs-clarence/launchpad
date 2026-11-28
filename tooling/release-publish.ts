@@ -20,7 +20,7 @@ import {
     floatingMoves,
     npmDistTag,
     npmPublishAction,
-    parseDistTags,
+    parseDistTagList,
     parseInspect,
     PUBLISH_ORDER,
     REGISTRY,
@@ -75,16 +75,15 @@ export function inspect(ref: string, exec: Runner = run): Inspected | null {
 
 export const imageRef = (name: string, tag: string) => `${REGISTRY}${name}:${tag}`;
 
-// The whole dist-tag map, not `dist-tags.<tag>`: npm resolves a bare package spec through
-// `latest` first, so a package that has `next` but no `latest` (every package before its first
-// stable release) would look as if it had no tag at all.
+// `npm dist-tag ls`, not `npm view`: view resolves a version through `latest` first, so a package
+// with `next` but no `latest` looks untagged. A missing tag is null; a failed lookup throws.
 function npmDistTags(name: string): Record<string, string> {
-    const done = run("npm", ["view", name, "dist-tags", "--json"]);
-    if (done.code !== 0) throw new Error(`npm view ${name} failed:\n${done.err}`);
+    const done = run("npm", ["dist-tag", "ls", name]);
+    if (done.code !== 0) throw new Error(`npm dist-tag ls ${name} failed:\n${done.err}`);
     try {
-        return parseDistTags(done.out);
+        return parseDistTagList(done.out);
     } catch (error) {
-        throw new Error(`npm view ${name} dist-tags: ${(error as Error).message}`);
+        throw new Error(`npm dist-tag ls ${name}: ${(error as Error).message}`);
     }
 }
 
