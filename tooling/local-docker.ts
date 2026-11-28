@@ -1317,6 +1317,13 @@ export async function teardown(
         );
     }
 
+    // Temporary files a killed run left, matched by pattern rather than by name: the upgrade names
+    // its file per run, so a fixed list would miss it and `rmdir` would then fail for ever.
+    if (profile.cleanPatterns)
+        for (const name of await d.fs.readdir(layout.dir)) {
+            if (profile.cleanPatterns.test(name)) await d.fs.unlink(layout.file(name));
+        }
+
     // The record goes last, so an interruption never leaves a directory that looks foreign.
     for (const name of [
         ...profile.stateFiles,

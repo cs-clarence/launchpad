@@ -540,6 +540,14 @@ describe("up", () => {
         expect(parseEnv(host.text(`${host.dir}/compose.env`)!).DEV_POSTGRES_PORT).toBe("40000");
     });
 
+    it("removes a killed upgrade's temporary file, then the directory", async () => {
+        await up(deps());
+        // A kill between the per-run write and its rename leaves this behind.
+        host.addFile(`${host.dir}/compose.env.4242-deadbeef.next`, "DEV_PROJECT=x\n", 0o600);
+        await destroy(deps());
+        expect(host.nodes.has(host.dir)).toBe(false);
+    });
+
     it("refuses another checkout's record", async () => {
         await up(deps());
         host.addFile(
