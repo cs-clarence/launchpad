@@ -1,6 +1,6 @@
 {
     "name": "@launchpad-kit/cli",
-    "version": "0.0.0",
+    "version": "0.1.0-rc.1",
     "private": true,
     "description": "The launchpad command-line client",
     "homepage": "https://github.com/launchpad-kit/launchpad#readme",

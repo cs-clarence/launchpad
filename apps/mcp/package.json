@@ -1,6 +1,6 @@
 {
     "name": "@launchpad-kit/mcp",
-    "version": "0.0.0",
+    "version": "0.1.0-rc.1",
     "private": true,
     "description": "Local stdio MCP adapter for Launchpad",
     "homepage": "https://github.com/launchpad-kit/launchpad#readme",

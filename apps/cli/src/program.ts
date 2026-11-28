@@ -93,7 +93,7 @@ export function buildProgram(rawIo: Io, secrets: Set<string> = new Set()) {
     const program = new Command()
         .name("launchpad")
         .description("Work with a Launchpad controller using an organization API key.")
-        .version("0.0.0")
+        .version("0.1.0-rc.1")
         .option("--json", "print machine-readable JSON")
         .option("--profile <name>", "use this saved profile instead of the current one")
         .showHelpAfterError(false)
