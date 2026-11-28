@@ -6,6 +6,7 @@ Follow the guidelines in `docs/guidelines`. On a fresh checkout, run
 Run every task through Omni (`omni run check test build`); see `CONTRIBUTING.md`.
 Read `CONTRIBUTING.md` for checks and Git workflow, `docs/tooling.md` for tooling,
 and `docs/patterns/README.md` for package boundaries and current patterns.
+Treat the areas in `docs/risk-overrides.md` as always High risk.
 
 ## Artifacts
 

@@ -213,6 +213,13 @@ SSH tests and deployment tests are not part of the default checks; image builds 
 the integration job.
 See [tooling](docs/tooling.md) and [patterns](docs/patterns/README.md).
 
+## Risk
+
+Changes to authentication, authorization, schema or migrations, secrets and
+production configuration, or deployment execution are always High risk, even
+when the diff looks small. Size verification and review accordingly; the exact
+paths and reasons are in [risk overrides](docs/risk-overrides.md).
+
 ## Git
 
 This repository was initialized on `main` with no commits, so no established
