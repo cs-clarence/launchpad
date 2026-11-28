@@ -196,6 +196,61 @@ registry's rules and the no-regression rule still apply and the reviewer sees th
 PR. A dead branch, or one whose PR was closed unmerged, is removed by deleting `release/<version>`
 and dispatching again.
 
+### Amendment: regenerating the release PR when main moves (maintainer-decided; implemented in `release-pr-sync.yaml`)
+
+The release PR's one commit is generated from `main` at dispatch. Merging `main` into it later would
+update the code but leave `CHANGELOG.md`, the version lines and the lockfile describing the old tip,
+and the "one commit directly on `main`" shape the push job validated would no longer hold.
+`.github/workflows/release-pr-sync.yaml` therefore watches pushes to `main` **and runs every five
+minutes**: for each open `release/<version>` pull request in this
+repository whose bump commit's parent is not the live tip, it closes the pull request with a note,
+deletes the branch (tolerating only 404), and dispatches Release PR again with the base and channel
+parsed from the branch name. Closing first matters: deleting the head branch closes an open pull
+request, which would look like a maintainer's decision and suppress the replacement. A new pull request
+number follows; no release tag is created and nothing is published (the only tags it writes are the
+internal `release-sync-retry/` markers below, and only when a recovery fails). The
+schedule reconciles a push that lands while Release PR is preparing the replacement, which the push
+trigger alone cannot see. A `workflow_run` completion listener was rejected: this workflow dispatches
+Release PR with the repository token, and a run started that way does not fire `workflow_run`, so the
+listener would have covered only manual dispatches. The schedule can be delayed by GitHub, so the
+reconciliation may take longer than five minutes. It reads every page of the open pull requests into
+one list before acting, so closing one cannot shift a later page; a failed page changes nothing.
+
+Before changing anything, the run writes a `release-sync-retry/<version>` marker at the old commit.
+If that write fails, the pull request is left untouched and the run stops, so the open PR is still the
+retry target. It then closes the PR, deletes the branch and dispatches, and removes the marker only
+after the dispatch is accepted: a failed close or delete leaves the marker, and a failed dispatch is
+retried once before the branch is restored and the PR reopened, with the marker still there. Every
+recovery is checked and the run fails with the exact `gh api` and `gh pr reopen` commands if one
+fails. Every run drains the markers first. If an open PR for the version exists, the marker is left to the
+PR pass (which removes it when that PR is current or regenerates a stale one). If the most recent
+closed PR for the version lacks this workflow's superseded comment, a maintainer closed it: the
+marker is dropped and nothing is regenerated (an older superseded PR does not mask it). A
+`release/<version>` branch whose tip differs from the commit the marker points at means a replacement
+has been pushed, so the marker is left for the PR pass — comparing the tip, not its parent, survives
+`main` moving while the replacement is prepared. Otherwise the run frees the
+branch, dispatches while the marker still exists, and removes it only after the dispatch is
+accepted. A failed dispatch therefore leaves the marker, and a marker that cannot be
+removed after a successful dispatch is a warning cleaned up when the replacement PR appears. The one
+gap left is a dispatch accepted whose Release PR run then fails to open a PR: the marker was removed
+after the acceptance, so that case needs a re-dispatch. These markers are internal, not `v*`, so the
+release tag ruleset does not cover them. A close that is a successful no-op ("already closed") skips
+everything: the branch is not deleted and no replacement is dispatched, so a maintainer ending a
+release is not overridden. A pull request already merged or closed at the first check is left alone
+before it is touched.
+
+The workflow runs no repository code and checks nothing out, and its three write scopes
+(`pull-requests`, `contents`, `actions`) are exactly the write operations it performs (delete or
+restore the ref, close or reopen, dispatch); `tooling/release-pr-sync.spec.ts` runs its step against
+a fake `gh` (each invariant has a mutation that fails it), and the carve-out in `tooling/ci.spec.ts`
+asserts the permissions. Unverified: the first live run; that `pull-requests: write` suffices for
+the close comment (the fine-grained permission table lists Issues write or Pull requests write for a
+PR comment); `gh workflow run` under the repository token; how much GitHub delays the five-minute
+schedule; the exact "already closed" no-op output of the runner's `gh`, which the skip relies on; and
+the marker tag POST/PATCH and the slash-bearing `matching-refs` call on the runner. A
+force-pushing sync that kept the pull request number was rejected: it would duplicate the release
+data validation and put force-pushing into the release path for no functional gain.
+
 ### Approval and tag integrity
 
 - **Who may create tags.** GitHub runs the workflow file from the tagged commit, so the gates in
@@ -707,7 +762,7 @@ Where `release.yaml` is more specific than, or differs from, the text above:
   environment approval and deployment-tag restriction, tag ruleset, minimal per-job permissions,
   no stored tokens, no cache, pinned actions, provenance. With one maintainer, approval is not a
   second-person control (see Approval).
-- The repository gains a global `v<semver>` tag (the only tag; package tags are off), created by `cog bump --version X.Y.Z --include-packages` locally and pushed by hand from `main`.
+- The repository gains a global `v<semver>` tag (the only **release** tag; package tags are off), created by `cog bump --version X.Y.Z --include-packages` locally and pushed by hand from `main`. The release-PR sync may write transient internal `release-sync-retry/` markers outside that namespace.
 - Rollback: npm versions cannot be freely unpublished; deprecate the bad version
   (`npm deprecate`) and fix forward with a new version. `X.Y.Z` image tags are never rewritten;
   move `X.Y` and `latest` back to the last good image.

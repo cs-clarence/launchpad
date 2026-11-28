@@ -1,0 +1,253 @@
+# Regenerates an open release pull request when main moves.
+#
+# The release PR holds one commit generated from main at dispatch: CHANGELOG.md, every manifest, the
+# lockfile and the version strings. Merging main into it would move the code but leave that content
+# describing the old tip, and the one-commit-on-main shape would no longer hold. So a stale release
+# PR is closed, its branch deleted, and Release PR dispatched again from the new tip, which
+# regenerates everything. It also runs every five minutes, because a push can land while the
+# replacement is being prepared and no event fires for that automatic replacement.
+#
+# This workflow runs no repository code and checks nothing out: only the gh calls below, with
+# exactly the three write scopes those calls need. It never publishes or pushes a branch; the only
+# tags it writes are internal `release-sync-retry/` markers for a failed recovery, and it deletes
+# them once the replacement is dispatched.
+# tooling/release-pr-sync.spec.ts and the carve-out in tooling/ci.spec.ts assert it.
+name: Release PR Sync
+
+on:
+  push:
+    branches: [main]
+  # A push that lands while Release PR is preparing a pull request is not seen by the push trigger.
+  # A `workflow_run` completion listener would not help: this workflow dispatches Release PR with
+  # the repository token, and a run started that way does not fire `workflow_run`. The schedule
+  # reconciles such a replacement within five minutes (GitHub may delay a scheduled run).
+  schedule:
+    - cron: "*/5 * * * *"
+
+permissions: {}
+
+# One sync at a time. The dispatch it starts has its own per-base concurrency group.
+concurrency:
+  group: release-pr-sync
+  cancel-in-progress: false
+
+jobs:
+  regenerate:
+    name: Regenerate a stale release pull request
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      # Close the pull request; delete its branch through the refs API; dispatch Release PR.
+      pull-requests: write
+      contents: write
+      actions: write
+    steps:
+      - name: Close, delete and re-dispatch each stale release pull request
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          # The live tip, not the SHA that triggered this run: a queued run can start after main
+          # moved again, and a release PR generated from the newer tip is then current, not stale.
+          live_main() {
+            gh api "repos/$REPO/git/ref/heads/main" --jq '.object.sha'
+          }
+          # A closed PR that cannot be reopened is invisible to later runs, so queue it as a marker
+          # the next run drains.
+          queue_retry() {
+            if ! gh api -X POST "repos/$REPO/git/refs" \
+              -f "ref=refs/tags/release-sync-retry/$version" -f "sha=$head" >/dev/null 2>&1; then
+              if ! gh api -X PATCH "repos/$REPO/git/refs/tags/release-sync-retry/$version" \
+                -f "sha=$head" -F force=true >/dev/null 2>&1; then
+                echo "::error::could not queue a retry marker for $version; restore it by hand"
+                return 1
+              fi
+            fi
+          }
+          # `--paginate`, not a fixed --limit: every open PR is read, however many pages that is.
+          # Read the whole list before touching anything, including the retry markers below: a
+          # failed fetch changes nothing, and acting while paging can shift a later page.
+          # Release PRs are in this repository; a fork's identically named branch is not ours.
+          open_prs=$(gh api --paginate "repos/$REPO/pulls?state=open&base=main&per_page=100" \
+            --jq '.[] | "\(.number) \(.head.ref) \(.head.sha) \(.head.repo.full_name)"')
+          # A recovery that could not restore the pull request leaves a retry marker. Drain those
+          # first; a listing failure stops the run (set -e) rather than silently skipping them.
+          markers=$(gh api --paginate "repos/$REPO/git/matching-refs/tags/release-sync-retry/" \
+            --jq '.[] | "\(.ref) \(.object.sha)"')
+          while read -r ref marker_sha; do
+            [ -n "${ref:-}" ] || continue
+            retry_version="${ref#refs/tags/release-sync-retry/}"
+            if [[ "$retry_version" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
+              retry_base="$retry_version"
+              retry_channel="stable"
+            elif [[ "$retry_version" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)-(rc)\.(0|[1-9][0-9]*)$ ]]; then
+              retry_base="${BASH_REMATCH[1]}.${BASH_REMATCH[2]}.${BASH_REMATCH[3]}"
+              retry_channel="${BASH_REMATCH[4]}"
+            else
+              echo "::warning::retry marker $ref is not a version this workflow knows; leaving it"
+              continue
+            fi
+            # An open PR for the version is handled by the PR pass below, which removes the marker
+            # when it sees a current PR or regenerates a stale one. Never delete that branch here.
+            if printf '%s\n' "$open_prs" | grep -q " release/$retry_version "; then
+              echo "an open release/$retry_version pull request exists; leaving the marker to the PR pass"
+              continue
+            fi
+            # A closed PR without this workflow's superseded comment was closed by a maintainer:
+            # respect that, drop the marker and do not regenerate.
+            closed_kind=$(gh pr list --repo "$REPO" --state closed --head "release/$retry_version" \
+              --json number,comments \
+              --jq 'if length == 0 then "none" elif (sort_by(.number) | last | [.comments[].body] | any(contains("superseded"))) then "ours" else "theirs" end')
+            if [ "$closed_kind" = "theirs" ]; then
+              echo "a maintainer closed release/$retry_version; removing the marker"
+              gh api -X DELETE "repos/$REPO/git/refs/tags/release-sync-retry/$retry_version" >/dev/null || { echo "::error::could not delete the retry marker $ref"; exit 1; }
+              continue
+            fi
+            # If release/<version> holds a different commit than the marker's, a replacement has
+            # already been pushed: leave the marker for the PR pass instead of deleting that branch.
+            # A normal branch move only changes this comparison, never the branch's parent.
+            if branch_sha=$(gh api "repos/$REPO/git/ref/heads/release/$retry_version" --jq '.object.sha' 2>/dev/null); then
+              if [ "$branch_sha" != "$marker_sha" ]; then
+                echo "release/$retry_version already holds a newer replacement; leaving the marker"
+                continue
+              fi
+            fi
+            # The branch may still exist (a failed reopen); free the name before dispatching. A
+            # failure here must keep the marker: release-pr refuses an existing branch.
+            if ! retry_deleted=$(gh api -X DELETE "repos/$REPO/git/refs/heads/release/$retry_version" 2>&1); then
+              if [[ "$retry_deleted" == *404* || "$retry_deleted" == *"Not Found"* ]]; then
+                echo "$retry_version branch was already gone"
+              else
+                echo "::error::could not delete release/$retry_version before the queued retry: $retry_deleted"
+                echo "::error::the retry marker stays for the next run"
+                exit 1
+              fi
+            fi
+            # Dispatch while the marker still exists: a failed dispatch then needs no recreate and
+            # cannot lose the target. Remove it only after the dispatch is accepted.
+            if ! gh workflow run release-pr.yaml --repo "$REPO" --ref main \
+              -f "base=$retry_base" -f "channel=$retry_channel"; then
+              echo "::error::could not dispatch the queued retry $ref; the marker stays for the next run"
+              exit 1
+            fi
+            gh api -X DELETE "repos/$REPO/git/refs/tags/release-sync-retry/$retry_version" >/dev/null 2>&1 ||
+              echo "::warning::could not remove the retry marker for $retry_version; the next run will"
+          done <<< "$markers"
+          while read -r number branch head source; do
+            [ -n "${number:-}" ] || continue
+            [ "$source" = "$REPO" ] || continue
+            case "$branch" in
+              release/*) ;;
+              *) continue ;;
+            esac
+            if [ -z "${head:-}" ] || [ "$head" = "null" ]; then
+              echo "::warning::$branch has no head commit; leaving it alone"
+              continue
+            fi
+            version="${branch#release/}"
+            if [[ "$version" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
+              base="$version"
+              channel="stable"
+            elif [[ "$version" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)-(rc)\.(0|[1-9][0-9]*)$ ]]; then
+              base="${BASH_REMATCH[1]}.${BASH_REMATCH[2]}.${BASH_REMATCH[3]}"
+              channel="${BASH_REMATCH[4]}"
+            else
+              echo "::warning::$branch is not a version this workflow knows; leaving it alone"
+              continue
+            fi
+            # The bump commit's parent is the main commit it was generated from. Read the tip
+            # again right before deciding: between the trigger and now it may have moved, and a
+            # release PR generated from the new tip must be left alone.
+            parent=$(gh api "repos/$REPO/commits/$head" --jq '.parents[0].sha')
+            main=$(live_main)
+            if [ "$parent" = "$main" ]; then
+              echo "$branch is already based on $main; nothing to do"
+              case " $markers " in
+                *" refs/tags/release-sync-retry/$version "*)
+                  gh api -X DELETE "repos/$REPO/git/refs/tags/release-sync-retry/$version" >/dev/null 2>&1 ||
+                    echo "::warning::could not remove the retry marker for $version"
+                  ;;
+              esac
+              continue
+            fi
+            echo "$branch is based on $parent, not $main; regenerating"
+            # Re-read the state: the PR may have been merged or closed since the listing.
+            state=$(gh pr view "$number" --repo "$REPO" --json state --jq '.state' 2>/dev/null || true)
+            if [ "$state" != "OPEN" ]; then
+              echo "#$number is already ${state:-unknown}; nothing to regenerate"
+              continue
+            fi
+            # Persist the retry marker before anything destructive. If every later step fails, a
+            # later run can still dispatch the replacement from this marker.
+            if ! queue_retry; then
+              echo "::error::could not persist a retry marker for $version; leaving the pull request unchanged"
+              exit 1
+            fi
+            # Close before deleting: deleting the head branch closes an open PR, which would look
+            # like a maintainer's decision and suppress the replacement.
+            if ! closed=$(gh pr close "$number" --repo "$REPO" --comment \
+              "Main moved since this release pull request was generated, so its changelog and version commit are stale. Release PR is regenerating it from the new tip; this pull request is superseded." 2>&1); then
+              state=$(gh pr view "$number" --repo "$REPO" --json state --jq '.state' 2>/dev/null || true)
+              if [ "$state" = "MERGED" ] || [ "$state" = "CLOSED" ]; then
+                echo "#$number is already ${state,,}; keeping the retry marker"
+                continue
+              fi
+              echo "::error::could not close #$number: $closed"
+              exit 1
+            fi
+            # A zero exit with this message means the PR was already closed: no comment, no close.
+            if [[ "$closed" == *"already closed"* ]]; then
+              echo "#$number was already closed; nothing to regenerate"
+              # The marker this run created must not make a later run regenerate it.
+              gh api -X DELETE "repos/$REPO/git/refs/tags/release-sync-retry/$version" >/dev/null 2>&1 ||
+                echo "::warning::could not remove the retry marker for $version"
+              continue
+            fi
+            # Delete the branch now that the PR is closed, so deletion cannot close anything.
+            deleted_by_us=0
+            if ! deleted=$(gh api -X DELETE "repos/$REPO/git/refs/heads/$branch" 2>&1); then
+              if [[ "$deleted" == *404* || "$deleted" == *"Not Found"* ]]; then
+                echo "$branch was already deleted"
+              else
+                echo "::error::could not delete $branch: $deleted"
+                # The PR is closed and the branch still exists; reopen it so the next run retries.
+                if ! gh pr reopen "$number" --repo "$REPO" >/dev/null 2>&1; then
+                  echo "::error::could not reopen #$number; reopen it with: gh pr reopen $number --repo $REPO"
+                fi
+                exit 1
+              fi
+            else
+              deleted_by_us=1
+            fi
+            # Dispatch the replacement, retrying once: a transient failure then needs no rollback.
+            if ! dispatched=$(gh workflow run release-pr.yaml --repo "$REPO" --ref main \
+              -f "base=$base" -f "channel=$channel" 2>&1); then
+              echo "::warning::Release PR dispatch failed, retrying once: $dispatched"
+              if ! dispatched=$(gh workflow run release-pr.yaml --repo "$REPO" --ref main \
+                -f "base=$base" -f "channel=$channel" 2>&1); then
+                # Still failing: restore a retry target, the branch at its old commit (only if this
+                # run deleted it) and the PR. Every step is checked; a failure gives the exact
+                # commands, because a closed PR is not visible to a later run.
+                if [ "$deleted_by_us" = 1 ]; then
+                  if ! restored=$(gh api -X POST "repos/$REPO/git/refs" \
+                    -f "ref=refs/heads/$branch" -f "sha=$head" 2>&1); then
+                    echo "::error::could not restore $branch: $restored"
+                    echo "::error::restore it with: gh api -X POST repos/$REPO/git/refs -f ref=refs/heads/$branch -f sha=$head"
+                    echo "::error::then reopen it with: gh pr reopen $number --repo $REPO"
+                    exit 1
+                  fi
+                fi
+                if ! gh pr reopen "$number" --repo "$REPO" >/dev/null 2>&1; then
+                  echo "::error::could not reopen #$number; reopen it with: gh pr reopen $number --repo $REPO"
+                  exit 1
+                fi
+                echo "::error::could not dispatch Release PR: $dispatched"
+                exit 1
+              fi
+            fi
+            # The replacement is dispatched; the marker did its job. If this cleanup fails a later
+            # run sees the current PR and removes it.
+            gh api -X DELETE "repos/$REPO/git/refs/tags/release-sync-retry/$version" >/dev/null 2>&1 ||
+              echo "::warning::could not remove the retry marker for $version"
+          done <<< "$open_prs"

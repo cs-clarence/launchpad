@@ -204,6 +204,15 @@ const RELEASE_PR_ALLOWED_COMMANDS = [
     '"$COMMIT:refs/heads/release/$VERSION"',
 ];
 const RELEASE_PR_WRITES = ["push: contents", "open-pr: pull-requests"];
+// The release-PR sync workflow closes a stale release PR, deletes its branch and dispatches Release
+// PR again; it runs no repository code and checks nothing out (tooling/release-pr-sync.spec.ts). Its
+// only refs named like tags are internal `release-sync-retry/` markers, never release tags.
+const RELEASE_PR_SYNC_WORKFLOW = "release-pr-sync.yaml";
+const RELEASE_PR_SYNC_WRITES = [
+    "regenerate: pull-requests",
+    "regenerate: contents",
+    "regenerate: actions",
+];
 const actionFile = path.join(root, ".github", "actions", "setup-workspace", "action.yaml");
 const others = [
     ...readdirSync(workflows)
@@ -294,17 +303,20 @@ const afterCarveOut = (commands: string) =>
         .split("\n")
         .filter((line) => !RELEASE_PR_ALLOWED_COMMANDS.includes(line.trim()))
         .join("\n");
-const strict = others.filter((file) => path.basename(file) !== RELEASE_PR_WORKFLOW);
+const strict = others.filter(
+    (file) => ![RELEASE_PR_WORKFLOW, RELEASE_PR_SYNC_WORKFLOW].includes(path.basename(file)!),
+);
 
 describe("every workflow except the release workflow", () => {
     it("is checked, and the release workflow is the only one exempt", () => {
         expect(readdirSync(workflows).toSorted()).toEqual([
             "ci.yaml",
             "release-dry-run.yaml",
+            RELEASE_PR_SYNC_WORKFLOW,
             RELEASE_PR_WORKFLOW,
             RELEASE_WORKFLOW,
         ]);
-        expect(others).toHaveLength(4);
+        expect(others).toHaveLength(5);
         expect(strict).toHaveLength(3);
     });
 
@@ -319,6 +331,16 @@ describe("every workflow except the release workflow", () => {
         expect(doc.jobs!.prepare!.permissions).toEqual({ contents: "read" });
         expect(commandsOf(text)).not.toMatch(/git tag/);
         for (const used of actionsOf(doc)) expect(used).not.toMatch(FORBIDDEN_ACTION);
+    });
+
+    it("keeps one narrow carve-out for the release-PR sync workflow", () => {
+        const text = readFileSync(path.join(workflows, RELEASE_PR_SYNC_WORKFLOW), "utf8");
+        const doc = parse(text);
+        expect(doc.permissions).toEqual({});
+        expect(permissionProblems(doc)).toEqual(RELEASE_PR_SYNC_WRITES);
+        // It runs no repository code and no action, so there is nothing to pin or run untrusted.
+        expect(actionsOf(doc)).toEqual([]);
+        expect(commandsOf(text)).not.toMatch(FORBIDDEN_COMMAND);
     });
 
     it("refuses anything beyond the carve-out", () => {

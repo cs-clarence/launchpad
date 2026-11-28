@@ -5,7 +5,9 @@ For a maintainer preparing a release. **Only one workflow publishes:**
 [release publishing decision](decisions/release-publishing.md). It runs when a maintainer pushes a
 `v<semver>` tag (never on a pull request, a schedule or by hand), each publishing job (`stage`,
 `npm-publish`, `image-publish`) waits for approval of the `release` environment, and it has **not
-run yet**. Nothing else in the repository publishes, pushes, tags or releases. The rehearsal below
+run yet**. Nothing else in the repository publishes, pushes, creates **release** tags or releases;
+the release-PR sync writes transient internal `release-sync-retry/` markers when a recovery fails.
+The rehearsal below
 is read-only. The state of the first
 release, what remains and the decisions still open are in the
 [0.1.0 plan](plans/release-0.1.0.md); its draft notes are in [release notes 0.1.0](release-notes/0.1.0.md).
@@ -322,6 +324,24 @@ names no further permission, so `pull-requests: write` is expected to suffice, w
 that the diff touches only versions, the lockfile and changelogs (it should read as a version bump
 and generated changelog text, nothing else).
 
+**If `main` moves while the PR is open.** Do not merge `main` into it: the bump commit's changelog
+and version lines were generated from the old tip. `.github/workflows/release-pr-sync.yaml` watches
+pushes to `main` and runs every five minutes; for an open `release/<version>` PR
+whose bump commit no longer sits directly on the live tip, it closes the PR with a note, deletes the
+branch and dispatches Release PR again for the same base and channel. Closing first matters: deleting
+the head branch would close the PR itself. That regenerates everything
+from the new tip, so expect a new PR number and merge that one. The five-minute run also catches a
+push that lands while Release PR is preparing a replacement (GitHub can delay a scheduled run, so
+this is not immediate). The run writes a `release-sync-retry/<version>` marker before it changes
+anything; if that write fails it leaves the PR untouched. It then closes the PR, deletes the branch
+and dispatches, removing the marker only after the dispatch is accepted. A failed close or delete
+keeps the marker; a failed dispatch is retried once, then restores the branch and reopens the PR,
+still keeping the marker. Those recoveries are checked and the run fails with the exact commands if
+one cannot be done. A later run drains any marker (free the branch, dispatch, remove the marker
+after the dispatch is accepted), so a closed PR cannot lose the retry. Its step
+is executed in `tooling/release-pr-sync.spec.ts` against a fake `gh`; it runs no repository code and
+never publishes. Its only tags are internal `release-sync-retry/` markers for a failed recovery.
+
 **Maintainer settings.** (1) **Settings, Actions, General, "Allow GitHub Actions to create and
 approve pull requests"** must be on, or `gh pr create` fails; only the `open-pr` job, which runs no
 untrusted code, uses it. (2) Recommended: the `release-pr` environment (created on first use) with
@@ -382,7 +402,8 @@ expected text).
   `next` (the `next` alias is shared by the pre-release channels, so an older channel never moves
   it past a newer one). The partial-release check stays for stable releases only.
 
-**Adding a channel is one more row** (and its case arm in the guard step, which the spec checks).
+**Adding a channel is one more row**, its case arm in the guard step, and its pre-release name in
+`release-pr-sync.yaml`'s branch parser (the specs check all three).
 For example, if `alpha` and `beta` are wanted, for major and minor releases only:
 
 ```ts
