@@ -201,26 +201,81 @@ const others = [
     actionFile,
 ];
 
+interface Doc {
+    on?: unknown;
+    permissions?: unknown;
+    jobs?: Record<string, Job & { permissions?: unknown; uses?: unknown }>;
+    runs?: { steps: Step[] };
+}
+const parse = (text: string) => Bun.YAML.parse(text) as Doc;
+const stepsOf = (doc: Doc) => [
+    ...Object.values(doc.jobs ?? {}).flatMap((job) => job.steps ?? []),
+    ...(doc.runs?.steps ?? []),
+];
+
 // Commands the shell would run: comments are not commands.
-const commandsOf = (text: string) => {
-    const parsed = Bun.YAML.parse(text) as {
-        jobs?: Record<string, Job>;
-        runs?: { steps: Step[] };
-    };
-    const all = [
-        ...Object.values(parsed.jobs ?? {}).flatMap((job) => job.steps ?? []),
-        ...(parsed.runs?.steps ?? []),
-    ];
-    return all
+const commandsOf = (text: string) =>
+    stepsOf(parse(text))
         .map((step) => step.run ?? "")
         .join("\n")
         .replace(/^\s*#.*$/gm, "");
-};
 
 const FORBIDDEN_COMMAND =
     /\b(publish|push|login|logout|tag|release create|imagetools create|attestation|provenance)\b|docker (push|login|tag)/;
 const FORBIDDEN_ACTION =
     /^(docker\/(login-action|build-push-action)|actions\/(attest|attest-build-provenance)|softprops\/|ncipollo\/|changesets\/|JS-DevTools\/npm-publish)/;
+
+// The parsed value, so `packages: "write"`, `'write'` and any other spelling count alike.
+const writes = (permissions: unknown): string[] => {
+    if (permissions === undefined || permissions === null) return [];
+    if (typeof permissions === "string") return /write/i.test(permissions) ? [permissions] : [];
+    return Object.entries(permissions as Record<string, unknown>)
+        .filter(
+            ([scope, level]) =>
+                scope.trim().toLowerCase() === "id-token" ||
+                String(level).trim().toLowerCase() === "write",
+        )
+        .map(([scope]) => scope);
+};
+const permissionProblems = (doc: Doc) => [
+    ...writes(doc.permissions),
+    ...Object.entries(doc.jobs ?? {}).flatMap(([id, job]) =>
+        writes(job.permissions).map((scope) => `${id}: ${scope}`),
+    ),
+];
+
+// Actions as parsed (the YAML value, never the raw token), also a reusable workflow call.
+const actionsOf = (doc: Doc) => [
+    ...Object.values(doc.jobs ?? {}).flatMap((job) =>
+        typeof job.uses === "string" ? [job.uses] : [],
+    ),
+    ...stepsOf(doc).flatMap((step) => (step.uses ? [step.uses] : [])),
+];
+
+// What can start the workflow on a tag: a push with no `branches` filter fires on tag pushes too
+// (GitHub starts it for every ref type when no filter is given), and so do `create` and `release`.
+const triggerProblems = (on: unknown): string[] => {
+    const events: Record<string, any> =
+        typeof on === "string"
+            ? { [on]: null }
+            : Array.isArray(on)
+              ? Object.fromEntries(on.map((event) => [String(event), null]))
+              : ((on ?? {}) as Record<string, any>);
+    const problems: string[] = [];
+    for (const [event, filter] of Object.entries(events)) {
+        if (event === "create" || event === "release") problems.push(`${event} can start on a tag`);
+        if (filter?.tags !== undefined || filter?.["tags-ignore"] !== undefined) {
+            problems.push(`${event} filters tags`);
+        }
+        if (
+            event === "push" &&
+            (!Array.isArray(filter?.branches) || filter.branches.length === 0)
+        ) {
+            problems.push("push has no branch filter, so it also fires on tag pushes");
+        }
+    }
+    return problems;
+};
 
 describe("every workflow except the release workflow", () => {
     it("is checked, and the release workflow is the only one exempt", () => {
@@ -232,33 +287,82 @@ describe("every workflow except the release workflow", () => {
         expect(others).toHaveLength(3);
     });
 
-    it("uses no secret, token permission or publishing credential", () => {
+    it("uses no secret and no publishing credential", () => {
         for (const file of others) {
             const text = readFileSync(file, "utf8").replace(/^\s*#.*$/gm, "");
-            expect(text, file).not.toMatch(
-                /secrets\.|id-token|attestations: write|packages: write|artifact-metadata|NODE_AUTH_TOKEN|NPM_TOKEN|_authToken/,
-            );
+            expect(text, file).not.toMatch(/secrets\.|NODE_AUTH_TOKEN|NPM_TOKEN|_authToken/);
         }
+    });
+
+    it("holds no write permission and no id-token at workflow or job scope", () => {
+        for (const file of others) {
+            expect(permissionProblems(parse(readFileSync(file, "utf8"))), file).toEqual([]);
+        }
+    });
+
+    it("rejects write permissions however they are written", () => {
+        for (const text of [
+            'permissions:\n  packages: "write"\njobs: {}',
+            "permissions:\n  attestations: 'write'\njobs: {}",
+            "permissions: write-all\njobs: {}",
+            "permissions:\n  id-token: read\njobs: {}",
+            'jobs:\n  a:\n    permissions:\n      "artifact-metadata": "write"\n    steps: []',
+            "jobs:\n  a:\n    permissions: { contents: write }\n    steps: []",
+        ]) {
+            expect(permissionProblems(parse(text)), text).not.toEqual([]);
+        }
+        expect(permissionProblems(parse("permissions:\n  contents: read\njobs: {}"))).toEqual([]);
     });
 
     it("runs no publishing, pushing, tagging or login command and uses no publishing action", () => {
         for (const file of others) {
             const text = readFileSync(file, "utf8");
             expect(commandsOf(text), file).not.toMatch(FORBIDDEN_COMMAND);
-            for (const [, used] of text.matchAll(/^\s*(?:- )?uses:\s*(\S+)/gm)) {
+            for (const used of actionsOf(parse(text)))
                 expect(used, file).not.toMatch(FORBIDDEN_ACTION);
-            }
         }
+    });
+
+    it("reads quoted and unquoted action references alike", () => {
+        for (const text of [
+            "jobs:\n  a:\n    steps:\n      - uses: docker/login-action@v4",
+            'jobs:\n  a:\n    steps:\n      - uses: "docker/login-action@v4"',
+            "jobs:\n  a:\n    steps:\n      - uses: 'actions/attest@v4'",
+            "jobs:\n  a:\n    uses: docker/build-push-action@v7",
+            'runs:\n  using: composite\n  steps:\n    - uses: "docker/login-action@v4"',
+        ]) {
+            const used = actionsOf(parse(text));
+            expect(used, text).toHaveLength(1);
+            expect(used[0], text).toMatch(FORBIDDEN_ACTION);
+        }
+        expect(
+            actionsOf(parse("jobs:\n  a:\n    steps:\n      - uses: actions/checkout@v6"))[0],
+        ).not.toMatch(FORBIDDEN_ACTION);
     });
 
     it("lets none of them start on a tag push", () => {
         for (const file of others.filter((f) => f.startsWith(workflows))) {
-            const on = (Bun.YAML.parse(readFileSync(file, "utf8")) as { on: Record<string, any> })
-                .on;
-            for (const [event, filter] of Object.entries(on)) {
-                expect(filter?.tags, `${file} ${event}`).toBeUndefined();
-            }
+            expect(triggerProblems(parse(readFileSync(file, "utf8")).on), file).toEqual([]);
         }
+    });
+
+    it("rejects triggers that can fire on a tag", () => {
+        for (const on of [
+            { push: {} },
+            { push: null },
+            "push",
+            ["push", "workflow_dispatch"],
+            { push: { tags: ["v*"] } },
+            { push: { branches: ["main"], "tags-ignore": ["x"] } },
+            { push: { branches: [] } },
+            { create: null },
+            { release: { types: ["published"] } },
+            { pull_request: { tags: ["v*"] } },
+        ]) {
+            expect(triggerProblems(on), JSON.stringify(on)).not.toEqual([]);
+        }
+        expect(triggerProblems({ push: { branches: ["main"] }, merge_group: null })).toEqual([]);
+        expect(triggerProblems({ workflow_dispatch: null })).toEqual([]);
     });
 
     it("keeps the release rehearsal manual, read-only and environment-free", () => {
