@@ -8,6 +8,7 @@ import {
     allowedPath,
     ALLOWED_PATHS,
     BODY_LIMIT,
+    MAX_FILE_BYTES,
     changedFileProblems,
     changelogRange,
     channelNames,
@@ -207,6 +208,15 @@ describe("the bump commit's paths", () => {
             "node_modules/x/package.json",
             "../package.json",
             "package.json/x",
+            "packages/../package.json",
+            "apps/../apps/cli/package.json",
+            "apps/./cli/package.json",
+            "apps/.git/package.json",
+            "packages/.git/CHANGELOG.md",
+            "apps/CLI/package.json",
+            "apps/cli.x/package.json",
+            "apps/cli_x/package.json",
+            "apps/ cli/package.json",
             "Package.json",
             "apps/cli/src/programxts",
             "bun.lockb",
@@ -233,6 +243,20 @@ describe("the bump commit's paths", () => {
         expect(changedFileProblems([file("package.json", "M", "100755", "100644")])).not.toEqual(
             [],
         );
+        expect(
+            changedFileProblems(
+                [file("CHANGELOG.md", "M")].map((f) => ({ ...f, size: MAX_FILE_BYTES })),
+            ),
+        ).toEqual([]);
+        expect(
+            changedFileProblems([{ ...file("CHANGELOG.md"), size: MAX_FILE_BYTES + 1 }]),
+        ).toEqual([expect.stringContaining("is larger than")]);
+        // A manifest or the lockfile is only ever modified in a release bump, never added.
+        expect(changedFileProblems([file("packages/x/package.json", "A", "000000")])).toEqual([
+            expect.stringContaining("must be modified, not added"),
+        ]);
+        expect(changedFileProblems([file("bun.lock", "A", "000000")])).not.toEqual([]);
+        expect(changedFileProblems([file("packages/x/CHANGELOG.md", "A", "000000")])).toEqual([]);
         expect(changedFileProblems([file(".github/workflows/x.yaml")])).toEqual([
             expect.stringContaining("not an allowed path"),
         ]);
@@ -269,7 +293,14 @@ describe("the bump commit's paths", () => {
         }
         // Changelogs and the lockfile change freely; the reviewer reads them.
         expect(versionOnlyProblems("CHANGELOG.md", ["anything"])).toEqual([]);
-        expect(versionOnlyProblems("bun.lock", ["anything"])).toEqual([]);
+        expect(versionOnlyProblems("bun.lock", ['      "version": "0.1.0",'])).toEqual([]);
+        // The lockfile is held to the same rule: a replaced dependency graph is refused.
+        expect(versionOnlyProblems("bun.lock", ['      "evil": "1.0.0",'])).not.toEqual([]);
+        expect(
+            versionOnlyProblems("bun.lock", [
+                '    "packages": { "x": ["x@1.0.0", "https://evil/x.tgz"] },',
+            ]),
+        ).not.toEqual([]);
     });
 });
 

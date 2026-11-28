@@ -72,6 +72,11 @@ describe("CI workflow", () => {
         // The dispatched check is of what the branch adds to origin/main.
         const commitsStep = ci.jobs.commits!.steps!.find((s) => s.uses?.startsWith("cocogitto/"))!;
         expect(commitsStep.with?.args).toContain("'origin/main..HEAD'");
+        // `origin/main` must exist in the checkout, so the history is fetched in full.
+        const checkout = ci.jobs.commits!.steps!.find((s) =>
+            s.uses?.startsWith("actions/checkout@"),
+        )!;
+        expect(checkout.with?.["fetch-depth"] as unknown).toBe(0);
         expect(commitsStep.with?.args).toContain("github.event.pull_request.base.sha");
         expect(gate.name).toBe("CI Passed");
     });
@@ -238,7 +243,7 @@ const RELEASE_WORKFLOW = "release.yaml";
 // and these three job-scoped write permissions, nothing else.
 const RELEASE_PR_WORKFLOW = "release-pr.yaml";
 const RELEASE_PR_ALLOWED_COMMANDS = [
-    'git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic $auth" push origin "HEAD:refs/heads/release/$VERSION"',
+    'git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic $auth" push origin "$COMMIT:refs/heads/release/$VERSION"',
 ];
 const RELEASE_PR_WRITES = ["push: contents", "open-pr: pull-requests", "open-pr: actions"];
 const actionFile = path.join(root, ".github", "actions", "setup-workspace", "action.yaml");
@@ -363,7 +368,7 @@ describe("every workflow except the release workflow", () => {
             "git push origin v1.0.0",
             "git push --tags",
             'git push origin "HEAD:refs/tags/v$VERSION"',
-            'git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic $auth" push origin "HEAD:refs/heads/release/$VERSION" --force',
+            'git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic $auth" push origin "$COMMIT:refs/heads/release/$VERSION" --force',
             'git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic $auth" push origin main',
             "git tag v1.0.0",
             'git tag -d "v$VERSION"',

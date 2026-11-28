@@ -188,14 +188,20 @@ jobs:
 
       # The version comes from `prepare`, so it is checked against the dispatch inputs and the
       # registry's channels (repeated here: no repository code runs; the spec checks the names).
-      # The bundle must hold one ref and exactly one commit on top of the main commit, with the
-      # fixed message, changing only allowlisted paths, and only the version line of a manifest or a
-      # source file. The allowlist is the one of tooling/release-pr.ts (the spec compares them).
+      # The bundle must hold one ref and exactly one commit on top of the main commit, whose object
+      # is exactly: tree, that one parent, author, committer, a blank line and the fixed message
+      # (no signature or other header, nothing after the message). It may change only allowlisted
+      # paths, as plain files, below a size cap, and a manifest, the lockfile or a source file only
+      # on its version line, which must carry this version. Every blob is read with `git cat-file`
+      # into a file and compared with `diff`; a failing step stops the job (nothing fails open).
+      # The allowlist is the one of tooling/release-pr.ts (the spec compares them).
       - name: Validate the release data
         id: validate
         run: |
           fail() { echo "::error::$1"; exit 1; }
           data="$RUNNER_TEMP/data"
+          work="$RUNNER_TEMP/validate"
+          mkdir -p "$work"
           [[ "$BASE" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]] || fail "the base is not X.Y.Z"
           [ "${VERSION%%-*}" = "$BASE" ] || fail "the version does not start with the base"
           (( ${#VERSION} <= 128 )) || fail "the version is longer than 128 characters"
@@ -219,10 +225,24 @@ jobs:
           [ "${heads#* }" = "refs/heads/release/$VERSION" ] || fail "the bundle holds another ref"
           git fetch --no-tags "$bundle" "refs/heads/release/$VERSION:refs/remotes/bundle/release"
           commit=$(git rev-parse --verify "refs/remotes/bundle/release^{commit}")
+          [[ "$commit" =~ ^[0-9a-f]{40}$ ]] || fail "unexpected commit id"
           [ "$(git rev-list --count "$GITHUB_SHA..$commit")" = 1 ] || fail "the bundle must hold exactly one new commit"
           [ "$(git rev-list --parents -n 1 "$commit")" = "$commit $GITHUB_SHA" ] || fail "the commit must sit directly on main"
-          [ "$(git log -1 --format=%B "$commit")" = "chore(version): v$VERSION" ] || fail "unexpected commit message"
-          allow='^package\.json$|^(apps|packages)/[^/]+/package\.json$|^bun\.lock$|^CHANGELOG\.md$|^(apps|packages)/[^/]+/CHANGELOG\.md$|^apps/cli/src/program\.ts$|^apps/mcp/src/server\.ts$|^apps/controller/src/server/openapi\.ts$'
+          raw=$(git cat-file commit "$commit"; printf x)
+          raw="${raw%x}"
+          header="${raw%%$'\n\n'*}"
+          body="${raw#*$'\n\n'}"
+          mapfile -t lines <<< "$header"
+          [ "${#lines[@]}" -eq 4 ] || fail "the commit must have exactly tree, parent, author and committer headers"
+          [[ "${lines[0]}" =~ ^tree\ [0-9a-f]{40}$ ]] || fail "unexpected tree header"
+          [ "${lines[1]}" = "parent $GITHUB_SHA" ] || fail "unexpected parent header"
+          person='^[^<>]+ <[^<>]*> [0-9]+ [+-][0-9]{4}$'
+          [[ "${lines[2]}" =~ ^author\ ${person#^} ]] || fail "unexpected author header"
+          [[ "${lines[3]}" =~ ^committer\ ${person#^} ]] || fail "unexpected committer header"
+          message="chore(version): v$VERSION"
+          { [ "$body" = "$message" ] || [ "$body" = "$message"$'\n' ]; } || fail "unexpected commit message"
+          allow='^package\.json$|^(apps|packages)/[a-z0-9-]+/package\.json$|^bun\.lock$|^CHANGELOG\.md$|^(apps|packages)/[a-z0-9-]+/CHANGELOG\.md$|^apps/cli/src/program\.ts$|^apps/mcp/src/server\.ts$|^apps/controller/src/server/openapi\.ts$'
+          max=2097152
           mapfile -d '' -t items < <(git diff --raw -z --no-abbrev --no-renames "$GITHUB_SHA" "$commit")
           [ "${#items[@]}" -gt 0 ] || fail "the commit changes nothing"
           for ((i = 0; i < ${#items[@]}; i += 2)); do
@@ -230,32 +250,44 @@ jobs:
             file="${items[i + 1]}"
             [[ "$meta" =~ ^:(100644|000000)\ 100644\ [0-9a-f]+\ [0-9a-f]+\ [AM]$ ]] || fail "$file: not an addition or a modification of a plain file"
             [[ "$file" =~ $allow ]] || fail "$file is not an allowed path"
+            size=$(git cat-file -s "$commit:$file")
+            [ "$size" -le "$max" ] || fail "$file is larger than $max bytes"
             case "$file" in
               apps/cli/src/program.ts) re='^[[:space:]]+\.version\("[^"]*"\)$' ;;
               apps/mcp/src/server.ts) re='^[[:space:]]+\{ name: "launchpad-mcp", version: "[^"]*" \},$' ;;
               apps/controller/src/server/openapi.ts) re='^[[:space:]]+version: "[^"]*",$' ;;
-              package.json | */package.json) re='^[[:space:]]+"version": "[^"]*",$' ;;
+              package.json | */package.json | bun.lock) re='^[[:space:]]+"version": "[^"]*",$' ;;
               *) continue ;;
             esac
+            [[ "$meta" == *" M" ]] || fail "$file must be modified, not added"
+            git cat-file blob "$GITHUB_SHA:$file" > "$work/old" || fail "cannot read $file at main"
+            git cat-file blob "$commit:$file" > "$work/new" || fail "cannot read $file in the commit"
+            rc=0
+            out=$(diff "$work/old" "$work/new") || rc=$?
+            [ "$rc" -le 1 ] || fail "diff failed for $file"
             while IFS= read -r line; do
               case "$line" in
-                "< "* | "> "*) [[ "${line:2}" =~ $re ]] || fail "$file: only the version line may change" ;;
+                "< "*) [[ "${line:2}" =~ $re ]] || fail "$file: only the version line may change" ;;
+                "> "*)
+                  [[ "${line:2}" =~ $re ]] || fail "$file: only the version line may change"
+                  [[ "$line" == *\"$VERSION\"* ]] || fail "$file: the new version line is not $VERSION"
+                  ;;
                 [0-9]* | "---") ;;
                 *) fail "$file: unexpected diff output" ;;
               esac
-            done < <(diff <(git show "$GITHUB_SHA:$file") <(git show "$commit:$file") || test $? -eq 1)
+            done <<< "$out"
           done
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "commit=$commit" >> "$GITHUB_OUTPUT"
 
       # The only step with the token. The branch must not exist (checked exactly), and only that
-      # branch is pushed, by an explicit refspec: no tag can be pushed from this job.
+      # branch is pushed, by an explicit refspec from the validated commit object (no worktree of
+      # the data is ever checked out): no tag can be pushed from this job.
       - name: Push the release branch only
         env:
           GH_TOKEN: ${{ github.token }}
           COMMIT: ${{ steps.validate.outputs.commit }}
         run: |
-          git switch --detach "$COMMIT"
           auth=$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)
           echo "::add-mask::$auth"
           rc=0
@@ -264,7 +296,7 @@ jobs:
             echo "::error::the branch release/$VERSION exists already, or the lookup failed (exit $rc)"
             exit 1
           fi
-          git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic $auth" push origin "HEAD:refs/heads/release/$VERSION"
+          git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic $auth" push origin "$COMMIT:refs/heads/release/$VERSION"
 
   open-pr:
     name: Open the pull request

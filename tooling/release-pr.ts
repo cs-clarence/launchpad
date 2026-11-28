@@ -120,10 +120,10 @@ export function prBody(version: string, channel: string, changelog: string): str
 // string (SOURCE_VERSIONS). Nothing else: no workflow, no script, no other source.
 export const ALLOWED_PATHS: RegExp[] = [
     /^package\.json$/,
-    /^(apps|packages)\/[^/]+\/package\.json$/,
+    /^(apps|packages)\/[a-z0-9-]+\/package\.json$/,
     /^bun\.lock$/,
     /^CHANGELOG\.md$/,
-    /^(apps|packages)\/[^/]+\/CHANGELOG\.md$/,
+    /^(apps|packages)\/[a-z0-9-]+\/CHANGELOG\.md$/,
     ...SOURCE_VERSIONS.map(
         (source) => new RegExp(`^${source.file.replace(/[.*+?^${}()|[\]\\/]/g, "\\$&")}$`),
     ),
@@ -131,10 +131,10 @@ export const ALLOWED_PATHS: RegExp[] = [
 
 export const allowedPath = (file: string) => ALLOWED_PATHS.some((pattern) => pattern.test(file));
 
-// A manifest or a source version file may change only on the line that holds the version, in
-// exactly the shape it has today (the push job repeats these in shell; the spec runs it).
+// A manifest, the lockfile (its workspace entries) or a source version file may change only on the
+// line that holds the version, in exactly the shape it has today (the push job repeats these in shell; the spec runs it).
 export const VERSION_LINES: { path: RegExp; line: RegExp }[] = [
-    { path: /(^|\/)package\.json$/, line: /^\s+"version": "[^"]*",$/ },
+    { path: /(^|\/)package\.json$|^bun\.lock$/, line: /^\s+"version": "[^"]*",$/ },
     { path: /^apps\/cli\/src\/program\.ts$/, line: /^\s+\.version\("[^"]*"\)$/ },
     {
         path: /^apps\/mcp\/src\/server\.ts$/,
@@ -144,7 +144,7 @@ export const VERSION_LINES: { path: RegExp; line: RegExp }[] = [
 ];
 
 // The changed lines (old or new, without a diff prefix) of `file` that are not its version line;
-// files outside VERSION_LINES (changelogs, the lockfile) are not checked line by line.
+// files outside VERSION_LINES (the changelogs) are not checked line by line; they are size-capped.
 export function versionOnlyProblems(file: string, changedLines: string[]): string[] {
     const rule = VERSION_LINES.find((r) => r.path.test(file));
     if (!rule) return [];
@@ -153,12 +153,17 @@ export function versionOnlyProblems(file: string, changedLines: string[]): strin
         .map((line) => `${file}: ${JSON.stringify(line)} is not the version line`);
 }
 
+// The cap on any changed file, in bytes: about ten times the lockfile (200 KB) and far above a
+// changelog that gains one release per section, but finite, so a huge blob is refused.
+export const MAX_FILE_BYTES = 2097152;
+
 export interface ChangedFile {
     // The raw `git diff` fields: modes and the status letter.
     oldMode: string;
     newMode: string;
     status: string;
     path: string;
+    size?: number;
 }
 
 // Why a bump commit's changes are refused: a path outside the allowlist, a deletion or a rename, a
@@ -168,6 +173,12 @@ export function changedFileProblems(files: ChangedFile[]): string[] {
     const problems: string[] = [];
     for (const file of files) {
         if (!allowedPath(file.path)) problems.push(`${file.path} is not an allowed path`);
+        if (file.size !== undefined && file.size > MAX_FILE_BYTES) {
+            problems.push(`${file.path} is larger than ${MAX_FILE_BYTES} bytes`);
+        }
+        if (VERSION_LINES.some((rule) => rule.path.test(file.path)) && file.status !== "M") {
+            problems.push(`${file.path} must be modified, not added`);
+        }
         if (file.status !== "A" && file.status !== "M") {
             problems.push(
                 `${file.path}: status ${file.status} is not an addition or a modification`,
