@@ -43,28 +43,32 @@ tasks:
     exec: sh -c 'cd "$(git rev-parse --show-toplevel)" && bun tooling/dev-infra.ts up {{ args.options }}'
     args:
       options: ""
-    interactive: true
+    output_logs: all
+    interactive: false
 
   dev:infra:down:
     description: "Stop the development infrastructure and keep its data (database, Dokku state, credentials, images)"
     exec: sh -c 'cd "$(git rev-parse --show-toplevel)" && bun tooling/dev-infra.ts down {{ args.options }}'
     args:
       options: ""
-    interactive: true
+    output_logs: all
+    interactive: false
 
   dev:infra:destroy:
     description: "Remove everything the development infrastructure created: sites, containers, volumes, network, images and .dev-infra/"
     exec: sh -c 'cd "$(git rev-parse --show-toplevel)" && bun tooling/dev-infra.ts destroy {{ args.options }}'
     args:
       options: ""
-    interactive: true
+    output_logs: all
+    interactive: false
 
   dev:infra:status:
     description: "Show the development infrastructure: service health, ports and deployed sites"
     exec: sh -c 'cd "$(git rev-parse --show-toplevel)" && bun tooling/dev-infra.ts status {{ args.options }}'
     args:
       options: ""
-    interactive: true
+    output_logs: all
+    interactive: false
 
   dev:infra:logs:
     description: "Follow the development infrastructure logs; option --service <name>"
@@ -78,7 +82,8 @@ tasks:
     exec: sh -c 'cd "$(git rev-parse --show-toplevel)" && bun tooling/dev-infra.ts seed {{ args.options }}'
     args:
       options: ""
-    interactive: true
+    output_logs: all
+    interactive: false
 
   check:format:
     description: Format check of the whole repository, including docs and root files
