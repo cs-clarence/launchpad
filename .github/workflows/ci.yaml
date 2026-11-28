@@ -6,8 +6,8 @@ name: CI
 on:
   merge_group:
   # Also by hand, so the release PR workflow can start CI on a `release/<version>` branch: a PR
-  # opened with the workflow token starts no pull_request run. The `commits` job is skipped under
-  # this event and the gatekeeper expects exactly that (it only expects `success` on pull requests).
+  # opened with the workflow token starts no pull_request run. Under this event the `commits` job
+  # checks the branch's commits against origin/main, as it does for a pull request.
   workflow_dispatch:
   push:
     branches: [main]
@@ -25,7 +25,7 @@ concurrency:
 jobs:
   commits:
     name: Check Commits
-    if: ${{ github.event_name == 'pull_request' }}
+    if: ${{ github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -36,8 +36,9 @@ jobs:
         uses: cocogitto/cocogitto-action@v4.2.0
         with:
           command: check
-          # Only this PR's commits; the repository has no SemVer tag for --from-latest-tag.
-          args: ${{ github.event.pull_request.base.sha }}..${{ github.event.pull_request.head.sha }}
+          # Only this PR's commits; the repository has no SemVer tag for --from-latest-tag. A
+          # dispatched run has no pull request, so it checks what the branch adds to origin/main.
+          args: ${{ github.event_name == 'pull_request' && format('{0}..{1}', github.event.pull_request.base.sha, github.event.pull_request.head.sha) || 'origin/main..HEAD' }}
 
   check:
     name: Check
@@ -179,8 +180,8 @@ jobs:
   #
   # The job set is static, so the gate is stricter than a dynamic plan needs to be:
   # `check`, `build`, `test` and `integration` must each be exactly `success` (a job
-  # skipped by mistake must not let a merge through), and `commits`, which only runs
-  # on pull requests, must be `success` there and `skipped` everywhere else.
+  # skipped by mistake must not let a merge through), and `commits`, which runs on pull
+  # requests and on a dispatch, must be `success` there and `skipped` everywhere else.
   ci-gatekeeper:
     name: CI Passed
     needs: [commits, check, build, test, integration, packages]
@@ -207,7 +208,7 @@ jobs:
           script: |
             const results = JSON.parse(process.env.RESULTS_JSON);
             const expected = {
-              commits: process.env.EVENT_NAME === 'pull_request' ? 'success' : 'skipped',
+              commits: ['pull_request', 'workflow_dispatch'].includes(process.env.EVENT_NAME) ? 'success' : 'skipped',
               check: 'success',
               build: 'success',
               test: 'success',

@@ -61,12 +61,18 @@ describe("CI workflow", () => {
 
     // The release-PR workflow dispatches CI on a release branch; the required `CI Passed` check must
     // report there under the same name, with the PR-only commits job skipped.
-    it("can be dispatched, with the commits job skipped and the gate under the same name", () => {
+    it("can be dispatched, with the commits job run and the gate under the same name", () => {
         const on = (
             Bun.YAML.parse(readFileSync(path.join(workflows, "ci.yaml"), "utf8")) as { on: object }
         ).on;
         expect(Object.keys(on)).toContain("workflow_dispatch");
-        expect(ci.jobs.commits!.if).toBe("${{ github.event_name == 'pull_request' }}");
+        expect(ci.jobs.commits!.if).toBe(
+            "${{ github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch' }}",
+        );
+        // The dispatched check is of what the branch adds to origin/main.
+        const commitsStep = ci.jobs.commits!.steps!.find((s) => s.uses?.startsWith("cocogitto/"))!;
+        expect(commitsStep.with?.args).toContain("'origin/main..HEAD'");
+        expect(commitsStep.with?.args).toContain("github.event.pull_request.base.sha");
         expect(gate.name).toBe("CI Passed");
     });
 
@@ -161,42 +167,64 @@ describe("CI gatekeeper script", () => {
         packages: "success",
     };
 
-    it("passes a pull request where every job succeeded", () => {
-        expect(evaluate("pull_request", allGreen)).toBeUndefined();
+    // The commit check runs on a pull request and on a dispatch (the release branch); it is skipped
+    // on a push to main and in the merge queue.
+    const checked = ["pull_request", "workflow_dispatch"];
+    const unchecked = ["push", "merge_group"];
+
+    it("passes a pull request or a dispatch where every job succeeded", () => {
+        for (const event of checked) expect(evaluate(event, allGreen), event).toBeUndefined();
     });
 
     it("passes a push or merge-queue run where only commits was skipped", () => {
-        for (const event of ["push", "merge_group", "workflow_dispatch"]) {
-            expect(evaluate(event, { ...allGreen, commits: "skipped" })).toBeUndefined();
+        for (const event of unchecked) {
+            expect(evaluate(event, { ...allGreen, commits: "skipped" }), event).toBeUndefined();
         }
     });
 
-    it("fails when any job failed or was cancelled", () => {
-        for (const job of ["commits", "check", "build", "test", "integration", "packages"]) {
-            for (const result of ["failure", "cancelled"]) {
-                expect(
-                    evaluate("pull_request", { ...allGreen, [job]: result }),
-                    `${job} ${result}`,
-                ).toContain(job);
+    it("fails when any job failed or was cancelled, on every event", () => {
+        for (const event of [...checked, ...unchecked]) {
+            const jobs = ["check", "build", "test", "integration", "packages"];
+            for (const job of checked.includes(event) ? ["commits", ...jobs] : jobs) {
+                for (const result of ["failure", "cancelled"]) {
+                    expect(
+                        evaluate(event, { ...allGreen, [job]: result }),
+                        `${event} ${job} ${result}`,
+                    ).toContain(job);
+                }
             }
         }
     });
 
     it("fails when a required job was skipped, as happens when an earlier job failed", () => {
-        for (const job of ["check", "build", "test", "integration", "packages"]) {
-            expect(
-                evaluate("push", { ...allGreen, commits: "skipped", [job]: "skipped" }),
-                job,
-            ).toContain(job);
+        for (const event of [...checked, ...unchecked]) {
+            for (const job of ["check", "build", "test", "integration", "packages"]) {
+                const commits = checked.includes(event) ? "success" : "skipped";
+                expect(
+                    evaluate(event, { ...allGreen, commits, [job]: "skipped" }),
+                    `${event} ${job}`,
+                ).toContain(job);
+            }
         }
     });
 
-    it("fails a pull request whose commit check was skipped", () => {
-        expect(evaluate("pull_request", { ...allGreen, commits: "skipped" })).toContain("commits");
+    it("fails a pull request or a dispatch whose commit check was skipped", () => {
+        for (const event of checked) {
+            expect(evaluate(event, { ...allGreen, commits: "skipped" }), event).toContain(
+                "commits",
+            );
+        }
     });
 
-    it("fails a push where the commit check unexpectedly ran and failed", () => {
-        expect(evaluate("push", { ...allGreen, commits: "failure" })).toContain("commits");
+    it("fails a push or merge-queue run where the commit check unexpectedly ran", () => {
+        for (const event of unchecked) {
+            for (const result of ["failure", "success"]) {
+                expect(
+                    evaluate(event, { ...allGreen, commits: result }),
+                    `${event} ${result}`,
+                ).toContain("commits");
+            }
+        }
     });
 });
 
