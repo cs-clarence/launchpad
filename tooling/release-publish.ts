@@ -17,15 +17,15 @@ import {
     classifyInspect,
     exactTagAction,
     existingVersion,
-    floatingTags,
+    floatingMoves,
     npmDistTag,
     npmPublishAction,
     parseInspect,
     PUBLISH_ORDER,
     REGISTRY,
     sumsFiles,
-    xyOf,
 } from "./release-core";
+import { channelOf, imageTagsOf } from "./release-channels";
 
 const root = path.resolve(import.meta.dirname, "..");
 
@@ -74,8 +74,8 @@ export function inspect(ref: string, exec: Runner = run): Inspected | null {
 
 export const imageRef = (name: string, tag: string) => `${REGISTRY}${name}:${tag}`;
 
-function latestOnNpm(name: string): string | null {
-    const done = run("npm", ["view", name, "dist-tags.latest"]);
+function tagOnNpm(name: string, tag: string): string | null {
+    const done = run("npm", ["view", name, `dist-tags.${tag}`]);
     if (done.code !== 0) throw new Error(`npm view ${name} failed:\n${done.err}`);
     return done.out.trim() || null;
 }
@@ -124,7 +124,9 @@ export function publishNpm(dir: string, version: string) {
             console.log(`${name}@${version}: already published, integrity and provenance match`);
             continue;
         }
-        const tag = npmDistTag(version, latestOnNpm(name));
+        const channelTag = channelOf(version)?.npmTag;
+        if (!channelTag) throw new Error(`${version} belongs to no registered channel`);
+        const tag = npmDistTag(version, tagOnNpm(name, channelTag));
         must("npm", ["publish", tarball, "--tag", tag, "--provenance", "--access", "public"]);
         console.log(`${name}@${version}: published with --tag ${tag}`);
     }
@@ -145,16 +147,9 @@ export function retag(name: string, version: string, digest: string, sha: string
     // A tag that exists with an unreadable label throws here instead of reading as missing.
     const versionOf = (tag: string) =>
         existingVersion(inspect(imageRef(name, tag)), imageRef(name, tag));
-    const plan = floatingTags({
-        version,
-        xyVersion: versionOf(xyOf(version)),
-        latestVersion: versionOf("latest"),
-    });
-    for (const [tag, move] of [
-        [xyOf(version), plan.xy],
-        ["latest", plan.latest],
-    ] as const) {
-        if (!move) continue;
+    const current: Record<string, string | null> = {};
+    for (const tag of imageTagsOf(version)) current[tag] = versionOf(tag);
+    for (const tag of floatingMoves(version, current)) {
         add(tag);
         console.log(`${name}: ${tag} -> ${digest}`);
     }

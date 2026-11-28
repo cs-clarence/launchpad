@@ -1,6 +1,13 @@
 // The pure decisions of the release workflow. Dependency-free on purpose: the publishing jobs hold
 // the OIDC token or write access to the registry, so what they run imports only node: built-ins
 // and relative modules like this one (asserted by tooling/release.spec.ts).
+import {
+    type Channel,
+    CHANNELS,
+    channelOf,
+    channelProblems,
+    imageTagsOf,
+} from "./release-channels";
 import { compareSemver } from "./semver-compare";
 
 // The five images, built as launchpad/<name> and pushed to ghcr.io/launchpad-kit/launchpad-<name>.
@@ -15,26 +22,34 @@ export const MAX_VERSION_LENGTH = 128;
 export const TAG_PATTERN =
     /^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-((0|[1-9][0-9]*)|[0-9]*[A-Za-z-][0-9A-Za-z-]*)(\.((0|[1-9][0-9]*)|[0-9]*[A-Za-z-][0-9A-Za-z-]*))*)?$/;
 
-export function checkTag(tag: string): string[] {
+// The tag is v<semver> without build metadata, at most 128 characters, and a version of a registered
+// channel (tooling/release-channels.ts): stable, or `<channel>.<N>` for a channel that supports the
+// kind of release.
+export function checkTag(tag: string, channels: Channel[] = CHANNELS): string[] {
     if (!TAG_PATTERN.test(tag)) return [`${tag} is not v<semver> without build metadata`];
     if (tag.length - 1 > MAX_VERSION_LENGTH) {
         return [`the version is longer than ${MAX_VERSION_LENGTH} characters (an image tag limit)`];
     }
-    return [];
+    return channelProblems(tag.slice(1), channels);
 }
 
 export const isStable = (version: string) => !version.includes("-");
 export const xyOf = (version: string) => version.split(".").slice(0, 2).join(".");
 
-export type DistTag = "latest" | "next" | "retry";
-
-// A pre-release never takes `latest`. A stable version takes it when the package has none yet
-// (only pre-releases or the bootstrap placeholder were published) or when it is not lower than the
-// current one; a lower one is a retry of an older release and must not move `latest` backwards.
-export function npmDistTag(version: string, currentLatest: string | null | undefined): DistTag {
-    if (!isStable(version)) return "next";
-    if (!currentLatest) return "latest";
-    return compareSemver(version, currentLatest) < 0 ? "retry" : "latest";
+// The dist-tag a version is published under: its channel's npm tag (`latest` for stable, `next` for
+// rc), forward-only. When the channel's tag is missing the version is eligible; when it already
+// points at a greater version, publishing with it would move it backwards, so the version is
+// published with `retry` instead and the release is fixed forward. Trusted publishing covers
+// `npm publish` only, so there is no `npm dist-tag add`, hence no alias across channels.
+export function npmDistTag(
+    version: string,
+    currentOnChannelTag: string | null | undefined,
+    channels: Channel[] = CHANNELS,
+): string {
+    const channel = channelOf(version, channels);
+    if (!channel) throw new Error(`${version} belongs to no registered channel`);
+    if (!currentOnChannelTag) return channel.npmTag;
+    return compareSemver(version, currentOnChannelTag) < 0 ? "retry" : channel.npmTag;
 }
 
 // What to do with one package version given what the registry holds. A version is skipped only
@@ -54,20 +69,18 @@ export function npmPublishAction(
     return "skip";
 }
 
-export interface FloatingInput {
-    version: string;
-    // The version label of the image now tagged X.Y, or null when that tag does not exist.
-    xyVersion: string | null;
-    // The same for `latest`.
-    latestVersion: string | null;
-}
-
-// Floating tags move forward only, and only for stable versions.
-export function floatingTags(input: FloatingInput): { xy: boolean; latest: boolean } {
-    if (!isStable(input.version)) return { xy: false, latest: false };
-    const ahead = (current: string | null) =>
-        !current || !isStable(current) || compareSemver(input.version, current) > 0;
-    return { xy: ahead(input.xyVersion), latest: ahead(input.latestVersion) };
+// The image tags of the version's channel that move: each is forward-only, so it moves when it does
+// not exist or its image's version label is lower. `current` maps each channel tag (X.Y resolved) to
+// the version label of the image now tagged so, or null when the tag does not exist.
+export function floatingMoves(
+    version: string,
+    current: Record<string, string | null>,
+    channels: Channel[] = CHANNELS,
+): string[] {
+    return imageTagsOf(version, channels).filter((tag) => {
+        const existing = current[tag];
+        return !existing || compareSemver(version, existing) > 0;
+    });
 }
 
 // What to do with the immutable X.Y.Z tag given what it points to now.

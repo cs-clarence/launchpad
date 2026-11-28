@@ -13,7 +13,7 @@ import {
     classifyInspect,
     consumerManifest,
     exactTagAction,
-    floatingTags,
+    floatingMoves,
     IMAGES,
     labelVersion,
     npmDistTag,
@@ -32,7 +32,7 @@ const root = path.resolve(import.meta.dirname, "..");
 
 describe("tag guard", () => {
     it("accepts release tags", () => {
-        for (const tag of ["v0.1.0", "v0.1.0-rc.1", "v1.2.3-rc-1", "v10.20.30"]) {
+        for (const tag of ["v0.1.0", "v0.1.0-rc.1", "v1.2.3-rc.12", "v10.20.30", "v1.0.0-rc.0"]) {
             expect(checkTag(tag), tag).toEqual([]);
         }
     });
@@ -53,79 +53,100 @@ describe("tag guard", () => {
         }
     });
 
+    it("refuses a pre-release that is not <registered channel>.<N>", () => {
+        for (const tag of [
+            "v1.2.3-foo.1",
+            "v1.2.3-rc",
+            "v1.2.3-rc-1",
+            "v1.2.3-rc.01",
+            "v1.2.3-rc.1.2",
+            "v1.2.3-rc.x",
+            "v1.2.3-rc.",
+            "v1.2.3-RC.1",
+            "v1.2.3-alpha.1",
+            "v1.2.3-beta.1",
+            "v1.2.3-nightly.20261128.abc",
+        ]) {
+            expect(checkTag(tag), tag).not.toEqual([]);
+        }
+    });
+
     it("limits the version to 128 characters, the longest image tag", () => {
-        const base = "1.2.3-";
-        expect(checkTag(`v${base}${"a".repeat(128 - base.length)}`)).toEqual([]);
-        expect(checkTag(`v${base}${"a".repeat(129 - base.length)}`)[0]).toContain("128");
+        const base = "1.2.3-rc.1";
+        expect(checkTag(`v${base}${"0".repeat(128 - base.length)}`)).toEqual([]);
+        expect(checkTag(`v${base}${"0".repeat(129 - base.length)}`)[0]).toContain("128");
     });
 });
 
 describe("npm dist-tag", () => {
-    it("never gives a pre-release latest", () => {
+    it("gives a pre-release its channel's tag, never latest", () => {
         expect(npmDistTag("0.1.0-rc.1", null)).toBe("next");
         expect(npmDistTag("0.1.0-rc.1", "0.0.1")).toBe("next");
         expect(npmDistTag("2.0.0-rc.1", "1.0.0")).toBe("next");
     });
 
-    it("takes latest when the package has none yet (the first stable release)", () => {
+    it("takes the channel's tag when it is missing (the first release)", () => {
         expect(npmDistTag("0.1.0", null)).toBe("latest");
         expect(npmDistTag("0.1.0", undefined)).toBe("latest");
         expect(npmDistTag("0.1.0", "")).toBe("latest");
+        expect(npmDistTag("0.1.0-rc.1", "")).toBe("next");
     });
 
-    it("retries a version lower than latest under retry", () => {
+    it("retries a version lower than what the channel's tag holds", () => {
         expect(npmDistTag("1.2.3", "1.2.4")).toBe("retry");
         expect(npmDistTag("1.9.0", "2.0.0")).toBe("retry");
         expect(npmDistTag("0.1.0", "0.1.0-rc.1")).toBe("latest");
+        expect(npmDistTag("0.2.0-rc.1", "0.2.0-rc.2")).toBe("retry");
+        expect(npmDistTag("0.2.0-rc.1", "0.3.0-rc.1")).toBe("retry");
     });
 
-    it("takes latest for a higher or equal version", () => {
+    it("takes the channel's tag for a higher or equal version", () => {
         expect(npmDistTag("1.2.4", "1.2.3")).toBe("latest");
         expect(npmDistTag("1.2.3", "1.2.3")).toBe("latest");
+        expect(npmDistTag("0.2.0-rc.2", "0.2.0-rc.1")).toBe("next");
+    });
+
+    it("refuses a version of no registered channel", () => {
+        expect(() => npmDistTag("1.0.0-foo.1", null)).toThrow(/no registered channel/);
     });
 });
 
 describe("floating image tags", () => {
+    const moves = (version: string, current: Record<string, string | null> = {}) =>
+        floatingMoves(version, current);
+
     it("moves X.Y and latest to a newer stable version", () => {
-        expect(
-            floatingTags({ version: "1.2.4", xyVersion: "1.2.3", latestVersion: "1.2.3" }),
-        ).toEqual({
-            xy: true,
-            latest: true,
-        });
+        expect(moves("1.2.4", { "1.2": "1.2.3", latest: "1.2.3" })).toEqual(["1.2", "latest"]);
     });
 
     it("creates a floating tag that does not exist", () => {
-        expect(floatingTags({ version: "0.1.0", xyVersion: null, latestVersion: null })).toEqual({
-            xy: true,
-            latest: true,
-        });
+        expect(moves("0.1.0")).toEqual(["0.1", "latest"]);
     });
 
     it("moves X.Y forward only", () => {
-        const plan = floatingTags({ version: "1.2.3", xyVersion: "1.2.4", latestVersion: "1.3.0" });
-        expect(plan).toEqual({ xy: false, latest: false });
-        expect(
-            floatingTags({ version: "1.2.5", xyVersion: "1.2.5", latestVersion: "1.2.5" }),
-        ).toEqual({ xy: false, latest: false });
+        expect(moves("1.2.3", { "1.2": "1.2.4", latest: "1.3.0" })).toEqual([]);
+        expect(moves("1.2.5", { "1.2": "1.2.5", latest: "1.2.5" })).toEqual([]);
     });
 
     it("moves X.Y but not latest when a newer minor holds latest", () => {
-        expect(
-            floatingTags({ version: "1.2.4", xyVersion: "1.2.3", latestVersion: "1.3.0" }),
-        ).toEqual({
-            xy: true,
-            latest: false,
-        });
+        expect(moves("1.2.4", { "1.2": "1.2.3", latest: "1.3.0" })).toEqual(["1.2"]);
     });
 
-    it("never moves a floating tag for a pre-release", () => {
-        expect(
-            floatingTags({ version: "0.1.0-rc.1", xyVersion: null, latestVersion: null }),
-        ).toEqual({
-            xy: false,
-            latest: false,
-        });
+    it("moves a pre-release's own tags, never X.Y or latest", () => {
+        expect(moves("0.1.0-rc.1")).toEqual(["rc", "next"]);
+        expect(moves("0.1.0-rc.2", { rc: "0.1.0-rc.1", next: "0.1.0-rc.1" })).toEqual([
+            "rc",
+            "next",
+        ]);
+    });
+
+    it("moves the rc and next aliases forward only", () => {
+        expect(moves("0.1.0-rc.1", { rc: "0.1.0-rc.2", next: "0.1.0-rc.2" })).toEqual([]);
+        expect(moves("0.2.0-rc.1", { rc: "0.1.0-rc.5", next: "0.3.0-rc.1" })).toEqual(["rc"]);
+    });
+
+    it("moves nothing for a version of no registered channel", () => {
+        expect(moves("0.1.0-foo.1")).toEqual([]);
     });
 });
 

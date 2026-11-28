@@ -49,6 +49,27 @@ jobs:
             exit 1
           fi
           version="${REF_NAME#v}"
+          # The channel rules of tooling/release-channels.ts, repeated here because this job cannot
+          # import it; the spec asserts the two agree. A pre-release is `<channel>.<N>`, N numeric
+          # without leading zeros, on a channel that supports the kind of release.
+          IFS=. read -r _ minor patch <<< "${version%%-*}"
+          if [ "$patch" != 0 ]; then kind=patch; elif [ "$minor" != 0 ]; then kind=minor; else kind=major; fi
+          if [[ "$version" == *-* ]]; then
+            pre="${version#*-}"
+            name="${pre%%.*}"
+            case "$name" in
+              rc) kinds=" major minor patch " ;;
+              *) echo "::error::$name is not a registered pre-release channel"; exit 1 ;;
+            esac
+            if [[ ! "$pre" =~ ^[a-z]+\.(0|[1-9][0-9]*)$ ]]; then
+              echo "::error::a pre-release must be <channel>.<N> with N numeric without leading zeros"
+              exit 1
+            fi
+            if [[ "$kinds" != *" $kind "* ]]; then
+              echo "::error::the $name channel does not support a $kind release"
+              exit 1
+            fi
+          fi
           if (( ${#version} > 128 )); then
             echo "::error::the version is longer than 128 characters (an image tag limit)"
             exit 1
@@ -100,6 +121,9 @@ jobs:
 
       - name: The tag is a release tag
         run: bun tooling/release-plan.ts guard "$TAG"
+
+      - name: No regression across channels
+        run: bun tooling/release-plan.ts no-regression "$VERSION"
 
       - name: The tag equals every published version
         run: bun tooling/release-plan.ts verify-tag "$TAG"

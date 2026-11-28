@@ -3,7 +3,8 @@ import { spawnSync } from "node:child_process";
 import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { IMAGES, TAG_PATTERN } from "./release-plan";
+import { CHANNELS, type Kind } from "./release-channels";
+import { checkTag, IMAGES, TAG_PATTERN } from "./release-plan";
 
 const root = path.resolve(import.meta.dirname, "..");
 const file = readFileSync(path.join(root, ".github/workflows/release.yaml"), "utf8");
@@ -192,7 +193,82 @@ describe("release workflow tag guard", () => {
 
     it("accepts release tags and outputs the version", () => {
         expect(guardOutcome("v0.1.0-rc.1")).toEqual({ code: 0, output: "version=0.1.0-rc.1\n" });
-        expect(guardOutcome("v1.2.3-rc-1").code).toBe(0);
+        expect(guardOutcome("v1.2.3-rc.12").code).toBe(0);
+        expect(guardOutcome("v1.2.3")).toEqual({ code: 0, output: "version=1.2.3\n" });
+    });
+
+    it("refuses a pre-release that is not <registered channel>.<N>", () => {
+        for (const ref of [
+            "v1.2.3-rc-1",
+            "v1.2.3-foo.1",
+            "v1.2.3-rc",
+            "v1.2.3-rc.01",
+            "v1.2.3-rc.1.2",
+            "v1.2.3-alpha.1",
+            "v1.2.3-beta.1",
+            "v1.2.3-RC.1",
+        ]) {
+            expect(guardOutcome(ref).code, ref).toBe(1);
+        }
+    });
+
+    // The shell guard cannot import the registry, so its channel names and the kinds each
+    // supports are read from its `case` and compared with the rows of tooling/release-channels.ts.
+    it("lists in its case arms exactly the registry's pre-release channels and their kinds", () => {
+        const arms = [...guard.matchAll(/^\s+([a-z]+)\) kinds="([^"]*)" ;;$/gm)].map((m) => [
+            m[1]!,
+            m[2]!.trim().split(/\s+/),
+        ]);
+        const rows = CHANNELS.filter((c) => c.preRelease !== null).map((c) => [
+            c.preRelease!.replace(/^-/, "").replace(/\.N$/, ""),
+            c.supports,
+        ]);
+        expect(arms).toEqual(rows);
+    });
+
+    it("agrees with checkTag on a table of tags", () => {
+        const tags = [
+            "v0.1.0",
+            "v0.1.0-rc.1",
+            "v0.2.1-rc.3",
+            "v1.0.0-rc.0",
+            "v1.0.0-rc.01",
+            "v1.0.0-rc",
+            "v1.0.0-rc.",
+            "v1.0.0-rc.1.1",
+            "v1.0.0-rc.a",
+            "v1.0.0-rc-1",
+            "v1.0.0-foo.1",
+            "v1.0.0-alpha.1",
+            "v1.0.0-beta.2",
+            "v1.0.0-RC.1",
+            "v1.0.0-nightly.20261128.abc1234",
+            "v1.0.0-",
+            "v1.0.0+build.5",
+            "v01.0.0",
+            "v1.2",
+            `v1.2.3-rc.${"1".repeat(119)}`,
+            `v1.2.3-rc.${"1".repeat(120)}`,
+        ];
+        for (const tag of tags) {
+            expect(guardOutcome(tag).code === 0, tag).toBe(checkTag(tag).length === 0);
+        }
+    });
+
+    it("agrees with the release kind rules for every channel", () => {
+        const kindOf = (core: string): Kind => {
+            const [, y, z] = core.split(".");
+            return z !== "0" ? "patch" : y !== "0" ? "minor" : "major";
+        };
+        for (const c of CHANNELS.filter((row) => row.preRelease !== null)) {
+            const name = c.preRelease!.replace(/^-/, "").replace(/\.N$/, "");
+            for (const core of ["0.0.1", "0.1.0", "1.0.0", "1.2.3", "2.0.0"]) {
+                const tag = `v${core}-${name}.1`;
+                const supported = c.supports.includes(kindOf(core));
+                expect(guardOutcome(tag).code === 0, tag).toBe(supported);
+                expect(checkTag(tag).length === 0, tag).toBe(supported);
+            }
+        }
     });
 
     it("rejects build metadata, leading zeros and trailing text", () => {
@@ -202,8 +278,8 @@ describe("release workflow tag guard", () => {
     });
 
     it("rejects a version longer than 128 characters", () => {
-        expect(guardOutcome(`v1.2.3-${"a".repeat(122)}`).code).toBe(0);
-        expect(guardOutcome(`v1.2.3-${"a".repeat(123)}`).code).toBe(1);
+        expect(guardOutcome(`v1.2.3-rc.${"1".repeat(119)}`).code).toBe(0);
+        expect(guardOutcome(`v1.2.3-rc.${"1".repeat(120)}`).code).toBe(1);
     });
 });
 
@@ -213,6 +289,7 @@ describe("release workflow verification", () => {
     it("checks the tag, the branch, CI Passed, the partial-release rule and the gate", () => {
         expect(runs).toContain('release-plan.ts guard "$TAG"');
         expect(runs).toContain('release-plan.ts verify-tag "$TAG"');
+        expect(runs).toContain('release-plan.ts no-regression "$VERSION"');
         expect(runs).toContain('git merge-base --is-ancestor "$GITHUB_SHA" origin/main');
         expect(runs).toMatch(/check-runs/);
         expect(runs).toContain("release-plan.ts ci-passed");
@@ -314,7 +391,7 @@ describe("release workflow npm", () => {
             '["contracts", "sdk", "client-core", "cli", "mcp"]',
         );
         expect(publishSource).toContain("for (const name of PUBLISH_ORDER)");
-        expect(publishSource).toContain("npmDistTag(version, latestOnNpm(name))");
+        expect(publishSource).toContain("npmDistTag(version, tagOnNpm(name, channelTag))");
     });
 });
 
@@ -475,7 +552,13 @@ describe("release workflow credentialed jobs install nothing", () => {
             }
         };
         visit("release-publish");
-        expect([...seen].toSorted()).toEqual(["release-core", "release-publish", "semver-compare"]);
+        // Deliberately exactly these: a new import into the credentialed jobs is a decision.
+        expect([...seen].toSorted()).toEqual([
+            "release-channels",
+            "release-core",
+            "release-publish",
+            "semver-compare",
+        ]);
     });
 
     it("scans imports whatever the quoting", () => {
