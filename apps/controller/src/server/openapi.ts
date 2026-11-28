@@ -1,4 +1,5 @@
 import { openapi } from "@elysia/openapi";
+import packageJson from "../../package.json" with { type: "json" };
 import type { DocumentDecoration } from "elysia/types";
 import {
     acceptedInvitationSchema,
@@ -240,7 +241,7 @@ export function openApiPlugin(enabled: boolean) {
         documentation: {
             info: {
                 title: "Launchpad API",
-                version: "0.0.0",
+                version: packageJson.version,
                 description:
                     "Launchpad controller API. Requests are authenticated by the browser session " +
                     "cookie; mutating requests from a browser must come from the controller's own " +

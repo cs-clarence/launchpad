@@ -8,7 +8,6 @@ import {
     checkVersions,
     covered,
     independentPackages,
-    SOURCE_VERSIONS,
     sharedWorkspaces,
     syncVersions,
     tagProblems,
@@ -40,15 +39,6 @@ function repository(overrides: { appVersion?: string; include?: string[] } = {})
     manifest(root, "packages/lib", "@t/lib", "1.2.3");
     manifest(root, "apps/app", "@t/app", overrides.appVersion ?? "1.2.3");
     manifest(root, "packages/tool", "@t/tool", "0.5.0");
-    for (const source of SOURCE_VERSIONS) {
-        mkdirSync(path.dirname(path.join(root, source.file)), { recursive: true });
-        const line = source.file.includes("cli")
-            ? `program.version("1.2.3");`
-            : source.file.includes("mcp")
-              ? `const info = { name: "launchpad-mcp", version: "1.2.3" };`
-              : `const info = {\n    version: "1.2.3",\n};`;
-        writeFileSync(path.join(root, source.file), `${line}\n`);
-    }
     const lockWorkspaces = Object.fromEntries(
         ["packages/lib", "apps/app", "packages/tool"].map((dir) => [
             dir,
@@ -107,20 +97,6 @@ describe("checkVersions", () => {
         expect(checkVersions(repository({ include: ["apps/**"] })).join("\n")).toContain(
             "packages/lib is not in the core include list",
         );
-    });
-});
-
-describe("version strings in source", () => {
-    it("are compared by check and rewritten by sync", () => {
-        const root = repository();
-        const file = path.join(root, SOURCE_VERSIONS[0]!.file);
-        writeFileSync(file, `program.version("0.0.1");\n`);
-        expect(checkVersions(root).join("\n")).toContain("says 0.0.1; the root is 1.2.3");
-        syncVersions(root, "core", "2.0.0");
-        expect(withoutLock(checkVersions(root))).toEqual([]);
-        for (const source of SOURCE_VERSIONS) {
-            expect(readFileSync(path.join(root, source.file), "utf8")).toContain('"2.0.0"');
-        }
     });
 });
 

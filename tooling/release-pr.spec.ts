@@ -367,12 +367,8 @@ describe("the push job's validation, run for real", () => {
     };
     const pkg = (version: string, extra = "") =>
         `{\n    "name": "x",\n    "version": "${version}",${extra}\n    "private": true\n}\n`;
-    const program = (version: string) =>
-        `export const a = 1;\n    const p = new Command()\n        .version("${version}")\n        .name("x");\n`;
-
     const lock = (version: string) =>
         `{\n  "lockfileVersion": 1,\n  "workspaces": {\n    "": {\n      "name": "x",\n      "version": "${version}",\n    },\n    "apps/cli": {\n      "name": "cli",\n      "version": "${version}",\n    },\n  },\n  "packages": {},\n}\n`;
-
     // Tree objects a normal checkout cannot make: an entry named `..` or `.git`.
     const literalTree = (repo: string, entries: [string, string, string][]) => {
         // Git orders tree entries bytewise, a directory as if its name ended in a slash.
@@ -443,7 +439,6 @@ describe("the push job's validation, run for real", () => {
         git(origin, "commit", "-qm", "first");
         write(origin, "package.json", pkg("0.0.0"));
         write(origin, "apps/cli/package.json", pkg("0.0.0"));
-        write(origin, "apps/cli/src/program.ts", program("0.0.0"));
         write(origin, "CHANGELOG.md", "# Changelog\n");
         write(origin, "bun.lock", lock("0.0.0"));
         write(origin, ".github/workflows/x.yaml", "name: x\n");
@@ -474,7 +469,6 @@ describe("the push job's validation, run for real", () => {
             else {
                 write(bump, "package.json", pkg(version));
                 write(bump, "apps/cli/package.json", pkg(version));
-                write(bump, "apps/cli/src/program.ts", program(version));
                 write(bump, "bun.lock", lock(version));
                 write(bump, "CHANGELOG.md", "# Changelog\n## v\n- change\n");
                 write(bump, "packages/tsconfig/CHANGELOG.md", "new\n");
@@ -606,33 +600,6 @@ describe("the push job's validation, run for real", () => {
             "only the version line may change",
         ],
         [
-            "an extra source line",
-            {
-                change: (r) =>
-                    write(
-                        r,
-                        "apps/cli/src/program.ts",
-                        program("0.1.0-rc.1").replace('.name("x")', '.name("x").evil()'),
-                    ),
-            },
-            "only the version line may change",
-        ],
-        [
-            "a source version line with extra code",
-            {
-                change: (r) =>
-                    write(
-                        r,
-                        "apps/cli/src/program.ts",
-                        program("0.1.0-rc.1").replace(
-                            '.version("0.1.0-rc.1")',
-                            '.version("0.1.0-rc.1"); exec()',
-                        ),
-                    ),
-            },
-            "only the version line may change",
-        ],
-        [
             "a deleted changelog",
             { change: (r) => rmSync(path.join(r, "CHANGELOG.md")) },
             "not an addition or a modification",
@@ -703,11 +670,6 @@ describe("the push job's validation, run for real", () => {
         [
             "a lockfile whose new version is not this version",
             { change: (r) => write(r, "bun.lock", lock("9.9.9")) },
-            "is not 0.1.0-rc.1",
-        ],
-        [
-            "a source file whose new version is not this version",
-            { change: (r) => write(r, "apps/cli/src/program.ts", program("9.9.9")) },
             "is not 0.1.0-rc.1",
         ],
         [

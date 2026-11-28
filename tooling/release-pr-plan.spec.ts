@@ -17,7 +17,6 @@ import {
     prBody,
     versionOnlyProblems,
 } from "./release-pr";
-import { SOURCE_VERSIONS } from "./versions";
 
 const rc = CHANNELS.find((c) => c.name === "rc")!;
 const beta: Channel = {
@@ -176,7 +175,7 @@ describe("the bump commit's paths", () => {
         newMode,
     });
 
-    it("allow the manifests, lockfile, changelogs and the three source version files", () => {
+    it("allow the manifests, lockfile and changelogs", () => {
         for (const path of [
             "package.json",
             "apps/cli/package.json",
@@ -184,16 +183,10 @@ describe("the bump commit's paths", () => {
             "bun.lock",
             "CHANGELOG.md",
             "packages/vite-config/CHANGELOG.md",
-            ...SOURCE_VERSIONS.map((source) => source.file),
         ]) {
             expect(allowedPath(path), path).toBe(true);
         }
-        expect(SOURCE_VERSIONS.map((s) => s.file).toSorted()).toEqual([
-            "apps/cli/src/program.ts",
-            "apps/controller/src/server/openapi.ts",
-            "apps/mcp/src/server.ts",
-        ]);
-        expect(ALLOWED_PATHS).toHaveLength(5 + SOURCE_VERSIONS.length);
+        expect(ALLOWED_PATHS).toHaveLength(5);
     });
 
     it("refuse workflows, scripts, other sources and path tricks", () => {
@@ -262,31 +255,15 @@ describe("the bump commit's paths", () => {
         ]);
     });
 
-    it("let a manifest or source file change only on its version line", () => {
+    it("let a manifest change only on its version line", () => {
         expect(versionOnlyProblems("package.json", ['    "version": "0.1.0",'])).toEqual([]);
         expect(versionOnlyProblems("apps/cli/package.json", ['    "version": "0.0.0",'])).toEqual(
             [],
         );
-        expect(
-            versionOnlyProblems("apps/cli/src/program.ts", ['        .version("0.1.0")']),
-        ).toEqual([]);
-        expect(
-            versionOnlyProblems("apps/mcp/src/server.ts", [
-                '        { name: "launchpad-mcp", version: "0.1.0" },',
-            ]),
-        ).toEqual([]);
-        expect(
-            versionOnlyProblems("apps/controller/src/server/openapi.ts", [
-                '                version: "0.1.0",',
-            ]),
-        ).toEqual([]);
         for (const [file, line] of [
             ["package.json", '    "postinstall": "curl x | sh",'],
             ["package.json", '    "version": "0.1.0", "x": 1,'],
             ["package.json", '    "scripts": { "a": "version" },'],
-            ["apps/cli/src/program.ts", '        .version("0.1.0"); exec("x")'],
-            ["apps/mcp/src/server.ts", "        evil(version)"],
-            ["apps/controller/src/server/openapi.ts", '                version: "0.1.0", x'],
             ["package.json", "++ not a header"],
         ] as const) {
             expect(versionOnlyProblems(file, [line]), `${file} ${line}`).not.toEqual([]);

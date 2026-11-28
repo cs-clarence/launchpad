@@ -19,7 +19,6 @@ import {
 } from "./release-channels";
 import { checkTag, isStable, previousStable, TAG_PATTERN } from "./release-core";
 import { compareSemver } from "./semver-compare";
-import { SOURCE_VERSIONS } from "./versions";
 
 const root = path.resolve(import.meta.dirname, "..");
 
@@ -130,31 +129,21 @@ export function prBody(version: string, channel: string, changelog: string): str
 
 // What the bump commit may touch. The push job of the workflow (which cannot run repository code)
 // repeats these patterns in shell and `tooling/release-pr.spec.ts` asserts the two are the same:
-// the manifests, the lockfile, the changelogs and the three source files that hold a version
-// string (SOURCE_VERSIONS). Nothing else: no workflow, no script, no other source.
+// the manifests, the lockfile and the changelogs. Nothing else: no workflow, no script, no source.
 export const ALLOWED_PATHS: RegExp[] = [
     /^package\.json$/,
     /^(apps|packages)\/[a-z0-9-]+\/package\.json$/,
     /^bun\.lock$/,
     /^CHANGELOG\.md$/,
     /^(apps|packages)\/[a-z0-9-]+\/CHANGELOG\.md$/,
-    ...SOURCE_VERSIONS.map(
-        (source) => new RegExp(`^${source.file.replace(/[.*+?^${}()|[\]\\/]/g, "\\$&")}$`),
-    ),
 ];
 
 export const allowedPath = (file: string) => ALLOWED_PATHS.some((pattern) => pattern.test(file));
 
-// A manifest, the lockfile (its workspace entries) or a source version file may change only on the
-// line that holds the version, in exactly the shape it has today (the push job repeats these in shell; the spec runs it).
+// A manifest or the lockfile (its workspace entries) may change only on the line that holds the
+// version, in exactly the shape it has today (the push job repeats these in shell; the spec runs it).
 export const VERSION_LINES: { path: RegExp; line: RegExp }[] = [
     { path: /(^|\/)package\.json$|^bun\.lock$/, line: /^\s+"version": "[^"]*",$/ },
-    { path: /^apps\/cli\/src\/program\.ts$/, line: /^\s+\.version\("[^"]*"\)$/ },
-    {
-        path: /^apps\/mcp\/src\/server\.ts$/,
-        line: /^\s+\{ name: "launchpad-mcp", version: "[^"]*" \},$/,
-    },
-    { path: /^apps\/controller\/src\/server\/openapi\.ts$/, line: /^\s+version: "[^"]*",$/ },
 ];
 
 // The changed lines (old or new, without a diff prefix) of `file` that are not its version line;

@@ -16,13 +16,6 @@ import { compareSemver } from "./semver-compare";
 export { compareSemver };
 
 export const CORE = "core";
-// Version strings written in source, which no manifest feeds: each is rewritten by `sync core`
-// and compared by `check`. The pattern's first group is everything before the version.
-export const SOURCE_VERSIONS: { file: string; pattern: RegExp }[] = [
-    { file: "apps/cli/src/program.ts", pattern: /(\.version\()"[^"]*"/ },
-    { file: "apps/mcp/src/server.ts", pattern: /(name: "launchpad-mcp", version: )"[^"]*"/ },
-    { file: "apps/controller/src/server/openapi.ts", pattern: /(\n\s+version: )"[^"]*"/ },
-];
 // Strict SemVer 2.0.0: no leading zeros, no empty identifiers.
 const NUMERIC = "(?:0|[1-9]\\d*)";
 const PRERELEASE = `(?:${NUMERIC}|\\d*[A-Za-z-][0-9A-Za-z-]*)`;
@@ -136,15 +129,6 @@ export function checkVersions(root: string): string[] {
             }
         }
     }
-    for (const source of SOURCE_VERSIONS) {
-        const found = readFileSync(path.join(root, source.file), "utf8").match(
-            new RegExp(source.pattern.source.replace('"[^"]*"', '"([^"]*)"')),
-        );
-        if (!found) problems.push(`${source.file}: the version string was not found`);
-        else if (found[2] !== expected) {
-            problems.push(`${source.file} says ${found[2]}; the root is ${expected}`);
-        }
-    }
     return problems;
 }
 
@@ -203,14 +187,6 @@ export function syncVersions(root: string, pkg: string, version: string): string
         dirs = [dir];
     }
     for (const dir of dirs) setVersion(path.join(root, dir, "package.json"), version);
-    if (pkg === CORE) {
-        for (const source of SOURCE_VERSIONS) {
-            const file = path.join(root, source.file);
-            const text = readFileSync(file, "utf8");
-            if (!source.pattern.test(text)) throw new Error(`${source.file}: no version string`);
-            writeFileSync(file, text.replace(source.pattern, `$1"${version}"`));
-        }
-    }
     return dirs;
 }
 

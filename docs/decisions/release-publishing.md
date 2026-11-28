@@ -85,7 +85,7 @@ following. Where a choice was made for the single-maintainer situation, the alte
   untouched). `cog bump --package core --version X.Y.Z` syncs the manifests but creates
   `core-vX.Y.Z`, not `v`.
 - Verified: `cog bump --version X.Y.Z --include-packages` runs the hooks including
-  `sync core`, rewrites every manifest, `bun.lock` and the source version strings, and creates
+  `sync core`, rewrites every manifest and `bun.lock` (the programs read their version from their own manifest), and creates
   only `vX.Y.Z`. It also sets the independent tooling packages to `X.Y.Z`. **This is the only
   supported way to bump.** `cog bump --auto` is not used.
 - Guard: `omni run check:versions` (`checkTags` in `tooling/versions.ts`) fails when a reachable
@@ -146,9 +146,9 @@ from dependencies ever holds a token that can write:
   token, and validates the data before the token is used: the version against the dispatch inputs
   and the registry's channels; a bundle with exactly one ref and exactly one new commit directly on
   the checked-out `main` commit; the fixed message `chore(version): v<version>`; every changed
-  path on the allowlist of `tooling/release-pr.ts` (manifests, the lockfile, changelogs and the
-  three source files that hold a version string; directory components are `[a-z0-9-]+`, so `..`
-  and `.git` never pass), as an addition or modification of a plain file no larger than 2 MiB;
+  path on the allowlist of `tooling/release-pr.ts` (manifests, the lockfile and changelogs;
+  directory components are `[a-z0-9-]+`, so `..` and `.git` never pass), as an addition or
+  modification of a plain file no larger than 2 MiB;
   the commit object exactly (tree, the one parent, author, committer, the message, nothing else);
   and a manifest, `bun.lock` or source file changing only on its version line, which must carry
   this version, with a new manifest refused (`bun.lock` is held to the manifest rule because the
@@ -687,8 +687,8 @@ Where `release.yaml` is more specific than, or differs from, the text above:
   guard's `[a-z]` under the runner's locale (harmless: the channel name must equal a `case` arm).
 - Release PR workflow, findings from a throwaway clone with the real `cog.toml` (cog 7.0.0; the clone
   had no earlier tags, so this is not the real tag history): `cog bump --version 0.1.0-rc.1
-  --include-packages` works (commit `chore(version): v0.1.0-rc.1`, tag `v0.1.0-rc.1`, every manifest,
-  the source version strings and `bun.lock` at the pre-release version; the three independent tooling
+  --include-packages` works (commit `chore(version): v0.1.0-rc.1`, tag `v0.1.0-rc.1`, every manifest
+  and `bun.lock` at the pre-release version; the three independent tooling
   packages also get that version and a `CHANGELOG.md`). `versions.ts check` agrees with the tag
   present and deleted. With the rc tag on the rc bump commit, `cog bump --version 0.1.0
   --include-packages` also works and `check` agrees. The committed `CHANGELOG.md` shows each
