@@ -260,7 +260,7 @@ A release is a person's decision. Work through this in order and stop at the fir
    image notes. No `.env`, key, source map or workspace specifier in any tarball.
 7. (Done by the [release PR workflow](#opening-the-release-pr); the manual fallback is)
    `cog bump --version X.Y.Z --include-packages` on a clean checkout, then review the bump commit, changelog and tag locally.
-   The bump commit rewrites manifests, source version strings and `bun.lock`, and does not
+   The bump commit rewrites manifests and `bun.lock` (the programs read their version from their own manifest), and does not
    carry `[skip ci]`, so CI validates it. On that commit rerun step 6's dry run and use the
    checksums from **that** run. The ones from before the bump
    are for a different version.
@@ -297,9 +297,9 @@ publishes. Three jobs:
    directly on `main` whose object is exactly tree, that parent, author, committer and the fixed
    message (no signature or other header, nothing after the message); only allowlisted paths
    (`package.json` and `CHANGELOG.md` files one level below `apps/` or `packages/` with
-   `[a-z0-9-]` directory names, the root ones, `bun.lock` and the three source files that hold a
-   version string), as plain files, none larger than 2 MiB (about ten times the lockfile, far
-   above a changelog that gains one release per section, but finite); and a manifest, `bun.lock` or
+   `[a-z0-9-]` directory names, the root ones and `bun.lock`), as plain files, none larger than 2 MiB
+   (about ten times the lockfile, far above a changelog that gains one release per section, but
+   finite); and a manifest or `bun.lock`
    source file changing only on its version line, which must carry this version (a new manifest
    is refused). Every blob is read with `git cat-file` and compared with `diff`, and a failing
    command stops the job. It then checks that `release/<version>` does not exist and pushes

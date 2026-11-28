@@ -9,6 +9,7 @@ import {
     useProfile,
     whoami,
 } from "@launchpad-kit/client-core";
+import packageJson from "../package.json" with { type: "json" };
 import { addApiCommand } from "./api-command";
 import { addAppCommands } from "./app-commands";
 import { addInviteCommands } from "./invite-commands";
@@ -93,7 +94,7 @@ export function buildProgram(rawIo: Io, secrets: Set<string> = new Set()) {
     const program = new Command()
         .name("launchpad")
         .description("Work with a Launchpad controller using an organization API key.")
-        .version("0.0.0")
+        .version(packageJson.version)
         .option("--json", "print machine-readable JSON")
         .option("--profile <name>", "use this saved profile instead of the current one")
         .showHelpAfterError(false)

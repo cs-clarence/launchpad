@@ -212,7 +212,7 @@ jobs:
           [[ "${lines[3]}" =~ ^committer\ ${person#^} ]] || fail "unexpected committer header"
           message="chore(version): v$VERSION"
           { [ "$body" = "$message" ] || [ "$body" = "$message"$'\n' ]; } || fail "unexpected commit message"
-          allow='^package\.json$|^(apps|packages)/[a-z0-9-]+/package\.json$|^bun\.lock$|^CHANGELOG\.md$|^(apps|packages)/[a-z0-9-]+/CHANGELOG\.md$|^apps/cli/src/program\.ts$|^apps/mcp/src/server\.ts$|^apps/controller/src/server/openapi\.ts$'
+          allow='^package\.json$|^(apps|packages)/[a-z0-9-]+/package\.json$|^bun\.lock$|^CHANGELOG\.md$|^(apps|packages)/[a-z0-9-]+/CHANGELOG\.md$'
           max=2097152
           mapfile -d '' -t items < <(git diff --raw -z --no-abbrev --no-renames "$GITHUB_SHA" "$commit")
           [ "${#items[@]}" -gt 0 ] || fail "the commit changes nothing"
@@ -224,9 +224,6 @@ jobs:
             size=$(git cat-file -s "$commit:$file")
             [ "$size" -le "$max" ] || fail "$file is larger than $max bytes"
             case "$file" in
-              apps/cli/src/program.ts) re='^[[:space:]]+\.version\("[^"]*"\)$' ;;
-              apps/mcp/src/server.ts) re='^[[:space:]]+\{ name: "launchpad-mcp", version: "[^"]*" \},$' ;;
-              apps/controller/src/server/openapi.ts) re='^[[:space:]]+version: "[^"]*",$' ;;
               package.json | */package.json | bun.lock) re='^[[:space:]]+"version": "[^"]*",$' ;;
               *) continue ;;
             esac

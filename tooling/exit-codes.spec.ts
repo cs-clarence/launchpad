@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it } from "bun:test";
 import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { checkVersions, SOURCE_VERSIONS, workspaces } from "./versions";
+import { checkVersions, workspaces } from "./versions";
 
 const root = path.resolve(import.meta.dirname, "..");
 
@@ -77,7 +77,6 @@ describe("versions.ts", () => {
                 ...workspaces(root)
                     .filter((w) => w.dir !== ".")
                     .map((w) => path.posix.join(w.dir, "package.json")),
-                ...SOURCE_VERSIONS.map((s) => s.file),
             ];
             for (const file of files) {
                 mkdirSync(path.dirname(path.join(copy, file)), { recursive: true });
