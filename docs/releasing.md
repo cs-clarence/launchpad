@@ -275,12 +275,73 @@ safely once used, so a bad release is superseded by a fixed one and the bad vers
 deprecated. An image tag is never reused. Data is protected by the backup that the upgrade
 procedure requires first.
 
+## Release channels
+
+The channels a release can use are rows of a registry, `tooling/release-channels.ts`, which is the
+source of truth for the guard, the npm tag, the image tags and the promotion order. The table below
+is checked against it by `tooling/release-channels.spec.ts`, so it cannot drift (the spec prints the
+expected text).
+
+<!-- channels:start -->
+
+| Channel | Rank | Pre-release form | Supports            | npm tag  | Image tags      | Trigger | Scheme  |
+| ------- | ---- | ---------------- | ------------------- | -------- | --------------- | ------- | ------- |
+| rc      | 3    | `-rc.N`          | major, minor, patch | `next`   | `rc`, `next`    | tag     | counter |
+| stable  | 4    | none             | major, minor, patch | `latest` | `X.Y`, `latest` | tag     | counter |
+
+<!-- channels:end -->
+
+- **Release kind** comes from the base version: patch if Z > 0, minor if Z is 0 and Y > 0, major if
+  it is X.0.0 (no special case for 0.x). A channel may release only the kinds it supports.
+- **Guard.** A pre-release must be `<registered channel>.<N>`, N numeric without leading zeros.
+  `v1.2.3-foo.1`, a bare `v1.2.3-rc`, `v1.2.3-rc-1` and `v1.2.3-rc.01` are refused, and so is a kind
+  the channel does not support. The guard job repeats the rules in shell (it cannot import the
+  registry); the spec runs it against the registry.
+- **No regression.** For one X.Y.Z a lower-ranked channel cannot follow an existing higher-ranked
+  one (with `v1.2.0-rc.1` existing, a `beta` of 1.2.0 is refused), and no pre-release is released
+  once the stable X.Y.Z exists. `verify` checks this against the `v` tags of its full checkout.
+- **npm.** Each channel publishes under its own tag, forward-only: when the channel's tag already
+  points at a greater version the version is published with `retry` instead, and a missing tag is
+  eligible. `next` is the rc channel's tag. There is no `next` alias across channels on npm:
+  trusted publishing covers `npm publish` only, and moving a tag later would need `npm dist-tag
+  add`, which is not available to the workflow.
+- **Images.** The exact tag always, then the channel's image tags, each forward-only by the
+  `org.opencontainers.image.version` label: stable moves `X.Y` and `latest`, rc moves `rc` and
+  `next` (the `next` alias is shared by the pre-release channels, so an older channel never moves
+  it past a newer one). The partial-release check stays for stable releases only.
+
+**Adding a channel is one more row** (and its case arm in the guard step, which the spec checks).
+For example, if `alpha` and `beta` are wanted, for major and minor releases only:
+
+```ts
+{ name: "alpha", rank: 1, preRelease: "-alpha.N", supports: ["major", "minor"],
+  npmTag: "alpha", imageTags: ["alpha", "next"], trigger: "tag", versionScheme: "counter" },
+{ name: "beta", rank: 2, preRelease: "-beta.N", supports: ["major", "minor"],
+  npmTag: "beta", imageTags: ["beta", "next"], trigger: "tag", versionScheme: "counter" },
+```
+
+The registry is validated by the spec: lowercase letter names that are not ranges and not
+`latest`, `retry`, `next` or `bootstrap`; unique names, ranks and npm tags; ranks that follow the
+SemVer order of the names (alpha < beta < rc) with stable last; a non-empty `supports` subset (stable
+supports all three); and only stable may use `latest` and `X.Y`.
+
+### Future: nightly (not implemented)
+
+The `trigger` (`schedule`) and `versionScheme` (`snapshot`) fields are reserved for a nightly
+channel, and the registry validation refuses them today. It needs its own amendment of the
+[record](decisions/release-publishing.md) first: a separate `nightly` environment without
+reviewers; a retention cap with **no prune**, deleting only named tags; whether npm trusted
+publishing allows a second workflow file per package (an open point); no git tags, so `checkTags`
+and the abandon flow do not apply; and a version such as `X.Y.Z-nightly.<date>.<sha>`, which does
+not fit `<channel>.<N>`.
+
 ## The release workflow
 
 `.github/workflows/release.yaml` runs these jobs in order, each needing the previous ones and
 `guard`; the decision record has the permissions of each.
 
-1. `guard`: the tag is a SemVer `v<version>` without build metadata, at most 128 characters
+1. `guard`: the tag is a SemVer `v<version>` without build metadata, of a registered channel (see
+   above), at most 128 characters
    after the `v`. It runs before any checkout.
 2. `verify`: the tag equals the version of the root and every published manifest, the commit is on
    `main`, its `CI Passed` check succeeded, the previous stable release is complete (refuses a new
@@ -293,11 +354,12 @@ procedure requires first.
 5. `smoke`: installs and runs the exact tarballs on Node 22.12; pulls the exact staged digests and
    checks their labels.
 6. `npm-publish` (approval): `npm publish` with trusted publishing (OIDC, no token) on Node 24.
-   The dist-tag is explicit: `next` for a pre-release; for a stable version `latest` when the
-   package has no `latest` yet or the version is not lower, else `retry`. A version already
+   The dist-tag is explicit: the channel's tag (`latest` for stable, `next` for rc) when it is
+   missing or the version is not lower than what it holds, else `retry`. A version already
    published is skipped only when its integrity and provenance match.
 7. `image-publish` (approval): retags the staged digest as `X.Y.Z` (immutable), then `X.Y` and
-   `latest` only for a stable version that is higher than what they hold.
+   `latest` only for a stable version that is higher than what they hold, or the channel's own tags
+   (`rc`, `next`) for a pre-release, each forward-only.
 8. `post-verify`: `gh attestation verify` for each image digest and `npm audit signatures`.
 
 Publishing cannot be undone, and a pushed tag stays. If a stable release stops part-way, the next
@@ -339,8 +401,8 @@ Limits of the first version:
   no copy of that release's tarballs to compare integrity with), and it reads the images
   anonymously, so it needs their packages to be public. It requires `X.Y` only when the previous
   release is the highest patch of its minor and `latest` only when it is the highest stable version.
-- A re-run of an older release can move the npm `next` dist-tag backwards (a pre-release is
-  published with `--tag next` whatever `next` holds now); this is accepted and not guarded.
+- A re-run of an older pre-release no longer moves the npm `next` tag backwards: it is published
+  with `retry`, like an older stable version. There is still no cross-channel alias on npm.
 - Push release tags **one at a time**: the workflow's concurrency group holds one running and one
   pending run, and GitHub may not start a run for every tag of a multi-tag push.
 - The jobs that hold the OIDC token or write to the registry (`stage`, `npm-publish`,

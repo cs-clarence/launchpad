@@ -291,6 +291,35 @@ publishes. A tarball is never rebuilt after `build`.
   deleted. An abandoned version still
   counts as a higher stable version when deciding whether the previous release must hold `X.Y` or
   `latest`, so the check stays lenient there.
+- **Amendment: release channels (maintainer-decided; implemented in `tooling/release-channels.ts`).**
+  The channels a release can use are rows of a registry, which is the source of truth for the guard,
+  the npm tag, the image tags and the promotion order; `docs/releasing.md` carries a table checked
+  against it. Rows today: `stable` (rank 4, no pre-release part, npm `latest`, image tags `X.Y` and
+  `latest`) and `rc` (rank 3, `-rc.N`, npm `next`, image tags `rc` and `next`), both for major,
+  minor and patch releases, triggered by a tag with counter versions. `alpha` and `beta` are not
+  added; each would be one row (major and minor only; npm tag `alpha`/`beta`; image tags the channel
+  name and `next`). Rules: (1) **Guard strictness.** The tag pattern and the 128-character rule
+  stay; a pre-release must also be `<registered channel>.<N>` with N numeric without leading zeros,
+  so `-foo.1`, a bare `-rc`, `-rc-1` (previously accepted) and `-rc.01` are refused, and a channel
+  must support the release kind: patch if Z > 0, minor if Z is 0 and Y > 0, major for X.0.0, with no
+  special case for 0.x. The guard job repeats the rules in shell and the spec keeps the two in step.
+  (2) **No regression.** For one X.Y.Z a lower-ranked channel cannot follow an existing
+  higher-ranked one, and no pre-release is released once the stable X.Y.Z exists; `verify` checks it
+  against the `v` tags of its `fetch-depth: 0` checkout. (3) **npm.** Each channel publishes under
+  its own tag, forward-only: when that tag already points at a greater version the version is
+  published with `retry`; a missing tag is eligible (the three-case rule of `latest`, generalised).
+  `next` stays the rc channel's tag, as before. There is **no cross-channel `next` alias on npm**:
+  trusted publishing covers `npm publish` only, so moving a tag after publishing would need
+  `npm dist-tag add`, which the workflow does not have. (4) **Images.** The exact tag always, then
+  the channel's image tags, each forward-only by the version label as before; the `next` image
+  alias is shared by pre-release channels and so never moves past a newer one. (5) The
+  partial-release check and the abandon flow stay for stable releases only. (6) **Nightly is
+  deferred.** The registry reserves `trigger: schedule` and `versionScheme: snapshot` and refuses
+  them today. A nightly channel needs its own amendment: a separate `nightly` environment without
+  reviewers, a retention cap with no prune (only named tags are deleted), whether npm trusted
+  publishing allows a second workflow file per package (open), no git tags (so `checkTags` and the
+  abandon flow do not apply), and a version such as `X.Y.Z-nightly.<date>.<sha>` that does not fit
+  `<channel>.<N>`.
 - **Partial publish.** Publishing five packages is not atomic. If it stops part-way, some
   versions are public and some are not. Re-running completes the missing ones; if a published
   package is wrong, deprecate it and fix forward with a new version.
@@ -493,6 +522,15 @@ Where `release.yaml` is more specific than, or differs from, the text above:
   (`verify` only, which installs dependencies); `release-core.ts` holds the pure validation and
   `previousStable`, and the credentialed jobs and their allowlist are unchanged. Nothing deprecates
   an abandoned version's packages automatically.
+- Release channels: the registry module imports nothing and the credentialed jobs now import
+  exactly `release-publish.ts`, `release-core.ts`, `release-channels.ts` and `semver-compare.ts`
+  (the spec states this list on purpose). `verify` runs `release-plan.ts no-regression`, using the
+  tags of its full checkout. The shell guard repeats the channel names and the kinds each supports;
+  `release.spec.ts` compares them with the registry and runs the guard against a table of tags and
+  every kind. Mutating the registry (an unregistered channel, a rank, a reserved npm tag) or the
+  guard fails the specs. Unverified: that `actions/checkout` with `fetch-depth: 0` fetches every
+  tag (its documented behaviour, not run here); the first rc run settles the `next` tag
+  forward-only behaviour of `npm view <name> dist-tags.next`.
 - CodeRabbit review of PR #124: artifacts are kept 30 days, which is now the stated retry window
   (the record had none; GitHub's repository limit is 90 days; the 30 days a run can be re-run for
   is unverified). `setup-buildx` runs with `cache-binary: false` (the other cache-like inputs at the
