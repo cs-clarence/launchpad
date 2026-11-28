@@ -147,16 +147,27 @@ from dependencies ever holds a token that can write:
   and the registry's channels; a bundle with exactly one ref and exactly one new commit directly on
   the checked-out `main` commit; the fixed message `chore(version): v<version>`; every changed
   path on the allowlist of `tooling/release-pr.ts` (manifests, the lockfile, changelogs and the
-  three source files that hold a version string), as an addition or modification of a plain file;
-  and a manifest or source file changing only on its version line. It then checks exactly (with
-  `git ls-remote --exit-code`) that `release/<version>` does not exist and pushes **only**
-  `HEAD:refs/heads/release/<version>` with an explicit refspec. It can write a branch under
+  three source files that hold a version string; directory components are `[a-z0-9-]+`, so `..`
+  and `.git` never pass), as an addition or modification of a plain file no larger than 2 MiB;
+  the commit object exactly (tree, the one parent, author, committer, the message, nothing else);
+  and a manifest, `bun.lock` or source file changing only on its version line, which must carry
+  this version, with a new manifest refused (`bun.lock` is held to the manifest rule because the
+  dispatched `ci.yaml` runs `bun install` on it before anyone reviews it). Blobs are read with
+  `git cat-file` into files and compared with `diff`, whose failure stops the job. It then checks
+  exactly (with `git ls-remote --exit-code`, exit 2 meaning absent) that `release/<version>` does
+  not exist and pushes **only** `<validated commit>:refs/heads/release/<version>` with an explicit
+  refspec; the data is never checked out. It can write a branch under
   `release/`; `main` and `refs/tags/v*` are ruleset-protected, so it cannot touch them.
 - `open-pr` (`pull-requests: write` and `actions: write` only; `environment: release-pr`) runs no
   repository code, has no checkout and installs nothing: `gh pr create` with the body as a file
   (`--body-file`, never interpolated) and a title built from the validated version, then
   `gh workflow run ci.yaml --ref release/<version>`. The "Allow GitHub Actions to create and
   approve pull requests" setting therefore only ever matters to a job that runs no untrusted code.
+  The PR body (mentions, closing keywords) comes from `prepare` and is accepted, size-capped
+  (the tooling cuts it at 60,000 characters and `open-pr` refuses more than 65,000 bytes).
+  `push` and `open-pr` each declare `environment: release-pr`, so a required reviewer on it would
+  approve twice; the recommendation is the `main`-only branch policy and no required reviewers
+  (a maintainer decision).
 
 `tooling/ci.spec.ts` carves out exactly the one push command line and the three job-scoped write
 scopes; `tooling/release-pr.spec.ts` asserts the rest, runs the real validation step against
@@ -633,6 +644,17 @@ Where `release.yaml` is more specific than, or differs from, the text above:
   decision names are granted); `git bundle verify`, `git fetch` from a bundle and
   `ls-remote --exit-code` with the `http.extraheader` form on the runner (run here only against
   local repositories); that the `release-pr` environment is created automatically on first use.
+- Third review of the release PR workflow: the validation no longer fails open (blobs are read with
+  `git cat-file` into files and `diff`'s status is checked; the spec runs the real step with a
+  `diff` that exits 2), `bun.lock` and the manifests carry only version lines that embed this
+  version, a changelog or any file above 2 MiB is refused, directory components are
+  `[a-z0-9-]+` (crafted trees with `..` and `.git` entries are refused in the spec), the commit
+  object is checked exactly, and `push` pushes the validated commit by SHA instead of checking out
+  the data. `open-pr` keeps only `pull-requests: write` and `actions: write`: `gh pr create` uses
+  GraphQL and the REST page for creating a pull request names no `contents` permission, so this is
+  expected to suffice and is **unverified**. Added to the unverified list: the `diff` and `git
+  cat-file` behaviour on a real runner beyond the local fixtures; that `ls-remote --exit-code`
+  returns 2 for no match against GitHub (it does against a local bare repository).
 - CodeRabbit review of PR #124: artifacts are kept 30 days, which is now the stated retry window
   (the record had none; GitHub's repository limit is 90 days; the 30 days a run can be re-run for
   is unverified). `setup-buildx` runs with `cache-binary: false` (the other cache-like inputs at the

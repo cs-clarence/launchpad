@@ -291,16 +291,30 @@ publishes. Three jobs:
    and the title with `cog verify`, and writes the PR body from `cog changelog` (a stable release
    since the last stable tag, a pre-release since the previous tag of any kind). It hands over only
    data: a git bundle of the one bump commit and the body.
-2. `push` (`contents: write`; runs no repository code): validates the bundle (one ref, one commit
-   on `main`, the fixed message, only version files, changelogs and the lockfile, a manifest or
-   source file changing only on its version line), checks that `release/<version>` does not exist
-   and pushes **only** that branch.
+2. `push` (`contents: write`; runs no repository code): validates the bundle: one ref; one commit
+   directly on `main` whose object is exactly tree, that parent, author, committer and the fixed
+   message (no signature or other header, nothing after the message); only allowlisted paths
+   (`package.json` and `CHANGELOG.md` files one level below `apps/` or `packages/` with
+   `[a-z0-9-]` directory names, the root ones, `bun.lock` and the three source files that hold a
+   version string), as plain files, none larger than 2 MiB (about ten times the lockfile, far
+   above a changelog that gains one release per section, but finite); and a manifest, `bun.lock` or
+   source file changing only on its version line, which must carry this version (a new manifest
+   is refused). Every blob is read with `git cat-file` and compared with `diff`, and a failing
+   command stops the job. It then checks that `release/<version>` does not exist and pushes
+   **only** `<validated commit>:refs/heads/release/<version>`; the data is never checked out.
 3. `open-pr` (`pull-requests` and `actions` write; runs no repository code): opens the PR
    `chore(release): v<version>` and dispatches `ci.yaml` on the branch.
 
 Then you review the PR, wait for `CI Passed`, merge, and create the one tag `v<version>` by hand on
 the merge commit as in step 8; the tag starts the release workflow. The manual steps of the
 checklist (step 7) remain the fallback.
+
+**The PR body** (the changelog text, so mentions and closing keywords) comes from the `prepare`
+job and is accepted as it is, cut at 60,000 characters by the tooling and refused above 65,000 bytes
+by `open-pr`; treat it as text to read, not as instructions. `open-pr` holds only
+`pull-requests: write` and `actions: write`: `gh pr create` uses GraphQL, and the REST page for
+creating a pull request names no further permission, so `pull-requests: write` is expected to
+suffice, which is unverified (add `contents: read` if it does not).
 
 **What to check in the PR.** The workflow validates the paths, but you are the reviewer: confirm
 that the diff touches only versions, the lockfile and changelogs (it should read as a version bump
@@ -309,7 +323,9 @@ and generated changelog text, nothing else).
 **Maintainer settings.** (1) **Settings, Actions, General, "Allow GitHub Actions to create and
 approve pull requests"** must be on, or `gh pr create` fails; only the `open-pr` job, which runs no
 untrusted code, uses it. (2) Recommended: the `release-pr` environment (created on first use) with
-its deployment branch policy limited to `main`. GitHub runs the workflow file from the branch it is
+its deployment branch policy limited to `main`, and **no required reviewers** beyond that (a
+maintainer decision): `push` and `open-pr` each declare `environment: release-pr`, so a configured
+reviewer would have to approve twice per run. GitHub runs the workflow file from the branch it is
 dispatched on, so a branch with an edited `release-pr.yaml` is the trust boundary; with the policy
 the jobs that hold write scopes cannot run from such a branch.
 
