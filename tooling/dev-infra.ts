@@ -14,6 +14,7 @@
 import { randomBytes } from "node:crypto";
 import { realpath } from "node:fs/promises";
 import path from "node:path";
+import { randomUUID } from "node:crypto";
 import { ClientCoreError, configDirectory } from "../packages/client-core/src/index";
 import { flagsOf, keyOf, optionHelp, parseOrFail, toolCommand, type Opt } from "./cli";
 import { loadRaw, interpolate } from "./compose-production";
@@ -221,7 +222,9 @@ export function assertRecordSecrets(recorded: Record<string, string>): void {
     if (lost.length > 0)
         throw new DeployError(
             `${STATE_DIR}/compose.env is missing ${lost.join(", ")}; it looks truncated or hand-edited. ` +
-                `Restore the file, or remove ${STATE_DIR} by hand and run up again (down cannot read it).`,
+                `Restore the file, or remove the project's containers, volumes, networks and images by exact ` +
+                `name, then remove ${STATE_DIR} by hand and run up again (see docs/local-dev-infra.md, ` +
+                `"compose.env is missing"; down cannot read it).`,
         );
 }
 
@@ -234,7 +237,7 @@ export async function rewriteComposeEnv(
     recorded: Record<string, string>,
     ports: Ports,
 ): Promise<Ports> {
-    const next = layout.file("compose.env.next");
+    const next = layout.file(`compose.env.${process.pid}-${randomUUID().slice(0, 8)}.next`);
     const target = layout.file("compose.env");
     const filled = withPortDefaults(recorded);
     for (const name of Object.keys(PORT_KEYS) as (keyof Ports)[]) {
@@ -306,6 +309,8 @@ export const DEV_PROFILE: Profile = {
         "state.json.next",
         "compose.env.next",
     ]),
+    // The upgrade writes a temporary file of its own per run, so two runs never share one.
+    cleanPatterns: /^compose\.env\.[A-Za-z0-9-]+\.next$/,
     imageTags: (project) => Object.values(projectImages(project)),
     imageLabel: IMAGE_LABEL,
     services: SERVICES,

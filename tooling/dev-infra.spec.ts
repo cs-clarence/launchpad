@@ -364,20 +364,26 @@ describe("up", () => {
         expect(after.POSTGRES_PASSWORD).toBe(recorded.POSTGRES_PASSWORD!);
         expect(after.DEV_AUTH_SECRET).toBe(recorded.DEV_AUTH_SECRET!);
         expect(host.text(`${host.dir}/credentials/token`)).toBe(token);
-        expect(host.text(`${host.dir}/compose.env.next`)).toBeNull();
-        // Atomic: the record is replaced by a rename, never written in place.
+        // Atomic: the record is replaced by a rename of this run's own temporary file, never in place.
         expect(host.events.filter((e) => e === "write compose.env")).toEqual([]);
-        expect(host.events).toContain("write compose.env.next");
-        expect(host.events).toContain("rename compose.env.next -> compose.env");
+        const written = host.events.filter((e) => /^write compose\.env\..+\.next$/.test(e));
+        expect(written).toHaveLength(1);
+        expect(host.events).toContain(
+            `${written[0]!.replace(/^write /, "rename ")} -> compose.env`,
+        );
     });
 
-    it("retries an upgrade after a kill left the temporary file behind", async () => {
+    it("retries an upgrade after a kill left an older temporary file behind", async () => {
         await up(deps());
         stripPorts("DEV_ADMINER_PORT");
         host.addFile(`${host.dir}/compose.env.next`, "POSTGRES_PASS", 0o600);
         await up(deps());
         expect(parseEnv(host.text(`${host.dir}/compose.env`)!).DEV_ADMINER_PORT).toBe("38080");
-        expect(host.text(`${host.dir}/compose.env.next`)).toBeNull();
+        // The leftover of the older naming is tolerated, not renamed into the record.
+        expect(host.text(`${host.dir}/compose.env.next`)).toBe("POSTGRES_PASS");
+        expect(host.children(host.dir).filter((n) => /^compose\.env\..+\.next$/.test(n))).toEqual(
+            [],
+        );
     });
 
     it("upgrades a record missing more than one port key", async () => {
@@ -473,12 +479,16 @@ describe("up", () => {
         expect(env).not.toContain("undefined");
     });
 
-    it("keeps the rewritten record at mode 600 even after a stale 644 temporary file", async () => {
+    it("keeps the rewritten record at mode 600", async () => {
         await up(deps());
         stripPorts("DEV_ADMINER_PORT");
         host.addFile(`${host.dir}/compose.env.next`, "stale", 0o644);
         await up(deps());
         expect(host.nodes.get(`${host.dir}/compose.env`)?.mode).toBe(0o600);
+        // The unique temporary file is created fresh, so a stale one cannot lend it a wider mode.
+        expect(host.children(host.dir).filter((n) => /^compose\.env\..+\.next$/.test(n))).toEqual(
+            [],
+        );
     });
 
     it("refuses a busy port before writing secrets", async () => {

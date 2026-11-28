@@ -368,6 +368,8 @@ export interface Profile {
     stateFiles: readonly string[];
     // Files that may sit in a directory that has no state.json (leftovers of an interrupted run).
     cleanExtras: ReadonlySet<string>;
+    // Names a killed run may leave behind; tolerated like `cleanExtras`, matched rather than listed.
+    cleanPatterns?: RegExp;
     // Exact image tags this project builds.
     imageTags(project: string): string[];
     // When set, an image is removed only if it carries this label with the project as its value.
@@ -1151,7 +1153,10 @@ export async function teardown(
     if (record.kind === "none") {
         const children = await d.fs.readdir(layout.dir);
         const strange = children.filter(
-            (name) => !profile.fixedChildren.includes(name) && !profile.cleanExtras.has(name),
+            (name) =>
+                !profile.fixedChildren.includes(name) &&
+                !profile.cleanExtras.has(name) &&
+                !profile.cleanPatterns?.test(name),
         );
         const images: string[] = [];
         for (const tag of profile.imageTags(project)) {

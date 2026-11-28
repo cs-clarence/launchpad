@@ -123,6 +123,12 @@ describe("docker-compose.dev.yaml", () => {
         const shallow = structuredClone(render());
         shallow.services.adminer.healthcheck.test = ["CMD", "true"];
         expect(assertDev(shallow).join("\n")).toContain("probe port 8080");
+        const wrongPort = structuredClone(render());
+        wrongPort.services.adminer.healthcheck.test = [
+            "CMD-SHELL",
+            "curl -fsS http://127.0.0.1:18080/ || exit 1",
+        ];
+        expect(assertDev(wrongPort).join("\n")).toContain("probe port 8080");
         const small = structuredClone(render());
         small.services.adminer.mem_limit = "256m";
         expect(assertDev(small).join("\n")).toContain("above 1 GiB");

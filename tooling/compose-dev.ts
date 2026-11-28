@@ -162,8 +162,11 @@ export function assertDev(model: Json, env: Env = DEV_EXAMPLE): string[] {
     if (!services.adminer?.healthcheck) fail("adminer needs a healthcheck.");
     else {
         const probe = JSON.stringify(services.adminer.healthcheck.test ?? "");
-        // It must probe the web listener, not merely exit 0.
-        if (!probe.includes("8080")) fail("adminer's healthcheck must probe port 8080.");
+        // It must probe the web listener, not merely exit 0, and on 8080 exactly: a URL or argument
+        // that only contains "8080" (18080) would otherwise pass.
+        const used = [...probe.matchAll(/(?::|,\s*)([0-9]{2,5})\b/g)].map((m) => m[1]!);
+        if (used.length === 0 || used.some((port) => port !== "8080"))
+            fail("adminer's healthcheck must probe port 8080.");
     }
     // The raw file lists it; `docker compose config` renders a map of conditions.
     const adminerDepends = services.adminer?.depends_on ?? [];
