@@ -455,8 +455,30 @@ describe("up", () => {
     it("refuses a truncated record instead of writing a ports-only one", async () => {
         await up(deps());
         host.addFile(`${host.dir}/compose.env`, "", 0o600);
-        expect(await fails(up(deps()))).toContain("looks truncated");
+        const message = await fails(up(deps()));
+        expect(message).toContain("looks truncated");
+        expect(message).not.toMatch(/run down|run destroy/i);
         expect(host.text(`${host.dir}/compose.env`)).toBe("");
+    });
+
+    it("refuses a record that lost a secret even when every port is present", async () => {
+        await up(deps());
+        stripPorts("DEV_AUTH_SECRET");
+        const recorded = host.text(`${host.dir}/compose.env`);
+        const env = host.text(`${host.dir}/env/controller.env`);
+        expect(await fails(up(deps()))).toContain("DEV_AUTH_SECRET");
+        expect(host.text(`${host.dir}/compose.env`)).toBe(recorded);
+        // Nothing was rendered with an undefined secret.
+        expect(host.text(`${host.dir}/env/controller.env`)).toBe(env);
+        expect(env).not.toContain("undefined");
+    });
+
+    it("keeps the rewritten record at mode 600 even after a stale 644 temporary file", async () => {
+        await up(deps());
+        stripPorts("DEV_ADMINER_PORT");
+        host.addFile(`${host.dir}/compose.env.next`, "stale", 0o644);
+        await up(deps());
+        expect(host.nodes.get(`${host.dir}/compose.env`)?.mode).toBe(0o600);
     });
 
     it("refuses a busy port before writing secrets", async () => {
@@ -776,6 +798,14 @@ describe("review findings", () => {
 });
 
 describe("status and logs", () => {
+    it("names Adminer in the summary, the status ports and the help", async () => {
+        await up(deps());
+        const text = host.logs.join("\n");
+        expect(text).toContain("Adminer");
+        expect(text).toContain(`http://127.0.0.1:${PORT_DEFAULTS.adminer}`);
+        expect(HELP).toContain("Adminer");
+    });
+
     it("reports health, ports and the recorded sites", async () => {
         await up(deps());
         host.deploySite(project, site);

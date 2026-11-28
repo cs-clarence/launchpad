@@ -117,6 +117,12 @@ describe("docker-compose.dev.yaml", () => {
         expect(problems).toContain("adminer needs a healthcheck");
         expect(problems).toContain("adminer needs a memory limit");
         expect(problems).toContain("adminer keeps no data");
+        const noDepends = structuredClone(render());
+        delete noDepends.services.adminer.depends_on;
+        expect(assertDev(noDepends).join("\n")).toContain("after postgres");
+        const shallow = structuredClone(render());
+        shallow.services.adminer.healthcheck.test = ["CMD", "true"];
+        expect(assertDev(shallow).join("\n")).toContain("probe port 8080");
         const small = structuredClone(render());
         small.services.adminer.mem_limit = "256m";
         expect(assertDev(small).join("\n")).toContain("above 1 GiB");

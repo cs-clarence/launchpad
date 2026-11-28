@@ -18,6 +18,13 @@ const slug = (heading: string) =>
         .replace(/ /g, "-");
 
 describe("docs/local-dev-infra.md", () => {
+    it("keeps Adminer in the service lists and says it has no login of its own", () => {
+        expect(guide).toContain("the Adminer SQL client");
+        expect(guide).toContain("38080");
+        expect(guide).toMatch(/no login of its own/i);
+        expect(devCompose).toContain("adminer");
+    });
+
     it("names only Omni tasks, projects, commands and flags that exist", () => {
         const seen = new Set<string>();
         for (const line of omniLines) {

@@ -189,7 +189,8 @@ function portsFromRecord(
         const n = Number(raw);
         if (!Number.isInteger(n) || n < 1024 || n > 65535) {
             throw new DeployError(
-                `compose.env has no valid ${key}. Edit ${STATE_DIR}/compose.env (or run down first) and set a free port.`,
+                `compose.env has no valid ${key}. Edit ${STATE_DIR}/compose.env by hand (down cannot read it) ` +
+                    `and set a free port.`,
             );
         }
         ports[name] = n;
@@ -220,7 +221,7 @@ export function assertRecordSecrets(recorded: Record<string, string>): void {
     if (lost.length > 0)
         throw new DeployError(
             `${STATE_DIR}/compose.env is missing ${lost.join(", ")}; it looks truncated or hand-edited. ` +
-                `Run down, then up, or restore the file and run up again.`,
+                `Restore the file, or remove ${STATE_DIR} by hand and run up again (down cannot read it).`,
         );
 }
 
@@ -240,8 +241,14 @@ export async function rewriteComposeEnv(
         filled[PORT_KEYS[name]] = String(ports[name]);
     }
     try {
-        // Not exclusive: a kill between write and rename leaves this file, and the retry replaces it.
-        await d.fs.writeFile(next, renderEnv(filled), 0o600, false);
+        // A kill between write and rename leaves this file; removing it first keeps the mode 600 the
+        // record documents, because writeFile only applies its mode when it creates the file.
+        try {
+            await d.fs.unlink(next);
+        } catch {
+            // Nothing to remove.
+        }
+        await d.fs.writeFile(next, renderEnv(filled), 0o600, true);
         await d.fs.rename(next, target);
     } catch (error) {
         try {
@@ -674,7 +681,7 @@ export async function up(d: Deps, options: UpOptions = {}): Promise<Summary> {
     } else {
         const recorded = parseEnv(envText);
         const missing = missingPortKeys(recorded);
-        if (missing.length > 0) assertRecordSecrets(recorded);
+        assertRecordSecrets(recorded);
         ports = portsFromRecord(recorded, d.env);
         // Check the ports before writing, so a failed upgrade leaves the record as it was.
         await freePorts(c, ports, true);

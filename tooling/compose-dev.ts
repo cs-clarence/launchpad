@@ -154,12 +154,23 @@ export function assertDev(model: Json, env: Env = DEV_EXAMPLE): string[] {
     if ((services.dokku?.volumes ?? []).map(mountOf).length !== 2) {
         fail("dokku must mount exactly its state directory and the Docker socket.");
     }
-    if (services.dokku?.restart || services.postgres?.restart) {
+    if (services.dokku?.restart || services.postgres?.restart || services.adminer?.restart) {
         fail("Dev services have no restart policy.");
     }
     if (!services.mailpit?.healthcheck) fail("mailpit needs a healthcheck.");
     if ((services.mailpit?.volumes ?? []).length > 0) fail("mailpit keeps no data.");
     if (!services.adminer?.healthcheck) fail("adminer needs a healthcheck.");
+    else {
+        const probe = JSON.stringify(services.adminer.healthcheck.test ?? "");
+        // It must probe the web listener, not merely exit 0.
+        if (!probe.includes("8080")) fail("adminer's healthcheck must probe port 8080.");
+    }
+    // The raw file lists it; `docker compose config` renders a map of conditions.
+    const adminerDepends = services.adminer?.depends_on ?? [];
+    const dependsOnPostgres = Array.isArray(adminerDepends)
+        ? adminerDepends.includes("postgres")
+        : Object.hasOwn(adminerDepends, "postgres");
+    if (!dependsOnPostgres) fail("adminer must start after postgres.");
     if ((services.adminer?.volumes ?? []).length > 0) fail("adminer keeps no data.");
     for (const name of ["dokku", "postgres", "adminer"]) {
         if (!services[name]?.mem_limit) fail(`${name} needs a memory limit.`);

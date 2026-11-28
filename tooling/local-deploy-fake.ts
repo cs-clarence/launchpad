@@ -148,7 +148,7 @@ export class FakeHost {
             this.events.push(`write ${p.split("/").pop()}`);
             if (old && exclusive) throw new Error("EEXIST");
             if (old && old.uid !== this.uid) throw new Error("EACCES");
-            this.addFile(p, data, mode);
+            this.addFile(p, data, old?.mode ?? mode);
         },
         rename: async (a, b) => {
             this.events.push(`rename ${a.split("/").pop()} -> ${b.split("/").pop()}`);
