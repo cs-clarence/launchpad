@@ -419,6 +419,39 @@ describe("up", () => {
         expect(parseEnv(host.text(`${host.dir}/compose.env`)!).DEV_ADMINER_PORT).toBeUndefined();
     });
 
+    it("adopts the record another concurrent upgrade installed, instead of failing", async () => {
+        await up(deps());
+        stripPorts("DEV_ADMINER_PORT");
+        // Simulate the loser of the race: the rename finds the temporary file already gone.
+        const base = deps();
+        const fs = base.fs;
+        let renamed = false;
+        const compose = `${host.dir}/compose.env`;
+        const racy = {
+            ...fs,
+            rename: async (from: string, to: string) => {
+                if (!renamed && to.endsWith("compose.env")) {
+                    renamed = true;
+                    // The competing run's rename lands first: its complete record is now in place.
+                    const winner = { ...parseEnv(host.text(compose)!), DEV_ADMINER_PORT: "38080" };
+                    host.addFile(
+                        compose,
+                        Object.entries(winner)
+                            .map(([key, value]) => `${key}=${value}\n`)
+                            .join(""),
+                        0o600,
+                    );
+                    throw Object.assign(new Error("ENOENT"), { code: "ENOENT" });
+                }
+                return fs.rename(from, to);
+            },
+        };
+        await up({ ...base, fs: racy } as Deps);
+        // The record keeps the earlier upgrade's values and is complete either way.
+        expect(parseEnv(host.text(`${host.dir}/compose.env`)!).DEV_ADMINER_PORT).toBe("38080");
+        expect(host.text(`${host.dir}/compose.env.next`)).toBeNull();
+    });
+
     it("refuses a truncated record instead of writing a ports-only one", async () => {
         await up(deps());
         host.addFile(`${host.dir}/compose.env`, "", 0o600);

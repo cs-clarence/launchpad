@@ -31,16 +31,27 @@ export const DEV_EXAMPLE: Env = {
 };
 
 export const DEV_SERVICES = ["adminer", "dokku", "mailpit", "postgres", "router"];
+// Compose accepts `b`, `k`/`kb`, `m`/`mb`, `g`/`gb` (and the `ib` spellings); the rendered model
+// gives plain bytes. Anything else is unknown, not zero, so a wrong unit cannot pass as small.
+const COMPOSE_UNITS: Record<string, number> = {
+    b: 1,
+    k: 1024,
+    kb: 1024,
+    kib: 1024,
+    m: 1024 ** 2,
+    mb: 1024 ** 2,
+    mib: 1024 ** 2,
+    g: 1024 ** 3,
+    gb: 1024 ** 3,
+    gib: 1024 ** 3,
+};
 const bytesOfMemory = (value: unknown): number | undefined => {
-    const text = String(value ?? "")
-        .trim()
-        .toLowerCase();
-    const m = /^([0-9.]+)\s*([bkmg])?$/.exec(text);
+    const m = /^\s*([0-9]+(?:\.[0-9]+)?)\s*([a-z]*)\s*$/i.exec(String(value ?? ""));
     if (!m) return undefined;
-    const unit = { b: 1, k: 1024, m: 1024 ** 2, g: 1024 ** 3 }[
-        (m[2] ?? "b") as "b" | "k" | "m" | "g"
-    ];
-    return Number(m[1]) * unit;
+    const unit = COMPOSE_UNITS[(m[2] || "b").toLowerCase()];
+    if (unit === undefined) return undefined;
+    const bytes = Number(m[1]) * unit;
+    return Number.isFinite(bytes) ? bytes : undefined;
 };
 const LOOPBACK = "127.0.0.1";
 const DIGEST = /@sha256:[0-9a-f]{64}$/;
@@ -156,6 +167,8 @@ export function assertDev(model: Json, env: Env = DEV_EXAMPLE): string[] {
     // Above PHP's own memory_limit = 1G, so a dump import hits PHP's guard rather than the cgroup.
     // The raw file says `1536m`; `docker compose config` renders bytes, so compare sizes.
     const adminerMemory = bytesOfMemory(services.adminer?.mem_limit);
+    if (services.adminer?.mem_limit !== undefined && adminerMemory === undefined)
+        fail(`adminer: mem_limit ${services.adminer.mem_limit} is not a byte size Compose knows.`);
     if (adminerMemory !== undefined && adminerMemory <= 1024 ** 3)
         fail(
             `adminer: mem_limit must be above 1 GiB (PHP's own memory_limit), not ${services.adminer?.mem_limit}.`,

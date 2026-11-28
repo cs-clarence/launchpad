@@ -70,8 +70,9 @@ has.
     [quickstart](local-quickstart.md#set-it-up) (step 6) to use it.
 
 Open the dashboard at `http://127.0.0.1:3000` and Mailpit at `http://127.0.0.1:38025`. To read or fix
-rows by hand, open Adminer at `http://127.0.0.1:38080`, choose PostgreSQL and log in with server
-`postgres`, user and database `launchpad`, and the password from `.dev-infra/compose.env`. Read and
+rows by hand, open Adminer at `http://127.0.0.1:38080` (the default port; use yours if you set
+`DEV_ADMINER_PORT`), choose PostgreSQL and log in with server `postgres`, user and database
+`launchpad`, and the password from `.dev-infra/compose.env`. Read and
 write are both allowed, exactly as with `psql`; nothing is exposed beyond loopback. An invitation
 sent from the dashboard (the controller runs with `LAUNCHPAD_ENROLLMENT=invitation`) shows up in
 Mailpit.

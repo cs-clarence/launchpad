@@ -120,6 +120,12 @@ describe("docker-compose.dev.yaml", () => {
         const small = structuredClone(render());
         small.services.adminer.mem_limit = "256m";
         expect(assertDev(small).join("\n")).toContain("above 1 GiB");
+        const alias = structuredClone(render());
+        alias.services.adminer.mem_limit = "256mb";
+        expect(assertDev(alias).join("\n")).toContain("above 1 GiB");
+        const nonsense = structuredClone(render());
+        nonsense.services.adminer.mem_limit = "lots";
+        expect(assertDev(nonsense).join("\n")).toContain("not a byte size");
     });
 
     it("keeps the PostgreSQL, Dokku and router parts equal to docker-compose.yaml", () => {

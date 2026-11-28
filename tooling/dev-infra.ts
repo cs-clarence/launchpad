@@ -224,21 +224,45 @@ export function assertRecordSecrets(recorded: Record<string, string>): void {
         );
 }
 
-// Atomic: a kill leaves the old record or the complete new one, never a torn file.
-async function rewriteComposeEnv(
+// Atomic: a kill leaves the old record or the complete new one, never a torn file. Two concurrent
+// upgrades share the temporary name, so the loser of the rename adopts the record the winner wrote
+// instead of failing on a file that no longer exists.
+export async function rewriteComposeEnv(
     d: BaseDeps,
     layout: Layout,
     recorded: Record<string, string>,
     ports: Ports,
-): Promise<void> {
+): Promise<Ports> {
     const next = layout.file("compose.env.next");
+    const target = layout.file("compose.env");
     const filled = withPortDefaults(recorded);
     for (const name of Object.keys(PORT_KEYS) as (keyof Ports)[]) {
         filled[PORT_KEYS[name]] = String(ports[name]);
     }
-    // Not exclusive: a kill between write and rename leaves this file, and the retry must replace it.
-    await d.fs.writeFile(next, renderEnv(filled), 0o600, false);
-    await d.fs.rename(next, layout.file("compose.env"));
+    try {
+        // Not exclusive: a kill between write and rename leaves this file, and the retry replaces it.
+        await d.fs.writeFile(next, renderEnv(filled), 0o600, false);
+        await d.fs.rename(next, target);
+    } catch (error) {
+        try {
+            await d.fs.unlink(next);
+        } catch {
+            // Nothing to clean up.
+        }
+        const after = await d.fs.readFile(target);
+        const parsed = after === null ? {} : parseEnv(after);
+        if (after !== null && missingPortKeys(parsed).length === 0)
+            return portsFromRecord(parsed, d.env);
+        throw new DeployError(
+            `Another up changed ${STATE_DIR}/compose.env while this one upgraded it (${(error as Error).message}). Run up again.`,
+        );
+    }
+    const after = parseEnv((await d.fs.readFile(target)) ?? "");
+    if (missingPortKeys(after).length > 0)
+        throw new DeployError(
+            `The upgrade of ${STATE_DIR}/compose.env did not complete. Run up again.`,
+        );
+    return portsFromRecord(after, d.env);
 }
 
 // Writes back any port key an older record lacks, so the file stays complete for later runs.
@@ -654,7 +678,7 @@ export async function up(d: Deps, options: UpOptions = {}): Promise<Summary> {
         ports = portsFromRecord(recorded, d.env);
         // Check the ports before writing, so a failed upgrade leaves the record as it was.
         await freePorts(c, ports, true);
-        if (missing.length > 0) await rewriteComposeEnv(d, layout, recorded, ports);
+        if (missing.length > 0) ports = await rewriteComposeEnv(d, layout, recorded, ports);
     }
     const key = await d.fs.stat(layout.file("credentials/id_ed25519"));
     const pub = await d.fs.stat(layout.file("credentials/id_ed25519.pub"));
