@@ -326,7 +326,7 @@ with. There are two ways, in this order:
       latest` so `latest` is missing; the next stable release then takes it (the missing-`latest`
       case). The `0.0.0-bootstrap.0` placeholder lives under the `bootstrap` tag, not `latest`.
     - `npm deprecate` the packages of the abandoned version that were published.
-    - Move the image `X.Y` and `latest` tags back by hand if they point at an unusable image.
+    - Move the image `X.Y` and `latest` tags back by hand if they point at an unusable image. If no earlier image exists for a tag, remove that tag so it is missing.
 
     Then release a new version. This is a lead-decided policy to confirm; see the record.
     What the workflow could not verify is listed under "Written as fact but unverified" in the record;
