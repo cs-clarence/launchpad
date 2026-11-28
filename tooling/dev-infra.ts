@@ -644,7 +644,9 @@ export async function up(d: Deps, options: UpOptions = {}): Promise<Summary> {
     if (record.kind === "ok") checkRecord(c, record.state!);
     else if (dirStat && (await d.fs.readdir(layout.dir)).length > 0) {
         throw new DeployError(
-            `${layout.dir} exists without a state.json; refusing to reuse it. Run destroy first.`,
+            `${layout.dir} exists without a state.json, so refusing to reuse it. Look inside, then remove it by ` +
+                `hand (its dokku/ child is root-owned, so it may need sudo): destroy cannot remove it, ` +
+                `because it refuses to guess what is there.`,
         );
     }
     if (record.kind !== "ok") await conflictsWithoutRecord(c);

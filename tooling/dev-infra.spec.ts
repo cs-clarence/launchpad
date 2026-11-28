@@ -403,6 +403,22 @@ describe("up", () => {
         expect(parseEnv(host.text(`${host.dir}/compose.env`)!).DEV_ADMINER_PORT).toBe("39090");
     });
 
+    it("does not point at down for an impossible recorded port", async () => {
+        await up(deps());
+        const recorded = parseEnv(host.text(`${host.dir}/compose.env`)!);
+        recorded.DEV_ADMINER_PORT = "not-a-port";
+        host.addFile(
+            `${host.dir}/compose.env`,
+            Object.entries(recorded)
+                .map(([key, value]) => `${key}=${value}\n`)
+                .join(""),
+            0o600,
+        );
+        const message = await fails(up(deps()));
+        expect(message).toContain("DEV_ADMINER_PORT");
+        expect(message).not.toMatch(/run down|run destroy|run destroy first/i);
+    });
+
     it("leaves the record alone when the upgrade's port is busy or clashes", async () => {
         await up(deps());
         stripPorts("DEV_ADMINER_PORT");
@@ -507,10 +523,14 @@ describe("up", () => {
         expect(host.nodes.has(host.dir)).toBe(false);
     });
 
-    it("refuses a directory it did not create", async () => {
+    it("refuses a directory it did not create, with advice that works", async () => {
         host.addDir(host.dir, 0o700);
         host.addFile(`${host.dir}/mine.txt`);
-        expect(await fails(up(deps()))).toContain("without a state.json");
+        const message = await fails(up(deps()));
+        expect(message).toContain("without a state.json");
+        // `destroy` refuses this directory, so the message may not send the user there.
+        expect(message).toMatch(/remove it by hand/i);
+        expect(message).not.toMatch(/run destroy first/i);
     });
 
     it("honours a port override from the environment on the first run only", async () => {
@@ -811,7 +831,7 @@ describe("status and logs", () => {
     it("names Adminer in the summary, the status ports and the help", async () => {
         await up(deps());
         const text = host.logs.join("\n");
-        expect(text).toContain("Adminer");
+        expect(text).toMatch(/Adminer\s+http:\/\/127\.0\.0\.1:/);
         expect(text).toContain(`http://127.0.0.1:${PORT_DEFAULTS.adminer}`);
         expect(HELP).toContain("Adminer");
     });
