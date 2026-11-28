@@ -1,6 +1,6 @@
 {
     "name": "@launchpad-kit/alias-router",
-    "version": "0.0.0",
+    "version": "0.1.0-rc.1",
     "private": true,
     "description": "Bun-only durable generation-checked alias routing authority (unwired core)",
     "type": "module",

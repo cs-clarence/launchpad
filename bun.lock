@@ -19,7 +19,7 @@
     },
     "apps/cli": {
       "name": "@launchpad-kit/cli",
-      "version": "0.0.0",
+      "version": "0.1.0-rc.1",
       "bin": {
         "launchpad": "./dist/cli.mjs",
       },
@@ -42,7 +42,7 @@
     },
     "apps/controller": {
       "name": "@launchpad-kit/controller",
-      "version": "0.0.0",
+      "version": "0.1.0-rc.1",
       "dependencies": {
         "@commander-js/extra-typings": "catalog:",
         "@elysia/openapi": "catalog:",
@@ -86,7 +86,7 @@
     },
     "apps/mcp": {
       "name": "@launchpad-kit/mcp",
-      "version": "0.0.0",
+      "version": "0.1.0-rc.1",
       "bin": {
         "launchpad-mcp": "./dist/mcp.mjs",
       },
@@ -111,7 +111,7 @@
     },
     "apps/router": {
       "name": "@launchpad-kit/router",
-      "version": "0.0.0",
+      "version": "0.1.0-rc.1",
       "dependencies": {
         "@commander-js/extra-typings": "catalog:",
         "@launchpad-kit/alias-router": "workspace:^",
@@ -130,7 +130,7 @@
     },
     "apps/worker": {
       "name": "@launchpad-kit/worker",
-      "version": "0.0.0",
+      "version": "0.1.0-rc.1",
       "dependencies": {
         "@launchpad-kit/alias-router": "workspace:^",
         "@launchpad-kit/database": "workspace:^",
@@ -150,7 +150,7 @@
     },
     "packages/alias-router": {
       "name": "@launchpad-kit/alias-router",
-      "version": "0.0.0",
+      "version": "0.1.0-rc.1",
       "dependencies": {
         "zod": "catalog:",
       },
@@ -166,7 +166,7 @@
     },
     "packages/auth": {
       "name": "@launchpad-kit/auth",
-      "version": "0.0.0",
+      "version": "0.1.0-rc.1",
       "dependencies": {
         "@launchpad-kit/database": "workspace:^",
         "better-auth": "catalog:",
@@ -186,7 +186,7 @@
     },
     "packages/client-core": {
       "name": "@launchpad-kit/client-core",
-      "version": "0.0.0",
+      "version": "0.1.0-rc.1",
       "dependencies": {
         "@launchpad-kit/contracts": "workspace:^",
         "@launchpad-kit/sdk": "workspace:^",
@@ -207,7 +207,7 @@
     },
     "packages/contracts": {
       "name": "@launchpad-kit/contracts",
-      "version": "0.0.0",
+      "version": "0.1.0-rc.1",
       "dependencies": {
         "zod": "catalog:",
       },
@@ -223,7 +223,7 @@
     },
     "packages/database": {
       "name": "@launchpad-kit/database",
-      "version": "0.0.0",
+      "version": "0.1.0-rc.1",
       "dependencies": {
         "kysely": "catalog:",
       },
@@ -239,7 +239,7 @@
     },
     "packages/dokku": {
       "name": "@launchpad-kit/dokku",
-      "version": "0.0.0",
+      "version": "0.1.0-rc.1",
       "devDependencies": {
         "@launchpad-kit/tsconfig": "workspace:^",
         "@launchpad-kit/vite-config": "workspace:^",
@@ -252,7 +252,7 @@
     },
     "packages/sdk": {
       "name": "@launchpad-kit/sdk",
-      "version": "0.0.0",
+      "version": "0.1.0-rc.1",
       "dependencies": {
         "@launchpad-kit/contracts": "workspace:^",
         "zod": "catalog:",
@@ -269,7 +269,7 @@
     },
     "packages/services": {
       "name": "@launchpad-kit/services",
-      "version": "0.0.0",
+      "version": "0.1.0-rc.1",
       "dependencies": {
         "@launchpad-kit/contracts": "workspace:^",
         "@launchpad-kit/database": "workspace:^",
@@ -290,11 +290,11 @@
     },
     "packages/tsconfig": {
       "name": "@launchpad-kit/tsconfig",
-      "version": "0.0.0",
+      "version": "0.1.0-rc.1",
     },
     "packages/vite-config": {
       "name": "@launchpad-kit/vite-config",
-      "version": "0.0.0",
+      "version": "0.1.0-rc.1",
       "dependencies": {
         "unplugin-dts": "catalog:",
         "vite": "catalog:",
@@ -302,7 +302,7 @@
     },
     "packages/vitest-config": {
       "name": "@launchpad-kit/vitest-config",
-      "version": "0.0.0",
+      "version": "0.1.0-rc.1",
       "dependencies": {
         "vitest": "catalog:",
       },

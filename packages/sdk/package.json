@@ -1,6 +1,6 @@
 {
     "name": "@launchpad-kit/sdk",
-    "version": "0.0.0",
+    "version": "0.1.0-rc.1",
     "private": true,
     "description": "Browser-safe HTTP SDK for the Launchpad controller API",
     "homepage": "https://github.com/launchpad-kit/launchpad#readme",

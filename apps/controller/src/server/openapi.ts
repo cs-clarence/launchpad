@@ -240,7 +240,7 @@ export function openApiPlugin(enabled: boolean) {
         documentation: {
             info: {
                 title: "Launchpad API",
-                version: "0.0.0",
+                version: "0.1.0-rc.1",
                 description:
                     "Launchpad controller API. Requests are authenticated by the browser session " +
                     "cookie; mutating requests from a browser must come from the controller's own " +
