@@ -58,7 +58,7 @@ Owners: **USER** does it by hand in a web UI or with a credential; **AGENT** is 
 
 1. [ ] USER: **approve the open decisions** (tag policy, rc.1 first, amd64 only, Compose tag, changelog baseline). Until then everything below that depends on them (the rc.1 steps, the tag and image tag rules) is proposed, not decided. Do this before the workflow is implemented or anything is published.
 2. [ ] USER: items 1-4 above (`main` protection, tag ruleset, `release` environment, npm scope).
-3. [ ] AGENT: `release.yaml`, its spec, and the `ci.spec.ts` extension (items 8-10), following the approved decisions; reviewed and merged.
+3. [ ] AGENT: `release.yaml`, its spec, and the `ci.spec.ts` extension (items 8-10), following the approved decisions: written (PR #124), to be reviewed and merged, not yet run.
 4. [ ] AGENT: Docker verification of the image builds (item 11).
 5. [ ] USER: bootstrap publish of `0.0.0-bootstrap.0`, revoke the token (item 5).
 6. [ ] **Only if rc.1 first is approved:** create the trusted publishers just before the rc, since an unused configuration expires after 2 days (item 6; decision record); `cog bump --version 0.1.0-rc.1 --include-packages` on a clean checkout; release PR; merge; hand-made `v0.1.0-rc.1` tag on the merge commit; approve the `release` jobs; confirm what the decision record lists as unverified (below) from the rc run and fix the workflow if any is wrong. If rc.1 is rejected, those statements are first confirmed by the final release, which is a higher risk, and the plan must be revised: the first GHCR push and everything in step 7 then move to the final release (step 8) and follow it. The trusted publishers must exist before step 8 publishes.
@@ -81,6 +81,7 @@ meant to settle the first five.
 - The ruleset UI selector for the maintainer bypass actor.
 - That GitHub runs the workflow file from the tagged commit.
 - The `npm publish` default dist-tag, npm's version length limit, and whether `artifact-metadata: write` is needed with `create-storage-record: false`.
+- Added by the workflow (see the record's implementation notes): the `npm view` outputs for a missing `latest` or version, the `imagetools inspect` JSON shape, `gh attestation verify` permissions, whether each matrix leg needs its own `release` approval, and that the workflow was never run.
 - Not in the record: the packed tarballs and the image builds were not run for this plan.
 
 ## Open decisions (proposed, not decided)

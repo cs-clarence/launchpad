@@ -1,10 +1,12 @@
 # Releasing Launchpad
 
-For a maintainer preparing a release. **Nothing in this repository publishes, pushes,
-tags or releases by itself.** The rehearsal below is read-only; real publishing needs a
-separate, explicit authorization and a workflow that does not exist yet. The
-[release publishing decision](decisions/release-publishing.md) defines the one gated workflow
-that may publish. This sentence is revisited when that workflow lands. The state of the first
+For a maintainer preparing a release. **Only one workflow publishes:**
+`.github/workflows/release.yaml`, described in the
+[release publishing decision](decisions/release-publishing.md). It runs when a maintainer pushes a
+`v<semver>` tag (never on a pull request, a schedule or by hand), each publishing job (`stage`,
+`npm-publish`, `image-publish`) waits for approval of the `release` environment, and it has **not
+run yet**. Nothing else in the repository publishes, pushes, tags or releases. The rehearsal below
+is read-only. The state of the first
 release, what remains and the decisions still open are in the
 [0.1.0 plan](plans/release-0.1.0.md); its draft notes are in [release notes 0.1.0](release-notes/0.1.0.md).
 
@@ -259,9 +261,11 @@ A release is a person's decision. Work through this in order and stop at the fir
    carry `[skip ci]`, so CI validates it. On that commit rerun step 6's dry run and use the
    checksums from **that** run. The ones from before the bump
    are for a different version.
-8. Obtain explicit authorization to publish. Publishing uses a least-privilege identity,
-   provenance attestation, and pinned image tags and digests; it is a separate workflow
-   written and reviewed for that purpose, and it is not part of this repository yet.
+8. Obtain explicit authorization to publish, then (after the maintainer steps in the decision
+   record are done) merge the release pull request and, on the merge commit on `main` after its
+   `CI Passed` is green, create and push the one tag `v<semver>` by hand (delete the local
+   Cocogitto tag first; push tags one at a time). The workflow then runs; approve each `release`
+   job (see below).
 9. After publishing: install the published packages in a clean project on Node and Bun
    (`omni -i run test:packages` does this from tarballs), and keep the previous version's
    artifacts available for rollback.
@@ -270,3 +274,37 @@ Rolling back a published package is not possible: an npm version cannot be unpub
 safely once used, so a bad release is superseded by a fixed one and the bad version is
 deprecated. An image tag is never reused. Data is protected by the backup that the upgrade
 procedure requires first.
+
+## The release workflow
+
+`.github/workflows/release.yaml` runs these jobs in order, each needing the previous ones and
+`guard`; the decision record has the permissions of each.
+
+1. `guard`: the tag is a SemVer `v<version>` without build metadata, at most 128 characters
+   after the `v`. It runs before any checkout.
+2. `verify`: the tag equals the version of the root and every published manifest, the commit is on
+   `main`, its `CI Passed` check succeeded, the previous stable release is complete (refuses a new
+   stable release on a partial one), then the full gate, the dry run and `test:packages` on Node
+   22.12 and the current Node. It restores no cache.
+3. `build`: packs the tarballs once and uploads them with `SHA256SUMS`; the checksum of
+   `SHA256SUMS` is a job output that later jobs check before using the tarballs.
+4. `stage` (approval): builds each image once, pushes it as `sha-<commit>` (an existing tag is
+   reused, never rebuilt) and creates the signed GitHub attestation for its digest.
+5. `smoke`: installs and runs the exact tarballs on Node 22.12; pulls the exact staged digests and
+   checks their labels.
+6. `npm-publish` (approval): `npm publish` with trusted publishing (OIDC, no token) on Node 24.
+   The dist-tag is explicit: `next` for a pre-release; for a stable version `latest` when the
+   package has no `latest` yet or the version is not lower, else `retry`. A version already
+   published is skipped only when its integrity and provenance match.
+7. `image-publish` (approval): retags the staged digest as `X.Y.Z` (immutable), then `X.Y` and
+   `latest` only for a stable version that is higher than what they hold.
+8. `post-verify`: `gh attestation verify` for each image digest and `npm audit signatures`.
+
+A re-run from the failed job is the recovery. Publishing cannot be undone: a bad release is
+deprecated on npm and fixed forward; `X.Y` and `latest` move back by hand to the last good digest.
+What the workflow could not verify is listed under "Written as fact but unverified" in the record;
+the `v0.1.0-rc.1` release settles it.
+
+Two limits of the first version: the partial-release check confirms the previous release's
+packages exist with provenance (it has no copy of that release's tarballs to compare integrity
+with), and it reads the images anonymously, so it needs their packages to be public.

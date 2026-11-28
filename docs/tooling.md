@@ -195,7 +195,15 @@ re-runs previously failed tasks even when cached) and finish with
 `omni -i cache prune -sy -o="7d"` to keep the restored cache small. `tooling/ci.spec.ts`
 guards the workflow: the gatekeeper must need every other job and always run, its real
 script is executed against every pass and fail scenario, and no job may bypass Omni with
-a package script. Lint the workflow files with
+a package script. Every workflow except `release.yaml` (and the setup action) is also checked there
+for publish, push, tag and login commands, publishing actions and credentials.
+`.github/workflows/release.yaml` is the single publishing workflow: `tooling/release.spec.ts`
+asserts its trigger, job graph, per-job permissions, `release` environment, absence of caches and
+secrets, SHA-pinned actions and the tag guard (it runs the guard step in bash), and
+`tooling/release-plan.ts` (spec: `release-plan.spec.ts`) holds its decisions: tag guard, npm
+dist-tag, floating image tags, partial-release check, `CI Passed` lookup. Run its commands by hand
+with `bun tooling/release-plan.ts <command>`; `release:dry-run` takes `-a options=--skip-images`.
+Lint the workflow files with
 `docker run --rm -v "$PWD":/repo -w /repo rhysd/actionlint:latest` after editing them.
 **CI installs the released Omni** (pinned in the setup action), which can be older than
 a local `cargo install` build of Omni's main branch. The first CI run failed on a preset

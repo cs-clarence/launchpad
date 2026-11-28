@@ -342,7 +342,8 @@ its own spec asserting: the tag glob and the guard job with its `needs:` edges, 
 environment on every publishing job, `permissions: {}` at workflow level and the per-job
 permissions in the job graph, no secrets beyond `GITHUB_TOKEN`, no cache restore, no
 `${{ github.ref_name }}` inside `run:` blocks, the npm and Node minimums, and full-SHA action pins.
-This change does not touch `ci.spec.ts`, which still matches reality until the workflow lands.
+`tooling/ci.spec.ts` enforces this for the other workflows and `tooling/release.spec.ts` is the dedicated
+spec (both landed with the workflow).
 
 ## Maintainer steps (not done by agents)
 
@@ -391,6 +392,49 @@ My own list, because the review's list was not available to me. Each item is mar
 - The exact ruleset UI selector for the maintainer bypass actor.
 - GitHub runs the workflow file from the tagged commit (stated by the review; not re-fetched here).
 
+## Implementation notes
+
+Where `release.yaml` is more specific than, or differs from, the text above:
+
+- Every job except `guard` also lists `guard` in `needs:`, because `needs.guard.outputs.version`
+  is readable only from a direct need.
+- `guard` has `permissions: {}`, so it cannot check out; its shell step repeats the pattern of
+  `tooling/release-plan.ts` (`TAG_PATTERN`), and the spec runs the step in bash and asserts the
+  two agree. Later jobs run the tooling `guard` again.
+- `setup-omni` and `setup-workspace` restore caches, so `verify` and `build` install Omni from the
+  pinned release zip and check its SHA-256 (the digest GitHub shows for the asset, confirmed by
+  downloading it). The version equals the one in `setup-workspace`, which the spec asserts.
+- `stage` is a matrix of the five images (the `admin` image is the `admin` target of the
+  controller Dockerfile). Digests reach `smoke`, `image-publish` and `post-verify` as `staged-*`
+  artifacts.
+- The logic of `npm publish`, the dist-tag, the retag and the partial-release check is in
+  `tooling/release-plan.ts` and is called as `bun tooling/release-plan.ts <command>`; `npm publish`
+  is spawned there with an explicit `--tag`, `--provenance` and `--access public`.
+- The partial-release check verifies that the previous stable release's packages exist with a
+  provenance attestation; it cannot compare integrity with that release's tarballs (they are not
+  kept), so "matching integrity" holds only for the release being published (`publish-npm`). It
+  reads the images anonymously (`verify` has no `packages: read`), so it needs the packages to be
+  public, which the maintainer sets after the first push; with no previous stable release it
+  checks nothing.
+- `verify` runs the dry run with `--skip-images` (the images are built, smoked and attested in
+  `stage`); `build` repeats it to produce the artifact.
+- `smoke` installs the exact tarballs with npm (overrides to the files) on Node 22.12 and runs
+  `launchpad --version`; it checks the exact staged digests by their labels and does not start the
+  containers. `post-verify` installs the published packages from the registry for
+  `npm audit signatures`.
+- Added to the unverified list: `npm view <name> dist-tags.latest` prints nothing (exit 0) for a
+  package without `latest`; `npm view <name>@<version> dist.integrity` fails with E404 or prints
+  nothing for a missing version; the `docker buildx imagetools inspect --format '{{json .}}'`
+  shape (`Manifest.digest`, `Image` as a config or a platform map) and its "not found" wording;
+  `gh attestation verify oci://...` needing only `packages: read`; whether each `stage` matrix leg
+  asks for its own `release` approval; `setup-omni` is not used and `actions/*` versions are the
+  latest at writing (checkout v7.0.1, setup-node v7.1.0, upload-artifact v7.0.2,
+  download-artifact v8.0.2, setup-bun v2.2.0, docker login v4.8.0, setup-buildx v4.4.1,
+  build-push v7.4.0, attest v4.2.2; SHAs read from the GitHub API on 2026-11-28), and
+  their inputs were read from each action's `action.yml` at that SHA, not run.
+- Not run: the workflow itself, `actionlint` (not installed here), Docker builds and the registry
+  commands. Only the unit specs and the guard step (in bash) were run.
+
 ## Consequences
 
 - A compromised workflow can publish. Mitigations: tag creation restricted to the maintainer, the
@@ -418,16 +462,15 @@ My own list, because the review's list was not available to me. Each item is mar
 
 ## Follow-ups
 
-- [ ] Job graph and `release.yaml` with its dedicated spec. Extend `tooling/ci.spec.ts` so every
-      workflow except `release.yaml` is checked for publish, login, tag and registry-push commands
-      and for secrets, matching commands in command position (not trigger keys such as
-      `on: push`). In the same change update every statement that nothing is published from CI:
-      `README.md`, `CONTRIBUTING.md`, `docs/releasing.md`. `AGENTS.md` was checked and has no such
-      statement (it only forbids starting servers or deployments unless asked); re-check it then.
+- [x] Job graph and `release.yaml` with its dedicated spec (`tooling/release.spec.ts`; decisions in
+      `tooling/release-plan.ts`). `tooling/ci.spec.ts` now checks every workflow except
+      `release.yaml` (and the setup action) for publish, login, tag and registry-push commands,
+      publishing actions and credentials. `README.md`, `CONTRIBUTING.md` and `docs/releasing.md`
+      no longer say nothing is published from CI. `AGENTS.md` was re-checked: no such statement.
 - [ ] Tag creation procedure (release PR, merge, hand-made `v<semver>` tag on `main`, local
       Cocogitto tags removed) and the tag ruleset change with the single bypass actor.
-- [ ] Artifact checksum handoff: upload, job-output SHA-256, re-verify in every publish job.
-- [ ] Post-publish verification job (`gh attestation verify`, `npm audit signatures`).
+- [x] Artifact checksum handoff: upload, job-output SHA-256, re-verify in every publish job.
+- [x] Post-publish verification job (`gh attestation verify`, `npm audit signatures`).
 - [ ] Bootstrap procedure for the five packages (placeholder version, `bootstrap` tag, token
       revoked), then trusted publishers and disallow-tokens.
 - [x] Bump CI: `skip_ci = ""`, so the bump commit has no `[skip ci]` and CI runs on it.
