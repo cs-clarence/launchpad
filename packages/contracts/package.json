@@ -1,6 +1,6 @@
 {
     "name": "@launchpad-kit/contracts",
-    "version": "0.0.0",
+    "version": "0.1.0-rc.1",
     "private": true,
     "description": "Versioned zod contracts shared by the controller, SDK and clients",
     "homepage": "https://github.com/launchpad-kit/launchpad#readme",

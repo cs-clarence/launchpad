@@ -1,6 +1,6 @@
 {
     "name": "@launchpad-kit/worker",
-    "version": "0.0.0",
+    "version": "0.1.0-rc.1",
     "private": true,
     "description": "The privileged deployment worker: builds images and talks to Dokku",
     "type": "module",

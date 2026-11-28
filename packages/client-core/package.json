@@ -1,6 +1,6 @@
 {
     "name": "@launchpad-kit/client-core",
-    "version": "0.0.0",
+    "version": "0.1.0-rc.1",
     "private": true,
     "description": "Profiles, credentials and workflows shared by the CLI and MCP server",
     "homepage": "https://github.com/launchpad-kit/launchpad#readme",
