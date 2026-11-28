@@ -1,5 +1,6 @@
-// Starts and removes the development infrastructure of docker-compose.dev.yaml (PostgreSQL,
-// Mailpit, Dokku, the alias router) so that the controller, worker and CLI can run on the host.
+// Starts and removes the development infrastructure of docker-compose.dev.yaml (PostgreSQL, the
+// Adminer SQL client, Mailpit, Dokku and the alias router) so that the controller, worker and CLI
+// can run on the host.
 //
 //   omni -i run dev:infra:up       [-a "options=--preset deploy"]
 //   omni -i run dev:infra:status
@@ -152,22 +153,44 @@ export function portsFrom(env: Record<string, string | undefined>): Ports {
         ports[name] = checkPort(PORT_KEYS[name], env[PORT_KEYS[name]], PORT_DEFAULTS[name]);
     }
     if (new Set(Object.values(ports)).size !== Object.values(ports).length) {
-        throw new DeployError("The seven host ports must all be different.");
+        throw new DeployError("The host ports must all be different.");
     }
     return ports;
 }
 
+// A record written before a port existed keeps working: the missing key takes its default and `up`
+// writes it back. Anything else wrong is still an error, because the record is then untrustworthy.
 function portsFromRecord(env: Record<string, string>): Ports {
     const ports = {} as Ports;
     for (const name of Object.keys(PORT_KEYS) as (keyof Ports)[]) {
         const key = PORT_KEYS[name];
-        const n = Number(env[key]);
+        const raw = env[key];
+        if (raw === undefined || raw === "") {
+            ports[name] = PORT_DEFAULTS[name];
+            continue;
+        }
+        const n = Number(raw);
         if (!Number.isInteger(n) || n < 1024 || n > 65535) {
             throw new DeployError(`compose.env has no valid ${key}; run destroy, then up again.`);
         }
         ports[name] = n;
     }
     return ports;
+}
+
+export const missingPortKeys = (env: Record<string, string>): string[] =>
+    Object.entries(PORT_KEYS)
+        .filter(([, key]) => env[key] === undefined || env[key] === "")
+        .map(([, key]) => key);
+
+// Writes back any port key an older record lacks, so the file stays complete for later runs.
+export function withPortDefaults(env: Record<string, string>): Record<string, string> {
+    const filled = { ...env };
+    for (const [name, key] of Object.entries(PORT_KEYS)) {
+        if (filled[key] === undefined || filled[key] === "")
+            filled[key] = String(PORT_DEFAULTS[name as keyof Ports]);
+    }
+    return filled;
 }
 
 // ---- pure planning -------------------------------------------------------------------------
@@ -566,7 +589,17 @@ export async function up(d: Deps, options: UpOptions = {}): Promise<Summary> {
         const env = composeEnv(layout, project, ports, generateSecrets(), d.version);
         await d.fs.writeFile(layout.file("compose.env"), renderEnv(env), 0o600, true);
     } else {
-        ports = portsFromRecord(parseEnv(envText));
+        const recorded = parseEnv(envText);
+        ports = portsFromRecord(recorded);
+        if (missingPortKeys(recorded).length > 0) {
+            // An older record: keep its secrets, add the new default, and leave the file complete.
+            await d.fs.writeFile(
+                layout.file("compose.env"),
+                renderEnv(withPortDefaults(recorded)),
+                0o600,
+                false,
+            );
+        }
         await freePorts(c, ports, true);
     }
     const key = await d.fs.stat(layout.file("credentials/id_ed25519"));
@@ -597,7 +630,7 @@ export async function up(d: Deps, options: UpOptions = {}): Promise<Summary> {
         await bootstrapDokkuAndRouter(c, ports);
     }
 
-    d.log("Starting the router...");
+    d.log("Starting the router and Adminer...");
     must(await compose(c, ["up", "-d", "--no-build"]), "Starting the services");
     await waitHealthy(c, "router", 7 * 60_000);
 

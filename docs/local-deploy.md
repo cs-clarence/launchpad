@@ -8,7 +8,7 @@ runs only the controller and deploys nothing, and uses the stack described in
 
 Developing the apps themselves rather than looking at the whole system? This guide runs everything,
 the controller and worker included, in Docker. To run the controller, worker and CLI on the host from
-your checkout, with only PostgreSQL, Mailpit, Dokku and the router in Docker, use
+your checkout, with only PostgreSQL, the Adminer SQL client, Mailpit, Dokku and the router in Docker, use
 [develop against local infrastructure](local-dev-infra.md) instead; run one of the two at a time,
 since each starts its own Dokku.
 

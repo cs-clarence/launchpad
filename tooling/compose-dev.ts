@@ -137,7 +137,9 @@ export function assertDev(model: Json, env: Env = DEV_EXAMPLE): string[] {
     }
     if (!services.mailpit?.healthcheck) fail("mailpit needs a healthcheck.");
     if ((services.mailpit?.volumes ?? []).length > 0) fail("mailpit keeps no data.");
-    for (const name of ["dokku", "postgres"]) {
+    if (!services.adminer?.healthcheck) fail("adminer needs a healthcheck.");
+    if ((services.adminer?.volumes ?? []).length > 0) fail("adminer keeps no data.");
+    for (const name of ["dokku", "postgres", "adminer"]) {
         if (!services[name]?.mem_limit) fail(`${name} needs a memory limit.`);
     }
     for (const name of Object.keys(model.networks ?? {})) {

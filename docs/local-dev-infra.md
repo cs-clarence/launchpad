@@ -20,6 +20,8 @@ extends [run Launchpad on your machine](local-quickstart.md).
   not.
 - Mailpit keeps mail in memory only: it is gone after `dev:infra:down`.
 - Deployments and the dashboard cannot both work at once (see [Two presets](#two-presets)).
+- Adminer has no login of its own: it is an unauthenticated UI that relies on the loopback bind and
+  the database password. Do not forward its port or publish it.
 - This is not a production install, and `docker-compose.dev.yaml` is not a template for one.
 
 You need Linux with native Docker Engine and Docker Compose v2 (not Docker Desktop, rootless Docker,
@@ -45,9 +47,9 @@ has.
 
     It checks Docker, that `.dev-infra/` is ignored by git and that the ports are free, writes
     `.dev-infra/` (mode 700) with its record first, builds the Dokku and router images under tags of
-    its own (`launchpad-dev-<hash>/<service>:local`), starts PostgreSQL, Mailpit and Dokku, pins
-    Dokku's host key and registers the worker's key, initialises the router once, starts the router
-    and writes the settings for the host apps to `.dev-infra/env/`. It is safe to run again: it keeps
+    its own (`launchpad-dev-<hash>/<service>:local`), starts PostgreSQL, Adminer, Mailpit and Dokku,
+    pins Dokku's host key and registers the worker's key, initialises the router once, starts the
+    router and writes the settings for the host apps to `.dev-infra/env/`. It is safe to run again: it keeps
     what exists and skips the one-time steps. Dokku's first start takes minutes.
 
 3. Copy the generated settings into the apps. The tool never writes an app's `.env.local`:
@@ -79,17 +81,17 @@ Mailpit.
 Measured once on a Linux workstation with warm Docker layer and base-image caches (a cold first run was
 not measured; Dokku's first start alone took 4.5 minutes in an earlier rehearsal):
 
-| What                                              | Measured                                                         |
-| ------------------------------------------------- | ---------------------------------------------------------------- |
-| First `dev:infra:up` (warm caches)                | 131 s, most of it Dokku's first start                            |
-| `dev:infra:up` again after `down`                 | 19 s; a stopped site answers again about 30 s later              |
-| `dev:infra:down`                                  | 12 s                                                             |
-| `dev:infra:destroy` with one deployed site        | 8 s                                                              |
-| One deployment of `hello` through the host worker | 72 s from `app deploy` to `succeeded`                            |
-| Memory limits in Compose                          | PostgreSQL 512 MiB, Dokku 1 GiB, router 128 MiB, Adminer 256 MiB |
+| What                                              | Measured                                                       |
+| ------------------------------------------------- | -------------------------------------------------------------- |
+| First `dev:infra:up` (warm caches)                | 131 s, most of it Dokku's first start                          |
+| `dev:infra:up` again after `down`                 | 19 s; a stopped site answers again about 30 s later            |
+| `dev:infra:down`                                  | 12 s                                                           |
+| `dev:infra:destroy` with one deployed site        | 8 s                                                            |
+| One deployment of `hello` through the host worker | 72 s from `app deploy` to `succeeded`                          |
+| Memory limits in Compose                          | PostgreSQL 512 MiB, Dokku 1 GiB, router 128 MiB, Adminer 1 GiB |
 
 Builds and deployed sites run in the host engine, outside the memory limits. Pulled base images (Mailpit,
-PostgreSQL, Dokku) and the build cache stay after `destroy`.
+PostgreSQL, Adminer, Dokku) and the build cache stay after `destroy`.
 
 ## Two presets
 

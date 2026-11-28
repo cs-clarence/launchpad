@@ -161,7 +161,7 @@ Rules that keep the graph correct:
   ([deploy a site on your machine](local-deploy.md)) is guarded by `tooling/local-deploy-docs.spec.ts`.
   The real-Docker proof is recorded in [the plan](plans/local-deploy-quickstart.md#status).
 - **Local dev infrastructure.** `omni -i run dev:infra:up` (`tooling/dev-infra.ts`; `status`, `down`,
-  `destroy`, `logs` and `seed` are the other tasks) runs `docker-compose.dev.yaml` (PostgreSQL, Mailpit,
+  `destroy`, `logs` and `seed` are the other tasks) runs `docker-compose.dev.yaml` (PostgreSQL, Adminer, Mailpit,
   Dokku, the alias router; all on `127.0.0.1`) under a project named `launchpad-dev-<8 hex>` so that
   the controller, worker and CLI run on the host. It writes the host apps' settings to
   `.dev-infra/env/` (git-ignored, mode 700) and never to an app's `.env.local`. `down` keeps the data,

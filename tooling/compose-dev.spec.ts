@@ -52,14 +52,17 @@ describe("docker-compose.dev.yaml", () => {
         const model = render({
             ...DEV_EXAMPLE,
             DEV_POSTGRES_PORT: "40001",
+            DEV_ADMINER_PORT: "41234",
             DEV_ROUTER_CONTROL_PORT: "40002",
         });
         expect(model.services.postgres.ports).toEqual(["127.0.0.1:40001:5432"]);
+        expect(model.services.adminer.ports).toEqual(["127.0.0.1:41234:8080"]);
         expect(model.services.router.ports).toContain("127.0.0.1:40002:3081");
         expect(
             assertDev(model, {
                 ...DEV_EXAMPLE,
                 DEV_POSTGRES_PORT: "40001",
+                DEV_ADMINER_PORT: "41234",
                 DEV_ROUTER_CONTROL_PORT: "40002",
             }),
         ).toEqual([]);
@@ -106,6 +109,14 @@ describe("docker-compose.dev.yaml", () => {
         const extra = structuredClone(render());
         extra.services.controller = { image: "x" };
         expect(assertDev(extra).join("\n")).toContain("exactly");
+        const adminer = structuredClone(render());
+        adminer.services.adminer.healthcheck = undefined;
+        adminer.services.adminer.mem_limit = undefined;
+        adminer.services.adminer.volumes = [{ adminer: "/data" }];
+        const problems = assertDev(adminer).join("\n");
+        expect(problems).toContain("adminer needs a healthcheck");
+        expect(problems).toContain("adminer needs a memory limit");
+        expect(problems).toContain("adminer keeps no data");
     });
 
     it("keeps the PostgreSQL, Dokku and router parts equal to docker-compose.yaml", () => {

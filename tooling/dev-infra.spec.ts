@@ -334,6 +334,27 @@ describe("up", () => {
         expect(has("network:set")).toEqual([]);
     });
 
+    it("upgrades a record written before a port existed, without destroying it", async () => {
+        await up(deps());
+        // A `compose.env` from before Adminer: drop its port key, as an older tool would have written it.
+        const recorded = parseEnv(host.text(`${host.dir}/compose.env`)!);
+        delete recorded.DEV_ADMINER_PORT;
+        const text = Object.entries(recorded)
+            .map(([key, value]) => `${key}=${value}\n`)
+            .join("");
+        host.addFile(`${host.dir}/compose.env`, text);
+        const token = host.text(`${host.dir}/credentials/token`);
+
+        await up(deps());
+
+        const after = parseEnv(host.text(`${host.dir}/compose.env`)!);
+        expect(after.DEV_ADMINER_PORT).toBe("38080");
+        expect(after.POSTGRES_PASSWORD).toBe(recorded.POSTGRES_PASSWORD!);
+        expect(host.text(`${host.dir}/credentials/token`)).toBe(token);
+        // `status` reads the same record and must not need the key either.
+        await status(deps());
+    });
+
     it("refuses a busy port before writing secrets", async () => {
         host.busyPorts.add(35432);
         expect(await fails(up(deps()))).toContain("postgres port 35432");
