@@ -189,36 +189,114 @@ describe("CI gatekeeper script", () => {
     });
 });
 
-// The release rehearsal must stay a rehearsal: manual, read-only, with no credential and no
-// command that publishes, pushes, tags or logs in.
-describe("release dry-run workflow", () => {
-    const file = readFileSync(path.join(workflows, "release-dry-run.yaml"), "utf8");
-    const parsed = Bun.YAML.parse(file) as {
-        on: Record<string, unknown>;
-        permissions: Record<string, string>;
-        jobs: Record<string, Job & { permissions?: unknown; environment?: unknown }>;
-    };
+// Only .github/workflows/release.yaml may publish (docs/decisions/release-publishing.md), and
+// tooling/release.spec.ts asserts that file. Every other workflow, and the composite action they
+// use, must not publish, push, tag, log in to a registry or hold a credential.
+const RELEASE_WORKFLOW = "release.yaml";
+const actionFile = path.join(root, ".github", "actions", "setup-workspace", "action.yaml");
+const others = [
+    ...readdirSync(workflows)
+        .filter((name) => name !== RELEASE_WORKFLOW)
+        .map((name) => path.join(workflows, name)),
+    actionFile,
+];
 
-    it("starts only by hand, with read-only permissions", () => {
+// Commands the shell would run: comments are not commands.
+const commandsOf = (text: string) => {
+    const parsed = Bun.YAML.parse(text) as {
+        jobs?: Record<string, Job>;
+        runs?: { steps: Step[] };
+    };
+    const all = [
+        ...Object.values(parsed.jobs ?? {}).flatMap((job) => job.steps ?? []),
+        ...(parsed.runs?.steps ?? []),
+    ];
+    return all
+        .map((step) => step.run ?? "")
+        .join("\n")
+        .replace(/^\s*#.*$/gm, "");
+};
+
+const FORBIDDEN_COMMAND =
+    /\b(publish|push|login|logout|tag|release create|imagetools create|attestation|provenance)\b|docker (push|login|tag)/;
+const FORBIDDEN_ACTION =
+    /^(docker\/(login-action|build-push-action)|actions\/(attest|attest-build-provenance)|softprops\/|ncipollo\/|changesets\/|JS-DevTools\/npm-publish)/;
+
+describe("every workflow except the release workflow", () => {
+    it("is checked, and the release workflow is the only one exempt", () => {
+        expect(readdirSync(workflows).toSorted()).toEqual([
+            "ci.yaml",
+            "release-dry-run.yaml",
+            RELEASE_WORKFLOW,
+        ]);
+        expect(others).toHaveLength(3);
+    });
+
+    it("uses no secret, token permission or publishing credential", () => {
+        for (const file of others) {
+            const text = readFileSync(file, "utf8").replace(/^\s*#.*$/gm, "");
+            expect(text, file).not.toMatch(
+                /secrets\.|id-token|attestations: write|packages: write|artifact-metadata|NODE_AUTH_TOKEN|NPM_TOKEN|_authToken/,
+            );
+        }
+    });
+
+    it("runs no publishing, pushing, tagging or login command and uses no publishing action", () => {
+        for (const file of others) {
+            const text = readFileSync(file, "utf8");
+            expect(commandsOf(text), file).not.toMatch(FORBIDDEN_COMMAND);
+            for (const [, used] of text.matchAll(/^\s*(?:- )?uses:\s*(\S+)/gm)) {
+                expect(used, file).not.toMatch(FORBIDDEN_ACTION);
+            }
+        }
+    });
+
+    it("lets none of them start on a tag push", () => {
+        for (const file of others.filter((f) => f.startsWith(workflows))) {
+            const on = (Bun.YAML.parse(readFileSync(file, "utf8")) as { on: Record<string, any> })
+                .on;
+            for (const [event, filter] of Object.entries(on)) {
+                expect(filter?.tags, `${file} ${event}`).toBeUndefined();
+            }
+        }
+    });
+
+    it("keeps the release rehearsal manual, read-only and environment-free", () => {
+        const parsed = Bun.YAML.parse(
+            readFileSync(path.join(workflows, "release-dry-run.yaml"), "utf8"),
+        ) as {
+            on: Record<string, unknown>;
+            permissions: Record<string, string>;
+            jobs: Record<string, Job & { permissions?: unknown; environment?: unknown }>;
+        };
         expect(Object.keys(parsed.on)).toEqual(["workflow_dispatch"]);
         expect(parsed.permissions).toEqual({ contents: "read" });
         for (const job of Object.values(parsed.jobs)) {
             expect(job.permissions).toBeUndefined();
             expect(job.environment).toBeUndefined();
         }
+        expect(
+            runs(
+                commandsOf(readFileSync(path.join(workflows, "release-dry-run.yaml"), "utf8")),
+                "release:dry-run",
+            ),
+        ).toBe(true);
     });
 
-    it("uses no secret and no publishing, pushing, tagging or login command", () => {
-        expect(file).not.toMatch(/secrets\.|id-token|NODE_AUTH_TOKEN|NPM_TOKEN/);
-        const commands = Object.values(parsed.jobs)
-            .flatMap((job) => job.steps ?? [])
-            .map((step) => step.run ?? "")
-            .join("\n")
-            // A shell comment is not a command.
-            .replace(/^\s*#.*$/gm, "");
-        expect(commands).not.toMatch(
-            /\b(publish|push|login|release create|git tag)\b|docker (push|login)/,
-        );
-        expect(runs(commands, "release:dry-run")).toBe(true);
+    it("recognises the commands it forbids", () => {
+        for (const command of [
+            "npm publish ./a.tgz",
+            "bun publish",
+            "docker login ghcr.io",
+            "docker push x",
+            "git tag v1",
+            "git push origin v1",
+            "gh release create v1",
+            "docker buildx imagetools create -t a b",
+        ]) {
+            expect(command, command).toMatch(FORBIDDEN_COMMAND);
+        }
+        expect("omni -i run release:dry-run -p tooling").not.toMatch(FORBIDDEN_COMMAND);
+        expect("uses: docker/login-action@v4").toMatch(/docker\/login-action/);
     });
 });

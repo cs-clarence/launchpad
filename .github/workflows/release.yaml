@@ -1,0 +1,578 @@
+# The ONLY workflow that may publish (docs/decisions/release-publishing.md). It runs when a
+# maintainer pushes a `v<semver>` tag from `main`, never on a pull request, and each publishing job
+# waits for approval of the `release` environment. tooling/release.spec.ts asserts this file.
+#
+# Rules from the record: every action is pinned by full commit SHA; no job restores a cache; no
+# secret other than the automatic GITHUB_TOKEN exists; untrusted context values reach shell only
+# through `env:`; logic lives in tooling/release-plan.ts, which has unit tests.
+name: Release
+
+on:
+  push:
+    # A glob, not a regular expression; deliberately loose. The `guard` job decides.
+    tags: ["v[0-9]+.[0-9]+.[0-9]+*"]
+
+permissions: {}
+
+# One release at a time, and never cancel one that is part-way through publishing.
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
+env:
+  OMNI_VERSION: "0.21.0"
+  # SHA-256 of omni-v0.21.0-x86_64-unknown-linux-gnu.zip, from the GitHub release asset.
+  OMNI_SHA256: "58534422a943885dcac2830c4f2a52001a5199283b55bc7688ece5da75a4bee6"
+
+jobs:
+  guard:
+    name: Guard
+    runs-on: ubuntu-latest
+    permissions: {}
+    outputs:
+      version: ${{ steps.tag.outputs.version }}
+    steps:
+      # No checkout here (no permission to read the repository), so the pattern is repeated from
+      # tooling/release-plan.ts; the spec runs this step and asserts the two agree.
+      - name: Validate the tag
+        id: tag
+        env:
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          semver='^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-((0|[1-9][0-9]*)|[0-9]*[A-Za-z-][0-9A-Za-z-]*)(\.((0|[1-9][0-9]*)|[0-9]*[A-Za-z-][0-9A-Za-z-]*))*)?$'
+          if [[ ! "$REF_NAME" =~ $semver ]]; then
+            echo "::error::$REF_NAME is not v<semver> without build metadata"
+            exit 1
+          fi
+          version="${REF_NAME#v}"
+          if (( ${#version} > 128 )); then
+            echo "::error::the version is longer than 128 characters (an image tag limit)"
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+  verify:
+    name: Verify
+    needs: [guard]
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      checks: read
+    env:
+      TAG: ${{ github.ref_name }}
+      VERSION: ${{ needs.guard.outputs.version }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Check out the tagged commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Install Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          no-cache: true
+
+      - name: Install Node
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "24"
+          package-manager-cache: false
+
+      # setup-omni restores a cache, so Omni is installed from its pinned release instead.
+      - name: Install Omni
+        run: |
+          curl -fsSL -o "$RUNNER_TEMP/omni.zip" "https://github.com/omni-oss/omni/releases/download/omni-v${OMNI_VERSION}/omni-v${OMNI_VERSION}-x86_64-unknown-linux-gnu.zip"
+          echo "$OMNI_SHA256  $RUNNER_TEMP/omni.zip" | sha256sum -c -
+          mkdir -p "$RUNNER_TEMP/omni-bin"
+          unzip -o "$RUNNER_TEMP/omni.zip" -d "$RUNNER_TEMP/omni-bin"
+          chmod +x "$RUNNER_TEMP/omni-bin/omni"
+          echo "$RUNNER_TEMP/omni-bin" >> "$GITHUB_PATH"
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: The tag is a release tag
+        run: bun tooling/release-plan.ts guard "$TAG"
+
+      - name: The tag equals every published version
+        run: bun tooling/release-plan.ts verify-tag "$TAG"
+
+      - name: The tagged commit is on main
+        run: git merge-base --is-ancestor "$GITHUB_SHA" origin/main
+
+      # The check's creating app is matched by its `slug` field (unverified against a live response).
+      - name: The commit's CI Passed check succeeded
+        run: |
+          gh api --paginate "repos/$GITHUB_REPOSITORY/commits/$GITHUB_SHA/check-runs?per_page=100" --jq '.check_runs[]' \
+            | bun tooling/release-plan.ts ci-passed
+
+      - name: No new stable release on a partial one
+        run: bun tooling/release-plan.ts partial "$VERSION"
+
+      - name: The full local gate
+        run: omni -i run check test build check:compose
+
+      - name: Release dry run
+        run: omni -i run release:dry-run -p '@launchpad-kit/tooling' -a 'options=--skip-images'
+
+      - name: Packages on the Node floor
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "22.12"
+          package-manager-cache: false
+
+      - name: Test packages (Node 22.12)
+        run: omni -i run test:packages -p '@launchpad-kit/tooling'
+
+      - name: Packages on the current Node
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "current"
+          package-manager-cache: false
+
+      - name: Test packages (current Node)
+        run: omni -i run test:packages -p '@launchpad-kit/tooling'
+
+  build:
+    name: Build packages
+    needs: [guard, verify]
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    outputs:
+      sums: ${{ steps.sums.outputs.sha256 }}
+    steps:
+      - name: Check out the tagged commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Install Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          no-cache: true
+
+      - name: Install Node
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "24"
+          package-manager-cache: false
+
+      - name: Install Omni
+        run: |
+          curl -fsSL -o "$RUNNER_TEMP/omni.zip" "https://github.com/omni-oss/omni/releases/download/omni-v${OMNI_VERSION}/omni-v${OMNI_VERSION}-x86_64-unknown-linux-gnu.zip"
+          echo "$OMNI_SHA256  $RUNNER_TEMP/omni.zip" | sha256sum -c -
+          mkdir -p "$RUNNER_TEMP/omni-bin"
+          unzip -o "$RUNNER_TEMP/omni.zip" -d "$RUNNER_TEMP/omni-bin"
+          chmod +x "$RUNNER_TEMP/omni-bin/omni"
+          echo "$RUNNER_TEMP/omni-bin" >> "$GITHUB_PATH"
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      # The tarballs are built here once and never rebuilt.
+      - name: Pack the packages
+        run: omni -i run release:dry-run -p '@launchpad-kit/tooling' -a 'options=--skip-images'
+
+      - name: Record the checksums
+        id: sums
+        working-directory: .release-dry-run/packages
+        run: |
+          sha256sum -c SHA256SUMS
+          echo "sha256=$(sha256sum SHA256SUMS | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
+
+      - name: Keep the tarballs and checksums
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: packages
+          # The folder is hidden, which upload-artifact skips unless told otherwise.
+          include-hidden-files: true
+          path: |
+            .release-dry-run/packages/SHA256SUMS
+            .release-dry-run/packages/*.tgz
+          retention-days: 7
+          if-no-files-found: error
+
+  stage:
+    name: Stage ${{ matrix.image }}
+    needs: [guard, build]
+    runs-on: ubuntu-latest
+    environment: release
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+      attestations: write
+      artifact-metadata: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - image: controller
+            file: apps/controller/Dockerfile
+            target: runtime
+          - image: worker
+            file: apps/worker/Dockerfile
+            target: ""
+          - image: router
+            file: apps/router/Dockerfile
+            target: ""
+          - image: admin
+            file: apps/controller/Dockerfile
+            target: admin
+          - image: dokku
+            file: containers/dokku/Dockerfile
+            target: ""
+    env:
+      IMAGE: ${{ matrix.image }}
+      VERSION: ${{ needs.guard.outputs.version }}
+    steps:
+      - name: Check out the tagged commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Install Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          no-cache: true
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile --ignore-scripts
+
+      - name: Log in to the registry
+        uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      # A re-run reuses the digest already under sha-<GITHUB_SHA>: a rebuild would produce another
+      # attested digest (the provenance holds build data). Only "not found" means absent.
+      - name: Find an existing staged image
+        id: existing
+        run: |
+          code=0
+          digest=$(bun tooling/release-plan.ts image-digest "$IMAGE" "sha-$GITHUB_SHA") || code=$?
+          case "$code" in
+            0) echo "found=true" >> "$GITHUB_OUTPUT"; echo "digest=$digest" >> "$GITHUB_OUTPUT" ;;
+            3) echo "found=false" >> "$GITHUB_OUTPUT" ;;
+            *) exit "$code" ;;
+          esac
+
+      - name: Commit time
+        id: commit
+        run: echo "created=$(git show -s --format=%cI "$GITHUB_SHA")" >> "$GITHUB_OUTPUT"
+
+      - name: Build and push the staging tag
+        id: build
+        if: steps.existing.outputs.found != 'true'
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: ${{ matrix.file }}
+          target: ${{ matrix.target }}
+          platforms: linux/amd64
+          push: true
+          # BuildKit attestations; the signed GitHub attestation is the step below.
+          provenance: mode=max
+          sbom: true
+          tags: ghcr.io/launchpad-kit/launchpad-${{ matrix.image }}:sha-${{ github.sha }}
+          build-args: |
+            LAUNCHPAD_VERSION=${{ needs.guard.outputs.version }}
+            LAUNCHPAD_REVISION=${{ github.sha }}
+            LAUNCHPAD_CREATED=${{ steps.commit.outputs.created }}
+
+      - name: The staged digest
+        id: digest
+        env:
+          EXISTING: ${{ steps.existing.outputs.digest }}
+          BUILT: ${{ steps.build.outputs.digest }}
+        run: |
+          digest="${EXISTING:-$BUILT}"
+          [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "::error::no staged digest"; exit 1; }
+          echo "digest=$digest" >> "$GITHUB_OUTPUT"
+          mkdir staged
+          echo "$digest" > "staged/$IMAGE.txt"
+
+      # Always attested, also on a re-run, which repairs a failure after the push.
+      - name: Attest the staged image
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-name: ghcr.io/launchpad-kit/launchpad-${{ matrix.image }}
+          subject-digest: ${{ steps.digest.outputs.digest }}
+          push-to-registry: true
+
+      - name: Keep the staged digest
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: staged-${{ matrix.image }}
+          path: staged/${{ matrix.image }}.txt
+          retention-days: 7
+          if-no-files-found: error
+
+  smoke:
+    name: Smoke
+    needs: [guard, build, stage]
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: read
+    env:
+      VERSION: ${{ needs.guard.outputs.version }}
+      SUMS: ${{ needs.build.outputs.sums }}
+    steps:
+      - name: Check out the tagged commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Install Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          no-cache: true
+
+      - name: Install Node
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "22.12"
+          package-manager-cache: false
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile --ignore-scripts
+
+      - name: Download the tarballs
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: packages
+          path: packages
+
+      - name: Verify the tarballs against the build job
+        working-directory: packages
+        run: |
+          [ "$(sha256sum SHA256SUMS | cut -d' ' -f1)" = "$SUMS" ]
+          sha256sum -c SHA256SUMS
+
+      - name: Install and run the exact tarballs
+        run: |
+          mkdir consumer
+          bun tooling/release-plan.ts consumer packages consumer
+          cd consumer
+          npm install --ignore-scripts --no-audit --no-fund
+          [ "$(./node_modules/.bin/launchpad --version)" = "$VERSION" ]
+          node --input-type=module -e 'await import("@launchpad-kit/sdk"); await import("@launchpad-kit/contracts")'
+
+      - name: Log in to the registry
+        uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+
+      - name: Download the staged digests
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: staged-*
+          merge-multiple: true
+          path: staged
+
+      - name: Pull and check the exact staged digests
+        run: |
+          for name in controller worker router admin dokku; do
+            ref="ghcr.io/launchpad-kit/launchpad-$name@$(cat "staged/$name.txt")"
+            docker pull --quiet "$ref"
+            label() { docker image inspect --format "{{ index .Config.Labels \"org.opencontainers.image.$1\" }}" "$ref"; }
+            [ "$(label version)" = "$VERSION" ]
+            [ "$(label revision)" = "$GITHUB_SHA" ]
+            [ "$(label source)" = "https://github.com/launchpad-kit/launchpad" ]
+          done
+
+  npm-publish:
+    name: Publish to npm
+    needs: [guard, build, smoke]
+    runs-on: ubuntu-latest
+    environment: release
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      VERSION: ${{ needs.guard.outputs.version }}
+      SUMS: ${{ needs.build.outputs.sums }}
+    steps:
+      - name: Check out the tagged commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Install Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          no-cache: true
+
+      # Trusted publishing needs npm >= 11.5.1 and Node >= 22.14.0; the repository floor (22.12) is
+      # lower, so this job runs on Node 24 and never upgrades npm on an older Node.
+      - name: Install Node
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "24"
+          package-manager-cache: false
+
+      - name: Check the npm and Node minimums
+        run: |
+          npm --version
+          node -e 'const at = (v, ...min) => { const p = v.split(".").map(Number); for (let i = 0; i < 3; i++) { if (p[i] !== min[i]) return p[i] > min[i]; } return true; }; if (!at(process.versions.node, 22, 14, 0) || !at(process.argv[1], 11, 5, 1)) process.exit(1)' "$(npm --version)"
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile --ignore-scripts
+
+      - name: Download the tarballs
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: packages
+          path: packages
+
+      - name: Verify the tarballs against the build job
+        working-directory: packages
+        run: |
+          [ "$(sha256sum SHA256SUMS | cut -d' ' -f1)" = "$SUMS" ]
+          sha256sum -c SHA256SUMS
+
+      # The only publish command is `npm publish`, run by release-plan.ts with an explicit --tag.
+      # It publishes the verified tarballs in dependency order and skips only a version whose
+      # integrity and provenance match.
+      - name: Publish
+        run: bun tooling/release-plan.ts publish-npm packages "$VERSION"
+
+  image-publish:
+    name: Publish images
+    needs: [guard, npm-publish]
+    runs-on: ubuntu-latest
+    environment: release
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: write
+    env:
+      VERSION: ${{ needs.guard.outputs.version }}
+    steps:
+      - name: Check out the tagged commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Install Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          no-cache: true
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile --ignore-scripts
+
+      - name: Log in to the registry
+        uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+
+      - name: Download the staged digests
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: staged-*
+          merge-multiple: true
+          path: staged
+
+      # Only tags are added to the staged digest; nothing is rebuilt. X.Y.Z is immutable, X.Y and
+      # latest move forward only and only for a stable version.
+      - name: Retag the staged digests
+        run: |
+          for name in controller worker router admin dokku; do
+            bun tooling/release-plan.ts retag "$name" "$VERSION" "$(cat "staged/$name.txt")" "$GITHUB_SHA"
+          done
+
+  post-verify:
+    name: Verify what was published
+    needs: [guard, image-publish]
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: read
+    env:
+      VERSION: ${{ needs.guard.outputs.version }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Check out the tagged commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Install Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          no-cache: true
+
+      - name: Install Node
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "24"
+          package-manager-cache: false
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile --ignore-scripts
+
+      - name: Log in to the registry
+        uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+
+      - name: Download the staged digests
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: staged-*
+          merge-multiple: true
+          path: staged
+
+      # A failure here is reported loudly; publishing cannot be undone, so the response is to
+      # deprecate and fix forward (docs/releasing.md).
+      - name: Verify the image attestations and the version tags
+        run: |
+          for name in controller worker router admin dokku; do
+            digest="$(cat "staged/$name.txt")"
+            gh attestation verify "oci://ghcr.io/launchpad-kit/launchpad-$name@$digest" --repo "$GITHUB_REPOSITORY"
+            [ "$(bun tooling/release-plan.ts image-digest "$name" "$VERSION")" = "$digest" ]
+          done
+
+      - name: Verify the package signatures and provenance
+        run: |
+          mkdir published
+          cd published
+          npm init -y > /dev/null
+          npm install --ignore-scripts --no-audit --no-fund \
+            "@launchpad-kit/contracts@$VERSION" "@launchpad-kit/sdk@$VERSION" \
+            "@launchpad-kit/client-core@$VERSION" "@launchpad-kit/cli@$VERSION" \
+            "@launchpad-kit/mcp@$VERSION"
+          npm audit signatures
