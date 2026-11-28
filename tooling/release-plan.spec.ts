@@ -1,5 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import {
+    checkPackageSet,
     checkTag,
     checkTarballSet,
     existingVersion,
@@ -281,12 +282,49 @@ describe("tag against manifests", () => {
 });
 
 describe("registry output", () => {
-    it("tells a missing tag from a failure", () => {
+    it("reads only the registry's not-found signals as absent", () => {
         expect(classifyInspect(0, "")).toBe("ok");
-        expect(classifyInspect(1, "ghcr.io/x:y: not found")).toBe("absent");
-        expect(classifyInspect(1, "manifest unknown")).toBe("absent");
-        expect(classifyInspect(1, "dial tcp: i/o timeout")).toBe("error");
+        for (const stderr of [
+            "ERROR: ghcr.io/launchpad-kit/launchpad-worker:1.2.3: not found",
+            "ghcr.io/launchpad-kit/launchpad-worker:sha-abc: not found\n",
+            "ERROR: failed to resolve: ghcr.io/x/y:1.2: not found",
+            "manifest unknown",
+            "MANIFEST_UNKNOWN: manifest unknown",
+            "NAME_UNKNOWN: repository name not known to registry",
+        ]) {
+            expect(classifyInspect(1, stderr), stderr).toBe("absent");
+        }
+    });
+
+    it("reads every other failure as an error", () => {
+        for (const stderr of [
+            "ERROR: ghcr.io/launchpad-kit/launchpad-worker:sha-a404b: dial tcp: i/o timeout",
+            "ERROR: ghcr.io/x/y:404: unauthorized",
+            'error getting credentials - err: exec: "docker-credential-x": executable file not found in $PATH',
+            "dial tcp: lookup ghcr.io on 127.0.0.53:53: no such host",
+            "net/http: request canceled (Client.Timeout exceeded)",
+            "denied: permission_denied",
+            "Error 404 from the proxy",
+            "",
+        ]) {
+            expect(classifyInspect(1, stderr), stderr).toBe("error");
+        }
+        expect(classifyInspect(null, "manifest unknown")).toBe("absent");
         expect(classifyInspect(null, "")).toBe("error");
+    });
+
+    it("requires exactly the five packages", () => {
+        const five = ["contracts", "sdk", "client-core", "cli", "mcp"].map(
+            (n) => `@launchpad-kit/${n}`,
+        );
+        expect(checkPackageSet(five)).toEqual([]);
+        expect(checkPackageSet(five.slice(1))).toEqual(["no tarball for @launchpad-kit/contracts"]);
+        expect(checkPackageSet([...five, "@launchpad-kit/extra"])).toEqual([
+            "unexpected package @launchpad-kit/extra",
+        ]);
+        expect(checkPackageSet([...five, five[0]!])).toEqual([
+            "2 tarballs for @launchpad-kit/contracts",
+        ]);
     });
 
     it("reads the version label of a single image or an index", () => {

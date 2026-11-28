@@ -445,6 +445,27 @@ Where `release.yaml` is more specific than, or differs from, the text above:
   `gh attestation verify` before retagging and `post-verify` pins `--signer-workflow` and
   `--source-ref refs/tags/v<version>` (both flags exist in `gh` 2.106's help; not run);
   `post-verify` retries the install of the published packages up to six times.
+- Second security review: `classifyInspect` treats only `manifest unknown`, `MANIFEST_UNKNOWN`,
+  `NAME_UNKNOWN` and a line ending in `: not found` (after dropping words with a `/`) as absent;
+  timeouts, DNS errors, a credential helper not found, and a number such as 404 inside a ref are
+  errors. The credentialed jobs run `bun --no-install tooling/release-publish.ts` (checked with
+  Bun 1.4.4: without the flag a bare import is auto-installed when there is no `node_modules`, with
+  it the run fails with "Cannot find package"). `release.spec.ts` holds an allowlist of the exact
+  `run:` commands and actions of `stage`, `npm-publish` and `image-publish`, scans imports with
+  `Bun.Transpiler.scanImports` plus a quote-agnostic pattern, and asserts no workflow-level `env`
+  except the Omni pair, `defaults.run.shell: bash`, and no `||` in `image-publish` and
+  `post-verify`. `stage` verifies the attestation of a reused staged image and attests only a
+  fresh build. `publish-npm` requires exactly the five packages (tested with fake tarballs).
+  Accepted residual risks: the Dockerfiles' `bun install` runs in BuildKit during `stage`, and
+  `build` runs `bun install` (no credential, but it builds what is published).
+  The runner image (ubuntu 24.04) lists Docker-Buildx 0.39.1, so `docker buildx imagetools` works in
+  `image-publish` and `post-verify` without `setup-buildx` (read from the runner-images README;
+  that `ubuntu-latest` is that image is unverified). GitHub keeps one running and one pending run
+  per concurrency group.
+- Added to the unverified list (second review): `NAME_UNKNOWN` (or another wording) on the first
+  push of a never-pushed repository; the `.Image` label shape of an index with attestation
+  manifests; `npm view` E404 versus empty output; whether a backport tagged `retry` is acceptable
+  to users.
 - Known limit, not fixed: a re-run of an older release can move the `next` dist-tag backwards.
 - Added to the unverified list: `gh attestation verify` in `image-publish` with only
   `contents: read` and `packages: write`; the `--signer-workflow` and `--source-ref` semantics for

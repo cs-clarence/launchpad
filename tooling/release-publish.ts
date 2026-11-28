@@ -13,6 +13,7 @@ import { readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
 import {
     checkTarballSet,
+    checkPackageSet,
     classifyInspect,
     exactTagAction,
     existingVersion,
@@ -20,6 +21,7 @@ import {
     labelVersion,
     npmDistTag,
     npmPublishAction,
+    PUBLISH_ORDER,
     REGISTRY,
     sumsFiles,
     xyOf,
@@ -74,9 +76,6 @@ function latestOnNpm(name: string): string | null {
     return done.out.trim() || null;
 }
 
-// The publish order: dependencies first.
-const PUBLISH_ORDER = ["contracts", "sdk", "client-core", "cli", "mcp"];
-
 export function publishNpm(dir: string, version: string) {
     const present = readdirSync(dir).filter((f) => f.endsWith(".tgz"));
     const listed = sumsFiles(readFileSync(path.join(dir, "SHA256SUMS"), "utf8"));
@@ -84,18 +83,21 @@ export function publishNpm(dir: string, version: string) {
     if (mismatch.length > 0)
         throw new Error(`The tarballs differ from SHA256SUMS:\n${mismatch.join("\n")}`);
     const byName = new Map<string, string>();
+    const names: string[] = [];
     for (const file of present) {
         const full = path.resolve(dir, file);
         const manifest = JSON.parse(must("tar", ["xzOf", full, "package/package.json"]));
         if (manifest.version !== version) {
             throw new Error(`${file} is version ${manifest.version}, not the tag's ${version}`);
         }
+        names.push(manifest.name);
         byName.set(manifest.name, full);
     }
-    for (const short of PUBLISH_ORDER) {
-        const name = `@launchpad-kit/${short}`;
-        const tarball = byName.get(name);
-        if (!tarball) throw new Error(`no tarball for ${name} in ${dir}`);
+    const wrongSet = checkPackageSet(names);
+    if (wrongSet.length > 0)
+        throw new Error(`The tarballs are not the published set:\n${wrongSet.join("\n")}`);
+    for (const name of PUBLISH_ORDER) {
+        const tarball = byName.get(name)!;
         const local = `sha512-${createHash("sha512").update(readFileSync(tarball)).digest("base64")}`;
         const view = run("npm", ["view", `${name}@${version}`, "dist.integrity"]);
         if (view.code !== 0 && !/E404/.test(view.err))

@@ -320,5 +320,20 @@ Limits of the first version:
   imports `node:` built-ins and the dependency-free `release-core.ts` and `semver-compare.ts`.
   `image-publish` verifies the staged attestations before it retags, and `post-verify` verifies
   them again, pinned to the `release.yaml` signer workflow and the tag ref.
+- **Backports.** A stable version lower than the package's current npm `latest` (for example 1.1.5
+  after 1.2.0) is published with the `retry` dist-tag, not `latest`. It is on the registry, but
+  `npm install <name>` does not get it; users pick it by version or by the `retry` tag.
+- **A re-run of `stage` after a half-finished first run.** An existing `sha-<commit>` image is
+  reused only if its attestation verifies (signer workflow, tag ref). If a first run pushed the
+  image and failed before attesting, the re-run fails; delete that staging tag in GHCR by hand
+  and re-run. The staged image is never rebuilt over an existing tag.
+- **Credentialed jobs.** `stage`, `npm-publish` and `image-publish` run `bun --no-install
+  tooling/release-publish.ts` (Bun's runtime would otherwise auto-install a missing bare import)
+  and install nothing on the runner; `tooling/release.spec.ts` holds an allowlist of the commands
+  and actions they may use. Accepted residual risks, not removed: the `bun install` inside the
+  Dockerfiles, which runs in BuildKit during `stage`, and the `bun install` in `build` (which
+  holds no credential but builds the tarballs that are published).
+- A pending run: GitHub keeps one running and one pending run per concurrency group, so a third
+  tag pushed while two runs exist cancels the pending one (this is why tags go one at a time).
 - Lint the workflow with actionlint v1.7.12 (clean); v1.7.7 reports a false positive on the
   `artifact-metadata` permission.

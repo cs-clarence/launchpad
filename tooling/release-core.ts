@@ -162,10 +162,25 @@ export function ciPassedProblem(runs: CheckRun[]): string | null {
         : `the latest \`CI Passed\` run concluded ${latest.conclusion}`;
 }
 
-// `docker buildx imagetools inspect` of a missing tag: exit status and wording are the only signal.
+// `docker buildx imagetools inspect` of a missing tag. Only the registry's own signals count as
+// absent: `manifest unknown`, `MANIFEST_UNKNOWN`, `NAME_UNKNOWN` (a repository never pushed to), or
+// a line ending in `: not found` once the image reference is removed from it. Anything else (a
+// timeout, DNS, a credential helper that is `not found in $PATH`, a number such as 404 inside a
+// reference) is an error, never "absent": absent lets a floating tag move or a tag be rebuilt.
 export function classifyInspect(code: number | null, stderr: string): "ok" | "absent" | "error" {
     if (code === 0) return "ok";
-    return /not found|manifest unknown|no such manifest|404/i.test(stderr) ? "absent" : "error";
+    if (/\b(manifest unknown|MANIFEST_UNKNOWN|NAME_UNKNOWN|name unknown)\b/.test(stderr))
+        return "absent";
+    for (const line of stderr.split("\n")) {
+        // Image references and paths hold a `/`; drop those words before reading the line.
+        const text = line
+            .split(/\s+/)
+            .filter((word) => !word.includes("/"))
+            .join(" ")
+            .trim();
+        if (/(^|:\s*)not found$/.test(text)) return "absent";
+    }
+    return "error";
 }
 
 // The version label of an image from `imagetools inspect --format '{{json .}}'`: `.Image` is the
@@ -227,5 +242,23 @@ export function checkTarballSet(listed: string[], present: string[]): string[] {
         if (!present.includes(name)) problems.push(`${name} is listed but missing`);
     for (const name of present)
         if (!listed.includes(name)) problems.push(`${name} is not in SHA256SUMS`);
+    return problems;
+}
+
+// The packages published, in dependency order.
+export const PUBLISH_ORDER = ["contracts", "sdk", "client-core", "cli", "mcp"].map(
+    (short) => `@launchpad-kit/${short}`,
+);
+
+// The tarballs must be exactly the five packages: none missing, none extra, none twice.
+export function checkPackageSet(names: string[]): string[] {
+    const problems: string[] = [];
+    for (const name of PUBLISH_ORDER) {
+        const count = names.filter((n) => n === name).length;
+        if (count === 0) problems.push(`no tarball for ${name}`);
+        else if (count > 1) problems.push(`${count} tarballs for ${name}`);
+    }
+    for (const name of names)
+        if (!PUBLISH_ORDER.includes(name)) problems.push(`unexpected package ${name}`);
     return problems;
 }
