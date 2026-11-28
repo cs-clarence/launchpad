@@ -129,6 +129,15 @@ export function regressionProblems(
     return problems;
 }
 
+// A listing of the existing tags that does not hold the tag being released proves nothing: an
+// empty or shallow fetch would make every check above pass. `verify` runs on that very tag, so the
+// listing must contain it or the check fails closed.
+export function listingProblems(version: string, tags: string[]): string[] {
+    return tags.includes(`v${version}`)
+        ? []
+        : [`the tag listing does not contain v${version} (a shallow or empty fetch?)`];
+}
+
 // The image tags a version moves, in registry order, with `X.Y` resolved.
 export function imageTagsOf(version: string, channels: Channel[] = CHANNELS): string[] {
     const channel = channelOf(version, channels);

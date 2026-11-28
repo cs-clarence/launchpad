@@ -8,6 +8,7 @@ import {
     channelProblems,
     channelsTable,
     imageTagsOf,
+    listingProblems,
     registryProblems,
     regressionProblems,
     releaseKind,
@@ -59,60 +60,184 @@ describe("the channel registry", () => {
         }
     });
 
-    it("rejects a tampered registry", () => {
-        const bad = (change: (rows: Channel[]) => Channel[]) =>
-            registryProblems(change(structuredClone(fake)));
-        const cases: Record<string, (rows: Channel[]) => Channel[]> = {
-            "an upper-case name": (r) => [...r, { ...beta, name: "Gamma", rank: 9 }],
-            "a name that is a range": (r) => [
-                { ...alpha, name: "x", preRelease: "-x.N" },
-                ...r.slice(1),
-            ],
-            "a reserved name": (r) => [
-                { ...alpha, name: "next", preRelease: "-next.N" },
-                ...r.slice(1),
-            ],
-            "a duplicate name": (r) => [...r, { ...rc, rank: 9 }],
-            "a duplicate rank": (r) => r.map((c) => (c.name === "beta" ? { ...c, rank: 1 } : c)),
-            "ranks against the name order": (r) =>
-                r
-                    .map((c) => (c.name === "alpha" ? { ...c, rank: 2.5 } : c))
-                    .map((c) => (c.name === "beta" ? { ...c, rank: 1 } : c)),
-            "stable not the highest": (r) =>
-                r.map((c) => (c.name === "stable" ? { ...c, rank: 0 } : c)),
-            "stable with a pre-release form": (r) =>
-                r.map((c) => (c.name === "stable" ? { ...c, preRelease: "-s.N" } : c)),
-            "stable not supporting patch": (r) =>
-                r.map((c) => (c.name === "stable" ? { ...c, supports: ["major", "minor"] } : c)),
-            "empty supports": (r) => r.map((c) => (c.name === "rc" ? { ...c, supports: [] } : c)),
-            "an unknown kind": (r) =>
-                r.map((c) => (c.name === "rc" ? { ...c, supports: ["huge" as never] } : c)),
-            "a form that does not match the name": (r) =>
-                r.map((c) => (c.name === "rc" ? { ...c, preRelease: "-pre.N" } : c)),
-            "a pre-release under latest": (r) =>
-                r.map((c) => (c.name === "rc" ? { ...c, npmTag: "latest" } : c)),
-            "the retry npm tag": (r) =>
-                r.map((c) => (c.name === "rc" ? { ...c, npmTag: "retry" } : c)),
-            "the bootstrap npm tag": (r) =>
-                r.map((c) => (c.name === "rc" ? { ...c, npmTag: "bootstrap" } : c)),
-            "a version-like npm tag": (r) =>
-                r.map((c) => (c.name === "rc" ? { ...c, npmTag: "v1" } : c)),
-            "a shared npm tag": (r) =>
-                r.map((c) => (c.name === "beta" ? { ...c, npmTag: "alpha" } : c)),
-            "latest as a pre-release image tag": (r) =>
-                r.map((c) => (c.name === "rc" ? { ...c, imageTags: ["latest"] } : c)),
-            "an invalid image tag": (r) =>
-                r.map((c) => (c.name === "rc" ? { ...c, imageTags: ["Bad Tag"] } : c)),
-            "no image tags": (r) => r.map((c) => (c.name === "rc" ? { ...c, imageTags: [] } : c)),
-            "a nightly trigger": (r) =>
-                r.map((c) => (c.name === "rc" ? { ...c, trigger: "schedule" as const } : c)),
-            "a snapshot scheme": (r) =>
-                r.map((c) => (c.name === "rc" ? { ...c, versionScheme: "snapshot" as const } : c)),
-            "a second stable row": (r) => [...r, { ...stable, name: "final", rank: 5 }],
-        };
-        for (const [what, change] of Object.entries(cases)) {
-            expect(bad(change), what).not.toEqual([]);
-        }
+    // Each case changes one thing of a valid registry and must produce the named problem, so
+    // deleting any single rule from registryProblems fails exactly the case that covers it.
+    const row = (rows: Channel[], name: string, change: Partial<Channel>) =>
+        rows.map((c) => (c.name === name ? { ...c, ...change } : c));
+    const cases: [string, (rows: Channel[]) => Channel[], string][] = [
+        [
+            "an upper-case name",
+            (r) => row(r, "rc", { name: "Rc", preRelease: "-Rc.N" }),
+            "the name must be lowercase letters",
+        ],
+        [
+            "a name with a digit",
+            (r) => row(r, "rc", { name: "rc2", preRelease: "-rc2.N" }),
+            "the name must be lowercase letters",
+        ],
+        [
+            "a name that is a range",
+            (r) => row(r, "rc", { name: "x", preRelease: "-x.N" }),
+            "not a range or a reserved tag",
+        ],
+        [
+            "the reserved name next",
+            (r) => row(r, "rc", { name: "next", preRelease: "-next.N" }),
+            "next: the name must be",
+        ],
+        [
+            "the reserved name latest",
+            (r) => row(r, "rc", { name: "latest", preRelease: "-latest.N" }),
+            "latest: the name must be",
+        ],
+        [
+            "the reserved name bootstrap",
+            (r) => row(r, "rc", { name: "bootstrap", preRelease: "-bootstrap.N" }),
+            "bootstrap: the name must be",
+        ],
+        [
+            "the reserved name retry",
+            (r) => row(r, "rc", { name: "retry", preRelease: "-retry.N" }),
+            "retry: the name must be",
+        ],
+        ["a duplicate name", (r) => [...r, { ...rc, rank: 9 }], "channel names must be unique"],
+        ["a duplicate rank", (r) => row(r, "beta", { rank: 1 }), "ranks must be unique"],
+        [
+            "a non-integer rank",
+            (r) => row(r, "rc", { rank: 3.5 }),
+            "the rank must be a positive integer",
+        ],
+        ["a zero rank", (r) => row(r, "alpha", { rank: 0 }), "the rank must be a positive integer"],
+        [
+            "stable that is not the highest rank",
+            (r) => row(r, "rc", { rank: 5 }),
+            "stable must have the highest rank",
+        ],
+        [
+            "ranks against the name order",
+            (r) => row(row(r, "beta", { rank: 3 }), "rc", { rank: 2 }),
+            "ranks must follow the SemVer order",
+        ],
+        [
+            "a stable row with a pre-release form",
+            (r) => row(r, "stable", { preRelease: "-s.N" }),
+            "exactly one stable row",
+        ],
+        [
+            "a second stable row",
+            (r) => [...r, { ...stable, name: "final", rank: 5, npmTag: "final" }],
+            "exactly one stable row",
+        ],
+        [
+            "stable not supporting patch",
+            (r) => row(r, "stable", { supports: ["major", "minor"] }),
+            "stable must support major, minor and patch",
+        ],
+        [
+            "stable under another npm tag",
+            (r) => row(r, "stable", { npmTag: "stable" }),
+            "stable publishes under latest",
+        ],
+        [
+            "empty supports",
+            (r) => row(r, "rc", { supports: [] }),
+            "supports must be a non-empty subset",
+        ],
+        [
+            "an unknown kind",
+            (r) => row(r, "rc", { supports: ["huge" as never] }),
+            "supports must be a non-empty subset",
+        ],
+        [
+            "a duplicate kind",
+            (r) => row(r, "rc", { supports: ["major", "major"] }),
+            "supports has a duplicate",
+        ],
+        [
+            "a form that does not match the name",
+            (r) => row(r, "rc", { preRelease: "-pre.N" }),
+            "the pre-release form must be -rc.N",
+        ],
+        [
+            "a pre-release under latest",
+            (r) => row(r, "rc", { npmTag: "latest" }),
+            "only stable may publish under latest",
+        ],
+        [
+            "the retry npm tag",
+            (r) => row(r, "rc", { npmTag: "retry" }),
+            "not a range, retry or bootstrap",
+        ],
+        [
+            "the bootstrap npm tag",
+            (r) => row(r, "rc", { npmTag: "bootstrap" }),
+            "not a range, retry or bootstrap",
+        ],
+        [
+            "a version-like npm tag",
+            (r) => row(r, "rc", { npmTag: "v1" }),
+            "not a range, retry or bootstrap",
+        ],
+        [
+            "the range npm tag x",
+            (r) => row(r, "rc", { npmTag: "x" }),
+            "not a range, retry or bootstrap",
+        ],
+        [
+            "an upper-case npm tag",
+            (r) => row(r, "rc", { npmTag: "Next" }),
+            "not a range, retry or bootstrap",
+        ],
+        ["a shared npm tag", (r) => row(r, "beta", { npmTag: "alpha" }), "npm tags must be unique"],
+        ["no image tags", (r) => row(r, "rc", { imageTags: [] }), "needs at least one image tag"],
+        [
+            "a duplicate image tag",
+            (r) => row(r, "rc", { imageTags: ["rc", "rc"] }),
+            "rc image tags must be unique",
+        ],
+        [
+            "latest as a pre-release image tag",
+            (r) => row(r, "rc", { imageTags: ["latest"] }),
+            "latest belongs to stable",
+        ],
+        [
+            "X.Y as a pre-release image tag",
+            (r) => row(r, "rc", { imageTags: ["X.Y"] }),
+            "X.Y belongs to stable",
+        ],
+        [
+            "an invalid image tag",
+            (r) => row(r, "rc", { imageTags: ["Bad Tag"] }),
+            '"Bad Tag" is not a valid image tag',
+        ],
+        [
+            "an image tag of a staged build",
+            (r) => row(r, "rc", { imageTags: ["sha-abc"] }),
+            '"sha-abc" is not a valid image tag',
+        ],
+        [
+            "a version-like image tag",
+            (r) => row(r, "rc", { imageTags: ["v1"] }),
+            '"v1" is not a valid image tag',
+        ],
+        [
+            "a nightly trigger",
+            (r) => row(r, "rc", { trigger: "schedule" }),
+            "the schedule trigger is reserved",
+        ],
+        [
+            "a snapshot scheme",
+            (r) => row(r, "rc", { versionScheme: "snapshot" }),
+            "the snapshot version scheme is reserved",
+        ],
+    ];
+
+    it.each(cases)("rejects %s", (_what, change, expected) => {
+        expect(registryProblems(change(structuredClone(fake))).join("\n")).toContain(expected);
+    });
+
+    it("accepts the unchanged registry, so each case above is its own change", () => {
+        expect(registryProblems(structuredClone(fake))).toEqual([]);
     });
 
     it("has precedence that follows the ranks", () => {
@@ -205,6 +330,15 @@ describe("no regression across channels", () => {
             regressionProblems("1.2.0-rc.1", ["core-v1.2.0", "1.2.0", "v1.2.0-foo.1", ""]),
         ).toEqual([]);
         expect(regressionProblems("1.2.0-foo.1", ["v1.2.0"])).toEqual([]);
+    });
+});
+
+describe("the tag listing", () => {
+    it("must hold the tag being released, so an empty or shallow fetch fails closed", () => {
+        expect(listingProblems("1.2.0", ["v1.2.0", "v1.1.0"])).toEqual([]);
+        expect(listingProblems("1.2.0", [])).toEqual([expect.stringContaining("v1.2.0")]);
+        expect(listingProblems("1.2.0", ["v1.1.0"])).not.toEqual([]);
+        expect(listingProblems("1.2.0-rc.1", ["v1.2.0"])).not.toEqual([]);
     });
 });
 

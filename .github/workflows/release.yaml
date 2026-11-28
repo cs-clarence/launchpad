@@ -123,7 +123,7 @@ jobs:
         run: bun tooling/release-plan.ts guard "$TAG"
 
       - name: No regression across channels
-        run: bun tooling/release-plan.ts no-regression "$VERSION"
+        run: bun tooling/release-plan.ts no-regression "$VERSION" --require-tag
 
       - name: The tag equals every published version
         run: bun tooling/release-plan.ts verify-tag "$TAG"

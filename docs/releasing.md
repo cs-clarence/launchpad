@@ -297,6 +297,8 @@ expected text).
   `v1.2.3-foo.1`, a bare `v1.2.3-rc`, `v1.2.3-rc-1` and `v1.2.3-rc.01` are refused, and so is a kind
   the channel does not support. The guard job repeats the rules in shell (it cannot import the
   registry); the spec runs it against the registry.
+- **Re-running a pre-release after its stable shipped is refused**, by design: the stable tag
+  exists, so the no-regression rule fires (fix forward with a new version).
 - **No regression.** For one X.Y.Z a lower-ranked channel cannot follow an existing higher-ranked
   one (with `v1.2.0-rc.1` existing, a `beta` of 1.2.0 is refused), and no pre-release is released
   once the stable X.Y.Z exists. `verify` checks this against the `v` tags of its full checkout.

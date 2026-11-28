@@ -4,7 +4,7 @@ import { createHash } from "node:crypto";
 import { mkdirSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { inspect, publishNpm } from "./release-publish";
+import { inspect, publishNpm, retag } from "./release-publish";
 
 const NAMES = ["contracts", "sdk", "client-core", "cli", "mcp"].map((n) => `@launchpad-kit/${n}`);
 
@@ -109,5 +109,103 @@ describe("inspect", () => {
     it("fails on a registry error instead of reading it as absent", () => {
         const { exec } = fake(fail("dial tcp: lookup ghcr.io: no such host"));
         expect(() => inspect("ghcr.io/x/y:1.0.0", exec)).toThrow(/could not inspect/);
+    });
+});
+
+describe("retag", () => {
+    const staged = `sha256:${"a".repeat(64)}`;
+    const other = `sha256:${"b".repeat(64)}`;
+    const SHA = "c0ffee";
+    type State = Record<string, { digest: string; version: string | null }>;
+
+    // A registry of one image: tag -> digest and version label. `create` adds a tag that
+    // resolves to the source digest, labelled with the staged image's version.
+    function registry(version: string, state: State) {
+        const created: string[] = [];
+        const tags: State = { [`sha-${SHA}`]: { digest: staged, version }, ...state };
+        const exec = (_command: string, args: string[]) => {
+            if (args[2] === "create") {
+                const tag = args[4]!.split(":").at(-1)!;
+                created.push(tag);
+                tags[tag] = { digest: staged, version };
+                return { code: 0, out: "", err: "" };
+            }
+            const ref = args[3]!;
+            const found = tags[ref.split(":").at(-1)!];
+            if (!found) return { code: 1, out: "", err: `ERROR: ${ref}: not found` };
+            if (args.includes("--raw")) return { code: 0, out: "{}", err: "" };
+            const labels = found.version
+                ? { "org.opencontainers.image.version": found.version }
+                : {};
+            return {
+                code: 0,
+                out: JSON.stringify({
+                    manifest: { digest: found.digest },
+                    image: { config: { Labels: labels } },
+                }),
+                err: "",
+            };
+        };
+        return { exec, created };
+    }
+    const quiet = <T>(fn: () => T): T => {
+        const log = console.log;
+        console.log = () => {};
+        try {
+            return fn();
+        } finally {
+            console.log = log;
+        }
+    };
+
+    it("creates the version, X.Y and latest for a stable release", () => {
+        const { exec, created } = registry("1.2.3", {});
+        quiet(() => retag("worker", "1.2.3", staged, SHA, exec));
+        expect(created).toEqual(["1.2.3", "1.2", "latest"]);
+    });
+
+    it("creates the version, rc and next for an rc, and never X.Y or latest", () => {
+        const { exec, created } = registry("1.2.3-rc.1", {});
+        quiet(() => retag("worker", "1.2.3-rc.1", staged, SHA, exec));
+        expect(created).toEqual(["1.2.3-rc.1", "rc", "next"]);
+    });
+
+    it("moves floating tags forward only", () => {
+        const { exec, created } = registry("1.2.3", {
+            "1.2": { digest: other, version: "1.2.4" },
+            latest: { digest: other, version: "1.3.0" },
+        });
+        quiet(() => retag("worker", "1.2.3", staged, SHA, exec));
+        expect(created).toEqual(["1.2.3"]);
+        const rc = registry("1.2.3-rc.1", { rc: { digest: other, version: "1.2.3-rc.2" } });
+        quiet(() => retag("worker", "1.2.3-rc.1", staged, SHA, rc.exec));
+        expect(rc.created).toEqual(["1.2.3-rc.1", "next"]);
+    });
+
+    it("on a re-run skips the version tag that is already on the digest and still moves the rest", () => {
+        const { exec, created } = registry("1.2.3", {
+            "1.2.3": { digest: staged, version: "1.2.3" },
+        });
+        quiet(() => retag("worker", "1.2.3", staged, SHA, exec));
+        expect(created).toEqual(["1.2", "latest"]);
+    });
+
+    it("refuses a version tag on another digest and a staged tag that is not the digest", () => {
+        const clash = registry("1.2.3", { "1.2.3": { digest: other, version: "1.2.3" } });
+        expect(() => quiet(() => retag("worker", "1.2.3", staged, SHA, clash.exec))).toThrow(
+            /already points/,
+        );
+        const moved = registry("1.2.3", { [`sha-${SHA}`]: { digest: other, version: "1.2.3" } });
+        expect(() => quiet(() => retag("worker", "1.2.3", staged, SHA, moved.exec))).toThrow(
+            /not sha256/,
+        );
+    });
+
+    it("stops on a floating tag whose version label is unreadable", () => {
+        const { exec, created } = registry("1.2.3", { latest: { digest: other, version: null } });
+        expect(() => quiet(() => retag("worker", "1.2.3", staged, SHA, exec))).toThrow(
+            /no readable/,
+        );
+        expect(created).toEqual(["1.2.3"]);
     });
 });

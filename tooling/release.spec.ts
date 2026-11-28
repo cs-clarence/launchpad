@@ -289,7 +289,7 @@ describe("release workflow verification", () => {
     it("checks the tag, the branch, CI Passed, the partial-release rule and the gate", () => {
         expect(runs).toContain('release-plan.ts guard "$TAG"');
         expect(runs).toContain('release-plan.ts verify-tag "$TAG"');
-        expect(runs).toContain('release-plan.ts no-regression "$VERSION"');
+        expect(runs).toContain('release-plan.ts no-regression "$VERSION" --require-tag');
         expect(runs).toContain('git merge-base --is-ancestor "$GITHUB_SHA" origin/main');
         expect(runs).toMatch(/check-runs/);
         expect(runs).toContain("release-plan.ts ci-passed");
@@ -432,7 +432,7 @@ describe("release workflow images", () => {
         expect(names("image-publish").join(" ")).not.toMatch(/build-push|buildx/);
         expect(runsOf("image-publish")).not.toMatch(/docker build|buildx build/);
         expect(runsOf("image-publish")).toContain("release-publish.ts retag");
-        expect(publishSource).toMatch(/"imagetools", "create", "-t"/);
+        expect(publishSource).toMatch(/"imagetools",\s*"create",\s*"-t"/);
     });
 
     it("smokes the exact staged digest", () => {

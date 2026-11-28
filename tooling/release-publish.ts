@@ -132,21 +132,39 @@ export function publishNpm(dir: string, version: string) {
     }
 }
 
-export function retag(name: string, version: string, digest: string, sha: string) {
-    const staged = inspect(imageRef(name, `sha-${sha}`));
+// Adds the tags to a staged digest. `exec` is the runner of every docker call, so the wiring (which
+// tags are created, and from what) is tested with a fake registry.
+export function retag(
+    name: string,
+    version: string,
+    digest: string,
+    sha: string,
+    exec: Runner = run,
+) {
+    const inspectRef = (ref: string) => inspect(ref, exec);
+    const staged = inspectRef(imageRef(name, `sha-${sha}`));
     if (staged?.digest !== digest) {
         throw new Error(`${name}: sha-${sha} is ${staged?.digest ?? "missing"}, not ${digest}`);
     }
     const source = `${REGISTRY}${name}@${digest}`;
-    const add = (tag: string) =>
-        must("docker", ["buildx", "imagetools", "create", "-t", imageRef(name, tag), source]);
-    if (exactTagAction(digest, inspect(imageRef(name, version))?.digest ?? null) === "create") {
+    const add = (tag: string) => {
+        const done = exec("docker", [
+            "buildx",
+            "imagetools",
+            "create",
+            "-t",
+            imageRef(name, tag),
+            source,
+        ]);
+        if (done.code !== 0) throw new Error(`creating ${tag} failed:\n${done.err}`);
+    };
+    if (exactTagAction(digest, inspectRef(imageRef(name, version))?.digest ?? null) === "create") {
         add(version);
         console.log(`${name}: ${version} -> ${digest}`);
     }
     // A tag that exists with an unreadable label throws here instead of reading as missing.
     const versionOf = (tag: string) =>
-        existingVersion(inspect(imageRef(name, tag)), imageRef(name, tag));
+        existingVersion(inspectRef(imageRef(name, tag)), imageRef(name, tag));
     const current: Record<string, string | null> = {};
     for (const tag of imageTagsOf(version)) current[tag] = versionOf(tag);
     for (const tag of floatingMoves(version, current)) {

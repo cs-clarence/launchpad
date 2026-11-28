@@ -25,7 +25,7 @@ import {
     previousStable,
     xyOf,
 } from "./release-core";
-import { regressionProblems } from "./release-channels";
+import { listingProblems, regressionProblems } from "./release-channels";
 import { imageRef, inspect, must, run } from "./release-publish";
 
 export * from "./release-core";
@@ -102,7 +102,7 @@ const usage = [
     "  verify-tag <tag>               the tag equals every published manifest version",
     "  ci-passed                      read check runs (one JSON object per line) from stdin",
     "  consumer <tarballDir> <outDir> write a consumer project pinned to the tarballs",
-    "  no-regression <version>        refuse a channel below one already released for the version",
+    "  no-regression <version> [--require-tag]  refuse a channel below one already released for the version",
     "  partial <version>              refuse when the previous stable release is partial",
 ].join("\n");
 
@@ -160,9 +160,13 @@ function main(argv: string[]) {
     program
         .command("no-regression")
         .argument("<version>")
-        .action((version) => {
+        .option("--require-tag")
+        .action((version, options) => {
             const tags = must("git", ["tag", "--list", "v*"]).split("\n").filter(Boolean);
-            const problems = regressionProblems(version, tags);
+            const problems = [
+                ...(options.requireTag ? listingProblems(version, tags) : []),
+                ...regressionProblems(version, tags),
+            ];
             if (problems.length > 0) fail(problems);
             console.log(`${version} does not go backwards across channels.`);
         });

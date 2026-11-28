@@ -298,7 +298,8 @@ publishes. A tarball is never rebuilt after `build`.
   `latest`) and `rc` (rank 3, `-rc.N`, npm `next`, image tags `rc` and `next`), both for major,
   minor and patch releases, triggered by a tag with counter versions. `alpha` and `beta` are not
   added; each would be one row (major and minor only; npm tag `alpha`/`beta`; image tags the channel
-  name and `next`). Rules: (1) **Guard strictness.** The tag pattern and the 128-character rule
+  name and `next`) plus one `case` arm in the guard step and the regenerated docs table (the specs
+  fail until all three agree). Rules: (1) **Guard strictness.** The tag pattern and the 128-character rule
   stay; a pre-release must also be `<registered channel>.<N>` with N numeric without leading zeros,
   so `-foo.1`, a bare `-rc`, `-rc-1` (previously accepted) and `-rc.01` are refused, and a channel
   must support the release kind: patch if Z > 0, minor if Z is 0 and Y > 0, major for X.0.0, with no
@@ -531,6 +532,15 @@ Where `release.yaml` is more specific than, or differs from, the text above:
   guard fails the specs. Unverified: that `actions/checkout` with `fetch-depth: 0` fetches every
   tag (its documented behaviour, not run here); the first rc run settles the `next` tag
   forward-only behaviour of `npm view <name> dist-tags.next`.
+- Review of the channel registry: `retag` takes its docker runner and is tested with a fake
+  registry (an rc, a stable, forward-only moves, a re-run, a clash, an unreadable label), so the
+  tags it creates are asserted exactly. The registry validation is tested one change at a time
+  with the named problem. `verify` runs `no-regression --require-tag`, so a tag listing that
+  lacks the tag being released (an empty or shallow fetch) fails closed. Re-running a pre-release
+  after its stable shipped is refused, by design (the stable tag exists, so the no-regression
+  rule fires). Added to the unverified list: `npm view <name> dist-tags.<tag>` for a package with
+  no versions at all (E404; publish-npm would stop, which the bootstrap placeholder avoids); the
+  guard's `[a-z]` under the runner's locale (harmless: the channel name must equal a `case` arm).
 - CodeRabbit review of PR #124: artifacts are kept 30 days, which is now the stated retry window
   (the record had none; GitHub's repository limit is 90 days; the 30 days a run can be re-run for
   is unverified). `setup-buildx` runs with `cache-binary: false` (the other cache-like inputs at the
