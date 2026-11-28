@@ -300,7 +300,7 @@ function adminHint(command: string, mode: AdminMode = OMNI): string {
     return `omni -i run admin -p ${ADMIN_PROJECT} -a command=${command}`;
 }
 
-export type AdminOutcome = "done" | "exists";
+export type AdminOutcome = "done" | "exists" | "missing" | "skipped";
 
 // The child's output is never echoed: it is only matched, so a message from the database driver
 // cannot carry a connection string into this script's output.
@@ -312,6 +312,13 @@ export function classifyAdmin(
     if (result.code === 0) return "done";
     const text = result.output;
     const compose = mode.kind === "compose";
+    // The seed verifies each account it created; one named on the command line may not exist when
+    // an operator with another address already holds the instance. That is not a failure.
+    if (command === "verify-email" && /No user has that email address/.test(text)) return "missing";
+    // A controller that is not in development mode refuses the command; seeding still succeeds.
+    // Match the refusal, not the setting name: an invalid value is a configuration error.
+    if (command === "verify-email" && /limited to development controllers/.test(text))
+        return "skipped";
     // Where the settings live differs by mode; so do the hints.
     const where = compose
         ? `${mode.stateDir}/compose.env (see \`omni -i run local:deploy -a options=status\`)`
@@ -885,6 +892,46 @@ async function seedWith(deps: Deps, options: Options, secrets: string[]): Promis
     const owner = { email: options.ownerEmail, password: ownerPassword };
     secrets.push(ownerPassword);
     if (operatorPassword !== null) secrets.push(operatorPassword);
+
+    // A provisioned address is unverified by design, and password recovery goes only to verified
+    // addresses. A development controller can verify the seeded accounts so that flow is usable;
+    // ConfigurationService decides "development" from the database, then LAUNCHPAD_DEVELOPMENT.
+    // A remote controller is not touched: its admin settings are not necessarily this checkout's.
+    if (!options.allowRemote) {
+        const checked: string[] = [];
+        const missing: string[] = [];
+        let refused = false;
+        for (const email of [options.operatorEmail, options.ownerEmail]) {
+            const outcome = classifyAdmin(
+                "verify-email",
+                await deps.run(adminArgs("verify-email", ["--email", email], mode)),
+                mode,
+            );
+            if (outcome === "done") checked.push(email);
+            if (outcome === "missing") missing.push(email);
+            if (outcome === "skipped") {
+                refused = true;
+                break;
+            }
+        }
+        if (refused) {
+            deps.log(
+                mode.kind === "compose"
+                    ? "Password recovery mail stays off for the seeded accounts: add an app_setting " +
+                          "row named development with value true."
+                    : "Password recovery mail stays off for the seeded accounts: this controller is " +
+                          "not in development mode (set LAUNCHPAD_DEVELOPMENT=true in its settings).",
+            );
+        } else {
+            const parts: string[] = [];
+            if (checked.length > 0) parts.push(`Verified ${checked.join(" and ")}`);
+            if (missing.length > 0) parts.push(`no account for ${missing.join(" or ")}`);
+            deps.log(
+                (parts.join("; ") || "No seeded account to verify") +
+                    (checked.length > 0 ? "; password recovery mail can reach Mailpit." : "."),
+            );
+        }
+    }
 
     const workspace = await ensureWorkspace(api, {
         org: options.org,

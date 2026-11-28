@@ -230,6 +230,12 @@ export interface InstanceStateTable {
     set_at: Generated<Date>;
 }
 
+export interface AppSettingTable {
+    key: string;
+    value: string;
+    updated_at: Generated<Date>;
+}
+
 export type AliasState =
     | "unbound"
     | "bound"
@@ -355,6 +361,7 @@ export interface Database {
     hostname_reservation: HostnameReservationTable;
     dokku_name_reservation: DokkuNameReservationTable;
     instance_state: InstanceStateTable;
+    app_setting: AppSettingTable;
     idempotency_key: IdempotencyKeyTable;
     organization: OrganizationTable;
     member: MemberTable;

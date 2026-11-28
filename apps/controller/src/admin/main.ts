@@ -7,6 +7,7 @@ import {
     resetPassword,
     revokeAllCredentials,
     setupFirstOperator,
+    verifyEmailForDevelopment,
 } from "@launchpad-kit/auth";
 import {
     createDatabase,
@@ -31,6 +32,7 @@ import {
     RECONCILIATION_REQUESTED,
     republishRecoveryAlias,
     supersedeOperation,
+    ConfigurationService,
 } from "@launchpad-kit/services";
 import { createBackup, verifyBackup } from "./backup";
 import {
@@ -737,6 +739,28 @@ program
         );
         console.log(
             `Password reset for ${result.email}; revoked ${result.revokedSessions} session(s) and ${result.revokedKeys} API key(s).`,
+        );
+    });
+
+program
+    .command("verify-email")
+    .description(
+        "Mark an account's address verified so email recovery can be exercised against " +
+            "Mailpit (development controllers only; reads the configuration service)",
+    )
+    .requiredOption("--email <email>", "address of the account to verify")
+    .action(async (options) => {
+        const result = await withDatabase(async (db) => {
+            const { development } = await new ConfigurationService(db).read();
+            return verifyEmailForDevelopment(
+                { db },
+                { email: options.email, actor: "operator-cli", development },
+            );
+        });
+        console.log(
+            result.changed
+                ? `Verified ${result.email}.`
+                : `${result.email} was already verified; nothing changed.`,
         );
     });
 

@@ -13,6 +13,7 @@ import { createTestDatabase } from "../testing";
 
 const FIRST = "20261124_001_initial_schema";
 const SECOND = "20261126_002_worker_heartbeat";
+const THIRD = "20261128_003_app_settings";
 
 // Every case gets its own database, so a focused run does not depend on an earlier case.
 let testDb: Awaited<ReturnType<typeof createTestDatabase>>;
@@ -32,22 +33,27 @@ const tableExists = async () =>
 
 describe("the worker_heartbeat migration", () => {
     it("applies on an empty database after the baseline", async () => {
-        expect((await migrationStatus(testDb.db)).pending).toEqual([FIRST, SECOND]);
+        expect((await migrationStatus(testDb.db)).pending).toEqual([FIRST, SECOND, THIRD]);
         await testDb.migrate();
-        expect((await migrationStatus(testDb.db)).applied).toEqual([FIRST, SECOND]);
+        expect((await migrationStatus(testDb.db)).applied).toEqual([FIRST, SECOND, THIRD]);
         expect(await tableExists()).toBe(true);
     });
 
     it("applies on a database at the baseline and leaves its rows alone", async () => {
         await testDb.migrate();
+        // Back to the baseline: drop what both later migrations created and forget them.
         await sql`drop table worker_heartbeat`.execute(testDb.db);
-        await sql`delete from launchpad_migration where name = ${SECOND}`.execute(testDb.db);
+        await sql`drop table app_setting`.execute(testDb.db);
+        await sql`drop function app_setting_touch()`.execute(testDb.db);
+        await sql`delete from launchpad_migration where name in (${SECOND}, ${THIRD})`.execute(
+            testDb.db,
+        );
         await sql`insert into audit_event (actor, action, target_type, target_id) values ('t', 'a', 'x', '1')`.execute(
             testDb.db,
         );
         const status = await migrationStatus(testDb.db);
         expect(status.applied).toEqual([FIRST]);
-        expect(status.pending).toEqual([SECOND]);
+        expect(status.pending).toEqual([SECOND, THIRD]);
         await migrateToLatest(testDb.db);
         expect((await migrationStatus(testDb.db)).pending).toEqual([]);
         expect(

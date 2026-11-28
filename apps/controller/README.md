@@ -21,6 +21,7 @@ Keep this page current when the entry points or runtime change.
 | `LAUNCHPAD_BASE_URL`              | Public controller URL; its origin is the only trusted origin (required)                                                                                                                                                                                                                                                                                                   |
 | `LAUNCHPAD_ENROLLMENT`            | `operator` (default) or `invitation` (requires SMTP)                                                                                                                                                                                                                                                                                                                      |
 | `LAUNCHPAD_PUBLIC_SIGNUP`         | `false` by default; sign-up is a separate policy from SMTP                                                                                                                                                                                                                                                                                                                |
+| `LAUNCHPAD_DEVELOPMENT`           | `false` by default. `true` lets the development-only `verify-email` admin command mark an address verified so email recovery can be exercised; an `app_setting` row named `development` overrides it. `dev:infra:up` sets it (`../../docs/decisions/configuration-service.md`)                                                                                            |
 | `LAUNCHPAD_SMTP_URL`              | Optional; set with `LAUNCHPAD_EMAIL_FROM` to enable email recovery and invitations. `smtps://` or `smtp://` (STARTTLS required unless loopback); no query options                                                                                                                                                                                                         |
 | `HOST` / `PORT`                   | Listen address and port of the built server (default `127.0.0.1`-style host, port `3000`)                                                                                                                                                                                                                                                                                 |
 | `LAUNCHPAD_DATA_DIR`              | Directory shared with the worker, readable and writable by **one user** (the controller's and the worker's alike: the worker builds in `build/` and collects and restores archives); uploaded archives are staged in `tmp/` and kept under `artifacts/` (default `.data/controller`). Mount durable storage here in production                                            |
@@ -135,6 +136,11 @@ also limits each client address. `setup` creates the one instance operator, once
 local recovery path: it replaces the password, revokes all of that user's
 sessions and API keys, and writes an audit event with revoked-session/key counts.
 It is a host command, not an HTTP endpoint.
+`verify-email --email <email>` is for development only: it marks an account's address
+verified so password recovery can be tested against Mailpit. It is idempotent, and refuses
+unless the configuration service resolves `development` to `true` (an `app_setting` row, then
+`LAUNCHPAD_DEVELOPMENT`, then `false`; see
+[configuration service](../../docs/decisions/configuration-service.md)).
 `revoke-all-credentials --i-understand-this-signs-everyone-out` is the offline counterpart after
 a [restore](../../docs/restore.md): in one transaction it deletes every session and emailed
 token, revokes every API key and every open invitation, and writes an audit event with the counts.
@@ -166,7 +172,9 @@ With `LAUNCHPAD_SMTP_URL` and `LAUNCHPAD_EMAIL_FROM` set, a forgot-password page
 appears and password reset mail is sent, but only to addresses that are
 **verified**. An address becomes verified when its owner accepts an emailed
 invitation; operator-provisioned addresses stay unverified and are recovered with
-`reset-password`. With `LAUNCHPAD_ENROLLMENT=invitation`, owners and
+`reset-password`. The one exception is the development seed on a local controller, which
+runs `verify-email` for the operator and owner it creates so the Mailpit flow can be
+exercised. With `LAUNCHPAD_ENROLLMENT=invitation`, owners and
 admins invite people by email (7-day, single-use link; only a hash is stored). A
 new person creates their own account from the link; an existing user must be
 signed in as the invited address. SMTP alone enables neither invitations nor

@@ -133,13 +133,14 @@ Rules that keep the graph correct:
   cannot be combined with public ingress or fast lease mode.
 - **Local seed.** `omni -i run local:seed` (`tooling/local-seed.ts`, options through
   `-a "options=..."`) prepares a controller you started yourself for development: it runs the
-  controller's `admin` task (`migrate`, `setup`, `create-user`) through Omni without a shell, then
-  signs in over HTTP to create an organization, a project and an API key, and saves the key with
-  `login` from `@launchpad-kit/client-core` so the profile is what `launchpad login` writes. It
-  starts no server or database, takes passwords only from mode-600 files and prints no secret. Its
-  tests use a fake `fetch` and a fake command runner; `tooling/local-quickstart.spec.ts` fails when
-  the guide ([run Launchpad on your machine](local-quickstart.md)) names an Omni task, script flag,
-  admin or CLI command, setting or link that no longer exists. Update the guide with the script.
+  controller's `admin` task (`migrate`, `setup`, `create-user`, then `verify-email`) through Omni
+  without a shell, then signs in over HTTP to create an organization, a project and an API key, and
+  saves the key with `login` from `@launchpad-kit/client-core` so the profile is what
+  `launchpad login` writes. It starts no server or database, takes passwords only from mode-600
+  files and prints no secret. Its tests use a fake `fetch` and a fake command runner;
+  `tooling/local-quickstart.spec.ts` fails when the guide
+  ([run Launchpad on your machine](local-quickstart.md)) names an Omni task, script flag, admin or
+  CLI command, setting or link that no longer exists. Update the guide with the script.
 - **Script arguments.** The tooling scripts that take options (`local-seed.ts`, `local-deploy.ts`,
   `versions.ts`, `test-db.ts`, `release-dry-run.ts`) parse them with commander, imported only through `@commander-js/extra-typings`. `tooling/cli.ts` is the
   shared helper for the option-table scripts: one option table per script feeds commander, the

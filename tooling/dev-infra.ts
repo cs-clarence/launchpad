@@ -426,6 +426,7 @@ export function appEnv(
         LAUNCHPAD_BASE_URL: deploy ? DEPLOY_MODE_BASE_URL : APP_MODE_BASE_URL,
         LAUNCHPAD_DEPLOYMENTS: deploy ? "on" : "off",
         LAUNCHPAD_ENROLLMENT: "invitation",
+        LAUNCHPAD_DEVELOPMENT: "true",
         LAUNCHPAD_SMTP_URL: `smtp://127.0.0.1:${ports.smtp}`,
         LAUNCHPAD_EMAIL_FROM: SMTP_FROM,
         HOST: "127.0.0.1",

@@ -191,6 +191,8 @@ describe("generated app settings against the real parsers", () => {
                 ).not.toThrow();
                 expect(env.LAUNCHPAD_ALIAS_CONTROL_CA_FILE).toBeUndefined();
             }
+            // The seed needs this to verify the accounts it creates for Mailpit recovery.
+            expect(controller.LAUNCHPAD_DEVELOPMENT).toBe("true");
             const routing = parseAppRoutingConfig(controller);
             expect(routing.enabled && routing.aliasControlUrl.origin).toBe(
                 "http://127.0.0.1:33183",
@@ -229,11 +231,13 @@ describe("generated app settings against the real parsers", () => {
         expect(parseAliasConfig(controller).enabled).toBe(false);
         expect(parseAppRoutingConfig(controller).enabled).toBe(false);
         expect(controller.LAUNCHPAD_BASE_URL).toBe("http://127.0.0.1:3000");
+        expect(controller.LAUNCHPAD_DEVELOPMENT).toBe("true");
     });
 
     it("quotes the values a dotenv file would split", () => {
         const text = renderApp(render("app", true).controller);
         expect(text).toContain('LAUNCHPAD_EMAIL_FROM="Launchpad <launchpad@localhost>"');
+        expect(text).toContain("LAUNCHPAD_DEVELOPMENT=true");
         expect(text).not.toContain("pw@127.0.0.1:35432/launchpad\n\n");
     });
 
