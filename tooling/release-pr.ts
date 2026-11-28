@@ -131,9 +131,27 @@ export const ALLOWED_PATHS: RegExp[] = [
 
 export const allowedPath = (file: string) => ALLOWED_PATHS.some((pattern) => pattern.test(file));
 
-// A manifest or a source version file may change only on the lines that hold the version.
-export const versionLine = (line: string) =>
-    /^[+-].*\bversion\b/.test(line) && !/^(\+\+\+|---) /.test(line);
+// A manifest or a source version file may change only on the line that holds the version, in
+// exactly the shape it has today (the push job repeats these in shell; the spec runs it).
+export const VERSION_LINES: { path: RegExp; line: RegExp }[] = [
+    { path: /(^|\/)package\.json$/, line: /^\s+"version": "[^"]*",$/ },
+    { path: /^apps\/cli\/src\/program\.ts$/, line: /^\s+\.version\("[^"]*"\)$/ },
+    {
+        path: /^apps\/mcp\/src\/server\.ts$/,
+        line: /^\s+\{ name: "launchpad-mcp", version: "[^"]*" \},$/,
+    },
+    { path: /^apps\/controller\/src\/server\/openapi\.ts$/, line: /^\s+version: "[^"]*",$/ },
+];
+
+// The changed lines (old or new, without a diff prefix) of `file` that are not its version line;
+// files outside VERSION_LINES (changelogs, the lockfile) are not checked line by line.
+export function versionOnlyProblems(file: string, changedLines: string[]): string[] {
+    const rule = VERSION_LINES.find((r) => r.path.test(file));
+    if (!rule) return [];
+    return changedLines
+        .filter((line) => !rule.line.test(line))
+        .map((line) => `${file}: ${JSON.stringify(line)} is not the version line`);
+}
 
 export interface ChangedFile {
     // The raw `git diff` fields: modes and the status letter.

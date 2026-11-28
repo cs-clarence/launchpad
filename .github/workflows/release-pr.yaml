@@ -1,8 +1,15 @@
 # Opens the release pull request: bumps the versions on a branch `release/<version>` and opens a PR
-# into main. It never tags and never publishes: it pushes ONLY that branch (an explicit refspec),
-# and the maintainer still creates the single `v<semver>` tag by hand on the merge commit, which
-# starts release.yaml (docs/decisions/release-publishing.md, docs/releasing.md).
+# into main. It never tags and never publishes, and the maintainer still creates the single
+# `v<semver>` tag by hand on the merge commit, which starts release.yaml.
+#
+# Three jobs, a classic privilege split. `prepare` runs all the code that comes from dependencies
+# (bun install, Cocogitto hooks) with read-only permissions and hands over DATA only: a git bundle
+# of the one bump commit and the PR body. `push` holds `contents: write`, runs only commands written
+# in this file, validates the bundle and pushes ONLY `release/<version>`. `open-pr` holds the pull
+# request and Actions permissions, runs only commands written in this file, and opens the PR.
 # tooling/release-pr.spec.ts asserts this file; the decisions are in tooling/release-pr.ts.
+# Dispatching a branch with an edited copy of this file is the trust boundary: the optional
+# `release-pr` environment, limited to main, is the platform-enforced guard (docs/releasing.md).
 name: Release PR
 
 on:
@@ -41,14 +48,15 @@ env:
   COG_SHA256: "e03938ff2c4c86d71c00c0f3284dbbe95c5ca76fe34a51f33e945c23010d59bb"
 
 jobs:
-  open:
-    name: Open the release PR
+  prepare:
+    name: Prepare the release commit
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
-      contents: write
-      pull-requests: write
-      actions: write
+      contents: read
+    outputs:
+      version: ${{ steps.plan.outputs.version }}
+      channel: ${{ steps.plan.outputs.channel }}
     env:
       BASE: ${{ inputs.base }}
       CHANNEL: ${{ inputs.channel }}
@@ -61,8 +69,6 @@ jobs:
             exit 1
           fi
 
-      # The token is not kept in the checkout: the dependencies and hooks that run below never
-      # see it, and only the steps that need it receive it through env.
       - name: Check out main
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -108,18 +114,6 @@ jobs:
         id: plan
         run: bun tooling/release-pr.ts plan --base "$BASE" --channel "$CHANNEL" >> "$GITHUB_OUTPUT"
 
-      - name: The release branch does not exist yet
-        env:
-          GH_TOKEN: ${{ github.token }}
-          VERSION: ${{ steps.plan.outputs.version }}
-        run: |
-          count=$(gh api "repos/$GITHUB_REPOSITORY/git/matching-refs/heads/release/$VERSION" \
-            | jq --arg ref "refs/heads/release/$VERSION" '[.[] | select(.ref == $ref)] | length')
-          if [ "$count" != 0 ]; then
-            echo "::error::the branch release/$VERSION already exists"
-            exit 1
-          fi
-
       # Cocogitto reads the committer from git config files, not from the environment.
       - name: Cut the release branch and bump
         env:
@@ -133,47 +127,180 @@ jobs:
       - name: Check the versions
         run: omni -i run check:versions -p '@launchpad-kit/tooling'
 
-      # The range ends at the tag cog created locally, so this runs before that tag is deleted.
-      - name: Write the PR body
+      # The commit message and the title are checked before anything is pushed. The range of the
+      # changelog ends at the tag cog created locally; the tag is never pushed (this job cannot).
+      - name: Check the messages and write the PR body
         env:
           VERSION: ${{ steps.plan.outputs.version }}
           RANGE: ${{ steps.plan.outputs.range }}
-          CHANNEL_NAME: ${{ steps.plan.outputs.channel }}
         run: |
+          cog verify "chore(release): v$VERSION"
+          cog verify "$(git log -1 --format=%B)"
+          mkdir -p "$RUNNER_TEMP/data"
           cog changelog --template remote --remote github.com \
             --owner "${GITHUB_REPOSITORY%%/*}" --repository "${GITHUB_REPOSITORY##*/}" \
             "$RANGE" > "$RUNNER_TEMP/changelog.md"
           bun tooling/release-pr.ts body --version "$VERSION" \
-            --changelog "$RUNNER_TEMP/changelog.md" --out "$RUNNER_TEMP/body.md"
+            --changelog "$RUNNER_TEMP/changelog.md" --out "$RUNNER_TEMP/data/body.md"
 
-      # A tag is never pushed: the local one is removed, and only the branch is pushed below.
-      - name: Delete the local tag
+      # Data only: the one bump commit as a bundle, and the PR body.
+      - name: Bundle the bump commit
         env:
           VERSION: ${{ steps.plan.outputs.version }}
-        run: git tag -d "v$VERSION"
+        run: git bundle create "$RUNNER_TEMP/data/release.bundle" "release/$VERSION" "^$GITHUB_SHA"
 
+      - name: Hand over the data
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release-pr-data
+          path: ${{ runner.temp }}/data/
+          retention-days: 7
+          if-no-files-found: error
+
+  push:
+    name: Validate and push the release branch
+    needs: [prepare]
+    runs-on: ubuntu-latest
+    environment: release-pr
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    outputs:
+      version: ${{ steps.validate.outputs.version }}
+    env:
+      BASE: ${{ inputs.base }}
+      CHANNEL: ${{ inputs.channel }}
+      VERSION: ${{ needs.prepare.outputs.version }}
+    steps:
+      # Nothing here installs or runs repository code: only the commands below, written in this file,
+      # touch what `prepare` produced, and only as data.
+      - name: Check out main
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Download the data
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: release-pr-data
+          path: ${{ runner.temp }}/data
+
+      # The version comes from `prepare`, so it is checked against the dispatch inputs and the
+      # registry's channels (repeated here: no repository code runs; the spec checks the names).
+      # The bundle must hold one ref and exactly one commit on top of the main commit, with the
+      # fixed message, changing only allowlisted paths, and only the version line of a manifest or a
+      # source file. The allowlist is the one of tooling/release-pr.ts (the spec compares them).
+      - name: Validate the release data
+        id: validate
+        run: |
+          fail() { echo "::error::$1"; exit 1; }
+          data="$RUNNER_TEMP/data"
+          [[ "$BASE" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]] || fail "the base is not X.Y.Z"
+          [ "${VERSION%%-*}" = "$BASE" ] || fail "the version does not start with the base"
+          (( ${#VERSION} <= 128 )) || fail "the version is longer than 128 characters"
+          if [[ "$VERSION" == *-* ]]; then
+            pre="${VERSION#*-}"
+            name="${pre%%.*}"
+            case "$name" in
+              rc) ;;
+              *) fail "$name is not a registered pre-release channel" ;;
+            esac
+            [ "$name" = "$CHANNEL" ] || fail "the version is not of the chosen channel"
+            [[ "$pre" =~ ^[a-z]+\.(0|[1-9][0-9]*)$ ]] || fail "a pre-release must be <channel>.<N>"
+          else
+            [ "$CHANNEL" = stable ] || fail "the version is not of the chosen channel"
+          fi
+          bundle="$data/release.bundle"
+          [ -f "$bundle" ] && [ ! -L "$bundle" ] || fail "no bundle"
+          git bundle verify "$bundle" > /dev/null
+          heads=$(git bundle list-heads "$bundle")
+          [ "$(printf '%s\n' "$heads" | wc -l)" -eq 1 ] || fail "the bundle must hold one ref"
+          [ "${heads#* }" = "refs/heads/release/$VERSION" ] || fail "the bundle holds another ref"
+          git fetch --no-tags "$bundle" "refs/heads/release/$VERSION:refs/remotes/bundle/release"
+          commit=$(git rev-parse --verify "refs/remotes/bundle/release^{commit}")
+          [ "$(git rev-list --count "$GITHUB_SHA..$commit")" = 1 ] || fail "the bundle must hold exactly one new commit"
+          [ "$(git rev-list --parents -n 1 "$commit")" = "$commit $GITHUB_SHA" ] || fail "the commit must sit directly on main"
+          [ "$(git log -1 --format=%B "$commit")" = "chore(version): v$VERSION" ] || fail "unexpected commit message"
+          allow='^package\.json$|^(apps|packages)/[^/]+/package\.json$|^bun\.lock$|^CHANGELOG\.md$|^(apps|packages)/[^/]+/CHANGELOG\.md$|^apps/cli/src/program\.ts$|^apps/mcp/src/server\.ts$|^apps/controller/src/server/openapi\.ts$'
+          mapfile -d '' -t items < <(git diff --raw -z --no-abbrev --no-renames "$GITHUB_SHA" "$commit")
+          [ "${#items[@]}" -gt 0 ] || fail "the commit changes nothing"
+          for ((i = 0; i < ${#items[@]}; i += 2)); do
+            meta="${items[i]}"
+            file="${items[i + 1]}"
+            [[ "$meta" =~ ^:(100644|000000)\ 100644\ [0-9a-f]+\ [0-9a-f]+\ [AM]$ ]] || fail "$file: not an addition or a modification of a plain file"
+            [[ "$file" =~ $allow ]] || fail "$file is not an allowed path"
+            case "$file" in
+              apps/cli/src/program.ts) re='^[[:space:]]+\.version\("[^"]*"\)$' ;;
+              apps/mcp/src/server.ts) re='^[[:space:]]+\{ name: "launchpad-mcp", version: "[^"]*" \},$' ;;
+              apps/controller/src/server/openapi.ts) re='^[[:space:]]+version: "[^"]*",$' ;;
+              package.json | */package.json) re='^[[:space:]]+"version": "[^"]*",$' ;;
+              *) continue ;;
+            esac
+            while IFS= read -r line; do
+              case "$line" in
+                "< "* | "> "*) [[ "${line:2}" =~ $re ]] || fail "$file: only the version line may change" ;;
+                [0-9]* | "---") ;;
+                *) fail "$file: unexpected diff output" ;;
+              esac
+            done < <(diff <(git show "$GITHUB_SHA:$file") <(git show "$commit:$file") || test $? -eq 1)
+          done
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "commit=$commit" >> "$GITHUB_OUTPUT"
+
+      # The only step with the token. The branch must not exist (checked exactly), and only that
+      # branch is pushed, by an explicit refspec: no tag can be pushed from this job.
       - name: Push the release branch only
         env:
           GH_TOKEN: ${{ github.token }}
-          VERSION: ${{ steps.plan.outputs.version }}
+          COMMIT: ${{ steps.validate.outputs.commit }}
         run: |
+          git switch --detach "$COMMIT"
           auth=$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)
           echo "::add-mask::$auth"
+          rc=0
+          git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic $auth" ls-remote --exit-code --heads origin "refs/heads/release/$VERSION" > /dev/null || rc=$?
+          if [ "$rc" != 2 ]; then
+            echo "::error::the branch release/$VERSION exists already, or the lookup failed (exit $rc)"
+            exit 1
+          fi
           git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic $auth" push origin "HEAD:refs/heads/release/$VERSION"
+
+  open-pr:
+    name: Open the pull request
+    needs: [prepare, push]
+    runs-on: ubuntu-latest
+    environment: release-pr
+    timeout-minutes: 15
+    permissions:
+      pull-requests: write
+      actions: write
+    env:
+      VERSION: ${{ needs.push.outputs.version }}
+    steps:
+      # No checkout and no install: the body is data, handed to `gh` as a file.
+      - name: Download the data
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: release-pr-data
+          path: ${{ runner.temp }}/data
+
+      - name: Check the body
+        run: |
+          body="$RUNNER_TEMP/data/body.md"
+          [ -f "$body" ] && [ ! -L "$body" ] || { echo "::error::no PR body"; exit 1; }
+          [ "$(wc -c < "$body")" -le 65000 ] || { echo "::error::the PR body is too long"; exit 1; }
 
       - name: Open the pull request
         env:
           GH_TOKEN: ${{ github.token }}
-          VERSION: ${{ steps.plan.outputs.version }}
         run: |
-          cog verify "chore(release): v$VERSION"
-          gh pr create --base main --head "release/$VERSION" \
-            --title "chore(release): v$VERSION" --body-file "$RUNNER_TEMP/body.md"
+          gh pr create --repo "$GITHUB_REPOSITORY" --base main --head "release/$VERSION" \
+            --title "chore(release): v$VERSION" --body-file "$RUNNER_TEMP/data/body.md"
 
-      # A PR opened with the workflow token starts no pull_request run, so CI is dispatched on
-      # the branch; its `CI Passed` check lands on the head commit (unverified).
+      # A PR opened with the workflow token starts no pull_request run, so CI is dispatched on the
+      # branch; its `CI Passed` check lands on the head commit (unverified).
       - name: Start CI on the branch
         env:
           GH_TOKEN: ${{ github.token }}
-          VERSION: ${{ steps.plan.outputs.version }}
-        run: gh workflow run ci.yaml --ref "release/$VERSION"
+        run: gh workflow run ci.yaml --repo "$GITHUB_REPOSITORY" --ref "release/$VERSION"

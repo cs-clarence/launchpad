@@ -232,15 +232,15 @@ describe("CI gatekeeper script", () => {
 // tooling/release.spec.ts asserts that file. Every other workflow, and the composite action they
 // use, must not publish, push, tag, log in to a registry or hold a credential.
 const RELEASE_WORKFLOW = "release.yaml";
-// The one other workflow that may write: it pushes a `release/<version>` branch and opens a PR, and
-// never tags or publishes (tooling/release-pr.spec.ts asserts it). Its carve-out below is exact:
-// these two command lines and these three job permissions, nothing else.
+// The one other workflow that may write: three jobs that prepare a `release/<version>` commit with
+// read-only access, push that branch, and open a PR; it never tags or publishes
+// (tooling/release-pr.spec.ts asserts it). Its carve-out below is exact: the one push command line
+// and these three job-scoped write permissions, nothing else.
 const RELEASE_PR_WORKFLOW = "release-pr.yaml";
 const RELEASE_PR_ALLOWED_COMMANDS = [
-    'git tag -d "v$VERSION"',
     'git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic $auth" push origin "HEAD:refs/heads/release/$VERSION"',
 ];
-const RELEASE_PR_WRITES = ["open: contents", "open: pull-requests", "open: actions"];
+const RELEASE_PR_WRITES = ["push: contents", "open-pr: pull-requests", "open-pr: actions"];
 const actionFile = path.join(root, ".github", "actions", "setup-workspace", "action.yaml");
 const others = [
     ...readdirSync(workflows)
@@ -352,7 +352,9 @@ describe("every workflow except the release workflow", () => {
         expect(doc.permissions).toEqual({});
         // Its commands are clean once the two exact lines are set aside.
         expect(afterCarveOut(commandsOf(text))).not.toMatch(FORBIDDEN_COMMAND);
-        expect(commandsOf(text)).toContain("git tag -d");
+        // No job but `push` writes contents, and the read-only job holds no write scope at all.
+        expect(doc.jobs!.prepare!.permissions).toEqual({ contents: "read" });
+        expect(commandsOf(text)).not.toMatch(/git tag/);
         for (const used of actionsOf(doc)) expect(used).not.toMatch(FORBIDDEN_ACTION);
     });
 
@@ -364,6 +366,7 @@ describe("every workflow except the release workflow", () => {
             'git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic $auth" push origin "HEAD:refs/heads/release/$VERSION" --force',
             'git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic $auth" push origin main',
             "git tag v1.0.0",
+            'git tag -d "v$VERSION"',
             'git tag -d "v$VERSION" && git push origin v1',
             "npm publish",
             "gh release create v1",

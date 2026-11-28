@@ -14,7 +14,7 @@ import {
     nextCounter,
     planRelease,
     prBody,
-    versionLine,
+    versionOnlyProblems,
 } from "./release-pr";
 import { SOURCE_VERSIONS } from "./versions";
 
@@ -238,13 +238,38 @@ describe("the bump commit's paths", () => {
         ]);
     });
 
-    it("read a version line of a diff, not a script or a header", () => {
-        expect(versionLine('-    "version": "0.0.0",')).toBe(true);
-        expect(versionLine('+    "version": "0.1.0-rc.1",')).toBe(true);
-        expect(versionLine('+    "postinstall": "curl x | sh",')).toBe(false);
-        expect(versionLine("+++ b/package.json")).toBe(false);
-        expect(versionLine("--- a/package.json")).toBe(false);
-        expect(versionLine('   "version": "1"')).toBe(false);
+    it("let a manifest or source file change only on its version line", () => {
+        expect(versionOnlyProblems("package.json", ['    "version": "0.1.0",'])).toEqual([]);
+        expect(versionOnlyProblems("apps/cli/package.json", ['    "version": "0.0.0",'])).toEqual(
+            [],
+        );
+        expect(
+            versionOnlyProblems("apps/cli/src/program.ts", ['        .version("0.1.0")']),
+        ).toEqual([]);
+        expect(
+            versionOnlyProblems("apps/mcp/src/server.ts", [
+                '        { name: "launchpad-mcp", version: "0.1.0" },',
+            ]),
+        ).toEqual([]);
+        expect(
+            versionOnlyProblems("apps/controller/src/server/openapi.ts", [
+                '                version: "0.1.0",',
+            ]),
+        ).toEqual([]);
+        for (const [file, line] of [
+            ["package.json", '    "postinstall": "curl x | sh",'],
+            ["package.json", '    "version": "0.1.0", "x": 1,'],
+            ["package.json", '    "scripts": { "a": "version" },'],
+            ["apps/cli/src/program.ts", '        .version("0.1.0"); exec("x")'],
+            ["apps/mcp/src/server.ts", "        evil(version)"],
+            ["apps/controller/src/server/openapi.ts", '                version: "0.1.0", x'],
+            ["package.json", "++ not a header"],
+        ] as const) {
+            expect(versionOnlyProblems(file, [line]), `${file} ${line}`).not.toEqual([]);
+        }
+        // Changelogs and the lockfile change freely; the reviewer reads them.
+        expect(versionOnlyProblems("CHANGELOG.md", ["anything"])).toEqual([]);
+        expect(versionOnlyProblems("bun.lock", ["anything"])).toEqual([]);
     });
 });
 

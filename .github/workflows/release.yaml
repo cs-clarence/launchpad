@@ -53,7 +53,7 @@ jobs:
           # import it; the spec asserts the two agree. A pre-release is `<channel>.<N>`, N numeric
           # without leading zeros, on a channel that supports the kind of release.
           IFS=. read -r _ minor patch <<< "${version%%-*}"
-          if [ "$patch" != 0 ]; then kind=patch; elif [ "$minor" != 0 ]; then kind=minor; else kind=major; fi
+          if [ "$patch" != 0 ]; then kind="patch"; elif [ "$minor" != 0 ]; then kind="minor"; else kind="major"; fi
           if [[ "$version" == *-* ]]; then
             pre="${version#*-}"
             name="${pre%%.*}"
