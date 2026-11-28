@@ -12,7 +12,7 @@ const code = readFileSync(path.join(root, ".github/workflows/release.yaml"), "ut
     /^\s*#.*$/gm,
     "",
 );
-const planSource = readFileSync(path.join(root, "tooling/release-plan.ts"), "utf8");
+const publishSource = readFileSync(path.join(root, "tooling/release-publish.ts"), "utf8");
 
 interface Step {
     name?: string;
@@ -291,10 +291,10 @@ describe("release workflow credentials and injection", () => {
 describe("release workflow npm", () => {
     it("publishes with npm only, on Node 24 with the npm minimum checked", () => {
         expect(file).not.toMatch(/bun publish|yarn publish|pnpm publish|npm stage/);
-        expect(planSource).toMatch(
+        expect(publishSource).toMatch(
             /must\("npm", \["publish", tarball, "--tag", tag, "--provenance"/,
         );
-        expect(planSource).not.toMatch(/"bun", \["publish|bun publish/);
+        expect(publishSource).not.toMatch(/"bun", \["publish|bun publish/);
         const node = jobs["npm-publish"]!.steps.find((s) =>
             s.uses?.startsWith("actions/setup-node"),
         );
@@ -303,12 +303,14 @@ describe("release workflow npm", () => {
         expect(check).toContain("22, 14, 0");
         expect(check).toContain("11, 5, 1");
         expect(jobs["npm-publish"]!.permissions).toEqual({ contents: "read", "id-token": "write" });
-        expect(runsOf("npm-publish")).toContain('release-plan.ts publish-npm packages "$VERSION"');
+        expect(runsOf("npm-publish")).toContain(
+            'release-publish.ts publish-npm packages "$VERSION"',
+        );
     });
 
     it("publishes in dependency order and chooses the tag per package", () => {
-        expect(planSource).toContain('["contracts", "sdk", "client-core", "cli", "mcp"]');
-        expect(planSource).toContain("npmDistTag(version, latestOnNpm(name))");
+        expect(publishSource).toContain('["contracts", "sdk", "client-core", "cli", "mcp"]');
+        expect(publishSource).toContain("npmDistTag(version, latestOnNpm(name))");
     });
 });
 
@@ -348,8 +350,8 @@ describe("release workflow images", () => {
     it("only retags after npm, and never builds in the image-publish job", () => {
         expect(names("image-publish").join(" ")).not.toMatch(/build-push|buildx/);
         expect(runsOf("image-publish")).not.toMatch(/docker build|buildx build/);
-        expect(runsOf("image-publish")).toContain("release-plan.ts retag");
-        expect(planSource).toMatch(/"imagetools", "create", "-t"/);
+        expect(runsOf("image-publish")).toContain("release-publish.ts retag");
+        expect(publishSource).toMatch(/"imagetools", "create", "-t"/);
     });
 
     it("smokes the exact staged digest", () => {
@@ -364,5 +366,111 @@ describe("release workflow post-verify", () => {
         expect(jobs["post-verify"]!.environment).toBeUndefined();
         expect(runsOf("post-verify")).toContain("gh attestation verify");
         expect(runsOf("post-verify")).toContain("npm audit signatures");
+    });
+});
+
+describe("release workflow credentialed jobs install nothing", () => {
+    const credentialed = ["stage", "npm-publish", "image-publish", "post-verify"];
+
+    it("run no install step and only the dependency-free publish script", () => {
+        for (const id of credentialed) {
+            const text = runsOf(id);
+            expect(text, id).not.toMatch(
+                /\b(bun|npm|yarn|pnpm) (install|i|ci|add)\b(?! --ignore-scripts --no-audit)/,
+            );
+            for (const [, script] of text.matchAll(/bun tooling\/(\S+)/g)) {
+                expect(script, id).toBe("release-publish.ts");
+            }
+        }
+        // The jobs that hold the OIDC token or write to the registry.
+        for (const id of ["stage", "npm-publish", "image-publish"]) {
+            expect(runsOf(id), id).not.toContain("bun install");
+            expect(runsOf(id), id).not.toContain("release-plan.ts");
+        }
+    });
+
+    it("run scripts that import only node: built-ins and dependency-free relative modules", () => {
+        const seen = new Set<string>();
+        const visit = (name: string) => {
+            if (seen.has(name)) return;
+            seen.add(name);
+            const source = readFileSync(path.join(root, "tooling", `${name}.ts`), "utf8");
+            const specifiers = [
+                ...source.matchAll(/\bfrom\s+"([^"]+)"/g),
+                ...source.matchAll(/\bimport\(\s*"([^"]+)"/g),
+                ...source.matchAll(/\brequire\(\s*"([^"]+)"/g),
+                ...source.matchAll(/^import\s+"([^"]+)"/gm),
+            ].map((m) => m[1]!);
+            for (const specifier of specifiers) {
+                if (specifier.startsWith("node:")) continue;
+                expect(specifier, `${name}.ts`).toMatch(/^\.\/[a-z-]+$/);
+                visit(specifier.slice(2));
+            }
+        };
+        visit("release-publish");
+        expect([...seen].toSorted()).toEqual(["release-core", "release-publish", "semver-compare"]);
+    });
+
+    it("verify attestations of the staged digests before image-publish retags", () => {
+        const text = runsOf("image-publish");
+        expect(text.indexOf("gh attestation verify")).toBeGreaterThan(-1);
+        expect(text.indexOf("gh attestation verify")).toBeLessThan(
+            text.indexOf("release-publish.ts retag"),
+        );
+    });
+
+    it("pin the signer workflow and the tag ref when verifying attestations", () => {
+        for (const id of ["image-publish", "post-verify"]) {
+            expect(runsOf(id), id).toContain(
+                "--signer-workflow launchpad-kit/launchpad/.github/workflows/release.yaml",
+            );
+            expect(runsOf(id), id).toContain('--source-ref "refs/tags/v$VERSION"');
+        }
+    });
+
+    it("retries the install of just-published packages, boundedly", () => {
+        expect(runsOf("post-verify")).toMatch(/for attempt in 1 2 3 4 5 6; do[\s\S]*sleep 20/);
+    });
+});
+
+describe("release workflow fails closed", () => {
+    const everyStep = Object.entries(jobs).flatMap(([id, job]) =>
+        job.steps.map((step) => ({ id, step })),
+    );
+
+    it("has no continue-on-error anywhere", () => {
+        expect(code).not.toContain("continue-on-error");
+        expect(code).not.toMatch(/\|\| true|set \+e/);
+    });
+
+    it("has no conditional job and one benign conditional step", () => {
+        for (const [id, job] of Object.entries(jobs)) {
+            expect((job as { if?: string }).if, id).toBeUndefined();
+        }
+        const conditional = everyStep.filter(({ step }) => step.if !== undefined);
+        expect(conditional.map(({ id, step }) => [id, step.if])).toEqual([
+            ["stage", "steps.existing.outputs.found != 'true'"],
+        ]);
+    });
+
+    it("checks out the tagged commit only, without keeping credentials", () => {
+        const checkouts = everyStep.filter(({ step }) =>
+            step.uses?.startsWith("actions/checkout@"),
+        );
+        expect(checkouts).toHaveLength(Object.keys(jobs).length - 1);
+        for (const { id, step } of checkouts) {
+            expect(step.with?.["persist-credentials"], id).toBe(false);
+            expect(step.with?.ref, id).toBe("${{ github.sha }}");
+        }
+    });
+
+    it("gives GH_TOKEN to the gh steps only", () => {
+        for (const [id, job] of Object.entries(jobs)) {
+            expect((job as { env?: Record<string, string> }).env?.GH_TOKEN, id).toBeUndefined();
+        }
+        for (const { id, step } of everyStep) {
+            if (/\bgh /.test(step.run ?? ""))
+                expect(step.env?.GH_TOKEN, `${id}: ${step.name}`).toBe("${{ github.token }}");
+        }
     });
 });

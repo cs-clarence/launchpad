@@ -305,6 +305,20 @@ deprecated on npm and fixed forward; `X.Y` and `latest` move back by hand to the
 What the workflow could not verify is listed under "Written as fact but unverified" in the record;
 the `v0.1.0-rc.1` release settles it.
 
-Two limits of the first version: the partial-release check confirms the previous release's
-packages exist with provenance (it has no copy of that release's tarballs to compare integrity
-with), and it reads the images anonymously, so it needs their packages to be public.
+Limits of the first version:
+
+- The partial-release check confirms the previous release's packages exist with provenance (it has
+  no copy of that release's tarballs to compare integrity with), and it reads the images
+  anonymously, so it needs their packages to be public. It requires `X.Y` only when the previous
+  release is the highest patch of its minor and `latest` only when it is the highest stable version.
+- A re-run of an older release can move the npm `next` dist-tag backwards (a pre-release is
+  published with `--tag next` whatever `next` holds now); this is accepted and not guarded.
+- Push release tags **one at a time**: the workflow's concurrency group holds one running and one
+  pending run, and GitHub may not start a run for every tag of a multi-tag push.
+- The jobs that hold the OIDC token or write to the registry (`stage`, `npm-publish`,
+  `image-publish`) install no dependencies. They run only `tooling/release-publish.ts`, which
+  imports `node:` built-ins and the dependency-free `release-core.ts` and `semver-compare.ts`.
+  `image-publish` verifies the staged attestations before it retags, and `post-verify` verifies
+  them again, pinned to the `release.yaml` signer workflow and the tag ref.
+- Lint the workflow with actionlint v1.7.12 (clean); v1.7.7 reports a false positive on the
+  `artifact-metadata` permission.

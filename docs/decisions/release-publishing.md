@@ -407,9 +407,9 @@ Where `release.yaml` is more specific than, or differs from, the text above:
 - `stage` is a matrix of the five images (the `admin` image is the `admin` target of the
   controller Dockerfile). Digests reach `smoke`, `image-publish` and `post-verify` as `staged-*`
   artifacts.
-- The logic of `npm publish`, the dist-tag, the retag and the partial-release check is in
-  `tooling/release-plan.ts` and is called as `bun tooling/release-plan.ts <command>`; `npm publish`
-  is spawned there with an explicit `--tag`, `--provenance` and `--access public`.
+- The logic of `npm publish`, the dist-tag and the retag is in `tooling/release-publish.ts`
+  (dependency-free) and the rest in `tooling/release-plan.ts`, both called as `bun tooling/<script>.ts
+  <command>`; `npm publish` is spawned in the former with an explicit `--tag`, `--provenance` and `--access public`.
 - The partial-release check verifies that the previous stable release's packages exist with a
   provenance attestation; it cannot compare integrity with that release's tarballs (they are not
   kept), so "matching integrity" holds only for the release being published (`publish-npm`). It
@@ -432,7 +432,27 @@ Where `release.yaml` is more specific than, or differs from, the text above:
   download-artifact v8.0.2, setup-bun v2.2.0, docker login v4.8.0, setup-buildx v4.4.1,
   build-push v7.4.0, attest v4.2.2; SHAs read from the GitHub API on 2026-11-28), and
   their inputs were read from each action's `action.yml` at that SHA, not run.
-- Not run: the workflow itself, `actionlint` (not installed here), Docker builds and the registry
+- Security review fixes: `stage`, `npm-publish`, `image-publish` and `post-verify` install no
+  dependencies and run only `tooling/release-publish.ts` (node: built-ins; pure logic in
+  `release-core.ts`, `semver-compare.ts`; `release.spec.ts` asserts the imports and the absence of
+  install steps). A floating tag that exists with an unreadable version label stops the retag
+  instead of reading as missing. `publish-npm` checks the tarball set against `SHA256SUMS` and each
+  tarball's version against the tag. The partial-release check takes the other stable versions as
+  input (`X.Y` only for the highest patch, `latest` only for the highest stable). The spec rejects
+  `if:` (but the one benign step), `continue-on-error`, a checkout without `persist-credentials:
+  false` and `ref: ${{ github.sha }}`, and a job-level `GH_TOKEN` (each mutation was tried and
+  fails the spec). `GH_TOKEN` is set on the `gh` steps only. `image-publish` runs
+  `gh attestation verify` before retagging and `post-verify` pins `--signer-workflow` and
+  `--source-ref refs/tags/v<version>` (both flags exist in `gh` 2.106's help; not run);
+  `post-verify` retries the install of the published packages up to six times.
+- Known limit, not fixed: a re-run of an older release can move the `next` dist-tag backwards.
+- Added to the unverified list: `gh attestation verify` in `image-publish` with only
+  `contents: read` and `packages: write`; the `--signer-workflow` and `--source-ref` semantics for
+  an attestation made by `actions/attest` (tag-triggered); the 20-second, six-attempt retry being
+  enough for npm propagation.
+- actionlint v1.7.12 reports nothing on the workflows (downloaded to `/tmp/opencode`); v1.7.7
+  falsely rejects the `artifact-metadata` permission.
+- Not run: the workflow itself, Docker builds and the registry
   commands. Only the unit specs and the guard step (in bash) were run.
 
 ## Consequences

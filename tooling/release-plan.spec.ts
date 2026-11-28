@@ -1,6 +1,9 @@
 import { describe, expect, it } from "bun:test";
 import {
     checkTag,
+    checkTarballSet,
+    existingVersion,
+    sumsFiles,
     ciPassedProblem,
     classifyInspect,
     consumerManifest,
@@ -159,6 +162,7 @@ describe("partial release check", () => {
     const image = { staged, exact: staged, xy: staged, latest: staged };
     const complete = (): PreviousRelease => ({
         version: "0.1.0",
+        stableVersions: [],
         packages: Object.fromEntries(
             ["contracts", "sdk", "client-core", "cli", "mcp"].map((n) => [
                 `@launchpad-kit/${n}`,
@@ -192,6 +196,38 @@ describe("partial release check", () => {
         expect(problems.join("\n")).toContain("worker:latest");
         expect(problems.join("\n")).toContain("router:0.1 is missing");
         expect(problems.join("\n")).toContain("admin:0.1.0");
+    });
+
+    // A release is complete when the tags it should hold resolve to its staged digest.
+    const other = "sha256:" + "d".repeat(64);
+
+    it("does not require latest for a backport made after a newer minor", () => {
+        const release = complete();
+        release.version = "1.1.5";
+        release.stableVersions = ["1.1.4", "1.2.0"];
+        release.images.worker!.latest = other;
+        expect(partialReleaseProblems(release)).toEqual([]);
+        release.images.worker!.xy = other;
+        expect(partialReleaseProblems(release)).toEqual([expect.stringContaining("worker:1.1")]);
+    });
+
+    it("does not require X.Y or latest on a retry after a newer patch", () => {
+        const release = complete();
+        release.version = "1.2.2";
+        release.stableVersions = ["1.2.1", "1.2.4", "1.1.9"];
+        release.images.worker!.latest = other;
+        release.images.worker!.xy = other;
+        expect(partialReleaseProblems(release)).toEqual([]);
+        release.images.worker!.exact = other;
+        expect(partialReleaseProblems(release)).toEqual([expect.stringContaining("worker:1.2.2")]);
+    });
+
+    it("requires X.Y and latest when no stable release is higher", () => {
+        const release = complete();
+        release.version = "1.2.3";
+        release.stableVersions = ["1.2.2", "1.1.9"];
+        release.images.worker!.latest = other;
+        expect(partialReleaseProblems(release)).toEqual([expect.stringContaining("worker:latest")]);
     });
 
     it("fails an image whose staged tag is missing", () => {
@@ -259,6 +295,43 @@ describe("registry output", () => {
         expect(labelVersion({ Image: { "linux/amd64": label } })).toBe("0.1.0");
         expect(labelVersion({ Image: { "linux/amd64": { config: {} } } })).toBeNull();
         expect(labelVersion({})).toBeNull();
+    });
+
+    it("reads the label from other plausible shapes", () => {
+        const labelled = (v: string) => ({
+            config: { Labels: { "org.opencontainers.image.version": v } },
+        });
+        expect(
+            labelVersion({
+                Image: { "unknown/unknown": { config: {} }, "linux/arm64": labelled("1.0.0") },
+            }),
+        ).toBe("1.0.0");
+        expect(labelVersion({ Image: { config: { Labels: null } } })).toBeNull();
+        expect(labelVersion({ Image: { config: { Labels: {} } } })).toBeNull();
+        expect(labelVersion({ Image: labelled("") })).toBeNull();
+        expect(labelVersion({ Image: {} })).toBeNull();
+        expect(labelVersion({ Image: null })).toBeNull();
+    });
+
+    it("fails closed when a tag exists but its version is unreadable", () => {
+        expect(existingVersion(null, "r")).toBeNull();
+        expect(existingVersion({ version: "1.2.3" }, "r")).toBe("1.2.3");
+        expect(() => existingVersion({ version: null }, "r")).toThrow(/no readable/);
+        expect(() => existingVersion({ version: "unknown" }, "r")).toThrow(/no readable/);
+        expect(() => existingVersion({ version: "v1.2.3" }, "r")).toThrow(/no readable/);
+    });
+
+    it("compares the tarballs with SHA256SUMS", () => {
+        const sums = `${"a".repeat(64)}  a.tgz\n${"b".repeat(64)}  b.tgz\n`;
+        expect(sumsFiles(sums)).toEqual(["a.tgz", "b.tgz"]);
+        expect(() => sumsFiles("nonsense")).toThrow();
+        expect(checkTarballSet(["a.tgz", "b.tgz"], ["b.tgz", "a.tgz"])).toEqual([]);
+        expect(checkTarballSet(["a.tgz"], ["a.tgz", "x.tgz"])).toEqual([
+            expect.stringContaining("x.tgz"),
+        ]);
+        expect(checkTarballSet(["a.tgz", "b.tgz"], ["a.tgz"])).toEqual([
+            expect.stringContaining("b.tgz"),
+        ]);
     });
 
     it("pins every package to its tarball", () => {
