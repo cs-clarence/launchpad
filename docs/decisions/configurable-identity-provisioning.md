@@ -43,3 +43,16 @@ Implementation note: email recovery mail goes only to verified addresses. An
 address is verified by accepting an emailed invitation, never by operator
 provisioning, so a mistyped provisioned address cannot be used to take over an
 account. The reset response is identical for every address.
+
+### Amendment: the development seed verifies its accounts
+
+Date: 2026-11-28. Approved by the user.
+
+`dev:infra:seed` marks the operator and owner it creates as verified, so email
+recovery can be exercised against the local Mailpit; without that, a freshly
+seeded development controller could never use the recovery flow. This is a
+development exception only. `dev:infra:up` sets `LAUNCHPAD_DEVELOPMENT=true` and
+`dev:infra:seed` runs the `verify-email` command for the accounts it created; that
+command refuses unless the [configuration service](configuration-service.md)
+resolves `development` to true. The development seed skips it for a remote
+controller, and operator provisioning elsewhere still never verifies an address.

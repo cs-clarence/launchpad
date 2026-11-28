@@ -39,9 +39,11 @@ down migration. v1 starts with an empty database. Rehearse later upgrades on dis
    `GET /api/v1/status` for database readiness and, if `LAUNCHPAD_DEPLOYMENTS` is on, that `workers.state` is `ok` (with deployments off it is `off`). `/api/health` is liveness and
    does not check PostgreSQL; `/api/ready` does (see [production Compose](production-compose.md#health-readiness-and-worker-status)).
 
-### This release adds a migration
+### This release adds migrations
 
-`20261126_002_worker_heartbeat` creates one table, `worker_heartbeat`. It is additive (nothing existing changes)
+`20261126_002_worker_heartbeat` creates one table, `worker_heartbeat`, and `20261128_003_app_settings`
+creates one table, `app_setting`, with a function and trigger that keep its `updated_at` current. All
+of it is additive (nothing existing changes)
 and forward-only: **rolling back means restoring the pre-upgrade backup** with a compatible build, as below. An
 older build refuses the migrated database (`503 schema-mismatch`, and `restore` refuses a backup taken after the
 migration), so nothing runs half-rolled-back. Recreate the controller and worker **together**: an old worker

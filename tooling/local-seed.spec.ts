@@ -48,7 +48,7 @@ const json = (body: unknown, status = 200, headers: Record<string, string> = {})
 
 // An in-memory controller and operator command line: just enough of both for the script.
 class Fake {
-    users = new Map<string, { password: string; role: "operator" | "user" }>();
+    users = new Map<string, { password: string; role: "operator" | "user"; verified: boolean }>();
     orgs: { id: string; slug: string; owner: string }[] = [];
     projects: { id: string; slug: string; org: string }[] = [];
     keys = new Map<string, string>();
@@ -67,6 +67,7 @@ class Fake {
     projectStatus = 201;
     private seq = 0;
     migrated = true;
+    devMode = true;
     staleHealthAfterMigrate = 0;
     private stale = 0;
 
@@ -82,6 +83,19 @@ class Fake {
         }
         const options = (args.find((a) => a.startsWith("options=")) ?? "").slice(8).split(" ");
         const email = options[options.indexOf("--email") + 1]!.toLowerCase();
+        if (command === "verify-email") {
+            if (!this.devMode)
+                return {
+                    code: 1,
+                    output:
+                        "Marking an address verified by hand is limited to development controllers " +
+                        "(LAUNCHPAD_DEVELOPMENT=true, or an app_setting row for `development`).",
+                };
+            const user = this.users.get(email);
+            if (!user) return { code: 1, output: "No user has that email address." };
+            user.verified = true;
+            return { code: 0, output: `Verified ${email}.` };
+        }
         const password = readFileSync(options[options.indexOf("--password-file") + 1]!, "utf8");
         if (command === "setup" && [...this.users.values()].some((u) => u.role === "operator")) {
             return { code: 1, output: "An operator already exists; use the recovery command." };
@@ -89,7 +103,11 @@ class Fake {
         if (this.users.has(email)) {
             return { code: 1, output: "A user with that email already exists." };
         }
-        this.users.set(email, { password, role: command === "setup" ? "operator" : "user" });
+        this.users.set(email, {
+            password,
+            role: command === "setup" ? "operator" : "user",
+            verified: false,
+        });
         return { code: 0, output: `Created ${email}.` };
     };
 
@@ -284,6 +302,22 @@ describe("admin command line", () => {
         expect(() => classifyAdmin("migrate", failed("relation already exists"))).toThrow(
             /migrate failed/,
         );
+        // A deliberate refusal excuses verification; a malformed setting is a configuration error.
+        expect(
+            classifyAdmin(
+                "verify-email",
+                failed(
+                    "Marking an address verified by hand is limited to development controllers " +
+                        "(LAUNCHPAD_DEVELOPMENT=true, or an app_setting row for `development`).",
+                ),
+            ),
+        ).toBe("skipped");
+        expect(classifyAdmin("verify-email", failed("No user has that email address."))).toBe(
+            "missing",
+        );
+        expect(() =>
+            classifyAdmin("verify-email", failed("LAUNCHPAD_DEVELOPMENT must be true or false.")),
+        ).toThrow(/verify-email failed/);
         expect(() => classifyAdmin("migrate", failed("DATABASE_URL is required."))).toThrow(
             /DATABASE_URL is not set/,
         );
@@ -314,7 +348,11 @@ describe("the worked example", () => {
             "command=migrate",
             "command=setup",
             "command=create-user",
+            "command=verify-email",
+            "command=verify-email",
         ]);
+        // Recovery mail goes only to verified addresses, so the seeded accounts must be verified.
+        for (const account of fake.users.values()) expect(account.verified).toBe(true);
 
         // The same profile `launchpad login` would write works against the controller.
         const ctx = createContext(
@@ -325,6 +363,21 @@ describe("the worked example", () => {
         expect(me.profile).toBe("local");
         expect(me.controller).toBe(BASE);
         expect(me.key.organizationId).toBe(fake.orgs[0]!.id);
+    });
+
+    it("does not ask a remote controller to verify the accounts it seeds", async () => {
+        await seed(deps(), options(["--allow-remote"]));
+        expect(fake.adminCalls.filter((c) => c.includes("command=verify-email"))).toHaveLength(0);
+    });
+
+    it("still seeds a controller that is not in development mode, and says recovery stays off", async () => {
+        fake.devMode = false;
+        const summary = await seed(deps(), options());
+        expect(summary.keyIssued).toBe(true);
+        expect(logs.join("\n")).toMatch(/LAUNCHPAD_DEVELOPMENT=true/);
+        for (const account of fake.users.values()) expect(account.verified).toBe(false);
+        // The refusal ends the verification step; it does not abort the seed.
+        expect(fake.adminCalls.filter((c) => c.includes("command=verify-email"))).toHaveLength(1);
     });
 
     it("writes password and credential files readable only by the owner", async () => {
@@ -492,7 +545,11 @@ describe("failures give one clear message", () => {
     });
 
     it("an existing owner whose password file is missing", async () => {
-        fake.users.set("owner@launchpad.local", { password: "p".repeat(20), role: "user" });
+        fake.users.set("owner@launchpad.local", {
+            password: "p".repeat(20),
+            role: "user",
+            verified: false,
+        });
         expect(await message(() => seed(deps(), options()))).toMatch(
             /owner owner@launchpad.local already exists.*password file/,
         );
@@ -501,10 +558,15 @@ describe("failures give one clear message", () => {
     });
 
     it("an existing operator without a password file only matters when it is needed", async () => {
-        fake.users.set("someone@else.test", { password: "p".repeat(20), role: "operator" });
+        fake.users.set("someone@else.test", {
+            password: "p".repeat(20),
+            role: "operator",
+            verified: false,
+        });
         expect(await message(() => seed(deps(), options()))).toMatch(
             /operator already exists.*Creating the organization needs it/,
         );
+        expect(logs.join("\n")).toMatch(/no account for operator@launchpad.local/);
     });
 
     it("an organization slug held by another owner", async () => {
@@ -611,7 +673,7 @@ describe("secrets in messages", () => {
 const adminPasswordFiles = () =>
     fake.adminCalls
         .map((args) => args.find((a) => a.startsWith("options=")))
-        .filter((o): o is string => o !== undefined)
+        .filter((o): o is string => o !== undefined && o.includes("--password-file"))
         .map((o) => o.split(" ")[o.split(" ").indexOf("--password-file") + 1]!);
 
 describe("paths", () => {

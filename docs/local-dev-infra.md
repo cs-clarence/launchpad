@@ -75,7 +75,13 @@ rows by hand, open Adminer at `http://127.0.0.1:38080` (the default port; use yo
 `launchpad`, and the password from `.dev-infra/compose.env`. Read and
 write are both allowed, exactly as with `psql`; nothing is exposed beyond loopback. An invitation
 sent from the dashboard (the controller runs with `LAUNCHPAD_ENROLLMENT=invitation`) shows up in
-Mailpit.
+Mailpit. `up` also writes `LAUNCHPAD_DEVELOPMENT=true`, which lets the seed mark the operator and
+owner it creates as verified: a provisioned address is otherwise unverified and password recovery
+mail goes only to verified addresses, so **Forgot your password?** for either of them would send
+nothing. With the flag, both deliver a reset link to Mailpit. That verification is a development
+exception (see the admin command in the
+[controller README](../apps/controller/README.md#email-optional) and the
+[configuration service](decisions/configuration-service.md)).
 
 ## What it costs
 
