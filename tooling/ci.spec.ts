@@ -59,6 +59,17 @@ describe("CI workflow", () => {
         expect(gate.needs?.toSorted()).toEqual(others.toSorted());
     });
 
+    // The release-PR workflow dispatches CI on a release branch; the required `CI Passed` check must
+    // report there under the same name, with the PR-only commits job skipped.
+    it("can be dispatched, with the commits job skipped and the gate under the same name", () => {
+        const on = (
+            Bun.YAML.parse(readFileSync(path.join(workflows, "ci.yaml"), "utf8")) as { on: object }
+        ).on;
+        expect(Object.keys(on)).toContain("workflow_dispatch");
+        expect(ci.jobs.commits!.if).toBe("${{ github.event_name == 'pull_request' }}");
+        expect(gate.name).toBe("CI Passed");
+    });
+
     it("always runs the gatekeeper, under a stable name", () => {
         expect(gate.if).toBe("${{ always() }}");
         expect(gate.name).toBe("CI Passed");
@@ -155,7 +166,7 @@ describe("CI gatekeeper script", () => {
     });
 
     it("passes a push or merge-queue run where only commits was skipped", () => {
-        for (const event of ["push", "merge_group"]) {
+        for (const event of ["push", "merge_group", "workflow_dispatch"]) {
             expect(evaluate(event, { ...allGreen, commits: "skipped" })).toBeUndefined();
         }
     });
@@ -193,6 +204,15 @@ describe("CI gatekeeper script", () => {
 // tooling/release.spec.ts asserts that file. Every other workflow, and the composite action they
 // use, must not publish, push, tag, log in to a registry or hold a credential.
 const RELEASE_WORKFLOW = "release.yaml";
+// The one other workflow that may write: it pushes a `release/<version>` branch and opens a PR, and
+// never tags or publishes (tooling/release-pr.spec.ts asserts it). Its carve-out below is exact:
+// these two command lines and these three job permissions, nothing else.
+const RELEASE_PR_WORKFLOW = "release-pr.yaml";
+const RELEASE_PR_ALLOWED_COMMANDS = [
+    'git tag -d "v$VERSION"',
+    'git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic $auth" push origin "HEAD:refs/heads/release/$VERSION"',
+];
+const RELEASE_PR_WRITES = ["open: contents", "open: pull-requests", "open: actions"];
 const actionFile = path.join(root, ".github", "actions", "setup-workspace", "action.yaml");
 const others = [
     ...readdirSync(workflows)
@@ -277,14 +297,54 @@ const triggerProblems = (on: unknown): string[] => {
     return problems;
 };
 
+// What is left of a workflow's commands once the release-PR carve-out's exact lines are removed.
+const afterCarveOut = (commands: string) =>
+    commands
+        .split("\n")
+        .filter((line) => !RELEASE_PR_ALLOWED_COMMANDS.includes(line.trim()))
+        .join("\n");
+const strict = others.filter((file) => path.basename(file) !== RELEASE_PR_WORKFLOW);
+
 describe("every workflow except the release workflow", () => {
     it("is checked, and the release workflow is the only one exempt", () => {
         expect(readdirSync(workflows).toSorted()).toEqual([
             "ci.yaml",
             "release-dry-run.yaml",
+            RELEASE_PR_WORKFLOW,
             RELEASE_WORKFLOW,
         ]);
-        expect(others).toHaveLength(3);
+        expect(others).toHaveLength(4);
+        expect(strict).toHaveLength(3);
+    });
+
+    it("keeps one narrow carve-out for the release-PR workflow", () => {
+        const text = readFileSync(path.join(workflows, RELEASE_PR_WORKFLOW), "utf8");
+        const doc = parse(text);
+        expect(permissionProblems(doc)).toEqual(RELEASE_PR_WRITES);
+        expect(doc.permissions).toEqual({});
+        // Its commands are clean once the two exact lines are set aside.
+        expect(afterCarveOut(commandsOf(text))).not.toMatch(FORBIDDEN_COMMAND);
+        expect(commandsOf(text)).toContain("git tag -d");
+        for (const used of actionsOf(doc)) expect(used).not.toMatch(FORBIDDEN_ACTION);
+    });
+
+    it("refuses anything beyond the carve-out", () => {
+        for (const command of [
+            "git push origin v1.0.0",
+            "git push --tags",
+            'git push origin "HEAD:refs/tags/v$VERSION"',
+            'git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic $auth" push origin "HEAD:refs/heads/release/$VERSION" --force',
+            'git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic $auth" push origin main',
+            "git tag v1.0.0",
+            'git tag -d "v$VERSION" && git push origin v1',
+            "npm publish",
+            "gh release create v1",
+        ]) {
+            expect(afterCarveOut(command), command).toMatch(FORBIDDEN_COMMAND);
+        }
+        for (const command of RELEASE_PR_ALLOWED_COMMANDS) {
+            expect(afterCarveOut(`  ${command}`)).not.toMatch(FORBIDDEN_COMMAND);
+        }
     });
 
     it("uses no secret and no publishing credential", () => {
@@ -295,7 +355,7 @@ describe("every workflow except the release workflow", () => {
     });
 
     it("holds no write permission and no id-token at workflow or job scope", () => {
-        for (const file of others) {
+        for (const file of strict) {
             expect(permissionProblems(parse(readFileSync(file, "utf8"))), file).toEqual([]);
         }
     });
@@ -315,7 +375,7 @@ describe("every workflow except the release workflow", () => {
     });
 
     it("runs no publishing, pushing, tagging or login command and uses no publishing action", () => {
-        for (const file of others) {
+        for (const file of strict) {
             const text = readFileSync(file, "utf8");
             expect(commandsOf(text), file).not.toMatch(FORBIDDEN_COMMAND);
             for (const used of actionsOf(parse(text)))

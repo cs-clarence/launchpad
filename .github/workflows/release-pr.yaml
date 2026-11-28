@@ -1,0 +1,179 @@
+# Opens the release pull request: bumps the versions on a branch `release/<version>` and opens a PR
+# into main. It never tags and never publishes: it pushes ONLY that branch (an explicit refspec),
+# and the maintainer still creates the single `v<semver>` tag by hand on the merge commit, which
+# starts release.yaml (docs/decisions/release-publishing.md, docs/releasing.md).
+# tooling/release-pr.spec.ts asserts this file; the decisions are in tooling/release-pr.ts.
+name: Release PR
+
+on:
+  workflow_dispatch:
+    inputs:
+      base:
+        description: The base version X.Y.Z of the release
+        type: string
+        required: true
+      channel:
+        description: The release channel (the rows of tooling/release-channels.ts)
+        type: choice
+        required: true
+        default: stable
+        options:
+          - stable
+          - rc
+
+permissions: {}
+
+# One dispatch per base version at a time, and never cancel one that is part-way.
+concurrency:
+  group: release-pr-${{ inputs.base }}
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
+env:
+  OMNI_VERSION: "0.21.0"
+  # SHA-256 of omni-v0.21.0-x86_64-unknown-linux-gnu.zip, from the GitHub release asset.
+  OMNI_SHA256: "58534422a943885dcac2830c4f2a52001a5199283b55bc7688ece5da75a4bee6"
+  COG_VERSION: "7.0.0"
+  # SHA-256 of cocogitto-7.0.0-x86_64-unknown-linux-musl.tar.gz, from the GitHub release asset.
+  COG_SHA256: "e03938ff2c4c86d71c00c0f3284dbbe95c5ca76fe34a51f33e945c23010d59bb"
+
+jobs:
+  open:
+    name: Open the release PR
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: write
+      pull-requests: write
+      actions: write
+    env:
+      BASE: ${{ inputs.base }}
+      CHANNEL: ${{ inputs.channel }}
+      REF: ${{ github.ref }}
+    steps:
+      - name: Run from main only
+        run: |
+          if [ "$REF" != "refs/heads/main" ]; then
+            echo "::error::this workflow runs from main only, not $REF"
+            exit 1
+          fi
+
+      # The token is not kept in the checkout: the dependencies and hooks that run below never
+      # see it, and only the steps that need it receive it through env.
+      - name: Check out main
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Install Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          no-cache: true
+
+      - name: Install Node
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "24"
+          package-manager-cache: false
+
+      - name: Install Omni
+        run: |
+          curl -fsSL -o "$RUNNER_TEMP/omni.zip" "https://github.com/omni-oss/omni/releases/download/omni-v${OMNI_VERSION}/omni-v${OMNI_VERSION}-x86_64-unknown-linux-gnu.zip"
+          echo "$OMNI_SHA256  $RUNNER_TEMP/omni.zip" | sha256sum -c -
+          mkdir -p "$RUNNER_TEMP/omni-bin"
+          unzip -o "$RUNNER_TEMP/omni.zip" -d "$RUNNER_TEMP/omni-bin"
+          chmod +x "$RUNNER_TEMP/omni-bin/omni"
+          echo "$RUNNER_TEMP/omni-bin" >> "$GITHUB_PATH"
+
+      - name: Install Cocogitto
+        run: |
+          curl -fsSL -o "$RUNNER_TEMP/cog.tar.gz" "https://github.com/cocogitto/cocogitto/releases/download/${COG_VERSION}/cocogitto-${COG_VERSION}-x86_64-unknown-linux-musl.tar.gz"
+          echo "$COG_SHA256  $RUNNER_TEMP/cog.tar.gz" | sha256sum -c -
+          mkdir -p "$RUNNER_TEMP/cog-bin"
+          tar -xzf "$RUNNER_TEMP/cog.tar.gz" -C "$RUNNER_TEMP/cog-bin" --strip-components=1 x86_64-unknown-linux-musl/cog
+          echo "$RUNNER_TEMP/cog-bin" >> "$GITHUB_PATH"
+          "$RUNNER_TEMP/cog-bin/cog" --version
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      # The inputs are validated again here, by the registry; the pre-release number is computed
+      # from the existing tags, never typed.
+      - name: Plan the release
+        id: plan
+        run: bun tooling/release-pr.ts plan --base "$BASE" --channel "$CHANNEL" >> "$GITHUB_OUTPUT"
+
+      - name: The release branch does not exist yet
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.plan.outputs.version }}
+        run: |
+          count=$(gh api "repos/$GITHUB_REPOSITORY/git/matching-refs/heads/release/$VERSION" \
+            | jq --arg ref "refs/heads/release/$VERSION" '[.[] | select(.ref == $ref)] | length')
+          if [ "$count" != 0 ]; then
+            echo "::error::the branch release/$VERSION already exists"
+            exit 1
+          fi
+
+      # Cocogitto reads the committer from git config files, not from the environment.
+      - name: Cut the release branch and bump
+        env:
+          VERSION: ${{ steps.plan.outputs.version }}
+        run: |
+          git switch -c "release/$VERSION"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          cog bump --version "$VERSION" --include-packages
+
+      - name: Check the versions
+        run: omni -i run check:versions -p '@launchpad-kit/tooling'
+
+      # The range ends at the tag cog created locally, so this runs before that tag is deleted.
+      - name: Write the PR body
+        env:
+          VERSION: ${{ steps.plan.outputs.version }}
+          RANGE: ${{ steps.plan.outputs.range }}
+          CHANNEL_NAME: ${{ steps.plan.outputs.channel }}
+        run: |
+          cog changelog --template remote --remote github.com \
+            --owner "${GITHUB_REPOSITORY%%/*}" --repository "${GITHUB_REPOSITORY##*/}" \
+            "$RANGE" > "$RUNNER_TEMP/changelog.md"
+          bun tooling/release-pr.ts body --version "$VERSION" \
+            --changelog "$RUNNER_TEMP/changelog.md" --out "$RUNNER_TEMP/body.md"
+
+      # A tag is never pushed: the local one is removed, and only the branch is pushed below.
+      - name: Delete the local tag
+        env:
+          VERSION: ${{ steps.plan.outputs.version }}
+        run: git tag -d "v$VERSION"
+
+      - name: Push the release branch only
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.plan.outputs.version }}
+        run: |
+          auth=$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)
+          echo "::add-mask::$auth"
+          git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic $auth" push origin "HEAD:refs/heads/release/$VERSION"
+
+      - name: Open the pull request
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.plan.outputs.version }}
+        run: |
+          cog verify "chore(release): v$VERSION"
+          gh pr create --base main --head "release/$VERSION" \
+            --title "chore(release): v$VERSION" --body-file "$RUNNER_TEMP/body.md"
+
+      # A PR opened with the workflow token starts no pull_request run, so CI is dispatched on
+      # the branch; its `CI Passed` check lands on the head commit (unverified).
+      - name: Start CI on the branch
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.plan.outputs.version }}
+        run: gh workflow run ci.yaml --ref "release/$VERSION"

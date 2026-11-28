@@ -5,6 +5,10 @@ name: CI
 
 on:
   merge_group:
+  # Also by hand, so the release PR workflow can start CI on a `release/<version>` branch: a PR
+  # opened with the workflow token starts no pull_request run. The `commits` job is skipped under
+  # this event and the gatekeeper expects exactly that (it only expects `success` on pull requests).
+  workflow_dispatch:
   push:
     branches: [main]
   pull_request:
