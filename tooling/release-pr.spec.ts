@@ -284,7 +284,7 @@ describe("release PR workflow credentials and supply chain", () => {
             readFileSync(path.join(root, ".github/actions/setup-workspace/action.yaml"), "utf8"),
         ) as {
             inputs: Record<string, { default?: string }>;
-            runs: { steps: { uses?: string; run?: string; if?: string }[] };
+            runs: { steps: { name?: string; uses?: string; run?: string; if?: string }[] };
         };
         expect(action.inputs["omni-sha256"]!.default).toMatch(/^[0-9a-f]{64}$/);
         const setup = stepOf(prepare, "Set up the workspace");
