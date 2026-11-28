@@ -24,6 +24,7 @@ import {
     type PreviousRelease,
     tagMismatches,
 } from "./release-plan";
+import { spawnSync } from "node:child_process";
 import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -594,5 +595,24 @@ describe("abandoned releases", () => {
     it("has a committed file of the right shape", () => {
         const entries = JSON.parse(readFileSync(path.join(root, ABANDONED_FILE), "utf8"));
         expect(abandonedFormatProblems(entries)).toEqual([]);
+    });
+});
+
+// The `--require-tag` flag is wired through the real command line: the tag listing of this checkout
+// holds no v99.0.0, so the flag must make the command fail and its absence must not.
+describe("the no-regression command line", () => {
+    const run = (...args: string[]) =>
+        spawnSync("bun", ["tooling/release-plan.ts", "no-regression", ...args], {
+            cwd: root,
+            encoding: "utf8",
+        });
+
+    it("fails closed with --require-tag when the listing lacks the tag, and not without it", () => {
+        const required = run("99.0.0", "--require-tag");
+        expect(required.status).toBe(1);
+        expect(required.stderr).toContain("does not contain v99.0.0");
+        const plain = run("99.0.0");
+        expect(plain.status).toBe(0);
+        expect(plain.stdout).toContain("does not go backwards");
     });
 });

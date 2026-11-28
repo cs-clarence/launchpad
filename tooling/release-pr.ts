@@ -19,6 +19,7 @@ import {
 } from "./release-channels";
 import { checkTag, isStable, previousStable, TAG_PATTERN } from "./release-core";
 import { compareSemver } from "./semver-compare";
+import { SOURCE_VERSIONS } from "./versions";
 
 const root = path.resolve(import.meta.dirname, "..");
 
@@ -28,18 +29,20 @@ export const BASE_PATTERN = /^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$
 // workflow's static `options` list is asserted to equal this.
 export const channelNames = (channels: Channel[] = CHANNELS) => channels.map((c) => c.name);
 
-// The highest counter of `v<base>-<channel>.N` tags plus one, or 1.
-export function nextCounter(base: string, channel: Channel, tags: string[]): number {
+// The highest counter of `v<base>-<channel>.N` tags plus one, or 1. Counters have no length limit
+// in SemVer, so they are compared as BigInt, not as numbers that lose precision.
+export function nextCounter(base: string, channel: Channel, tags: string[]): bigint {
     if (channel.preRelease === null) throw new Error("stable has no counter");
     const pattern = preReleasePattern(channel.preRelease);
-    let highest = 0;
+    let highest = 0n;
     for (const tag of tags) {
         if (!tag.startsWith(`v${base}-`)) continue;
         const part = tag.slice(`v${base}-`.length);
         if (!pattern.test(part)) continue;
-        highest = Math.max(highest, Number(part.slice(part.lastIndexOf(".") + 1)));
+        const counter = BigInt(part.slice(part.lastIndexOf(".") + 1));
+        if (counter > highest) highest = counter;
     }
-    return highest + 1;
+    return highest + 1n;
 }
 
 // The changelog range. A stable release covers everything since the last stable tag (the
@@ -87,8 +90,16 @@ export function planRelease(
     return { version, channel: channel.name, range: changelogRange(version, tags) };
 }
 
+// GitHub refuses a PR body of more than 65536 characters; the changelog of a first release can be
+// long, so it is cut, with a note, well below that.
+export const BODY_LIMIT = 60000;
+
 // The PR description: what the PR is, what merging does not do, and the changelog.
 export function prBody(version: string, channel: string, changelog: string): string {
+    const log =
+        changelog.length > BODY_LIMIT
+            ? `${changelog.slice(0, BODY_LIMIT)}\n\n(The changelog is cut here; see CHANGELOG.md in this PR.)`
+            : changelog;
     return [
         `Release **v${version}** (${channel} channel), opened by the release PR workflow.`,
         "",
@@ -98,9 +109,59 @@ export function prBody(version: string, channel: string, changelog: string): str
         "",
         "## Changelog",
         "",
-        changelog.trim(),
+        log.trim(),
         "",
     ].join("\n");
+}
+
+// What the bump commit may touch. The push job of the workflow (which cannot run repository code)
+// repeats these patterns in shell and `tooling/release-pr.spec.ts` asserts the two are the same:
+// the manifests, the lockfile, the changelogs and the three source files that hold a version
+// string (SOURCE_VERSIONS). Nothing else: no workflow, no script, no other source.
+export const ALLOWED_PATHS: RegExp[] = [
+    /^package\.json$/,
+    /^(apps|packages)\/[^/]+\/package\.json$/,
+    /^bun\.lock$/,
+    /^CHANGELOG\.md$/,
+    /^(apps|packages)\/[^/]+\/CHANGELOG\.md$/,
+    ...SOURCE_VERSIONS.map(
+        (source) => new RegExp(`^${source.file.replace(/[.*+?^${}()|[\]\\/]/g, "\\$&")}$`),
+    ),
+];
+
+export const allowedPath = (file: string) => ALLOWED_PATHS.some((pattern) => pattern.test(file));
+
+// A manifest or a source version file may change only on the lines that hold the version.
+export const versionLine = (line: string) =>
+    /^[+-].*\bversion\b/.test(line) && !/^(\+\+\+|---) /.test(line);
+
+export interface ChangedFile {
+    // The raw `git diff` fields: modes and the status letter.
+    oldMode: string;
+    newMode: string;
+    status: string;
+    path: string;
+}
+
+// Why a bump commit's changes are refused: a path outside the allowlist, a deletion or a rename, a
+// symlink or an executable file, or nothing changed at all.
+export function changedFileProblems(files: ChangedFile[]): string[] {
+    if (files.length === 0) return ["the commit changes nothing"];
+    const problems: string[] = [];
+    for (const file of files) {
+        if (!allowedPath(file.path)) problems.push(`${file.path} is not an allowed path`);
+        if (file.status !== "A" && file.status !== "M") {
+            problems.push(
+                `${file.path}: status ${file.status} is not an addition or a modification`,
+            );
+        }
+        if (file.newMode !== "100644" || !["100644", "000000"].includes(file.oldMode)) {
+            problems.push(
+                `${file.path}: mode ${file.oldMode} to ${file.newMode} is not a plain file`,
+            );
+        }
+    }
+    return problems;
 }
 
 function tagsInGit(): string[] {

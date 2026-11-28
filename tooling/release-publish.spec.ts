@@ -122,9 +122,13 @@ describe("retag", () => {
     // resolves to the source digest, labelled with the staged image's version.
     function registry(version: string, state: State) {
         const created: string[] = [];
+        const sources: string[] = [];
+        let failCreate = false;
         const tags: State = { [`sha-${SHA}`]: { digest: staged, version }, ...state };
         const exec = (_command: string, args: string[]) => {
             if (args[2] === "create") {
+                sources.push(args[5]!);
+                if (failCreate) return { code: 1, out: "", err: "ERROR: denied" };
                 const tag = args[4]!.split(":").at(-1)!;
                 created.push(tag);
                 tags[tag] = { digest: staged, version };
@@ -146,7 +150,14 @@ describe("retag", () => {
                 err: "",
             };
         };
-        return { exec, created };
+        return {
+            exec,
+            created,
+            sources,
+            failCreates: () => {
+                failCreate = true;
+            },
+        };
     }
     const quiet = <T>(fn: () => T): T => {
         const log = console.log;
@@ -162,6 +173,26 @@ describe("retag", () => {
         const { exec, created } = registry("1.2.3", {});
         quiet(() => retag("worker", "1.2.3", staged, SHA, exec));
         expect(created).toEqual(["1.2.3", "1.2", "latest"]);
+    });
+
+    it("sources every tag from the staged digest, never from the sha tag", () => {
+        const { exec, created, sources } = registry("1.2.3", {});
+        quiet(() => retag("worker", "1.2.3", staged, SHA, exec));
+        expect(created).toHaveLength(3);
+        for (const source of sources) {
+            expect(source).toBe(`ghcr.io/launchpad-kit/launchpad-worker@${staged}`);
+            expect(source).not.toContain(`:sha-${SHA}`);
+        }
+    });
+
+    it("fails closed when creating a tag fails, and creates nothing after it", () => {
+        const { exec, created, sources, failCreates } = registry("1.2.3", {});
+        failCreates();
+        expect(() => quiet(() => retag("worker", "1.2.3", staged, SHA, exec))).toThrow(
+            /creating 1.2.3 failed/,
+        );
+        expect(sources).toHaveLength(1);
+        expect(created).toEqual([]);
     });
 
     it("creates the version, rc and next for an rc, and never X.Y or latest", () => {

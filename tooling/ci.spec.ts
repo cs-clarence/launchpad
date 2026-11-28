@@ -241,7 +241,7 @@ const commandsOf = (text: string) =>
         .replace(/^\s*#.*$/gm, "");
 
 const FORBIDDEN_COMMAND =
-    /\b(publish|push|login|logout|tag|release create|imagetools create|attestation|provenance)\b|docker (push|login|tag)/;
+    /\b(publish|push|login|logout|tag|release create|imagetools create|attestation|provenance|send-pack|update-ref|fast-import)\b|docker (push|login|tag)/;
 const FORBIDDEN_ACTION =
     /^(docker\/(login-action|build-push-action)|actions\/(attest|attest-build-provenance)|softprops\/|ncipollo\/|changesets\/|JS-DevTools\/npm-publish)/;
 
@@ -457,6 +457,9 @@ describe("every workflow except the release workflow", () => {
             "git push origin v1",
             "gh release create v1",
             "docker buildx imagetools create -t a b",
+            "git send-pack origin x",
+            "git update-ref refs/heads/main HEAD",
+            "git fast-import < x",
         ]) {
             expect(command, command).toMatch(FORBIDDEN_COMMAND);
         }
