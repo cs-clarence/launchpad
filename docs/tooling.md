@@ -195,7 +195,18 @@ re-runs previously failed tasks even when cached) and finish with
 `omni -i cache prune -sy -o="7d"` to keep the restored cache small. `tooling/ci.spec.ts`
 guards the workflow: the gatekeeper must need every other job and always run, its real
 script is executed against every pass and fail scenario, and no job may bypass Omni with
-a package script. Lint the workflow files with
+a package script. Every workflow except `release.yaml` (and the setup action) is also checked there
+for publish, push, tag and login commands, publishing actions and credentials.
+`.github/workflows/release.yaml` is the single publishing workflow: `tooling/release.spec.ts`
+asserts its trigger, job graph, per-job permissions, `release` environment, absence of caches and
+secrets, SHA-pinned actions and the tag guard (it runs the guard step in bash). The release
+workflows set up through `.github/actions/setup-workspace`, which owns the Omni and Cocogitto
+versions and digests; the release jobs call it with `cache: "false"`. The specs allow that one
+local action and still pin every remote action by SHA.
+`tooling/release-pr.ts` (the release PR workflow's decisions: input validation, pre-release counter, changelog range, PR body; specs `release-pr-plan.spec.ts` and `release-pr.spec.ts`), `tooling/release-channels.ts` (the release channel registry, as data, and the channel rules; spec: `release-channels.spec.ts`, which also checks the channels table of `docs/releasing.md`), `tooling/release-core.ts` (pure, dependency-free; spec: `release-plan.spec.ts`), `release-publish.ts` (what the credentialed jobs run: node built-ins only) and `release-plan.ts` hold its decisions: tag guard, npm
+dist-tag, floating image tags, partial-release check, `CI Passed` lookup. Run its commands by hand
+with `bun tooling/release-plan.ts <command>`; `release:dry-run` takes `-a options=--skip-images`.
+Lint the workflow files with
 `docker run --rm -v "$PWD":/repo -w /repo rhysd/actionlint:latest` after editing them.
 **CI installs the released Omni** (pinned in the setup action), which can be older than
 a local `cargo install` build of Omni's main branch. The first CI run failed on a preset

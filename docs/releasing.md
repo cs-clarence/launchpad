@@ -1,10 +1,12 @@
 # Releasing Launchpad
 
-For a maintainer preparing a release. **Nothing in this repository publishes, pushes,
-tags or releases by itself.** The rehearsal below is read-only; real publishing needs a
-separate, explicit authorization and a workflow that does not exist yet. The
-[release publishing decision](decisions/release-publishing.md) defines the one gated workflow
-that may publish. This sentence is revisited when that workflow lands. The state of the first
+For a maintainer preparing a release. **Only one workflow publishes:**
+`.github/workflows/release.yaml`, described in the
+[release publishing decision](decisions/release-publishing.md). It runs when a maintainer pushes a
+`v<semver>` tag (never on a pull request, a schedule or by hand), each publishing job (`stage`,
+`npm-publish`, `image-publish`) waits for approval of the `release` environment, and it has **not
+run yet**. Nothing else in the repository publishes, pushes, tags or releases. The rehearsal below
+is read-only. The state of the first
 release, what remains and the decisions still open are in the
 [0.1.0 plan](plans/release-0.1.0.md); its draft notes are in [release notes 0.1.0](release-notes/0.1.0.md).
 
@@ -254,14 +256,17 @@ A release is a person's decision. Work through this in order and stop at the fir
    [production Compose](production-compose.md#images-and-pins)). Refresh them deliberately.
 6. Run the [dry run](#rehearse-a-release); inspect the tarball listings, `SHA256SUMS` and the
    image notes. No `.env`, key, source map or workspace specifier in any tarball.
-7. `cog bump --version X.Y.Z --include-packages` on a clean checkout, then review the bump commit, changelog and tag locally.
+7. (Done by the [release PR workflow](#opening-the-release-pr); the manual fallback is)
+   `cog bump --version X.Y.Z --include-packages` on a clean checkout, then review the bump commit, changelog and tag locally.
    The bump commit rewrites manifests, source version strings and `bun.lock`, and does not
    carry `[skip ci]`, so CI validates it. On that commit rerun step 6's dry run and use the
    checksums from **that** run. The ones from before the bump
    are for a different version.
-8. Obtain explicit authorization to publish. Publishing uses a least-privilege identity,
-   provenance attestation, and pinned image tags and digests; it is a separate workflow
-   written and reviewed for that purpose, and it is not part of this repository yet.
+8. Obtain explicit authorization to publish, then (after the maintainer steps in the decision
+   record are done) merge the release pull request and, on the merge commit on `main` after its
+   `CI Passed` is green, create and push the one tag `v<semver>` by hand (delete the local
+   Cocogitto tag first; push tags one at a time). The workflow then runs; approve each `release`
+   job (see below).
 9. After publishing: install the published packages in a clean project on Node and Bun
    (`omni -i run test:packages` does this from tarballs), and keep the previous version's
    artifacts available for rollback.
@@ -270,3 +275,232 @@ Rolling back a published package is not possible: an npm version cannot be unpub
 safely once used, so a bad release is superseded by a fixed one and the bad version is
 deprecated. An image tag is never reused. Data is protected by the backup that the upgrade
 procedure requires first.
+
+## Opening the release PR
+
+`.github/workflows/release-pr.yaml` does the mechanical part of the checklist's step 7. In
+Actions, run **Release PR** from `main` (it fails on any other ref) with the base version `X.Y.Z`
+and a channel (`stable` or `rc`, the rows of the registry below). It never tags and never
+publishes. Three jobs:
+
+1. `prepare` (read-only; runs `bun install`, Cocogitto and its hooks): validates the inputs with the
+   registry (the kind of release comes from the base and the channel must support it), computes the
+   pre-release number from the existing `v<base>-<channel>.*` tags, refuses a stable `X.Y.Z` that
+   exists or a version that would go backwards across channels, cuts `release/<version>`, runs
+   `cog bump --version <version> --include-packages` and `check:versions`, checks the commit message
+   and the title with `cog verify`, and writes the PR body from `cog changelog` (a stable release
+   since the last stable tag, a pre-release since the previous tag of any kind). It hands over only
+   data: a git bundle of the one bump commit and the body.
+2. `push` (`contents: write`; runs no repository code): validates the bundle: one ref; one commit
+   directly on `main` whose object is exactly tree, that parent, author, committer and the fixed
+   message (no signature or other header, nothing after the message); only allowlisted paths
+   (`package.json` and `CHANGELOG.md` files one level below `apps/` or `packages/` with
+   `[a-z0-9-]` directory names, the root ones, `bun.lock` and the three source files that hold a
+   version string), as plain files, none larger than 2 MiB (about ten times the lockfile, far
+   above a changelog that gains one release per section, but finite); and a manifest, `bun.lock` or
+   source file changing only on its version line, which must carry this version (a new manifest
+   is refused). Every blob is read with `git cat-file` and compared with `diff`, and a failing
+   command stops the job. It then checks that `release/<version>` does not exist and pushes
+   **only** `<validated commit>:refs/heads/release/<version>`; the data is never checked out.
+3. `open-pr` (`pull-requests: write`; runs no repository code): opens the PR
+   `chore(release): v<version>`.
+
+Then you approve the PR's pending workflow run (**Approve workflows to run** in the merge box: a
+PR opened with the workflow token starts its run in the approval-required state), review the PR,
+wait for `CI Passed`, merge, and create the one tag `v<version>` by hand on the merge commit as in
+step 8; the tag starts the release workflow. The manual steps of the checklist (step 7) remain the
+fallback.
+
+**The PR body** (the changelog text, so mentions and closing keywords) comes from the `prepare`
+job and is accepted as it is, cut at 60,000 bytes by the tooling and refused above 65,000 bytes
+by `open-pr`; treat it as text to read, not as instructions. `open-pr` holds only
+`pull-requests: write`: `gh pr create` uses GraphQL, and the REST page for creating a pull request
+names no further permission, so `pull-requests: write` is expected to suffice, which is unverified
+(add `contents: read` if it does not).
+
+**What to check in the PR.** The workflow validates the paths, but you are the reviewer: confirm
+that the diff touches only versions, the lockfile and changelogs (it should read as a version bump
+and generated changelog text, nothing else).
+
+**Maintainer settings.** (1) **Settings, Actions, General, "Allow GitHub Actions to create and
+approve pull requests"** must be on, or `gh pr create` fails; only the `open-pr` job, which runs no
+untrusted code, uses it. (2) Recommended: the `release-pr` environment (created on first use) with
+its deployment branch policy limited to `main`, and **no required reviewers** beyond that (a
+maintainer decision): `push` and `open-pr` each declare `environment: release-pr`, so a configured
+reviewer would have to approve twice per run. GitHub runs the workflow file from the branch it is
+dispatched on, so a branch with an edited `release-pr.yaml` is the trust boundary. The policy binds
+only jobs that still reference the environment: while they do, the two jobs that hold write scopes
+cannot run from another branch, but a dispatched file that drops `environment:` is outside it, so
+trust in who may dispatch, and in reviewed workflow changes, remains part of the boundary.
+
+**When it goes wrong.** If a run stops after the push, or the PR was closed without merging,
+delete the branch `release/<version>` and dispatch again (the workflow refuses an existing
+branch). A base lower than the latest tag (for example 1.5.0 when `v2.0.0-rc.1` exists) is
+accepted on purpose, for backports; the registry rules still apply.
+
+A PR opened with the workflow token starts its `pull_request` run in the approval-required state;
+you start it with **Approve workflows to run**, and that run's `CI Passed` is the merge gate. The
+workflow no longer dispatches CI: a `workflow_dispatch` run is not a required status check the
+ruleset honours (unverified, but the reason the dispatch and its `actions: write` were removed), and
+the approval click is needed either way. A compromised `prepare` job can write Actions cache
+entries scoped to `main`; this is accepted, as `ci.yaml` already does the same.
+
+## Release channels
+
+The channels a release can use are rows of a registry, `tooling/release-channels.ts`, which is the
+source of truth for the guard, the npm tag, the image tags and the promotion order. The table below
+is checked against it by `tooling/release-channels.spec.ts`, so it cannot drift (the spec prints the
+expected text).
+
+<!-- channels:start -->
+
+| Channel | Rank | Pre-release form | Supports            | npm tag  | Image tags      | Trigger | Scheme  |
+| ------- | ---- | ---------------- | ------------------- | -------- | --------------- | ------- | ------- |
+| rc      | 3    | `-rc.N`          | major, minor, patch | `next`   | `rc`, `next`    | tag     | counter |
+| stable  | 4    | none             | major, minor, patch | `latest` | `X.Y`, `latest` | tag     | counter |
+
+<!-- channels:end -->
+
+- **Release kind** comes from the base version: patch if Z > 0, minor if Z is 0 and Y > 0, major if
+  it is X.0.0 (no special case for 0.x). A channel may release only the kinds it supports.
+- **Guard.** A pre-release must be `<registered channel>.<N>`, N numeric without leading zeros.
+  `v1.2.3-foo.1`, a bare `v1.2.3-rc`, `v1.2.3-rc-1` and `v1.2.3-rc.01` are refused, and so is a kind
+  the channel does not support. The guard job repeats the rules in shell (it cannot import the
+  registry); the spec runs it against the registry.
+- **Re-running a pre-release after its stable shipped is refused**, by design: the stable tag
+  exists, so the no-regression rule fires (fix forward with a new version).
+- **No regression.** For one X.Y.Z a lower-ranked channel cannot follow an existing higher-ranked
+  one (with `v1.2.0-rc.1` existing, a `beta` of 1.2.0 is refused), and no pre-release is released
+  once the stable X.Y.Z exists. `verify` checks this against the `v` tags of its full checkout.
+- **npm.** Each channel publishes under its own tag, forward-only: when the channel's tag already
+  points at a greater version the version is published with `retry` instead, and a missing tag is
+  eligible. `next` is the rc channel's tag. There is no `next` alias across channels on npm:
+  trusted publishing covers `npm publish` only, and moving a tag later would need `npm dist-tag
+  add`, which is not available to the workflow.
+- **Images.** The exact tag always, then the channel's image tags, each forward-only by the
+  `org.opencontainers.image.version` label: stable moves `X.Y` and `latest`, rc moves `rc` and
+  `next` (the `next` alias is shared by the pre-release channels, so an older channel never moves
+  it past a newer one). The partial-release check stays for stable releases only.
+
+**Adding a channel is one more row** (and its case arm in the guard step, which the spec checks).
+For example, if `alpha` and `beta` are wanted, for major and minor releases only:
+
+```ts
+{ name: "alpha", rank: 1, preRelease: "-alpha.N", supports: ["major", "minor"],
+  npmTag: "alpha", imageTags: ["alpha", "next"], trigger: "tag", versionScheme: "counter" },
+{ name: "beta", rank: 2, preRelease: "-beta.N", supports: ["major", "minor"],
+  npmTag: "beta", imageTags: ["beta", "next"], trigger: "tag", versionScheme: "counter" },
+```
+
+The registry is validated by the spec: lowercase letter names that are not ranges and not
+`latest`, `retry`, `next` or `bootstrap`; unique names, ranks and npm tags; ranks that follow the
+SemVer order of the names (alpha < beta < rc) with stable last; a non-empty `supports` subset (stable
+supports all three); and only stable may use `latest` and `X.Y`.
+
+### Future: nightly (not implemented)
+
+The `trigger` (`schedule`) and `versionScheme` (`snapshot`) fields are reserved for a nightly
+channel, and the registry validation refuses them today. It needs its own amendment of the
+[record](decisions/release-publishing.md) first: a separate `nightly` environment without
+reviewers; a retention cap with **no prune**, deleting only named tags; whether npm trusted
+publishing allows a second workflow file per package (an open point); no git tags, so `checkTags`
+and the abandon flow do not apply; and a version such as `X.Y.Z-nightly.<date>.<sha>`, which does
+not fit `<channel>.<N>`.
+
+## The release workflow
+
+`.github/workflows/release.yaml` runs these jobs in order, each needing the previous ones and
+`guard`; the decision record has the permissions of each.
+
+1. `guard`: the tag is a SemVer `v<version>` without build metadata, of a registered channel (see
+   above), at most 128 characters
+   after the `v`. It runs before any checkout.
+2. `verify`: the tag equals the version of the root and every published manifest, the commit is on
+   `main`, its `CI Passed` check succeeded, the previous stable release is complete (refuses a new
+   stable release on a partial one unless that release is in `tooling/abandoned-releases.json`), then the full gate, the dry run and `test:packages` on Node
+   22.12 and the current Node. It restores no cache: `verify` and `build` use the repository's
+   `setup-workspace` action with `cache: "false"`, which installs Omni from its pinned release.
+3. `build`: packs the tarballs once and uploads them with `SHA256SUMS`; the checksum of
+   `SHA256SUMS` is a job output that later jobs check before using the tarballs.
+4. `stage` (approval): builds each image once, pushes it as `sha-<commit>` (an existing tag is
+   reused, never rebuilt) and creates the signed GitHub attestation for its digest.
+5. `smoke`: installs and runs the exact tarballs on Node 22.12; pulls the exact staged digests and
+   checks their labels.
+6. `npm-publish` (approval): `npm publish` with trusted publishing (OIDC, no token) on Node 24.
+   The dist-tag is explicit: the channel's tag (`latest` for stable, `next` for rc) when it is
+   missing or the version is not lower than what it holds, else `retry`. A version already
+   published is skipped only when its integrity and provenance match.
+7. `image-publish` (approval): retags the staged digest as `X.Y.Z` (immutable), then `X.Y` and
+   `latest` only for a stable version that is higher than what they hold, or the channel's own tags
+   (`rc`, `next`) for a pre-release, each forward-only.
+8. `post-verify`: `gh attestation verify` for each image digest and `npm audit signatures`.
+
+Publishing cannot be undone, and a pushed tag stays. If a stable release stops part-way, the next
+stable release is refused by `verify` (the partial-release check) until the failed one is dealt
+with. There are two ways, in this order:
+
+1. **Complete it (primary).** Re-run the failed jobs, or the whole run, of the same tag within the
+   30-day artifact window (below). The run skips what is already published, finishes the rest, and
+   the partial check then passes for the next release.
+2. **Abandon it (after the window, or if it cannot be completed).** Add the exact version and a
+   short reason to `tooling/abandoned-releases.json` in a reviewed commit, for example
+   `[{ "version": "0.1.0", "reason": "npm stopped after sdk; the artifacts expired" }]`. The check
+   then skips that version and walks down to the next stable tag that is not abandoned. The file
+   is validated every time the check runs: stable SemVer only, a reason, no duplicates, and a
+   `v<version>` tag must exist. The only version refused for its value is the one being released
+   (it cannot be abandoned and released at once). A higher abandoned version is valid and simply
+   ignored, so a backport such as 1.1.5 still releases while 1.2.0 is abandoned. **Do not remove
+   an entry to unblock a backport**: the entry is correct, and removing it would make the check
+   stop on the incomplete release again. Its tag stays. **Do these by hand first, before the
+   abandonment commit** (they need the maintainer's npm credentials, not trusted publishing; that
+   `npm dist-tag` works for the maintainer here is unverified):
+    - For each package whose npm `latest` still points at the abandoned version, restore it with
+      `npm dist-tag add <package>@<previous stable> latest`, where `<previous stable>` is the
+      version the walk-down selects (the highest stable tag below the abandoned one that is not
+      abandoned). If the package has no earlier stable version, run `npm dist-tag rm <package>
+      latest` so `latest` is missing; the next stable release then takes it (the missing-`latest`
+      case). The `0.0.0-bootstrap.0` placeholder lives under the `bootstrap` tag, not `latest`.
+    - `npm deprecate` the packages of the abandoned version that were published.
+    - Move the image `X.Y` and `latest` tags back by hand if they point at an unusable image. If no earlier image exists for a tag, remove that tag so it is missing.
+
+    Then release a new version. This is a lead-decided policy to confirm; see the record.
+    What the workflow could not verify is listed under "Written as fact but unverified" in the record;
+    the `v0.1.0-rc.1` release settles it.
+
+Limits of the first version:
+
+- The partial-release check skips versions listed in `tooling/abandoned-releases.json` (an empty
+  array today) and confirms the previous release's packages exist with provenance (it has
+  no copy of that release's tarballs to compare integrity with), and it reads the images
+  anonymously, so it needs their packages to be public. It requires `X.Y` only when the previous
+  release is the highest patch of its minor and `latest` only when it is the highest stable version.
+- A re-run of an older pre-release no longer moves the npm `next` tag backwards: it is published
+  with `retry`, like an older stable version. There is still no cross-channel alias on npm.
+- Push release tags **one at a time**: the workflow's concurrency group holds one running and one
+  pending run, and GitHub may not start a run for every tag of a multi-tag push.
+- The jobs that hold the OIDC token or write to the registry (`stage`, `npm-publish`,
+  `image-publish`) install no dependencies. They run only `tooling/release-publish.ts`, which
+  imports `node:` built-ins and the dependency-free `release-core.ts` and `semver-compare.ts`.
+  `image-publish` verifies the staged attestations before it retags, and `post-verify` verifies
+  them again, pinned to the `release.yaml` signer workflow and the tag ref.
+- **Retry window: 30 days.** The tarball and staged-digest artifacts are kept for 30 days
+  (`retention-days: 30`; the repository's own limit is 90), so a re-run of `npm-publish` or
+  `image-publish` up to then still finds them. After that, completing the release is not possible
+  and it is abandoned (see above) and fixed forward with a new version.
+- **Backports.** A stable version lower than the package's current npm `latest` (for example 1.1.5
+  after 1.2.0) is published with the `retry` dist-tag, not `latest`. It is on the registry, but
+  `npm install <name>` does not get it; users pick it by version or by the `retry` tag.
+- **A re-run of `stage` after a half-finished first run.** An existing `sha-<commit>` image is
+  reused only if its attestation verifies (signer workflow, tag ref). If a first run pushed the
+  image and failed before attesting, the re-run fails; delete that staging tag in GHCR by hand
+  and re-run. The staged image is never rebuilt over an existing tag.
+- **Credentialed jobs.** `stage`, `npm-publish` and `image-publish` run `bun --no-install
+  tooling/release-publish.ts` (Bun's runtime would otherwise auto-install a missing bare import)
+  and install nothing on the runner; `tooling/release.spec.ts` holds an allowlist of the commands
+  and actions they may use. Accepted residual risks, not removed: the `bun install` inside the
+  Dockerfiles, which runs in BuildKit during `stage`, and the `bun install` in `build` (which
+  holds no credential but builds the tarballs that are published).
+- A pending run: GitHub keeps one running and one pending run per concurrency group, so a third
+  tag pushed while two runs exist cancels the pending one (this is why tags go one at a time).
+- Lint the workflow with actionlint v1.7.12 (clean); v1.7.7 reports a false positive on the
+  `artifact-metadata` permission.

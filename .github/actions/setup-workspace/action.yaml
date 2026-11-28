@@ -1,7 +1,11 @@
 # Adapted from Pureform's .github/actions/setup-workspace; provenance and MIT
 # notice are in .github/NOTICE.md. Playwright is removed: no job runs browser tests.
+#
+# The one place tool versions live. The release workflows call this with `cache: "false"`,
+# which installs Omni from its pinned release asset (digest checked) instead of the setup
+# action, and restores nothing. `ci.yaml` keeps the defaults.
 name: "Setup Workspace"
-description: "Install Omni, Bun and dependencies, and restore the Omni cache"
+description: "Install Omni, Bun, Node and dependencies; optionally cache, and install Cocogitto"
 
 inputs:
   cache-key-prefix:
@@ -11,14 +15,34 @@ inputs:
   cache-restore-key-prefixes:
     description: "Extra whitespace-separated prefixes to restore from"
     required: false
+  cache:
+    description: 'Restore and save caches. The release workflows pass "false".'
+    required: false
+    default: "true"
+  install-dependencies:
+    description: "Run bun install --frozen-lockfile"
+    required: false
+    default: "true"
   omni-version:
     description: "Version of Omni to install; keep in step with the version used locally"
     required: false
     default: "0.21.0"
+  omni-sha256:
+    description: "SHA-256 of omni-v<version>-x86_64-unknown-linux-gnu.zip"
+    required: false
+    default: "58534422a943885dcac2830c4f2a52001a5199283b55bc7688ece5da75a4bee6"
   node-version:
     description: "Node version to install (actions/setup-node syntax)"
     required: false
     default: "lts/*"
+  cocogitto-version:
+    description: "Cocogitto version to install (for example 7.0.0); empty installs nothing"
+    required: false
+    default: ""
+  cocogitto-sha256:
+    description: "SHA-256 of cocogitto-<version>-x86_64-unknown-linux-musl.tar.gz"
+    required: false
+    default: ""
   github-token:
     description: "GitHub token for higher rate limit"
     required: false
@@ -28,22 +52,57 @@ runs:
   using: "composite"
   steps:
     - name: Install Omni
+      if: inputs.cache == 'true'
       uses: omni-oss/setup-omni@v2
       with:
         github-token: ${{ inputs.github-token }}
         version: ${{ inputs.omni-version }}
 
+    # The setup action restores a cache, so the cache-free path installs the pinned release
+    # itself and checks its digest.
+    - name: Install Omni from the pinned release
+      if: inputs.cache != 'true'
+      shell: bash
+      env:
+        OMNI_VERSION: ${{ inputs.omni-version }}
+        OMNI_SHA256: ${{ inputs.omni-sha256 }}
+      run: |
+        curl -fsSL -o "$RUNNER_TEMP/omni.zip" "https://github.com/omni-oss/omni/releases/download/omni-v${OMNI_VERSION}/omni-v${OMNI_VERSION}-x86_64-unknown-linux-gnu.zip"
+        echo "$OMNI_SHA256  $RUNNER_TEMP/omni.zip" | sha256sum -c -
+        mkdir -p "$RUNNER_TEMP/omni-bin"
+        unzip -o "$RUNNER_TEMP/omni.zip" -d "$RUNNER_TEMP/omni-bin"
+        chmod +x "$RUNNER_TEMP/omni-bin/omni"
+        echo "$RUNNER_TEMP/omni-bin" >> "$GITHUB_PATH"
+
     # With no version given, setup-bun reads the root package.json `packageManager`
     # field, so CI uses the Bun version the repository pins.
     - name: Install Bun
       uses: oven-sh/setup-bun@v2
+      with:
+        no-cache: ${{ inputs.cache != 'true' }}
 
     - name: Install Node
       uses: actions/setup-node@v4
       with:
         node-version: ${{ inputs.node-version }}
+        package-manager-cache: ${{ inputs.cache == 'true' }}
+
+    - name: Install Cocogitto
+      if: inputs.cocogitto-version != ''
+      shell: bash
+      env:
+        COG_VERSION: ${{ inputs.cocogitto-version }}
+        COG_SHA256: ${{ inputs.cocogitto-sha256 }}
+      run: |
+        [ -n "$COG_SHA256" ] || { echo "::error::cocogitto-sha256 is required"; exit 1; }
+        curl -fsSL -o "$RUNNER_TEMP/cog.tar.gz" "https://github.com/cocogitto/cocogitto/releases/download/${COG_VERSION}/cocogitto-${COG_VERSION}-x86_64-unknown-linux-musl.tar.gz"
+        echo "$COG_SHA256  $RUNNER_TEMP/cog.tar.gz" | sha256sum -c -
+        mkdir -p "$RUNNER_TEMP/cog-bin"
+        tar -xzf "$RUNNER_TEMP/cog.tar.gz" -C "$RUNNER_TEMP/cog-bin" --strip-components=1 x86_64-unknown-linux-musl/cog
+        echo "$RUNNER_TEMP/cog-bin" >> "$GITHUB_PATH"
 
     - name: Cache Bun install
+      if: inputs.cache == 'true'
       uses: actions/cache@v5
       with:
         path: ~/.bun/install/cache
@@ -52,15 +111,18 @@ runs:
           ${{ runner.os }}-bun-
 
     - name: Install dependencies
+      if: inputs.install-dependencies == 'true'
       shell: bash
       run: bun install --frozen-lockfile
 
     - name: Get workspace hash
+      if: inputs.cache == 'true'
       id: workspace_hash
       shell: bash
       run: echo "hash=$(omni hash -r workspace)" >> "$GITHUB_OUTPUT"
 
     - name: Create restore key list
+      if: inputs.cache == 'true'
       id: restore_keys
       shell: bash
       env:
@@ -76,6 +138,7 @@ runs:
         } >> "$GITHUB_OUTPUT"
 
     - name: Cache Omni directory
+      if: inputs.cache == 'true'
       uses: actions/cache@v5
       with:
         path: .omni

@@ -180,7 +180,7 @@ jobs on pushes to `main`, pull requests and the merge queue:
 
 | Job           | Runs                                                                                                             |
 | ------------- | ---------------------------------------------------------------------------------------------------------------- |
-| `commits`     | Conventional Commits check of the pull request's commits (PRs only)                                              |
+| `commits`     | Conventional Commits check of the pull request's commits (pull requests and dispatched runs)                     |
 | `check`       | `omni -i run check check:compose`: types, lint, format, dependency consistency                                   |
 | `build`       | `omni -i run build`                                                                                              |
 | `test`        | `omni -i run test` (unit tests)                                                                                  |
@@ -200,9 +200,12 @@ Jobs restore the Omni cache (`.omni`) so unchanged projects are skipped; this is
 safe because every task's cache key names its inputs (see [tooling](docs/tooling.md)).
 The Omni version is pinned in `.github/actions/setup-workspace/action.yaml`: raise it
 together with the version you use locally. Bun comes from `packageManager` in
-`package.json`. Nothing is published or deployed from CI today; the
-[release publishing decision](docs/decisions/release-publishing.md) permits exactly one gated
-release workflow, which does not exist yet. The manual **Release dry run** workflow
+`package.json`. The only workflow that publishes is `.github/workflows/release.yaml` (the
+[release publishing decision](docs/decisions/release-publishing.md)): it starts only on a pushed
+`v<semver>` tag, never on a pull request, and each publishing job waits for approval of the
+`release` environment. It has not run yet. Every other workflow is checked by `tooling/ci.spec.ts`
+for publish, push, tag and login commands and for credentials; the release workflow has its own
+`tooling/release.spec.ts`, and its decisions are in `tooling/release-plan.ts`. The manual **Release PR** workflow (`.github/workflows/release-pr.yaml`, `workflow_dispatch` from `main` only) opens the release pull request: it pushes a `release/<version>` branch and opens a PR, and never tags or publishes (`tooling/release-pr.spec.ts`; `ci.spec.ts` carves out exactly its one branch push); `ci.yaml` accepts `workflow_dispatch` so CI can run on that branch. The manual **Release dry run** workflow
 (`omni -i run release:dry-run -p @launchpad-kit/tooling`) rehearses a release without publishing; see
 [releasing](docs/releasing.md) for versioning, compatibility rules and the release checklist.
 

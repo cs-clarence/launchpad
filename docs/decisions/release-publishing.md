@@ -122,6 +122,80 @@ process, in the follow-up slice:
 `cog.toml` now sets `skip_ci = ""` (verified: the bump commit carries no marker) and
 `tooling/cog-config.spec.ts` asserts it.
 
+### Amendment: the release PR workflow (maintainer-decided; implemented in `release-pr.yaml`)
+
+A second workflow may write, within a narrow limit: it may push a branch `release/<version>` and
+open a pull request, and it **never tags and never publishes**. Why it is allowed: the bump is
+mechanical and the manual steps invite mistakes (a wrong pre-release number, a diverged tag, a
+`[skip ci]` marker); the maintainer still reviews and merges the PR and still creates the tag by
+hand on the merge commit, so the approval and tag-integrity controls above are unchanged.
+
+It starts only by `workflow_dispatch` from `main`, with a base `X.Y.Z` and a channel from a static
+list equal to the registry; the version and the pre-release number are computed from the registry
+and the existing tags. It has **three jobs, a classic privilege split**, so that no code that comes
+from dependencies ever holds a token that can write:
+
+- `prepare` (`contents: read` only, no token with write scope, no environment) runs everything that
+  executes dependency or repository code: `bun install`, Cocogitto and its version-sync hook,
+  `cog bump`, the changelog and the body. It produces DATA only, a `git bundle` of the single bump
+  commit and the PR body. A compromised dependency here can change that data and what its job
+  outputs say, and can write Actions cache entries scoped to `main` (accepted: `ci.yaml` already
+  does the same), but it cannot push, open a PR or dispatch anything.
+- `push` (`contents: write` only; `environment: release-pr`) runs no repository code and installs
+  nothing: only commands written in the workflow file. It checks out `main` without keeping the
+  token, and validates the data before the token is used: the version against the dispatch inputs
+  and the registry's channels; a bundle with exactly one ref and exactly one new commit directly on
+  the checked-out `main` commit; the fixed message `chore(version): v<version>`; every changed
+  path on the allowlist of `tooling/release-pr.ts` (manifests, the lockfile, changelogs and the
+  three source files that hold a version string; directory components are `[a-z0-9-]+`, so `..`
+  and `.git` never pass), as an addition or modification of a plain file no larger than 2 MiB;
+  the commit object exactly (tree, the one parent, author, committer, the message, nothing else);
+  and a manifest, `bun.lock` or source file changing only on its version line, which must carry
+  this version, with a new manifest refused (`bun.lock` is held to the manifest rule because the
+  dispatched `ci.yaml` runs `bun install` on it before anyone reviews it). Blobs are read with
+  `git cat-file` into files and compared with `diff`, whose failure stops the job. It then checks
+  exactly (with `git ls-remote --exit-code`, exit 2 meaning absent) that `release/<version>` does
+  not exist and pushes **only** `<validated commit>:refs/heads/release/<version>` with an explicit
+  refspec; the data is never checked out. It can write a branch under
+  `release/`; `main` and `refs/tags/v*` are ruleset-protected, so it cannot touch them.
+- `open-pr` (`pull-requests: write` only; `environment: release-pr`) runs no repository code, has
+  no checkout and installs nothing: `gh pr create` with the body as a file (`--body-file`, never
+  interpolated) and a title built from the validated version. The "Allow GitHub Actions to create
+  and approve pull requests" setting therefore only ever matters to a job that runs no untrusted
+  code. CI is not dispatched by this workflow (below).
+  The PR body (mentions, closing keywords) comes from `prepare` and is accepted, size-capped
+  (the tooling cuts it at 60,000 characters and `open-pr` refuses more than 65,000 bytes).
+  `push` and `open-pr` each declare `environment: release-pr`, so a required reviewer on it would
+  approve twice; the recommendation is the `main`-only branch policy and no required reviewers
+  (a maintainer decision).
+
+`tooling/ci.spec.ts` carves out exactly the one push command and the two job-scoped write scopes; `tooling/release-pr.spec.ts` asserts the rest, runs the real validation step against
+repositories built to be refused (changed workflow, extra line in a manifest, deletion, mode
+change, two commits, a merge commit, another message, wrong ref, wrong channel...) and compares
+the shell allowlist, version-line shapes and channel names with the repository's.
+
+**Trust boundary.** GitHub runs the workflow file from the dispatched branch, so dispatching a
+branch with an edited `release-pr.yaml` runs the edited file, with that file's permissions. The
+guard `refs/heads/main` in the first step is not a boundary against that. What limits it is who may
+push such a branch and dispatch it (the maintainer) and, recommended, the `release-pr`
+environment: set its deployment branch policy to `main` only (a maintainer step; the environment
+is created on first use with no protection). That policy protects only jobs that still reference
+the environment: a maintainer who dispatches an edited file that drops `environment:` is outside
+it, so trust in who may dispatch and in reviewed workflow changes is part of the boundary. While
+the jobs still reference `release-pr`, that policy keeps `push` and `open-pr`, the only jobs that
+hold write scopes, from running on another branch.
+
+A pull request created with the workflow token starts its `pull_request` run in the
+**approval-required** state (documented behaviour; [GitHub docs](https://docs.github.com/en/actions/how-tos/write-workflows/choose-when-workflows-run/trigger-a-workflow)).
+A user with write access approves it with "Approve workflows to run" in the merge box, and that
+run's `CI Passed` is the merge gate. CI is therefore **not** dispatched: a `workflow_dispatch` run
+would not be a required check the ruleset honours, and the extra `actions: write` scope it needed
+bought nothing. `ci.yaml` is unchanged from the normal pull request path. A lower base than the
+latest tag (1.5.0 when `v2.0.0-rc.1` exists) is **accepted on purpose**, for backports; the
+registry's rules and the no-regression rule still apply and the reviewer sees the version in the
+PR. A dead branch, or one whose PR was closed unmerged, is removed by deleting `release/<version>`
+and dispatching again.
+
 ### Approval and tag integrity
 
 - **Who may create tags.** GitHub runs the workflow file from the tagged commit, so the gates in
@@ -181,9 +255,11 @@ process, in the follow-up slice:
   including `contents: read` wherever it checks out code (a job that grants `checks: read` must
   restate `contents: read`).
 - Every job that produces or verifies publishable artifacts (`verify`, `build`, `smoke`,
-  `npm-publish`) restores **no cache**: not the repository's `setup-workspace` action as it is
-  today, no Omni or Bun cache restore, and `package-manager-cache: false` on `actions/setup-node`.
-  A restored cache is a poisoning path [S1]. Every action is pinned by full commit SHA (below).
+  `npm-publish`) restores **no cache**. `verify` and `build` set up through the repository's own
+  `setup-workspace` action with `cache: "false"`, which skips both cache steps and installs Omni
+  from its pinned release asset with a SHA-256 check; the remaining jobs keep
+  `package-manager-cache: false` on `actions/setup-node`. A restored cache is a poisoning path
+  [S1]. Every remote action a workflow names directly is pinned by full commit SHA (below).
 - Images are published after npm: `image-publish` needs `npm-publish`. If npm succeeded and the
   images failed, a re-run skips npm versions that already exist with matching integrity and
   provenance (below) and continues with the images. Re-running the whole workflow from the failed
@@ -239,8 +315,9 @@ publishes. A tarball is never rebuilt after `build`.
 - **Dist-tags.** A tag is always passed explicitly with `--tag`, because `npm publish` without
   `--tag` defaults to `latest` (<https://docs.npmjs.com/cli/v12/commands/npm-publish/>; not
   re-fetched here, so the default is **unverified**). `--tag next` for pre-releases. For a stable
-  version, the tag is decided **per package** from the package's current `latest`
-  (`npm view <name> dist-tags.latest`), in three cases: (a) `latest` is **missing** (only
+  version, the tag is decided **per package** from the package's current `latest` and `next`
+  (`npm dist-tag ls <name>`; never `npm view`, which resolves a version through `latest` first and
+  prints nothing when it is missing), in three cases: (a) `latest` is **missing** (only
   pre-releases or the `0.0.0-bootstrap.0` placeholder were published, so the first stable `0.1.0`
   has nothing to resolve by default): the package is eligible for promotion and is published with
   `--tag latest`; (b) the version is **lower** than the current `latest`: published with
@@ -269,6 +346,58 @@ publishes. A tarball is never rebuilt after `build`.
   `0.1.0`), there is nothing to check. The spec asserts this rule. Alternative, not chosen:
   record completion per release as a final job step (a `release-complete` git note or GitHub
   release object read by `verify`); it adds state that must itself be kept correct.
+- **Amendment: abandoning a release (lead-decided policy, to be confirmed by the maintainer).** A
+  failed stable release keeps its pushed tag, so by the rule above it would be the "previous"
+  release forever and block every newer one; "fix forward" would deadlock. Recovery is therefore:
+  (1) complete the failed release by re-running its failed jobs or run from the same tag within the
+  30-day artifact retention window; the check then passes. (2) After the window, or when it cannot
+  be completed, the maintainer abandons it in a reviewed commit that adds `{ version, reason }` to
+  `tooling/abandoned-releases.json`. The check skips abandoned versions and walks down to the
+  next stable tag that is not abandoned. The file must be valid (stable SemVer, no duplicates, an
+  existing `v<version>` tag, and not equal to the version being released: it cannot be abandoned and
+  released at once) or `verify` fails. A higher abandoned version is valid and irrelevant to the
+  walk-down, which looks only below the version being released, so a backport (1.1.5 after an
+  abandoned 1.2.0) still releases; removing an entry is **not** the way to unblock it, because the
+  entry is right and its removal would make the check stop on the incomplete release again. Before
+  the abandonment commit the maintainer, by hand: restores npm `latest` for each package that still
+  points at the abandoned version (`npm dist-tag add <pkg>@<previous stable> latest`, the version the
+  walk-down selects; with no earlier stable version `npm dist-tag rm <pkg> latest`, so `latest` is
+  missing and the next stable takes it; the `0.0.0-bootstrap.0` placeholder is under `bootstrap`),
+  and runs `npm deprecate` on the published packages. These `npm dist-tag` commands need the
+  maintainer's credentials rather than trusted publishing, which is unverified. Its tag is never
+  deleted. An abandoned version still
+  counts as a higher stable version when deciding whether the previous release must hold `X.Y` or
+  `latest`, so the check stays lenient there.
+- **Amendment: release channels (maintainer-decided; implemented in `tooling/release-channels.ts`).**
+  The channels a release can use are rows of a registry, which is the source of truth for the guard,
+  the npm tag, the image tags and the promotion order; `docs/releasing.md` carries a table checked
+  against it. Rows today: `stable` (rank 4, no pre-release part, npm `latest`, image tags `X.Y` and
+  `latest`) and `rc` (rank 3, `-rc.N`, npm `next`, image tags `rc` and `next`), both for major,
+  minor and patch releases, triggered by a tag with counter versions. `alpha` and `beta` are not
+  added; each would be one row (major and minor only; npm tag `alpha`/`beta`; image tags the channel
+  name and `next`) plus one `case` arm in the guard step and the regenerated docs table (the specs
+  fail until all three agree). Rules: (1) **Guard strictness.** The tag pattern and the 128-character rule
+  stay; a pre-release must also be `<registered channel>.<N>` with N numeric without leading zeros,
+  so `-foo.1`, a bare `-rc`, `-rc-1` (previously accepted) and `-rc.01` are refused, and a channel
+  must support the release kind: patch if Z > 0, minor if Z is 0 and Y > 0, major for X.0.0, with no
+  special case for 0.x. The guard job repeats the rules in shell and the spec keeps the two in step.
+  (2) **No regression.** For one X.Y.Z a lower-ranked channel cannot follow an existing
+  higher-ranked one, and no pre-release is released once the stable X.Y.Z exists; `verify` checks it
+  against the `v` tags of its `fetch-depth: 0` checkout. (3) **npm.** Each channel publishes under
+  its own tag, forward-only: when that tag already points at a greater version the version is
+  published with `retry`; a missing tag is eligible (the three-case rule of `latest`, generalised).
+  `next` stays the rc channel's tag, as before. There is **no cross-channel `next` alias on npm**:
+  trusted publishing covers `npm publish` only, so moving a tag after publishing would need
+  `npm dist-tag add`, which the workflow does not have. (4) **Images.** The exact tag always, then
+  the channel's image tags, each forward-only by the version label as before; the `next` image
+  alias is shared by pre-release channels and so never moves past a newer one. (5) The
+  partial-release check and the abandon flow stay for stable releases only. (6) **Nightly is
+  deferred.** The registry reserves `trigger: schedule` and `versionScheme: snapshot` and refuses
+  them today. A nightly channel needs its own amendment: a separate `nightly` environment without
+  reviewers, a retention cap with no prune (only named tags are deleted), whether npm trusted
+  publishing allows a second workflow file per package (open), no git tags (so `checkTags` and the
+  abandon flow do not apply), and a version such as `X.Y.Z-nightly.<date>.<sha>` that does not fit
+  `<channel>.<N>`.
 - **Partial publish.** Publishing five packages is not atomic. If it stops part-way, some
   versions are public and some are not. Re-running completes the missing ones; if a published
   package is wrong, deprecate it and fix forward with a new version.
@@ -330,19 +459,30 @@ forward (see Consequences), because publishing cannot be undone.
 
 ### Pinned actions
 
-For `release.yaml`, every `uses:` is pinned by **full commit SHA** with the version in a comment,
-stricter than the other workflows on purpose. The dedicated spec asserts it.
+Every remote action that a release workflow names directly is pinned by **full commit SHA** with
+the version in a comment, stricter than the other workflows on purpose. The dedicated specs assert
+it, and allow one local action, `./.github/actions/setup-workspace`.
+
+The shared setup action is where the tool versions live: Omni's version and the digest of its
+release zip, and (for the release PR workflow) Cocogitto's version and the digest of its tarball.
+Its own third-party actions (`omni-oss/setup-omni`, `oven-sh/setup-bun`, `actions/setup-node`,
+`actions/cache`) stay on major-version tags. That is a deliberate exception: they run only in
+jobs with `contents: read`, updating four SHAs per action per workflow was the larger cost, and
+the repository at the tagged commit is immutable. A maintainer who wants stricter pins can move
+them back to SHAs inside that one file.
 
 ## What stays forbidden
 
-Publish, push, login or tag commands in any other workflow. The Release dry run workflow stays
+Publish, push, login or tag commands in any other workflow, except the one carve-out of the release PR
+workflow (a push of its `release/<version>` branch, in its `push` job; see the amendment above). The Release dry run workflow stays
 manual, read-only and secret-free. When the release workflow lands, `tooling/ci.spec.ts` is
 extended to enforce this for every workflow except the single named release workflow, which gets
 its own spec asserting: the tag glob and the guard job with its `needs:` edges, the `release`
 environment on every publishing job, `permissions: {}` at workflow level and the per-job
 permissions in the job graph, no secrets beyond `GITHUB_TOKEN`, no cache restore, no
 `${{ github.ref_name }}` inside `run:` blocks, the npm and Node minimums, and full-SHA action pins.
-This change does not touch `ci.spec.ts`, which still matches reality until the workflow lands.
+`tooling/ci.spec.ts` enforces this for the other workflows and `tooling/release.spec.ts` is the dedicated
+spec (both landed with the workflow).
 
 ## Maintainer steps (not done by agents)
 
@@ -391,6 +531,176 @@ My own list, because the review's list was not available to me. Each item is mar
 - The exact ruleset UI selector for the maintainer bypass actor.
 - GitHub runs the workflow file from the tagged commit (stated by the review; not re-fetched here).
 
+## Implementation notes
+
+Where `release.yaml` is more specific than, or differs from, the text above:
+
+- Every job except `guard` also lists `guard` in `needs:`, because `needs.guard.outputs.version`
+  is readable only from a direct need.
+- `guard` has `permissions: {}`, so it cannot check out; its shell step repeats the pattern of
+  `tooling/release-plan.ts` (`TAG_PATTERN`), and the spec runs the step in bash and asserts the
+  two agree. Later jobs run the tooling `guard` again.
+- `setup-workspace` restores caches by default, so `verify` and `build` call it with
+  `cache: "false"`. In that mode it installs Omni from the pinned release zip and checks its
+  SHA-256 (the digest GitHub shows for the asset, confirmed by downloading it), and it skips both
+  `actions/cache` steps. The version and digest exist only in that action; a spec asserts the
+  workflow keeps no copy. The release PR workflow uses the same action for Omni and Cocogitto.
+- `stage` is a matrix of the five images (the `admin` image is the `admin` target of the
+  controller Dockerfile). Digests reach `smoke`, `image-publish` and `post-verify` as `staged-*`
+  artifacts.
+- The logic of `npm publish`, the dist-tag and the retag is in `tooling/release-publish.ts`
+  (dependency-free) and the rest in `tooling/release-plan.ts`, both called as `bun tooling/<script>.ts
+  <command>`; `npm publish` is spawned in the former with an explicit `--tag`, `--provenance` and `--access public`.
+- The partial-release check verifies that the previous stable release's packages exist with a
+  provenance attestation; it cannot compare integrity with that release's tarballs (they are not
+  kept), so "matching integrity" holds only for the release being published (`publish-npm`). It
+  reads the images anonymously (`verify` has no `packages: read`), so it needs the packages to be
+  public, which the maintainer sets after the first push; with no previous stable release it
+  checks nothing.
+- `verify` runs the dry run with `--skip-images` (the images are built, smoked and attested in
+  `stage`); `build` repeats it to produce the artifact.
+- `smoke` installs the exact tarballs with npm (overrides to the files) on Node 22.12 and runs
+  `launchpad --version`; it checks the exact staged digests by their labels and does not start the
+  containers. `post-verify` installs the published packages from the registry for
+  `npm audit signatures`.
+- Added to the unverified list: the exact `npm dist-tag ls` output for a package whose only tag is
+  `next` (the parser refuses any line it cannot read, so a difference fails closed); `npm view <name>@<version> dist.integrity` fails with E404 or prints
+  nothing for a missing version; the `docker buildx imagetools inspect --format '{{json .}}'`
+  shape (`Manifest.digest`, `Image` as a config or a platform map) and its "not found" wording;
+  `gh attestation verify oci://...` needing only `packages: read`; whether each `stage` matrix leg
+  asks for its own `release` approval; `setup-omni` is not used and `actions/*` versions are the
+  latest at writing (checkout v7.0.1, setup-node v7.1.0, upload-artifact v7.0.2,
+  download-artifact v8.0.2, setup-bun v2.2.0, docker login v4.8.0, setup-buildx v4.4.1,
+  build-push v7.4.0, attest v4.2.2; SHAs read from the GitHub API on 2026-11-28), and
+  their inputs were read from each action's `action.yml` at that SHA, not run.
+- Security review fixes: `stage`, `npm-publish`, `image-publish` and `post-verify` install no
+  dependencies and run only `tooling/release-publish.ts` (node: built-ins; pure logic in
+  `release-core.ts`, `semver-compare.ts`; `release.spec.ts` asserts the imports and the absence of
+  install steps). A floating tag that exists with an unreadable version label stops the retag
+  instead of reading as missing. `publish-npm` checks the tarball set against `SHA256SUMS` and each
+  tarball's version against the tag. The partial-release check takes the other stable versions as
+  input (`X.Y` only for the highest patch, `latest` only for the highest stable). The spec rejects
+  `if:` (but the one benign step), `continue-on-error`, a checkout without `persist-credentials:
+  false` and `ref: ${{ github.sha }}`, and a job-level `GH_TOKEN` (each mutation was tried and
+  fails the spec). `GH_TOKEN` is set on the `gh` steps only. `image-publish` runs
+  `gh attestation verify` before retagging and `post-verify` pins `--signer-workflow` and
+  `--source-ref refs/tags/v<version>` (both flags exist in `gh` 2.106's help; not run);
+  `post-verify` retries the install of the published packages up to six times.
+- Second security review: `classifyInspect` treats only `manifest unknown`, `MANIFEST_UNKNOWN`,
+  `NAME_UNKNOWN` and a line ending in `: not found` (after dropping words with a `/`) as absent;
+  timeouts, DNS errors, a credential helper not found, and a number such as 404 inside a ref are
+  errors. The credentialed jobs run `bun --no-install tooling/release-publish.ts` (checked with
+  Bun 1.4.4: without the flag a bare import is auto-installed when there is no `node_modules`, with
+  it the run fails with "Cannot find package"). `release.spec.ts` holds an allowlist of the exact
+  `run:` commands and actions of `stage`, `npm-publish` and `image-publish`, scans imports with
+  `Bun.Transpiler.scanImports` plus a quote-agnostic pattern, and asserts no workflow-level `env`
+  except the Omni pair, `defaults.run.shell: bash`, and no `||` in `image-publish` and
+  `post-verify`. `stage` verifies the attestation of a reused staged image and attests only a
+  fresh build. `publish-npm` requires exactly the five packages (tested with fake tarballs).
+  Accepted residual risks: the Dockerfiles' `bun install` runs in BuildKit during `stage`, and
+  `build` runs `bun install` (no credential, but it builds what is published).
+  The runner image (ubuntu 24.04) lists Docker-Buildx 0.39.1, so `docker buildx imagetools` works in
+  `image-publish` and `post-verify` without `setup-buildx` (read from the runner-images README;
+  that `ubuntu-latest` is that image is unverified). GitHub keeps one running and one pending run
+  per concurrency group.
+- Added to the unverified list (second review): `NAME_UNKNOWN` (or another wording) on the first
+  push of a never-pushed repository; the `.Image` label shape of an index with attestation
+  manifests; `npm view` E404 versus empty output; whether a backport tagged `retry` is acceptable
+  to users.
+- Abandoned releases (CodeRabbit finding on the fix-forward deadlock): implemented as the amendment
+  above, **a lead-decided policy to be confirmed**. The list is read in `tooling/release-plan.ts`
+  (`verify` only, which installs dependencies); `release-core.ts` holds the pure validation and
+  `previousStable`, and the credentialed jobs and their allowlist are unchanged. Nothing deprecates
+  an abandoned version's packages automatically.
+- Release channels: the registry module imports nothing and the credentialed jobs now import
+  exactly `release-publish.ts`, `release-core.ts`, `release-channels.ts` and `semver-compare.ts`
+  (the spec states this list on purpose). `verify` runs `release-plan.ts no-regression`, using the
+  tags of its full checkout. The shell guard repeats the channel names and the kinds each supports;
+  `release.spec.ts` compares them with the registry and runs the guard against a table of tags and
+  every kind. Mutating the registry (an unregistered channel, a rank, a reserved npm tag) or the
+  guard fails the specs. Unverified: that `actions/checkout` with `fetch-depth: 0` fetches every
+  tag (its documented behaviour, not run here); the first rc run settles the `next` tag
+  forward-only behaviour, read with `npm dist-tag ls`.
+- Review of the channel registry: `retag` takes its docker runner and is tested with a fake
+  registry (an rc, a stable, forward-only moves, a re-run, a clash, an unreadable label), so the
+  tags it creates are asserted exactly. The registry validation is tested one change at a time
+  with the named problem. `verify` runs `no-regression --require-tag`, so a tag listing that
+  lacks the tag being released (an empty or shallow fetch) fails closed. Re-running a pre-release
+  after its stable shipped is refused, by design (the stable tag exists, so the no-regression
+  rule fires). Added to the unverified list: `npm dist-tag ls <name>` for a package with no
+  versions at all (E404; publish-npm would stop, which the bootstrap placeholder avoids); the
+  guard's `[a-z]` under the runner's locale (harmless: the channel name must equal a `case` arm).
+- Release PR workflow, findings from a throwaway clone with the real `cog.toml` (cog 7.0.0; the clone
+  had no earlier tags, so this is not the real tag history): `cog bump --version 0.1.0-rc.1
+  --include-packages` works (commit `chore(version): v0.1.0-rc.1`, tag `v0.1.0-rc.1`, every manifest,
+  the source version strings and `bun.lock` at the pre-release version; the three independent tooling
+  packages also get that version and a `CHANGELOG.md`). `versions.ts check` agrees with the tag
+  present and deleted. With the rc tag on the rc bump commit, `cog bump --version 0.1.0
+  --include-packages` also works and `check` agrees. The committed `CHANGELOG.md` shows each
+  release twice (`core-v…` and `v…` sections) and the stable section repeats the whole history
+  (cog's bump changelog starts at the last _stable_ tag, none here), so the PR body is generated
+  separately: `cog changelog --template remote --remote github.com --owner … --repository …
+  <range>` works with ranges `<prev>..v<new>` and `..v<new>` and needs no `cog.toml` remote
+  setting; a range lists a section per tag inside it. Cocogitto (libgit2) reads `user.name` and
+  `user.email` from git config files only (`GIT_AUTHOR_*` and `GIT_CONFIG_COUNT` were not
+  honoured), so the workflow sets them in its ephemeral checkout. The CI dispatch was removed
+  (see the amendment): the approval-required `pull_request` run is the merge gate.
+  Unverified: that the approval-required run appears and that approving it satisfies the ruleset
+  on the PR; that `workflow_dispatch` check runs are not honoured by rulesets (the reason the
+  dispatch was removed); that the PR can be created with
+  the setting on; the pre-release range and the remote changelog template on the real repository's
+  history; `git push` with the `http.extraheader` form against GitHub; `jq` on the runner.
+- Release PR workflow, security review: the workflow is now three jobs (`prepare` read-only,
+  `push`, `open-pr`), so the earlier sentence that the token never reaches dependencies is true by
+  construction rather than by step-level care. `shellcheck` 0.11.0 (SHA-256 verified, run on every
+  `run:` block of the three workflows) reports nothing for `release-pr.yaml`; in `release.yaml` it
+  reported SC2209 on an unquoted `kind=patch` (quoted now) and SC2164 on a bare `cd` in two steps
+  (left: `bash -e` stops on a failing `cd`, and the specs forbid `||` there). The commit-message
+  check runs in `prepare` before anything is pushed and `push` re-checks the exact message.
+  Unverified, added: whether `open-pr` needs `contents: read` for `gh pr create` (only
+  `pull-requests: write` is granted); `git bundle verify`, `git fetch` from a bundle and
+  `ls-remote --exit-code` with the `http.extraheader` form on the runner (run here only against
+  local repositories); that the `release-pr` environment is created automatically on first use.
+- Third review of the release PR workflow: the validation no longer fails open (blobs are read with
+  `git cat-file` into files and `diff`'s status is checked; the spec runs the real step with a
+  `diff` that exits 2), `bun.lock` and the manifests carry only version lines that embed this
+  version, a changelog or any file above 2 MiB is refused, directory components are
+  `[a-z0-9-]+` (crafted trees with `..` and `.git` entries are refused in the spec), the commit
+  object is checked exactly, and `push` pushes the validated commit by SHA instead of checking out
+  the data. `open-pr` keeps only `pull-requests: write` (the CI dispatch and its `actions: write`
+  were removed): `gh pr create` uses
+  GraphQL and the REST page for creating a pull request names no `contents` permission, so this is
+  expected to suffice and is **unverified**. Added to the unverified list: the `diff` and `git
+  cat-file` behaviour on a real runner beyond the local fixtures; that `ls-remote --exit-code`
+  returns 2 for no match against GitHub (it does against a local bare repository).
+- CodeRabbit review of PR #124: artifacts are kept 30 days, which is now the stated retry window
+  (the record had none; GitHub's repository limit is 90 days; the 30 days a run can be re-run for
+  is unverified). `setup-buildx` runs with `cache-binary: false` (the other cache-like inputs at the
+  pinned SHAs are `package-manager-cache`, `no-cache`, and the unset `cache-from`/`cache-to`).
+  The output shape of `docker buildx imagetools inspect --format '{{json .}}'` is now read from
+  buildx v0.39.1's `util/imagetools/printers.go`: lowercase `name`, `manifest`, `image`; the index
+  is printed with its own `digest`; `image` is one OCI image for one platform (attestation
+  manifests are index entries linked by annotation, not platforms) and a platform map for several.
+  The earlier unverified item about that shape is therefore settled by source, not by a run; that
+  the runner's buildx (0.39.1 per the runner-images README) behaves the same is unverified. Existence
+  is decided by `--raw` (resolve and read the tag's manifest only); the full inspection that also
+  fetches child manifests may not report absent: a child `: not found` stops the release.
+  `ci.spec.ts` compares parsed permissions, parsed `uses` values and the effective push filter.
+  The staged attestations are verified in `smoke`, before `npm-publish`; what can still fail after
+  npm publishes, untested against real tool output: `imagetools create` retagging and
+  `image-publish`'s own `gh attestation verify`, `post-verify`'s `gh attestation verify` and
+  `npm audit signatures` (which may fail on a dependency without signatures). A failure there is
+  fixed forward (deprecate, re-run from the failed job).
+- Known limit, not fixed: a re-run of an older release can move the `next` dist-tag backwards.
+- Added to the unverified list: `gh attestation verify` in `image-publish` with only
+  `contents: read` and `packages: write`; the `--signer-workflow` and `--source-ref` semantics for
+  an attestation made by `actions/attest` (tag-triggered); the 20-second, six-attempt retry being
+  enough for npm propagation.
+- actionlint v1.7.12 reports nothing on the workflows (downloaded to `/tmp/opencode`); v1.7.7
+  falsely rejects the `artifact-metadata` permission.
+- Not run: the workflow itself, Docker builds and the registry
+  commands. Only the unit specs and the guard step (in bash) were run.
+
 ## Consequences
 
 - A compromised workflow can publish. Mitigations: tag creation restricted to the maintainer, the
@@ -418,16 +728,15 @@ My own list, because the review's list was not available to me. Each item is mar
 
 ## Follow-ups
 
-- [ ] Job graph and `release.yaml` with its dedicated spec. Extend `tooling/ci.spec.ts` so every
-      workflow except `release.yaml` is checked for publish, login, tag and registry-push commands
-      and for secrets, matching commands in command position (not trigger keys such as
-      `on: push`). In the same change update every statement that nothing is published from CI:
-      `README.md`, `CONTRIBUTING.md`, `docs/releasing.md`. `AGENTS.md` was checked and has no such
-      statement (it only forbids starting servers or deployments unless asked); re-check it then.
+- [x] Job graph and `release.yaml` with its dedicated spec (`tooling/release.spec.ts`; decisions in
+      `tooling/release-plan.ts`). `tooling/ci.spec.ts` now checks every workflow except
+      `release.yaml` (and the setup action) for publish, login, tag and registry-push commands,
+      publishing actions and credentials. `README.md`, `CONTRIBUTING.md` and `docs/releasing.md`
+      no longer say nothing is published from CI. `AGENTS.md` was re-checked: no such statement.
 - [ ] Tag creation procedure (release PR, merge, hand-made `v<semver>` tag on `main`, local
       Cocogitto tags removed) and the tag ruleset change with the single bypass actor.
-- [ ] Artifact checksum handoff: upload, job-output SHA-256, re-verify in every publish job.
-- [ ] Post-publish verification job (`gh attestation verify`, `npm audit signatures`).
+- [x] Artifact checksum handoff: upload, job-output SHA-256, re-verify in every publish job.
+- [x] Post-publish verification job (`gh attestation verify`, `npm audit signatures`).
 - [ ] Bootstrap procedure for the five packages (placeholder version, `bootstrap` tag, token
       revoked), then trusted publishers and disallow-tokens.
 - [x] Bump CI: `skip_ci = ""`, so the bump commit has no `[skip ci]` and CI runs on it.
