@@ -252,9 +252,11 @@ and dispatching again.
   including `contents: read` wherever it checks out code (a job that grants `checks: read` must
   restate `contents: read`).
 - Every job that produces or verifies publishable artifacts (`verify`, `build`, `smoke`,
-  `npm-publish`) restores **no cache**: not the repository's `setup-workspace` action as it is
-  today, no Omni or Bun cache restore, and `package-manager-cache: false` on `actions/setup-node`.
-  A restored cache is a poisoning path [S1]. Every action is pinned by full commit SHA (below).
+  `npm-publish`) restores **no cache**. `verify` and `build` set up through the repository's own
+  `setup-workspace` action with `cache: "false"`, which skips both cache steps and installs Omni
+  from its pinned release asset with a SHA-256 check; the remaining jobs keep
+  `package-manager-cache: false` on `actions/setup-node`. A restored cache is a poisoning path
+  [S1]. Every remote action a workflow names directly is pinned by full commit SHA (below).
 - Images are published after npm: `image-publish` needs `npm-publish`. If npm succeeded and the
   images failed, a re-run skips npm versions that already exist with matching integrity and
   provenance (below) and continues with the images. Re-running the whole workflow from the failed
@@ -453,8 +455,17 @@ forward (see Consequences), because publishing cannot be undone.
 
 ### Pinned actions
 
-For `release.yaml`, every `uses:` is pinned by **full commit SHA** with the version in a comment,
-stricter than the other workflows on purpose. The dedicated spec asserts it.
+Every remote action that a release workflow names directly is pinned by **full commit SHA** with
+the version in a comment, stricter than the other workflows on purpose. The dedicated specs assert
+it, and allow one local action, `./.github/actions/setup-workspace`.
+
+The shared setup action is where the tool versions live: Omni's version and the digest of its
+release zip, and (for the release PR workflow) Cocogitto's version and the digest of its tarball.
+Its own third-party actions (`omni-oss/setup-omni`, `oven-sh/setup-bun`, `actions/setup-node`,
+`actions/cache`) stay on major-version tags. That is a deliberate exception: they run only in
+jobs with `contents: read`, updating four SHAs per action per workflow was the larger cost, and
+the repository at the tagged commit is immutable. A maintainer who wants stricter pins can move
+them back to SHAs inside that one file.
 
 ## What stays forbidden
 
@@ -525,9 +536,11 @@ Where `release.yaml` is more specific than, or differs from, the text above:
 - `guard` has `permissions: {}`, so it cannot check out; its shell step repeats the pattern of
   `tooling/release-plan.ts` (`TAG_PATTERN`), and the spec runs the step in bash and asserts the
   two agree. Later jobs run the tooling `guard` again.
-- `setup-omni` and `setup-workspace` restore caches, so `verify` and `build` install Omni from the
-  pinned release zip and check its SHA-256 (the digest GitHub shows for the asset, confirmed by
-  downloading it). The version equals the one in `setup-workspace`, which the spec asserts.
+- `setup-workspace` restores caches by default, so `verify` and `build` call it with
+  `cache: "false"`. In that mode it installs Omni from the pinned release zip and checks its
+  SHA-256 (the digest GitHub shows for the asset, confirmed by downloading it), and it skips both
+  `actions/cache` steps. The version and digest exist only in that action; a spec asserts the
+  workflow keeps no copy. The release PR workflow uses the same action for Omni and Cocogitto.
 - `stage` is a matrix of the five images (the `admin` image is the `admin` target of the
   controller Dockerfile). Digests reach `smoke`, `image-publish` and `post-verify` as `staged-*`
   artifacts.

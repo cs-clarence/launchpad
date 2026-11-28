@@ -415,7 +415,8 @@ not fit `<channel>.<N>`.
 2. `verify`: the tag equals the version of the root and every published manifest, the commit is on
    `main`, its `CI Passed` check succeeded, the previous stable release is complete (refuses a new
    stable release on a partial one unless that release is in `tooling/abandoned-releases.json`), then the full gate, the dry run and `test:packages` on Node
-   22.12 and the current Node. It restores no cache.
+   22.12 and the current Node. It restores no cache: `verify` and `build` use the repository's
+   `setup-workspace` action with `cache: "false"`, which installs Omni from its pinned release.
 3. `build`: packs the tarballs once and uploads them with `SHA256SUMS`; the checksum of
    `SHA256SUMS` is a job output that later jobs check before using the tarballs.
 4. `stage` (approval): builds each image once, pushes it as `sha-<commit>` (an existing tag is

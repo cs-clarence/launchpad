@@ -110,7 +110,13 @@ describe("release PR workflow privilege split", () => {
             expect(step.env?.GH_TOKEN).toBeUndefined();
             expect(step.run ?? "").not.toMatch(/GH_TOKEN|github\.token|extraheader|\bgh \b/);
         }
-        expect(runsOf(prepare)).toContain("bun install --frozen-lockfile");
+        const setup = stepOf(prepare, "Set up the workspace");
+        expect(setup.uses).toBe("./.github/actions/setup-workspace");
+        expect(setup.with).toMatchObject({
+            cache: "false",
+            "install-dependencies": "true",
+            "cocogitto-version": "7.0.0",
+        });
         expect(runsOf(prepare)).toContain("cog bump");
     });
 
@@ -176,7 +182,7 @@ describe("release PR workflow privilege split", () => {
         for (const job of Object.values(wf.jobs)) {
             expect(job.env?.GH_TOKEN).toBeUndefined();
         }
-        expect(wf.env.GH_TOKEN).toBeUndefined();
+        expect(wf.env?.GH_TOKEN).toBeUndefined();
         for (const { step } of all.filter((a) => a.id === "push" && a.step.uses)) {
             expect(step.env?.GH_TOKEN).toBeUndefined();
         }
@@ -248,18 +254,23 @@ describe("release PR workflow credentials and supply chain", () => {
         );
     });
 
-    it("pins every action by full commit SHA with the version in a comment", () => {
+    it("pins every remote action by full commit SHA, and uses no other local action", () => {
         const uses = file.split("\n").filter((line) => /^\s*(- )?uses:/.test(line));
-        expect(uses.length).toBeGreaterThan(4);
+        expect(uses.length).toBeGreaterThan(3);
         for (const line of uses) {
+            if (/uses: \.\//.test(line)) {
+                expect(line.trim()).toBe("uses: ./.github/actions/setup-workspace");
+                continue;
+            }
             expect(line, line).toMatch(/uses: [\w.-]+\/[\w.-]+@[0-9a-f]{40} # v\d+(\.\d+)*$/);
         }
     });
 
-    it("restores no cache", () => {
-        expect(code).not.toMatch(
-            /actions\/cache|setup-omni|setup-workspace|cache-from|cache-to|restore-keys/,
-        );
+    it("restores no cache: the shared setup action runs with caching off", () => {
+        expect(code).not.toMatch(/actions\/cache|setup-omni|cache-from|cache-to|restore-keys/);
+        const setups = all.filter(({ step }) => step.uses === "./.github/actions/setup-workspace");
+        expect(setups).toHaveLength(1);
+        expect(setups[0]!.step.with?.cache).toBe("false");
         for (const { step } of all) {
             if (step.uses?.startsWith("actions/setup-node"))
                 expect(step.with?.["package-manager-cache"]).toBe(false);
@@ -268,19 +279,21 @@ describe("release PR workflow credentials and supply chain", () => {
         }
     });
 
-    it("installs Omni and Cocogitto from pinned releases whose checksums are verified", () => {
-        expect(wf.env.OMNI_SHA256).toMatch(/^[0-9a-f]{64}$/);
-        expect(wf.env.COG_SHA256).toMatch(/^[0-9a-f]{64}$/);
-        expect(stepOf(prepare, "Install Omni").run).toContain("sha256sum -c -");
-        expect(stepOf(prepare, "Install Cocogitto").run).toContain("sha256sum -c -");
-        const release = (
-            Bun.YAML.parse(
-                readFileSync(path.join(root, ".github/workflows/release.yaml"), "utf8"),
-            ) as { env: Record<string, string> }
-        ).env;
-        expect(wf.env.OMNI_VERSION).toBe(release.OMNI_VERSION);
-        expect(wf.env.OMNI_SHA256).toBe(release.OMNI_SHA256);
-        expect(stepOf(prepare, "Install dependencies").run).toBe("bun install --frozen-lockfile");
+    it("gets Omni and Cocogitto from the shared setup action, which checks their digests", () => {
+        const action = Bun.YAML.parse(
+            readFileSync(path.join(root, ".github/actions/setup-workspace/action.yaml"), "utf8"),
+        ) as {
+            inputs: Record<string, { default?: string }>;
+            runs: { steps: { uses?: string; run?: string; if?: string }[] };
+        };
+        expect(action.inputs["omni-sha256"]!.default).toMatch(/^[0-9a-f]{64}$/);
+        const setup = stepOf(prepare, "Set up the workspace");
+        expect(setup.with?.["cocogitto-version"]).toBe("7.0.0");
+        expect(setup.with?.["cocogitto-sha256"]).toMatch(/^[0-9a-f]{64}$/);
+        const install = action.runs.steps.find((s) => s.name === "Install Cocogitto")!;
+        expect(install.run).toContain("sha256sum -c -");
+        expect(install.run).toContain("COG_SHA256");
+        expect(install.if).toBe("inputs.cocogitto-version != ''");
     });
 
     it("runs in bash, with no conditional steps and no failures swallowed", () => {

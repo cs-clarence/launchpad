@@ -39,14 +39,6 @@ defaults:
   run:
     shell: bash
 
-env:
-  OMNI_VERSION: "0.21.0"
-  # SHA-256 of omni-v0.21.0-x86_64-unknown-linux-gnu.zip, from the GitHub release asset.
-  OMNI_SHA256: "58534422a943885dcac2830c4f2a52001a5199283b55bc7688ece5da75a4bee6"
-  COG_VERSION: "7.0.0"
-  # SHA-256 of cocogitto-7.0.0-x86_64-unknown-linux-musl.tar.gz, from the GitHub release asset.
-  COG_SHA256: "e03938ff2c4c86d71c00c0f3284dbbe95c5ca76fe34a51f33e945c23010d59bb"
-
 jobs:
   prepare:
     name: Prepare the release commit
@@ -76,37 +68,16 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
-      - name: Install Bun
-        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+      # The repository's shared setup action owns the tool versions and digests. Caches are off
+      # in the release path, so it installs Omni from its pinned release asset.
+      - name: Set up the workspace
+        uses: ./.github/actions/setup-workspace
         with:
-          no-cache: true
-
-      - name: Install Node
-        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
-        with:
+          cache: "false"
+          install-dependencies: "true"
           node-version: "24"
-          package-manager-cache: false
-
-      - name: Install Omni
-        run: |
-          curl -fsSL -o "$RUNNER_TEMP/omni.zip" "https://github.com/omni-oss/omni/releases/download/omni-v${OMNI_VERSION}/omni-v${OMNI_VERSION}-x86_64-unknown-linux-gnu.zip"
-          echo "$OMNI_SHA256  $RUNNER_TEMP/omni.zip" | sha256sum -c -
-          mkdir -p "$RUNNER_TEMP/omni-bin"
-          unzip -o "$RUNNER_TEMP/omni.zip" -d "$RUNNER_TEMP/omni-bin"
-          chmod +x "$RUNNER_TEMP/omni-bin/omni"
-          echo "$RUNNER_TEMP/omni-bin" >> "$GITHUB_PATH"
-
-      - name: Install Cocogitto
-        run: |
-          curl -fsSL -o "$RUNNER_TEMP/cog.tar.gz" "https://github.com/cocogitto/cocogitto/releases/download/${COG_VERSION}/cocogitto-${COG_VERSION}-x86_64-unknown-linux-musl.tar.gz"
-          echo "$COG_SHA256  $RUNNER_TEMP/cog.tar.gz" | sha256sum -c -
-          mkdir -p "$RUNNER_TEMP/cog-bin"
-          tar -xzf "$RUNNER_TEMP/cog.tar.gz" -C "$RUNNER_TEMP/cog-bin" --strip-components=1 x86_64-unknown-linux-musl/cog
-          echo "$RUNNER_TEMP/cog-bin" >> "$GITHUB_PATH"
-          "$RUNNER_TEMP/cog-bin/cog" --version
-
-      - name: Install dependencies
-        run: bun install --frozen-lockfile
+          cocogitto-version: "7.0.0"
+          cocogitto-sha256: "e03938ff2c4c86d71c00c0f3284dbbe95c5ca76fe34a51f33e945c23010d59bb"
 
       # The inputs are validated again here, by the registry; the pre-release number is computed
       # from the existing tags, never typed.

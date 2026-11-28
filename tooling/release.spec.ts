@@ -333,18 +333,25 @@ describe("release workflow credentials and injection", () => {
         }
     });
 
-    it("pins every action by full commit SHA with the version in a comment", () => {
+    it("pins every remote action by full commit SHA, and uses no other local action", () => {
         const uses = file.split("\n").filter((line) => /^\s*(- )?uses:/.test(line));
-        expect(uses.length).toBeGreaterThan(10);
+        expect(uses.length).toBeGreaterThan(9);
         for (const line of uses) {
+            if (/uses: \.\//.test(line)) {
+                expect(line.trim()).toBe("uses: ./.github/actions/setup-workspace");
+                continue;
+            }
             expect(line, line).toMatch(/uses: [\w.-]+\/[\w.-]+@[0-9a-f]{40} # v\d+(\.\d+)*$/);
         }
     });
 
-    it("restores no cache", () => {
-        expect(code).not.toMatch(
-            /actions\/cache|setup-omni|setup-workspace|cache-from|cache-to|restore-keys/,
+    it("restores no cache: the shared setup action runs with caching off", () => {
+        expect(code).not.toMatch(/actions\/cache|setup-omni|cache-from|cache-to|restore-keys/);
+        const setups = steps.filter(
+            ({ step }) => step.uses === "./.github/actions/setup-workspace",
         );
+        expect(setups.map(({ id }) => id).toSorted()).toEqual(["build", "verify"]);
+        for (const { id, step } of setups) expect(step.with?.cache, id).toBe("false");
         for (const { id, step } of steps) {
             if (step.uses?.startsWith("actions/setup-node")) {
                 expect(step.with?.["package-manager-cache"], id).toBe(false);
@@ -355,14 +362,23 @@ describe("release workflow credentials and injection", () => {
         }
     });
 
-    it("installs the same Omni version as the setup action, from a checked release", () => {
+    it("takes Omni through the shared setup action, which checks the release digest", () => {
         const action = Bun.YAML.parse(
             readFileSync(path.join(root, ".github/actions/setup-workspace/action.yaml"), "utf8"),
-        ) as { inputs: Record<string, { default?: string }> };
-        const env = (Bun.YAML.parse(file) as { env: Record<string, string> }).env;
-        expect(env.OMNI_VERSION).toBe(action.inputs["omni-version"]!.default!);
-        expect(env.OMNI_SHA256).toMatch(/^[0-9a-f]{64}$/);
-        expect(stepNamed("verify", "Install Omni").run).toContain("sha256sum -c -");
+        ) as {
+            inputs: Record<string, { default?: string }>;
+            runs: { steps: { name?: string; run?: string; if?: string }[] };
+        };
+        expect(action.inputs["omni-version"]!.default).toBe("0.21.0");
+        expect(action.inputs["omni-sha256"]!.default).toMatch(/^[0-9a-f]{64}$/);
+        const install = action.runs.steps.find(
+            (s) => s.name === "Install Omni from the pinned release",
+        )!;
+        expect(install.run).toContain("sha256sum -c -");
+        expect(install.if).toBe("inputs.cache != 'true'");
+        // The workflow does not keep a second copy of the version or its digest.
+        expect(file).not.toMatch(/OMNI_VERSION|OMNI_SHA256/);
+        expect(file).not.toMatch(/curl .*omni/);
     });
 });
 
@@ -634,9 +650,9 @@ describe("release workflow fails closed", () => {
 });
 
 describe("release workflow environment, shell and fallbacks", () => {
-    it("has no workflow-level env but the pinned Omni pair", () => {
-        const env = (Bun.YAML.parse(file) as { env: Record<string, string> }).env;
-        expect(Object.keys(env).toSorted()).toEqual(["OMNI_SHA256", "OMNI_VERSION"]);
+    it("has no workflow-level env: the tool versions live in the setup action", () => {
+        const env = (Bun.YAML.parse(file) as { env?: Record<string, string> }).env;
+        expect(env ?? {}).toEqual({});
     });
 
     it("runs every step in bash, set once at the workflow level", () => {
@@ -688,10 +704,12 @@ describe("release workflow artifacts and cache-like inputs", () => {
             for (const input of Object.keys(step.with ?? {})) {
                 if (!/cache/i.test(input)) continue;
                 expect(
-                    ["package-manager-cache", "no-cache", "cache-binary"],
+                    ["package-manager-cache", "no-cache", "cache-binary", "cache"],
                     `${id}: ${step.uses} ${input}`,
                 ).toContain(input);
             }
+            if ("cache" in (step.with ?? {}))
+                expect(step.with, `${id}: ${step.uses}`).toMatchObject({ cache: "false" });
         }
     });
 });
