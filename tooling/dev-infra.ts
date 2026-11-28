@@ -82,7 +82,7 @@ export const STATE_DIR = ".dev-infra";
 export const PROJECT_PREFIX = "launchpad-dev-";
 export const PROJECT_PATTERN = /^launchpad-dev-[a-z0-9-]{1,40}$/;
 export const IMAGE_SERVICES = ["dokku", "router"] as const;
-export const SERVICES = ["postgres", "mailpit", "dokku", "router"] as const;
+export const SERVICES = ["postgres", "adminer", "mailpit", "dokku", "router"] as const;
 export const FIXED_CHILDREN = ["dokku", "credentials", "data", "env"] as const;
 export const IMAGE_LABEL = "com.launchpad.dev-project";
 export const APPS_DOMAIN = "apps.localhost";
@@ -98,6 +98,7 @@ export type Preset = (typeof PRESETS)[number];
 
 export interface Ports {
     postgres: number;
+    adminer: number;
     smtp: number;
     mailpit: number;
     ssh: number;
@@ -108,6 +109,7 @@ export interface Ports {
 
 export const PORT_DEFAULTS: Ports = {
     postgres: 35432,
+    adminer: 38080,
     smtp: 31025,
     mailpit: 38025,
     ssh: 33222,
@@ -119,6 +121,7 @@ export const PORT_DEFAULTS: Ports = {
 // The same names docker-compose.dev.yaml reads.
 export const PORT_KEYS: Record<keyof Ports, string> = {
     postgres: "DEV_POSTGRES_PORT",
+    adminer: "DEV_ADMINER_PORT",
     smtp: "DEV_SMTP_PORT",
     mailpit: "DEV_MAILPIT_UI_PORT",
     ssh: "DEV_DOKKU_SSH_PORT",
@@ -625,6 +628,7 @@ function printSummary(d: BaseDeps, s: Summary): void {
     d.log("");
     d.log(`Project ${s.project} is up. Everything listens on 127.0.0.1 only:`);
     d.log(`  PostgreSQL     127.0.0.1:${p.postgres}  (user and database launchpad)`);
+    d.log(`  Adminer        http://127.0.0.1:${p.adminer}  (the SQL client; server postgres)`);
     d.log(`  Mailpit SMTP   127.0.0.1:${p.smtp}`);
     d.log(`  Mailpit web    http://127.0.0.1:${p.mailpit}`);
     d.log(`  Dokku SSH      127.0.0.1:${p.ssh}`);
@@ -683,7 +687,7 @@ export async function status(d: Deps, options: { project?: string } = {}): Promi
         d.log(`  ${service.padEnd(9)} ${health}`);
     }
     d.log(
-        `Ports (127.0.0.1): PostgreSQL ${ports.postgres}, Mailpit ${ports.smtp}/${ports.mailpit}, ` +
+        `Ports (127.0.0.1): PostgreSQL ${ports.postgres}, Adminer ${ports.adminer}, Mailpit ${ports.smtp}/${ports.mailpit}, ` +
             `Dokku SSH ${ports.ssh}, HTTP ${ports.http}, router ${ports.routerData}/${ports.routerControl}`,
     );
     const query = await compose(c, DB_QUERY);
@@ -867,7 +871,7 @@ export const HELP = `Run the development infrastructure on this machine (see doc
 
 Usage: omni -i run dev:infra:<command> [-a "options=<flags>"]
 
-  up        build and start PostgreSQL, Mailpit, Dokku and the router, write the app settings
+  up        build and start PostgreSQL, Adminer, Mailpit, Dokku and the router, write the app settings
   status    show service health, ports and the number of recorded deployments
   down      stop everything and keep the data (database, Dokku state, credentials, images)
   destroy   remove everything this created: sites, containers, volumes, network, images, ${STATE_DIR}/

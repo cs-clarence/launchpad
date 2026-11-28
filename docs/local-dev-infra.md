@@ -2,7 +2,7 @@
 
 For a developer who changes the controller, worker, CLI or dashboard and wants PostgreSQL, a mail
 catcher and a working deployment target on their machine, without running the apps in Docker. One
-command starts PostgreSQL, Mailpit, Dokku and the alias router; the controller, worker and CLI run on
+command starts PostgreSQL, the Adminer SQL client, Mailpit, Dokku and the alias router; the controller, worker and CLI run on
 the host from your checkout. It is the infrastructure-only counterpart of
 [deploy a site on your machine](local-deploy.md) (everything in Docker, one `hello` deployment), and
 extends [run Launchpad on your machine](local-quickstart.md).
@@ -67,7 +67,10 @@ has.
     project `demo` and a CLI profile `dev-infra`. Build the CLI once as in the
     [quickstart](local-quickstart.md#set-it-up) (step 6) to use it.
 
-Open the dashboard at `http://127.0.0.1:3000` and Mailpit at `http://127.0.0.1:38025`. An invitation
+Open the dashboard at `http://127.0.0.1:3000` and Mailpit at `http://127.0.0.1:38025`. To read or fix
+rows by hand, open Adminer at `http://127.0.0.1:38080`, choose PostgreSQL and log in with server
+`postgres`, user and database `launchpad`, and the password from `.dev-infra/compose.env`. Read and
+write are both allowed, exactly as with `psql`; nothing is exposed beyond loopback. An invitation
 sent from the dashboard (the controller runs with `LAUNCHPAD_ENROLLMENT=invitation`) shows up in
 Mailpit.
 
@@ -76,14 +79,14 @@ Mailpit.
 Measured once on a Linux workstation with warm Docker layer and base-image caches (a cold first run was
 not measured; Dokku's first start alone took 4.5 minutes in an earlier rehearsal):
 
-| What                                              | Measured                                            |
-| ------------------------------------------------- | --------------------------------------------------- |
-| First `dev:infra:up` (warm caches)                | 131 s, most of it Dokku's first start               |
-| `dev:infra:up` again after `down`                 | 19 s; a stopped site answers again about 30 s later |
-| `dev:infra:down`                                  | 12 s                                                |
-| `dev:infra:destroy` with one deployed site        | 8 s                                                 |
-| One deployment of `hello` through the host worker | 72 s from `app deploy` to `succeeded`               |
-| Memory limits in Compose                          | PostgreSQL 512 MiB, Dokku 1 GiB, router 128 MiB     |
+| What                                              | Measured                                                         |
+| ------------------------------------------------- | ---------------------------------------------------------------- |
+| First `dev:infra:up` (warm caches)                | 131 s, most of it Dokku's first start                            |
+| `dev:infra:up` again after `down`                 | 19 s; a stopped site answers again about 30 s later              |
+| `dev:infra:down`                                  | 12 s                                                             |
+| `dev:infra:destroy` with one deployed site        | 8 s                                                              |
+| One deployment of `hello` through the host worker | 72 s from `app deploy` to `succeeded`                            |
+| Memory limits in Compose                          | PostgreSQL 512 MiB, Dokku 1 GiB, router 128 MiB, Adminer 256 MiB |
 
 Builds and deployed sites run in the host engine, outside the memory limits. Pulled base images (Mailpit,
 PostgreSQL, Dokku) and the build cache stay after `destroy`.
@@ -131,6 +134,7 @@ Every port is published on `127.0.0.1` only and avoids the ports of `local:deplo
 | Service        | Default | Variable (set it before the first `up`) |
 | -------------- | ------- | --------------------------------------- |
 | PostgreSQL     | 35432   | `DEV_POSTGRES_PORT`                     |
+| Adminer        | 38080   | `DEV_ADMINER_PORT`                      |
 | Mailpit SMTP   | 31025   | `DEV_SMTP_PORT`                         |
 | Mailpit web    | 38025   | `DEV_MAILPIT_UI_PORT`                   |
 | Dokku SSH      | 33222   | `DEV_DOKKU_SSH_PORT`                    |

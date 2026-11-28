@@ -1,5 +1,5 @@
-// Checks of docker-compose.dev.yaml, the development infrastructure (PostgreSQL, Mailpit, Dokku,
-// the alias router). Like compose-production.ts, the same assertions run on the raw YAML
+// Checks of docker-compose.dev.yaml, the development infrastructure (PostgreSQL, the Adminer SQL
+// client, Mailpit, Dokku and the alias router). Like compose-production.ts, the same assertions run on the raw YAML
 // interpolated here (a unit test, no Docker) and on `docker compose config` output
 // (`bun tooling/compose-dev.ts`, part of the check:compose task). Nothing is started.
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -30,7 +30,7 @@ export const DEV_EXAMPLE: Env = {
     DEV_PROJECT: "launchpad-dev-example",
 };
 
-export const DEV_SERVICES = ["dokku", "mailpit", "postgres", "router"];
+export const DEV_SERVICES = ["adminer", "dokku", "mailpit", "postgres", "router"];
 const LOOPBACK = "127.0.0.1";
 const DIGEST = /@sha256:[0-9a-f]{64}$/;
 const BUILT = ["dokku", "router"];
@@ -98,6 +98,7 @@ export function assertDev(model: Json, env: Env = DEV_EXAMPLE): string[] {
     };
     const at = (key: string, fallback: string) => env[key] ?? fallback;
     expectPorts("postgres", [[at("DEV_POSTGRES_PORT", "35432"), 5432]]);
+    expectPorts("adminer", [[at("DEV_ADMINER_PORT", "38080"), 8080]]);
     expectPorts("mailpit", [
         [at("DEV_SMTP_PORT", "31025"), 1025],
         [at("DEV_MAILPIT_UI_PORT", "38025"), 8025],

@@ -8,7 +8,7 @@
 #   docker compose -p <project> --env-file .dev-infra/compose.env -f docker-compose.dev.yaml ps
 #
 # Rules this file keeps (asserted by tooling/compose-dev.ts):
-# - the services are exactly postgres, mailpit, dokku and router; every published port is on 127.0.0.1;
+# - the services are exactly postgres, adminer, mailpit, dokku and router; every published port is on 127.0.0.1;
 # - no `env_file`; every external image is pinned by digest; built images are `${DEV_PROJECT}/<service>:local`;
 # - only Dokku holds the host Docker socket, which is root-equivalent on this host;
 # - the Dokku block, PostgreSQL pin and Dokku healthcheck equal docker-compose.yaml's.
@@ -40,6 +40,32 @@ services:
       timeout: 5s
       retries: 6
       start_period: 30s
+    logging: *logging
+
+  # Adminer is the SQL client for the dev database: open it, choose PostgreSQL, and log in with
+  # server `postgres`, user and database `launchpad`, and the password from `.dev-infra/compose.env`.
+  # It is the lighter of the general SQL UIs, it holds no data of its own, and it is loopback only.
+  # Tag 6.3.1-standalone, index digest read from the registry manifest list on 2026-11-28.
+  adminer:
+    image: adminer:6.3.1-standalone@sha256:7fee0b5a0992f5641b47d4dc788468dbf044fd0487a57500b349f135dbd65886
+    mem_limit: 256m
+    ports:
+      - "127.0.0.1:${DEV_ADMINER_PORT:-38080}:8080"
+    networks: [backend]
+    depends_on: [postgres]
+    healthcheck:
+      # The standalone image serves with PHP's built-in server on [::]:8080, so try both families.
+      test:
+        [
+          "CMD",
+          "php",
+          "-r",
+          "exit((@fsockopen('[::1]', 8080) || @fsockopen('127.0.0.1', 8080)) ? 0 : 1);",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 5s
     logging: *logging
 
   # Tag v1.29, index digest read with `docker buildx imagetools inspect` on 2026-11-27. Change them

@@ -53,7 +53,9 @@ export class DevHost extends FakeHost {
             case "up": {
                 const wanted = sub.filter((x) => !x.startsWith("-")).slice(1);
                 const services =
-                    wanted.length > 0 ? wanted : ["postgres", "mailpit", "dokku", "router"];
+                    wanted.length > 0
+                        ? wanted
+                        : ["postgres", "adminer", "mailpit", "dokku", "router"];
                 for (const name of services) {
                     const existing = svc(name);
                     if (existing) {

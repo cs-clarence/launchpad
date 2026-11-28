@@ -91,6 +91,7 @@ describe("planning", () => {
         expect(portsFrom({})).toEqual(PORT_DEFAULTS);
         expect(PORT_DEFAULTS).toEqual({
             postgres: 35432,
+            adminer: 38080,
             smtp: 31025,
             mailpit: 38025,
             ssh: 33222,
@@ -656,7 +657,7 @@ describe("status and logs", () => {
         host.logs.length = 0;
         await status(deps());
         const text = host.logs.join("\n");
-        for (const service of ["postgres", "mailpit", "dokku", "router"]) {
+        for (const service of ["postgres", "adminer", "mailpit", "dokku", "router"]) {
             expect(text).toContain(service);
         }
         expect(text).toContain("running healthy");

@@ -30,8 +30,9 @@ describe("docker-compose.dev.yaml", () => {
         ]);
     });
 
-    it("has exactly the four services and no controller, worker or admin", () => {
+    it("has exactly the five services and no controller or worker", () => {
         expect(Object.keys(render().services).sort()).toEqual([
+            "adminer",
             "dokku",
             "mailpit",
             "postgres",
@@ -42,7 +43,7 @@ describe("docker-compose.dev.yaml", () => {
     it("publishes only on loopback, with the default port block", () => {
         const model = render();
         const published = Object.values<any>(model.services).flatMap((s) => s.ports ?? []);
-        expect(published.length).toBe(7);
+        expect(published.length).toBe(8);
         for (const port of published) expect(String(port)).toStartWith("127.0.0.1:");
         expect(published).toContain("127.0.0.1:33183:3081");
     });
