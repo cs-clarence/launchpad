@@ -11,6 +11,8 @@ import path from "node:path";
 import { Command, CommanderError } from "@commander-js/extra-typings";
 import { TARGETS } from "./package-clients";
 import {
+    ABANDONED_FILE,
+    abandonedProblems,
     ciPassedProblem,
     TAG_PATTERN,
     type CheckRun,
@@ -44,9 +46,21 @@ export function tagMismatches(repository: string, tag: string): string[] {
 
 // ---- commands: gather facts and apply the decisions above ----
 
+// The abandoned versions, validated against the tags; a bad file stops the release.
+export function readAbandoned(
+    tags: string[],
+    version: string,
+    file = path.join(root, ABANDONED_FILE),
+) {
+    const entries: unknown = JSON.parse(readFileSync(file, "utf8"));
+    const problems = abandonedProblems(entries, tags, version);
+    if (problems.length > 0) throw new Error(`${ABANDONED_FILE}:\n${problems.join("\n")}`);
+    return (entries as { version: string }[]).map((entry) => entry.version);
+}
+
 function gatherPrevious(version: string): PreviousRelease | null {
     const tags = must("git", ["tag", "--list", "v*"]).split("\n").filter(Boolean);
-    const previous = previousStable(tags, version);
+    const previous = previousStable(tags, version, readAbandoned(tags, version));
     if (!previous) return null;
     const commit = must("git", ["rev-list", "-n", "1", `v${previous}`]);
     const packages: PreviousRelease["packages"] = {};

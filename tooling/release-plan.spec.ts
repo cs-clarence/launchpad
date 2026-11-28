@@ -1,5 +1,9 @@
 import { describe, expect, it } from "bun:test";
 import {
+    abandonedFormatProblems,
+    abandonedProblems,
+    ABANDONED_FILE,
+    readAbandoned,
     checkPackageSet,
     checkTag,
     checkTarballSet,
@@ -20,6 +24,8 @@ import {
     type PreviousRelease,
     tagMismatches,
 } from "./release-plan";
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import path from "node:path";
 
 const root = path.resolve(import.meta.dirname, "..");
@@ -478,5 +484,79 @@ describe("buildx inspect output", () => {
             expect(() => parseInspect(text), text).toThrow(/no manifest digest/);
         }
         expect(() => parseInspect("not json")).toThrow();
+    });
+});
+
+describe("abandoned releases", () => {
+    const tags = ["v0.1.0", "v0.1.1", "v0.1.2", "v0.2.0-rc.1", "v0.2.0"];
+    const entry = (version: string, reason = "stopped before the images") => ({ version, reason });
+
+    it("are skipped when choosing the previous stable release, walking down", () => {
+        expect(previousStable(tags, "0.3.0")).toBe("0.2.0");
+        expect(previousStable(tags, "0.3.0", ["0.2.0"])).toBe("0.1.2");
+        expect(previousStable(tags, "0.3.0", ["0.2.0", "0.1.2"])).toBe("0.1.1");
+        expect(previousStable(tags, "0.3.0", ["0.2.0", "0.1.2", "0.1.1", "0.1.0"])).toBeNull();
+        expect(previousStable(tags, "0.3.0", [])).toBe("0.2.0");
+    });
+
+    it("accept an empty list and valid entries", () => {
+        expect(abandonedProblems([], tags, "0.3.0")).toEqual([]);
+        expect(abandonedProblems([entry("0.2.0"), entry("0.1.1")], tags, "0.3.0")).toEqual([]);
+    });
+
+    it("reject a bad shape", () => {
+        for (const bad of [
+            {},
+            "0.1.0",
+            [null],
+            [["0.1.0"]],
+            [{ version: "0.1.0" }],
+            [{ version: "0.1.0", reason: " " }],
+            [{ reason: "x" }],
+            [entry("v0.1.0")],
+            [entry("0.1.0-rc.1")],
+            [entry("01.1.0")],
+            [entry("0.1.0+build")],
+            [entry("0.1.0"), entry("0.1.0")],
+        ]) {
+            expect(abandonedFormatProblems(bad), JSON.stringify(bad)).not.toEqual([]);
+        }
+    });
+
+    it("reject a version with no tag, or one not below the version being released", () => {
+        expect(abandonedProblems([entry("0.0.9")], tags, "0.3.0")).toEqual([
+            expect.stringContaining("no v0.0.9 tag"),
+        ]);
+        expect(abandonedProblems([entry("0.2.0")], tags, "0.2.0")).toEqual([
+            expect.stringContaining("not below"),
+        ]);
+        expect(abandonedProblems([entry("0.2.0")], tags, "0.1.2")).toEqual([
+            expect.stringContaining("not below"),
+        ]);
+    });
+
+    it("are read from a file that is validated against the tags", () => {
+        const dir = mkdtempSync(path.join(tmpdir(), "abandoned-"));
+        const write = (text: string) => {
+            const file = path.join(dir, "abandoned.json");
+            writeFileSync(file, text);
+            return file;
+        };
+        expect(readAbandoned(tags, "0.3.0", write("[]"))).toEqual([]);
+        expect(readAbandoned(tags, "0.3.0", write(JSON.stringify([entry("0.1.1")])))).toEqual([
+            "0.1.1",
+        ]);
+        expect(() => readAbandoned(tags, "0.3.0", write("{"))).toThrow();
+        expect(() => readAbandoned(tags, "0.3.0", write(JSON.stringify([entry("0.3.0")])))).toThrow(
+            /not below/,
+        );
+        expect(() => readAbandoned(tags, "0.3.0", write(JSON.stringify([entry("9.0.0")])))).toThrow(
+            /no v9.0.0 tag|not below/,
+        );
+    });
+
+    it("has a committed file of the right shape", () => {
+        const entries = JSON.parse(readFileSync(path.join(root, ABANDONED_FILE), "utf8"));
+        expect(abandonedFormatProblems(entries)).toEqual([]);
     });
 });

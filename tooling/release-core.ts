@@ -77,12 +77,18 @@ export function exactTagAction(staged: string, existing: string | null): "create
     throw new Error(`the version tag already points to ${existing}, not the staged ${staged}`);
 }
 
-// The highest stable release strictly below `version`, from the `v<semver>` tags.
-export function previousStable(tags: string[], version: string): string | null {
+// The highest stable release strictly below `version`, from the `v<semver>` tags, skipping the
+// versions the maintainer abandoned (tooling/abandoned-releases.json): the check walks down to the
+// next stable tag that was not abandoned.
+export function previousStable(
+    tags: string[],
+    version: string,
+    abandoned: string[] = [],
+): string | null {
     const found = tags
         .filter((tag) => TAG_PATTERN.test(tag) && isStable(tag.slice(1)))
         .map((tag) => tag.slice(1))
-        .filter((v) => compareSemver(v, version) < 0)
+        .filter((v) => compareSemver(v, version) < 0 && !abandoned.includes(v))
         .toSorted(compareSemver);
     return found.at(-1) ?? null;
 }
@@ -287,5 +293,48 @@ export function checkPackageSet(names: string[]): string[] {
     }
     for (const name of names)
         if (!PUBLISH_ORDER.includes(name)) problems.push(`unexpected package ${name}`);
+    return problems;
+}
+
+// The committed list of abandoned stable releases: `[{ "version": "0.1.0", "reason": "..." }]`.
+// A release that could not be completed (see docs/releasing.md) is abandoned by a reviewed commit,
+// so the partial-release check no longer stops on it. Lead-decided policy, to be confirmed.
+export const ABANDONED_FILE = "tooling/abandoned-releases.json";
+
+// The shape alone: an array of { version, reason } with stable SemVer versions, no duplicates.
+export function abandonedFormatProblems(entries: unknown): string[] {
+    if (!Array.isArray(entries)) return ["the file must hold an array"];
+    const problems: string[] = [];
+    const seen = new Set<string>();
+    entries.forEach((entry, i) => {
+        const where = `entry ${i}`;
+        if (typeof entry !== "object" || entry === null || Array.isArray(entry)) {
+            return problems.push(`${where} is not an object`);
+        }
+        const { version, reason } = entry as { version?: unknown; reason?: unknown };
+        if (typeof version !== "string" || !TAG_PATTERN.test(`v${version}`) || !isStable(version)) {
+            problems.push(`${where}: "${String(version)}" is not a stable SemVer version`);
+        } else if (seen.has(version)) {
+            problems.push(`${where}: ${version} is listed twice`);
+        } else {
+            seen.add(version);
+        }
+        if (typeof reason !== "string" || !reason.trim())
+            problems.push(`${where}: a reason is required`);
+    });
+    return problems;
+}
+
+// The shape, and against the repository: each version has a v tag and is below the version being
+// released (a release never abandons itself or a newer one).
+export function abandonedProblems(entries: unknown, tags: string[], current: string): string[] {
+    const problems = abandonedFormatProblems(entries);
+    if (problems.length > 0) return problems;
+    for (const { version } of entries as { version: string }[]) {
+        if (!tags.includes(`v${version}`)) problems.push(`${version} has no v${version} tag`);
+        if (compareSemver(version, current) >= 0) {
+            problems.push(`${version} is not below the version being released (${current})`);
+        }
+    }
     return problems;
 }

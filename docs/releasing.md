@@ -284,7 +284,7 @@ procedure requires first.
    after the `v`. It runs before any checkout.
 2. `verify`: the tag equals the version of the root and every published manifest, the commit is on
    `main`, its `CI Passed` check succeeded, the previous stable release is complete (refuses a new
-   stable release on a partial one), then the full gate, the dry run and `test:packages` on Node
+   stable release on a partial one unless that release is in `tooling/abandoned-releases.json`), then the full gate, the dry run and `test:packages` on Node
    22.12 and the current Node. It restores no cache.
 3. `build`: packs the tarballs once and uploads them with `SHA256SUMS`; the checksum of
    `SHA256SUMS` is a job output that later jobs check before using the tarballs.
@@ -300,14 +300,29 @@ procedure requires first.
    `latest` only for a stable version that is higher than what they hold.
 8. `post-verify`: `gh attestation verify` for each image digest and `npm audit signatures`.
 
-A re-run from the failed job is the recovery. Publishing cannot be undone: a bad release is
-deprecated on npm and fixed forward; `X.Y` and `latest` move back by hand to the last good digest.
-What the workflow could not verify is listed under "Written as fact but unverified" in the record;
-the `v0.1.0-rc.1` release settles it.
+Publishing cannot be undone, and a pushed tag stays. If a stable release stops part-way, the next
+stable release is refused by `verify` (the partial-release check) until the failed one is dealt
+with. There are two ways, in this order:
+
+1. **Complete it (primary).** Re-run the failed jobs, or the whole run, of the same tag within the
+   30-day artifact window (below). The run skips what is already published, finishes the rest, and
+   the partial check then passes for the next release.
+2. **Abandon it (after the window, or if it cannot be completed).** Add the exact version and a
+   short reason to `tooling/abandoned-releases.json` in a reviewed commit, for example
+   `[{ "version": "0.1.0", "reason": "npm stopped after sdk; the artifacts expired" }]`. The check
+   then skips that version and walks down to the next stable tag that is not abandoned. The file
+   is validated every time the check runs: stable SemVer only, no duplicates, a `v<version>` tag
+   must exist, and the version must be below the one being released. Its tag stays, `npm
+   deprecate` the packages of it that were published (by hand, not automated), and move `X.Y`
+   and `latest` back by hand if they point at an unusable image. Then release a new version.
+   This is a lead-decided policy to confirm; see the record.
+   What the workflow could not verify is listed under "Written as fact but unverified" in the record;
+   the `v0.1.0-rc.1` release settles it.
 
 Limits of the first version:
 
-- The partial-release check confirms the previous release's packages exist with provenance (it has
+- The partial-release check skips versions listed in `tooling/abandoned-releases.json` (an empty
+  array today) and confirms the previous release's packages exist with provenance (it has
   no copy of that release's tarballs to compare integrity with), and it reads the images
   anonymously, so it needs their packages to be public. It requires `X.Y` only when the previous
   release is the highest patch of its minor and `latest` only when it is the highest stable version.
@@ -322,8 +337,8 @@ Limits of the first version:
   them again, pinned to the `release.yaml` signer workflow and the tag ref.
 - **Retry window: 30 days.** The tarball and staged-digest artifacts are kept for 30 days
   (`retention-days: 30`; the repository's own limit is 90), so a re-run of `npm-publish` or
-  `image-publish` up to then still finds them. After that, a failed release is fixed forward with
-  a new version.
+  `image-publish` up to then still finds them. After that, completing the release is not possible
+  and it is abandoned (see above) and fixed forward with a new version.
 - **Backports.** A stable version lower than the package's current npm `latest` (for example 1.1.5
   after 1.2.0) is published with the `retry` dist-tag, not `latest`. It is on the registry, but
   `npm install <name>` does not get it; users pick it by version or by the `retry` tag.

@@ -269,6 +269,18 @@ publishes. A tarball is never rebuilt after `build`.
   `0.1.0`), there is nothing to check. The spec asserts this rule. Alternative, not chosen:
   record completion per release as a final job step (a `release-complete` git note or GitHub
   release object read by `verify`); it adds state that must itself be kept correct.
+- **Amendment: abandoning a release (lead-decided policy, to be confirmed by the maintainer).** A
+  failed stable release keeps its pushed tag, so by the rule above it would be the "previous"
+  release forever and block every newer one; "fix forward" would deadlock. Recovery is therefore:
+  (1) complete the failed release by re-running its failed jobs or run from the same tag within the
+  30-day artifact retention window; the check then passes. (2) After the window, or when it cannot
+  be completed, the maintainer abandons it in a reviewed commit that adds `{ version, reason }` to
+  `tooling/abandoned-releases.json`. The check skips abandoned versions and walks down to the
+  next stable tag that is not abandoned. The file must be valid (stable SemVer, no duplicates, an
+  existing `v<version>` tag, strictly below the version being released) or `verify` fails. Its
+  published packages are deprecated by hand; its tag is never deleted. An abandoned version still
+  counts as a higher stable version when deciding whether the previous release must hold `X.Y` or
+  `latest`, so the check stays lenient there.
 - **Partial publish.** Publishing five packages is not atomic. If it stops part-way, some
   versions are public and some are not. Re-running completes the missing ones; if a published
   package is wrong, deprecate it and fix forward with a new version.
@@ -466,6 +478,11 @@ Where `release.yaml` is more specific than, or differs from, the text above:
   push of a never-pushed repository; the `.Image` label shape of an index with attestation
   manifests; `npm view` E404 versus empty output; whether a backport tagged `retry` is acceptable
   to users.
+- Abandoned releases (CodeRabbit finding on the fix-forward deadlock): implemented as the amendment
+  above, **a lead-decided policy to be confirmed**. The list is read in `tooling/release-plan.ts`
+  (`verify` only, which installs dependencies); `release-core.ts` holds the pure validation and
+  `previousStable`, and the credentialed jobs and their allowlist are unchanged. Nothing deprecates
+  an abandoned version's packages automatically.
 - CodeRabbit review of PR #124: artifacts are kept 30 days, which is now the stated retry window
   (the record had none; GitHub's repository limit is 90 days; the 30 days a run can be re-run for
   is unverified). `setup-buildx` runs with `cache-binary: false` (the other cache-like inputs at the
