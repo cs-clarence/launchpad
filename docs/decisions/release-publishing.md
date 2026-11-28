@@ -128,23 +128,59 @@ A second workflow may write, within a narrow limit: it may push a branch `releas
 open a pull request, and it **never tags and never publishes**. Why it is allowed: the bump is
 mechanical and the manual steps invite mistakes (a wrong pre-release number, a diverged tag, a
 `[skip ci]` marker); the maintainer still reviews and merges the PR and still creates the tag by
-hand on the merge commit, so the approval and tag-integrity controls above are unchanged. It starts
-only by `workflow_dispatch` from `main`, holds exactly `contents: write`, `pull-requests: write`
-and `actions: write` (no `id-token`, no `packages`, no secrets, no cache), pins every action by
-SHA, and installs Omni and Cocogitto from pinned release assets with verified checksums. The
-inputs are a base `X.Y.Z` and a channel from a static list equal to the registry; the version and
-the pre-release number are computed from the registry and the existing tags, and the workflow
-refuses an existing branch. It pushes with an explicit refspec (`HEAD:refs/heads/release/<version>`)
-and deletes the local tag first; `tooling/ci.spec.ts` carves out exactly its two commands
-(`git tag -d` and that push) and its three write scopes, and `tooling/release-pr.spec.ts` asserts the
-rest. Risks: the dependencies and Cocogitto's hooks run in a job holding `contents: write` (the
-token is not kept in the checkout and reaches only the steps that call GitHub), and a compromised
-run could push or open PRs, but `main` and `refs/tags/v*` are ruleset-protected, a branch under
-`release/` is only a proposal, and the maintainer reviews the PR. Maintainer step: enable
-"Allow GitHub Actions to create and approve pull requests". A PR created with the workflow token
-starts no `pull_request` run, so CI is dispatched on the branch (`workflow_dispatch` is exempt
-from that rule: documented behaviour, unverified here); `ci.yaml` gained `workflow_dispatch`, under
-which the PR-only `commits` job is skipped and the gatekeeper expects that.
+hand on the merge commit, so the approval and tag-integrity controls above are unchanged.
+
+It starts only by `workflow_dispatch` from `main`, with a base `X.Y.Z` and a channel from a static
+list equal to the registry; the version and the pre-release number are computed from the registry
+and the existing tags. It has **three jobs, a classic privilege split**, so that no code that comes
+from dependencies ever holds a token that can write:
+
+- `prepare` (`contents: read` only, no token with write scope, no environment) runs everything that
+  executes dependency or repository code: `bun install`, Cocogitto and its version-sync hook,
+  `cog bump`, the changelog and the body. It produces DATA only, a `git bundle` of the single bump
+  commit and the PR body. A compromised dependency here can change that data and what its job
+  outputs say, and can write Actions cache entries scoped to `main` (accepted: `ci.yaml` already
+  does the same), but it cannot push, open a PR or dispatch anything.
+- `push` (`contents: write` only; `environment: release-pr`) runs no repository code and installs
+  nothing: only commands written in the workflow file. It checks out `main` without keeping the
+  token, and validates the data before the token is used: the version against the dispatch inputs
+  and the registry's channels; a bundle with exactly one ref and exactly one new commit directly on
+  the checked-out `main` commit; the fixed message `chore(version): v<version>`; every changed
+  path on the allowlist of `tooling/release-pr.ts` (manifests, the lockfile, changelogs and the
+  three source files that hold a version string), as an addition or modification of a plain file;
+  and a manifest or source file changing only on its version line. It then checks exactly (with
+  `git ls-remote --exit-code`) that `release/<version>` does not exist and pushes **only**
+  `HEAD:refs/heads/release/<version>` with an explicit refspec. It can write a branch under
+  `release/`; `main` and `refs/tags/v*` are ruleset-protected, so it cannot touch them.
+- `open-pr` (`pull-requests: write` and `actions: write` only; `environment: release-pr`) runs no
+  repository code, has no checkout and installs nothing: `gh pr create` with the body as a file
+  (`--body-file`, never interpolated) and a title built from the validated version, then
+  `gh workflow run ci.yaml --ref release/<version>`. The "Allow GitHub Actions to create and
+  approve pull requests" setting therefore only ever matters to a job that runs no untrusted code.
+
+`tooling/ci.spec.ts` carves out exactly the one push command line and the three job-scoped write
+scopes; `tooling/release-pr.spec.ts` asserts the rest, runs the real validation step against
+repositories built to be refused (changed workflow, extra line in a manifest, deletion, mode
+change, two commits, a merge commit, another message, wrong ref, wrong channel...) and compares
+the shell allowlist, version-line shapes and channel names with the repository's.
+
+**Trust boundary.** GitHub runs the workflow file from the dispatched branch, so dispatching a
+branch with an edited `release-pr.yaml` runs the edited file, with that file's permissions. The
+guard `refs/heads/main` in the first step is not a boundary against that. What limits it is who may
+push such a branch and dispatch it (the maintainer) and, recommended, the `release-pr`
+environment: set its deployment branch policy to `main` only (a maintainer step; the environment
+is created on first use with no protection). With that policy `push` and `open-pr`, the only jobs
+that hold write scopes, cannot run from another branch even if the file is edited.
+
+A PR created with the workflow token starts no `pull_request` run, so CI is dispatched on the
+branch (`workflow_dispatch` is exempt from that rule: documented behaviour, unverified here).
+`ci.yaml` accepts `workflow_dispatch`; under it the `commits` job runs against `origin/main..HEAD`
+(it is skipped only on a push to main and in the merge queue) and the gatekeeper expects `success`
+for pull requests and dispatches, `skipped` for pushes and the merge queue. A lower base than the
+latest tag (1.5.0 when `v2.0.0-rc.1` exists) is **accepted on purpose**, for backports; the
+registry's rules and the no-regression rule still apply and the reviewer sees the version in the
+PR. A dead branch, or one whose PR was closed unmerged, is removed by deleting `release/<version>`
+and dispatching again.
 
 ### Approval and tag integrity
 
@@ -412,8 +448,7 @@ stricter than the other workflows on purpose. The dedicated spec asserts it.
 ## What stays forbidden
 
 Publish, push, login or tag commands in any other workflow, except the one carve-out of the release PR
-workflow (a `git tag -d` of the local tag and a push of its `release/<version>` branch; see the
-amendment above). The Release dry run workflow stays
+workflow (a push of its `release/<version>` branch, in its `push` job; see the amendment above). The Release dry run workflow stays
 manual, read-only and secret-free. When the release workflow lands, `tooling/ci.spec.ts` is
 extended to enforce this for every workflow except the single named release workflow, which gets
 its own spec asserting: the tag glob and the guard job with its `needs:` edges, the `release`
@@ -585,6 +620,19 @@ Where `release.yaml` is more specific than, or differs from, the text above:
   `release/` branch (only the gatekeeper logic is tested); that the PR can be created with
   the setting on; the pre-release range and the remote changelog template on the real repository's
   history; `git push` with the `http.extraheader` form against GitHub; `jq` on the runner.
+- Release PR workflow, security review: the workflow is now three jobs (`prepare` read-only,
+  `push`, `open-pr`), so the earlier sentence that the token never reaches dependencies is true by
+  construction rather than by step-level care. `shellcheck` 0.11.0 (SHA-256 verified, run on every
+  `run:` block of the three workflows) reports nothing for `release-pr.yaml`; in `release.yaml` it
+  reported SC2209 on an unquoted `kind=patch` (quoted now) and SC2164 on a bare `cd` in two steps
+  (left: `bash -e` stops on a failing `cd`, and the specs forbid `||` there). The commit-message
+  check runs in `prepare` before anything is pushed and `push` re-checks the exact message.
+  Unverified, added: whether the dispatched `CI Passed` (a second check run with the same name on the
+  same SHA) behaves correctly with the ruleset when the PR's own `pull_request` run fails or is
+  absent; whether `open-pr` needs `contents: read` for `gh pr create` (only the two scopes the
+  decision names are granted); `git bundle verify`, `git fetch` from a bundle and
+  `ls-remote --exit-code` with the `http.extraheader` form on the runner (run here only against
+  local repositories); that the `release-pr` environment is created automatically on first use.
 - CodeRabbit review of PR #124: artifacts are kept 30 days, which is now the stated retry window
   (the record had none; GitHub's repository limit is 90 days; the 30 days a run can be re-run for
   is unverified). `setup-buildx` runs with `cache-binary: false` (the other cache-like inputs at the

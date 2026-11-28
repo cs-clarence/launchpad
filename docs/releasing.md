@@ -281,30 +281,50 @@ procedure requires first.
 `.github/workflows/release-pr.yaml` does the mechanical part of the checklist's step 7. In
 Actions, run **Release PR** from `main` (it fails on any other ref) with the base version `X.Y.Z`
 and a channel (`stable` or `rc`, the rows of the registry below). It never tags and never
-publishes. It:
+publishes. Three jobs:
 
-1. validates the inputs with the registry (the kind of release comes from the base, and the channel
-   must support it), computes the pre-release number itself from the existing `v<base>-<channel>.*`
-   tags, and refuses when the stable `X.Y.Z` already exists, the version would go backwards across
-   channels, or the branch `release/<version>` already exists;
-2. cuts `release/<version>` from `main` and runs `cog bump --version <version> --include-packages`,
-   then `check:versions`;
-3. writes the PR body from `cog changelog` (a stable release since the last stable tag, a
-   pre-release since the previous tag of any kind), deletes the local tag Cocogitto made, and pushes
-   **only** the branch, with the refspec `HEAD:refs/heads/release/<version>`;
-4. opens the PR `chore(release): v<version>` and dispatches `ci.yaml` on the branch.
+1. `prepare` (read-only; runs `bun install`, Cocogitto and its hooks): validates the inputs with the
+   registry (the kind of release comes from the base and the channel must support it), computes the
+   pre-release number from the existing `v<base>-<channel>.*` tags, refuses a stable `X.Y.Z` that
+   exists or a version that would go backwards across channels, cuts `release/<version>`, runs
+   `cog bump --version <version> --include-packages` and `check:versions`, checks the commit message
+   and the title with `cog verify`, and writes the PR body from `cog changelog` (a stable release
+   since the last stable tag, a pre-release since the previous tag of any kind). It hands over only
+   data: a git bundle of the one bump commit and the body.
+2. `push` (`contents: write`; runs no repository code): validates the bundle (one ref, one commit
+   on `main`, the fixed message, only version files, changelogs and the lockfile, a manifest or
+   source file changing only on its version line), checks that `release/<version>` does not exist
+   and pushes **only** that branch.
+3. `open-pr` (`pull-requests` and `actions` write; runs no repository code): opens the PR
+   `chore(release): v<version>` and dispatches `ci.yaml` on the branch.
 
 Then you review the PR, wait for `CI Passed`, merge, and create the one tag `v<version>` by hand on
 the merge commit as in step 8; the tag starts the release workflow. The manual steps of the
-checklist (step 7) remain the fallback. One-time maintainer setting: **Settings, Actions, General,
-"Allow GitHub Actions to create and approve pull requests"** must be on, or `gh pr create` fails.
-A pull request opened with the workflow token starts no `pull_request` run, which is why the
-workflow dispatches CI itself (`ci.yaml` accepts `workflow_dispatch`; its `commits` job is skipped
-under that event and `CI Passed` still reports). That the dispatched run's `CI Passed` check
-satisfies the ruleset on the PR is unverified; if it does not, run CI on the PR by closing and
-reopening it. The checkout never keeps the token and only the steps that call GitHub receive it,
-but the dependencies and Cocogitto hooks run in a job that holds `contents: write`; `main` and the
-`v*` tags are ruleset-protected, which is what limits what they could do.
+checklist (step 7) remain the fallback.
+
+**What to check in the PR.** The workflow validates the paths, but you are the reviewer: confirm
+that the diff touches only versions, the lockfile and changelogs (it should read as a version bump
+and generated changelog text, nothing else).
+
+**Maintainer settings.** (1) **Settings, Actions, General, "Allow GitHub Actions to create and
+approve pull requests"** must be on, or `gh pr create` fails; only the `open-pr` job, which runs no
+untrusted code, uses it. (2) Recommended: the `release-pr` environment (created on first use) with
+its deployment branch policy limited to `main`. GitHub runs the workflow file from the branch it is
+dispatched on, so a branch with an edited `release-pr.yaml` is the trust boundary; with the policy
+the jobs that hold write scopes cannot run from such a branch.
+
+**When it goes wrong.** If a run stops after the push, or the PR was closed without merging,
+delete the branch `release/<version>` and dispatch again (the workflow refuses an existing
+branch). A base lower than the latest tag (for example 1.5.0 when `v2.0.0-rc.1` exists) is
+accepted on purpose, for backports; the registry rules still apply.
+
+A PR opened with the workflow token starts no `pull_request` run, which is why the workflow
+dispatches CI itself. `ci.yaml` accepts `workflow_dispatch`, and under it the `commits` job checks
+the branch's commits against `origin/main`. That the dispatched run's `CI Passed` satisfies the
+ruleset on the PR is unverified, including when the PR's own `pull_request` run fails or is absent
+(two check runs with the same name on one commit); if it does not, close and reopen the PR. A
+compromised `prepare` job can write Actions cache entries scoped to `main`; this is accepted, as
+`ci.yaml` already does the same.
 
 ## Release channels
 
