@@ -13,6 +13,8 @@ export default defineConfig({
         "**/.tanstack/**",
         "**/routeTree.gen.ts",
         "bun.lock",
+        "CHANGELOG.md",
+        "**/CHANGELOG.md",
         "THIRD_PARTY_NOTICES.md",
         "omni/generators/**/templates/**",
     ],
