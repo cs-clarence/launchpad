@@ -218,7 +218,7 @@ See [tooling](docs/tooling.md) and [patterns](docs/patterns/README.md).
 Changes to authentication, authorization, schema or migrations, secrets and
 production configuration, or deployment execution are always High risk, even
 when the diff looks small. Size verification and review accordingly; the exact
-paths and reasons are in [risk overrides](risk-overrides.md).
+paths and reasons are in [risk overrides](docs/risk-overrides.md).
 
 ## Git
 

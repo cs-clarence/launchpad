@@ -38,10 +38,10 @@ changes inside the scope. Documentation elsewhere is not affected.
 
 - rule: `core/risk-tiers.md#tiers`
 - action: add
-- scope: `packages/database/src/migrations/**`, `packages/database/src/auth-schema.ts`, `packages/database/src/migrate.ts`, `packages/services/src/deployment-deletion.ts`, `packages/services/src/app-shutdown.ts`
+- scope: `packages/database/src/migrations/**`, `packages/database/src/auth-schema.ts`, `packages/database/src/migrate.ts`, `packages/alias-router/src/schema.ts`, `packages/services/src/deployment-deletion.ts`, `packages/services/src/app-shutdown.ts`
 - effective: every change is High risk
-- reason: forward-only migrations and deletion paths change persistent data and
-  are hard or impossible to undo after they run.
+- reason: schema, forward-only migrations and deletion paths change persistent
+  data and are hard or impossible to undo after they run.
 
 ### Secrets and production configuration
 
