@@ -320,6 +320,10 @@ Limits of the first version:
   imports `node:` built-ins and the dependency-free `release-core.ts` and `semver-compare.ts`.
   `image-publish` verifies the staged attestations before it retags, and `post-verify` verifies
   them again, pinned to the `release.yaml` signer workflow and the tag ref.
+- **Retry window: 30 days.** The tarball and staged-digest artifacts are kept for 30 days
+  (`retention-days: 30`; the repository's own limit is 90), so a re-run of `npm-publish` or
+  `image-publish` up to then still finds them. After that, a failed release is fixed forward with
+  a new version.
 - **Backports.** A stable version lower than the package's current npm `latest` (for example 1.1.5
   after 1.2.0) is published with the `retry` dist-tag, not `latest`. It is on the registry, but
   `npm install <name>` does not get it; users pick it by version or by the `retry` tag.

@@ -50,6 +50,7 @@ function globToRegExp(glob: string): RegExp {
         const c = glob[i]!;
         if (c === "[") {
             const end = glob.indexOf("]", i);
+            if (end === -1) throw new Error(`unclosed [ in ${glob}`);
             source += glob.slice(i, end + 1);
             i = end;
         } else if (c === "+") source += "+";
@@ -576,5 +577,57 @@ describe("release workflow environment, shell and fallbacks", () => {
         );
         const attest = stage.find((s) => s.uses?.startsWith("actions/attest@"))!;
         expect(attest.if).toBe("steps.existing.outputs.found != 'true'");
+    });
+});
+
+describe("release workflow artifacts and cache-like inputs", () => {
+    it("keeps the tarballs and staged digests for the whole 30-day retry window", () => {
+        const uploads = steps.filter(({ step }) =>
+            step.uses?.startsWith("actions/upload-artifact@"),
+        );
+        expect(uploads.map(({ id }) => id).toSorted()).toEqual(["build", "stage"]);
+        for (const { id, step } of uploads) {
+            expect(step.with?.["retention-days"], id).toBe(30);
+        }
+    });
+
+    // Every input of a pinned action that can restore or save a cache, as read from its action.yml
+    // at the pinned SHA: setup-node `package-manager-cache` (default true), setup-bun `no-cache`
+    // (default false), setup-buildx `cache-binary` (default true), build-push `cache-from` and
+    // `cache-to` (unset by default, never given here).
+    it("turns off every cache an action would otherwise use", () => {
+        const buildx = steps.filter(({ step }) =>
+            step.uses?.startsWith("docker/setup-buildx-action@"),
+        );
+        expect(buildx.length).toBeGreaterThan(0);
+        for (const { id, step } of buildx) expect(step.with?.["cache-binary"], id).toBe(false);
+        for (const { id, step } of steps) {
+            for (const input of Object.keys(step.with ?? {})) {
+                if (!/cache/i.test(input)) continue;
+                expect(
+                    ["package-manager-cache", "no-cache", "cache-binary"],
+                    `${id}: ${step.uses} ${input}`,
+                ).toContain(input);
+            }
+        }
+    });
+});
+
+describe("the tag glob matcher", () => {
+    it("rejects an unclosed character class instead of looping", () => {
+        expect(() => globToRegExp("v[0-9+.[0-9]+")).not.toThrow();
+        expect(() => globToRegExp("v[0-9")).toThrow(/unclosed/);
+        expect(globToRegExp("v[0-9]+").test("v10")).toBe(true);
+    });
+});
+
+describe("release workflow orders its risks before npm publishes", () => {
+    it("verifies the staged attestations in smoke, which runs before npm-publish", () => {
+        expect(jobs["npm-publish"]!.needs).toContain("smoke");
+        expect(runsOf("smoke")).toContain("gh attestation verify");
+        expect(runsOf("smoke")).toContain(
+            "--signer-workflow launchpad-kit/launchpad/.github/workflows/release.yaml",
+        );
+        expect(runsOf("smoke")).toContain('--source-ref "refs/tags/v$VERSION"');
     });
 });

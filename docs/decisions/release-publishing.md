@@ -466,6 +466,24 @@ Where `release.yaml` is more specific than, or differs from, the text above:
   push of a never-pushed repository; the `.Image` label shape of an index with attestation
   manifests; `npm view` E404 versus empty output; whether a backport tagged `retry` is acceptable
   to users.
+- CodeRabbit review of PR #124: artifacts are kept 30 days, which is now the stated retry window
+  (the record had none; GitHub's repository limit is 90 days; the 30 days a run can be re-run for
+  is unverified). `setup-buildx` runs with `cache-binary: false` (the other cache-like inputs at the
+  pinned SHAs are `package-manager-cache`, `no-cache`, and the unset `cache-from`/`cache-to`).
+  The output shape of `docker buildx imagetools inspect --format '{{json .}}'` is now read from
+  buildx v0.39.1's `util/imagetools/printers.go`: lowercase `name`, `manifest`, `image`; the index
+  is printed with its own `digest`; `image` is one OCI image for one platform (attestation
+  manifests are index entries linked by annotation, not platforms) and a platform map for several.
+  The earlier unverified item about that shape is therefore settled by source, not by a run; that
+  the runner's buildx (0.39.1 per the runner-images README) behaves the same is unverified. Existence
+  is decided by `--raw` (resolve and read the tag's manifest only); the full inspection that also
+  fetches child manifests may not report absent: a child `: not found` stops the release.
+  `ci.spec.ts` compares parsed permissions, parsed `uses` values and the effective push filter.
+  The staged attestations are verified in `smoke`, before `npm-publish`; what can still fail after
+  npm publishes, untested against real tool output: `imagetools create` retagging and
+  `image-publish`'s own `gh attestation verify`, `post-verify`'s `gh attestation verify` and
+  `npm audit signatures` (which may fail on a dependency without signatures). A failure there is
+  fixed forward (deprecate, re-run from the failed job).
 - Known limit, not fixed: a re-run of an older release can move the `next` dist-tag backwards.
 - Added to the unverified list: `gh attestation verify` in `image-publish` with only
   `contents: read` and `packages: write`; the `--signer-workflow` and `--source-ref` semantics for

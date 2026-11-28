@@ -192,6 +192,8 @@ jobs:
           sha256sum -c SHA256SUMS
           echo "sha256=$(sha256sum SHA256SUMS | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
 
+      # Kept for the supported retry window (30 days, docs/releasing.md): a re-run of npm-publish or
+      # image-publish downloads these.
       - name: Keep the tarballs and checksums
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
@@ -201,7 +203,7 @@ jobs:
           path: |
             .release-dry-run/packages/SHA256SUMS
             .release-dry-run/packages/*.tgz
-          retention-days: 7
+          retention-days: 30
           if-no-files-found: error
 
   stage:
@@ -259,6 +261,9 @@ jobs:
 
       - name: Set up Buildx
         uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+        with:
+          # The action restores the Buildx binary from the Actions cache by default.
+          cache-binary: false
 
       # A re-run reuses the digest already under sha-<GITHUB_SHA>: a rebuild would produce another
       # attested digest (the provenance holds build data). Only "not found" means absent.
@@ -335,7 +340,7 @@ jobs:
         with:
           name: staged-${{ matrix.image }}
           path: staged/${{ matrix.image }}.txt
-          retention-days: 7
+          retention-days: 30
           if-no-files-found: error
 
   smoke:
@@ -414,6 +419,19 @@ jobs:
             [ "$(label version)" = "$VERSION" ]
             [ "$(label revision)" = "$GITHUB_SHA" ]
             [ "$(label source)" = "https://github.com/launchpad-kit/launchpad" ]
+          done
+
+      # Checked here, before npm publishes anything irreversible, so a problem with the attestation
+      # lookup (permissions, the signer or ref flags) stops the release early.
+      - name: Verify the staged attestations
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          for name in controller worker router admin dokku; do
+            gh attestation verify "oci://ghcr.io/launchpad-kit/launchpad-$name@$(cat "staged/$name.txt")" \
+              --repo "$GITHUB_REPOSITORY" \
+              --signer-workflow launchpad-kit/launchpad/.github/workflows/release.yaml \
+              --source-ref "refs/tags/v$VERSION"
           done
 
   npm-publish:
