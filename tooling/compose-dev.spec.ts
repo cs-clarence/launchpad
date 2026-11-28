@@ -30,8 +30,9 @@ describe("docker-compose.dev.yaml", () => {
         ]);
     });
 
-    it("has exactly the four services and no controller, worker or admin", () => {
+    it("has exactly the five services and no controller or worker", () => {
         expect(Object.keys(render().services).sort()).toEqual([
+            "adminer",
             "dokku",
             "mailpit",
             "postgres",
@@ -42,7 +43,7 @@ describe("docker-compose.dev.yaml", () => {
     it("publishes only on loopback, with the default port block", () => {
         const model = render();
         const published = Object.values<any>(model.services).flatMap((s) => s.ports ?? []);
-        expect(published.length).toBe(7);
+        expect(published.length).toBe(8);
         for (const port of published) expect(String(port)).toStartWith("127.0.0.1:");
         expect(published).toContain("127.0.0.1:33183:3081");
     });
@@ -51,14 +52,17 @@ describe("docker-compose.dev.yaml", () => {
         const model = render({
             ...DEV_EXAMPLE,
             DEV_POSTGRES_PORT: "40001",
+            DEV_ADMINER_PORT: "41234",
             DEV_ROUTER_CONTROL_PORT: "40002",
         });
         expect(model.services.postgres.ports).toEqual(["127.0.0.1:40001:5432"]);
+        expect(model.services.adminer.ports).toEqual(["127.0.0.1:41234:8080"]);
         expect(model.services.router.ports).toContain("127.0.0.1:40002:3081");
         expect(
             assertDev(model, {
                 ...DEV_EXAMPLE,
                 DEV_POSTGRES_PORT: "40001",
+                DEV_ADMINER_PORT: "41234",
                 DEV_ROUTER_CONTROL_PORT: "40002",
             }),
         ).toEqual([]);
@@ -105,6 +109,35 @@ describe("docker-compose.dev.yaml", () => {
         const extra = structuredClone(render());
         extra.services.controller = { image: "x" };
         expect(assertDev(extra).join("\n")).toContain("exactly");
+        const adminer = structuredClone(render());
+        adminer.services.adminer.healthcheck = undefined;
+        adminer.services.adminer.mem_limit = undefined;
+        adminer.services.adminer.volumes = [{ adminer: "/data" }];
+        const problems = assertDev(adminer).join("\n");
+        expect(problems).toContain("adminer needs a healthcheck");
+        expect(problems).toContain("adminer needs a memory limit");
+        expect(problems).toContain("adminer keeps no data");
+        const noDepends = structuredClone(render());
+        delete noDepends.services.adminer.depends_on;
+        expect(assertDev(noDepends).join("\n")).toContain("after postgres");
+        const shallow = structuredClone(render());
+        shallow.services.adminer.healthcheck.test = ["CMD", "true"];
+        expect(assertDev(shallow).join("\n")).toContain("probe port 8080");
+        const wrongPort = structuredClone(render());
+        wrongPort.services.adminer.healthcheck.test = [
+            "CMD-SHELL",
+            "curl -fsS http://127.0.0.1:18080/ || exit 1",
+        ];
+        expect(assertDev(wrongPort).join("\n")).toContain("probe port 8080");
+        const small = structuredClone(render());
+        small.services.adminer.mem_limit = "256m";
+        expect(assertDev(small).join("\n")).toContain("above 1 GiB");
+        const alias = structuredClone(render());
+        alias.services.adminer.mem_limit = "256mb";
+        expect(assertDev(alias).join("\n")).toContain("above 1 GiB");
+        const nonsense = structuredClone(render());
+        nonsense.services.adminer.mem_limit = "lots";
+        expect(assertDev(nonsense).join("\n")).toContain("not a byte size");
     });
 
     it("keeps the PostgreSQL, Dokku and router parts equal to docker-compose.yaml", () => {

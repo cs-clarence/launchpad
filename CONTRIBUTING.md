@@ -157,7 +157,7 @@ To seed a running local controller with accounts, an organization, a project and
 `omni -i run local:seed`; see [run Launchpad on your machine](docs/local-quickstart.md). To run
 the whole stack and deploy a site locally with Docker, see
 [deploy a site on your machine](docs/local-deploy.md). To run the controller, worker and CLI on the
-host against PostgreSQL, Mailpit, Dokku and the router in Docker (`docker-compose.dev.yaml`), see
+host against PostgreSQL, the Adminer SQL client, Mailpit, Dokku and the router in Docker (`docker-compose.dev.yaml`), see
 [develop against local infrastructure](docs/local-dev-infra.md):
 
 ```sh

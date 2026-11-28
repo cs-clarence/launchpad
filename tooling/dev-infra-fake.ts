@@ -1,5 +1,5 @@
 // The in-memory machine of local-deploy-fake.ts with the Compose project of
-// docker-compose.dev.yaml: four services, no override file, no admin service, and images that
+// docker-compose.dev.yaml: five services, no override file, no admin service, and images that
 // carry the com.launchpad.dev-project label.
 import { DEV_COMPOSE_FILE } from "./compose-dev";
 import { FakeHost } from "./local-deploy-fake";
@@ -53,7 +53,9 @@ export class DevHost extends FakeHost {
             case "up": {
                 const wanted = sub.filter((x) => !x.startsWith("-")).slice(1);
                 const services =
-                    wanted.length > 0 ? wanted : ["postgres", "mailpit", "dokku", "router"];
+                    wanted.length > 0
+                        ? wanted
+                        : ["postgres", "adminer", "mailpit", "dokku", "router"];
                 for (const name of services) {
                     const existing = svc(name);
                     if (existing) {

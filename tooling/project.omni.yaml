@@ -34,11 +34,12 @@ tasks:
       options: ""
     interactive: true
 
-  # Starts and removes docker-compose.dev.yaml (PostgreSQL, Mailpit, Dokku, the router) for running
-  # the controller, worker and CLI on the host. Docker only; the host socket is mounted into Dokku.
+  # Starts and removes docker-compose.dev.yaml (PostgreSQL, Adminer, Mailpit, Dokku, the router) for
+  # running the controller, worker and CLI on the host. Docker only; the host socket is mounted
+  # into Dokku.
   # See docs/local-dev-infra.md.
   dev:infra:up:
-    description: "Start PostgreSQL, Mailpit, Dokku and the router for host development, and write the app settings to .dev-infra/env (needs Docker, ssh-keygen); options --preset app|deploy, --aliases on|off"
+    description: "Start PostgreSQL, Adminer, Mailpit, Dokku and the router for host development, and write the app settings to .dev-infra/env (needs Docker, ssh-keygen); options --preset app|deploy, --aliases on|off"
     exec: sh -c 'cd "$(git rev-parse --show-toplevel)" && bun tooling/dev-infra.ts up {{ args.options }}'
     args:
       options: ""

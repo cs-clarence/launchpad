@@ -21,7 +21,7 @@ repository root unless a step says otherwise.
     omni remote-sources install && omni projection sync
     ```
 
-2. Start a PostgreSQL 17. The easiest path is `omni -i run dev:infra:up`, which also starts Mailpit
+2. Start a PostgreSQL 17. The easiest path is `omni -i run dev:infra:up`, which also starts Mailpit and Adminer
    and writes the controller's settings to `.dev-infra/env/controller.env`
    (see [develop against local infrastructure](local-dev-infra.md)); copy that file to
    `apps/controller/.env.local` and continue at step 4. Any other server works too; this runs a

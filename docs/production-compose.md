@@ -312,7 +312,7 @@ generation and epoch handling.
 
 ## Images and pins
 
-The development file `docker-compose.dev.yaml` has its own pins (PostgreSQL, Mailpit and the Dokku and
+The development file `docker-compose.dev.yaml` has its own pins (PostgreSQL, Adminer, Mailpit and the Dokku and
 router builds); `tooling/compose-dev.ts` asserts that they are digest-pinned and that its PostgreSQL
 image and the Dokku and router parts equal this file's.
 

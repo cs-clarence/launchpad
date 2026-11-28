@@ -2,7 +2,7 @@
 
 For a developer who changes the controller, worker, CLI or dashboard and wants PostgreSQL, a mail
 catcher and a working deployment target on their machine, without running the apps in Docker. One
-command starts PostgreSQL, Mailpit, Dokku and the alias router; the controller, worker and CLI run on
+command starts PostgreSQL, the Adminer SQL client, Mailpit, Dokku and the alias router; the controller, worker and CLI run on
 the host from your checkout. It is the infrastructure-only counterpart of
 [deploy a site on your machine](local-deploy.md) (everything in Docker, one `hello` deployment), and
 extends [run Launchpad on your machine](local-quickstart.md).
@@ -20,6 +20,8 @@ extends [run Launchpad on your machine](local-quickstart.md).
   not.
 - Mailpit keeps mail in memory only: it is gone after `dev:infra:down`.
 - Deployments and the dashboard cannot both work at once (see [Two presets](#two-presets)).
+- Adminer has no login of its own: it is an unauthenticated UI that relies on the loopback bind and
+  the database password. Do not forward its port or publish it.
 - This is not a production install, and `docker-compose.dev.yaml` is not a template for one.
 
 You need Linux with native Docker Engine and Docker Compose v2 (not Docker Desktop, rootless Docker,
@@ -45,9 +47,9 @@ has.
 
     It checks Docker, that `.dev-infra/` is ignored by git and that the ports are free, writes
     `.dev-infra/` (mode 700) with its record first, builds the Dokku and router images under tags of
-    its own (`launchpad-dev-<hash>/<service>:local`), starts PostgreSQL, Mailpit and Dokku, pins
-    Dokku's host key and registers the worker's key, initialises the router once, starts the router
-    and writes the settings for the host apps to `.dev-infra/env/`. It is safe to run again: it keeps
+    its own (`launchpad-dev-<hash>/<service>:local`), starts PostgreSQL, Adminer, Mailpit and Dokku,
+    pins Dokku's host key and registers the worker's key, initialises the router once, starts the
+    router and writes the settings for the host apps to `.dev-infra/env/`. It is safe to run again: it keeps
     what exists and skips the one-time steps. Dokku's first start takes minutes.
 
 3. Copy the generated settings into the apps. The tool never writes an app's `.env.local`:
@@ -67,26 +69,31 @@ has.
     project `demo` and a CLI profile `dev-infra`. Build the CLI once as in the
     [quickstart](local-quickstart.md#set-it-up) (step 6) to use it.
 
-Open the dashboard at `http://127.0.0.1:3000` and Mailpit at `http://127.0.0.1:38025`. An invitation
+Open the dashboard at `http://127.0.0.1:3000` and Mailpit at `http://127.0.0.1:38025`. To read or fix
+rows by hand, open Adminer at `http://127.0.0.1:38080` (the default port; use yours if you set
+`DEV_ADMINER_PORT`), choose PostgreSQL and log in with server `postgres`, user and database
+`launchpad`, and the password from `.dev-infra/compose.env`. Read and
+write are both allowed, exactly as with `psql`; nothing is exposed beyond loopback. An invitation
 sent from the dashboard (the controller runs with `LAUNCHPAD_ENROLLMENT=invitation`) shows up in
 Mailpit.
 
 ## What it costs
 
-Measured once on a Linux workstation with warm Docker layer and base-image caches (a cold first run was
+Measured once on a Linux workstation with warm Docker layer and base-image caches, before Adminer
+joined the stack (its image adds a pull on the first run) (a cold first run was
 not measured; Dokku's first start alone took 4.5 minutes in an earlier rehearsal):
 
-| What                                              | Measured                                            |
-| ------------------------------------------------- | --------------------------------------------------- |
-| First `dev:infra:up` (warm caches)                | 131 s, most of it Dokku's first start               |
-| `dev:infra:up` again after `down`                 | 19 s; a stopped site answers again about 30 s later |
-| `dev:infra:down`                                  | 12 s                                                |
-| `dev:infra:destroy` with one deployed site        | 8 s                                                 |
-| One deployment of `hello` through the host worker | 72 s from `app deploy` to `succeeded`               |
-| Memory limits in Compose                          | PostgreSQL 512 MiB, Dokku 1 GiB, router 128 MiB     |
+| What                                              | Measured                                                         |
+| ------------------------------------------------- | ---------------------------------------------------------------- |
+| First `dev:infra:up` (warm caches)                | 131 s, most of it Dokku's first start                            |
+| `dev:infra:up` again after `down`                 | 19 s; a stopped site answers again about 30 s later              |
+| `dev:infra:down`                                  | 12 s                                                             |
+| `dev:infra:destroy` with one deployed site        | 8 s                                                              |
+| One deployment of `hello` through the host worker | 72 s from `app deploy` to `succeeded`                            |
+| Memory limits in Compose                          | PostgreSQL 512 MiB, Dokku 1 GiB, router 128 MiB, Adminer 1.5 GiB |
 
 Builds and deployed sites run in the host engine, outside the memory limits. Pulled base images (Mailpit,
-PostgreSQL, Dokku) and the build cache stay after `destroy`.
+PostgreSQL, Adminer, Dokku) and the build cache stay after `destroy`.
 
 ## Two presets
 
@@ -131,6 +138,7 @@ Every port is published on `127.0.0.1` only and avoids the ports of `local:deplo
 | Service        | Default | Variable (set it before the first `up`) |
 | -------------- | ------- | --------------------------------------- |
 | PostgreSQL     | 35432   | `DEV_POSTGRES_PORT`                     |
+| Adminer        | 38080   | `DEV_ADMINER_PORT`                      |
 | Mailpit SMTP   | 31025   | `DEV_SMTP_PORT`                         |
 | Mailpit web    | 38025   | `DEV_MAILPIT_UI_PORT`                   |
 | Dokku SSH      | 33222   | `DEV_DOKKU_SSH_PORT`                    |
@@ -189,6 +197,7 @@ with no network and a bind of `.dev-infra/` only; it has no further hardening.
 | Path                                   | What                                                                                                  |
 | -------------------------------------- | ----------------------------------------------------------------------------------------------------- |
 | `compose.env`                          | Generated Compose settings: passwords, ports, project name (mode 600)                                 |
+| `compose.env.next`                     | Only during an upgrade of `compose.env`, then renamed over it; safe to delete while nothing runs      |
 | `dokku/`                               | Dokku state, root-owned; the SSH host key survives `down`, so `known_hosts` stays valid               |
 | `credentials/`                         | The worker's SSH key, `known_hosts` (`[127.0.0.1]:33222 ssh-ed25519 ...`), the router token and epoch |
 | `data/`                                | `LAUNCHPAD_DATA_DIR`, shared by the host controller and worker                                        |
@@ -199,16 +208,16 @@ with no network and a bind of `.dev-infra/` only; it has no further hardening.
 
 Each failure prints one message and exits nonzero. `up`, `down` and `destroy` can be run again.
 
-| Message mentions                                     | What to do                                                                                                                                                                    |
-| ---------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| a port in use                                        | Set the `DEV_*_PORT` variable for it (table above) before the first `up`, or free it.                                                                                         |
-| `not ignored by git`                                 | `.dev-infra` is missing from `.gitignore`; add it.                                                                                                                            |
-| `exists without a state.json`                        | Something else is in `.dev-infra/`; look, then remove it by hand.                                                                                                             |
-| `another up running`                                 | Two `up` commands ran at once and this one changed nothing; wait for the other, then run `status`.                                                                            |
-| `state.json is unreadable`, `compose.env is missing` | `down` and `destroy` refuse. Follow the printed steps: remove the project's containers, volumes, networks and images by exact name, then delete `.dev-infra` (`sudo rm -rf`). |
-| `Timed out waiting for dokku`                        | Look at `dev:infra:logs`; the first start installs packages and can take minutes.                                                                                             |
-| `router ... state exists`                            | A previous `up` stopped after `router init`: run `dev:infra:destroy`, then `up`.                                                                                              |
-| `root helper container could not run`                | The pinned PostgreSQL image is missing or Docker refused; remove the named directories with the printed `sudo rm -rf` lines, then run `destroy` again.                        |
+| Message mentions                                     | What to do                                                                                                                                                                                                                                                                                                                            |
+| ---------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| a port in use                                        | Set the `DEV_*_PORT` variable for it (table above) before the first `up`, or free it.                                                                                                                                                                                                                                                 |
+| `not ignored by git`                                 | `.dev-infra` is missing from `.gitignore`; add it.                                                                                                                                                                                                                                                                                    |
+| `exists without a state.json`                        | Something else is in `.dev-infra/`; look, then remove it by hand.                                                                                                                                                                                                                                                                     |
+| `another up running`                                 | Two `up` commands ran at once and this one changed nothing; wait for the other, then run `status`.                                                                                                                                                                                                                                    |
+| `state.json is unreadable`, `compose.env is missing` | `down` and `destroy` refuse. Follow the printed steps: remove the project's containers, volumes, networks and images by exact name, then delete `.dev-infra` (`sudo rm -rf`). A `compose.env` that is truncated or names an impossible port gets the same treatment: restore it, or clean those resources up and delete `.dev-infra`. |
+| `Timed out waiting for dokku`                        | Look at `dev:infra:logs`; the first start installs packages and can take minutes.                                                                                                                                                                                                                                                     |
+| `router ... state exists`                            | A previous `up` stopped after `router init`: run `dev:infra:destroy`, then `up`.                                                                                                                                                                                                                                                      |
+| `root helper container could not run`                | The pinned PostgreSQL image is missing or Docker refused; remove the named directories with the printed `sudo rm -rf` lines, then run `destroy` again.                                                                                                                                                                                |
 
 ## Limits
 

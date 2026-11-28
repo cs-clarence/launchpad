@@ -1,5 +1,5 @@
-// Checks of docker-compose.dev.yaml, the development infrastructure (PostgreSQL, Mailpit, Dokku,
-// the alias router). Like compose-production.ts, the same assertions run on the raw YAML
+// Checks of docker-compose.dev.yaml, the development infrastructure (PostgreSQL, the Adminer SQL
+// client, Mailpit, Dokku and the alias router). Like compose-production.ts, the same assertions run on the raw YAML
 // interpolated here (a unit test, no Docker) and on `docker compose config` output
 // (`bun tooling/compose-dev.ts`, part of the check:compose task). Nothing is started.
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -30,7 +30,29 @@ export const DEV_EXAMPLE: Env = {
     DEV_PROJECT: "launchpad-dev-example",
 };
 
-export const DEV_SERVICES = ["dokku", "mailpit", "postgres", "router"];
+export const DEV_SERVICES = ["adminer", "dokku", "mailpit", "postgres", "router"];
+// Compose accepts `b`, `k`/`kb`, `m`/`mb`, `g`/`gb` (and the `ib` spellings); the rendered model
+// gives plain bytes. Anything else is unknown, not zero, so a wrong unit cannot pass as small.
+const COMPOSE_UNITS: Record<string, number> = {
+    b: 1,
+    k: 1024,
+    kb: 1024,
+    kib: 1024,
+    m: 1024 ** 2,
+    mb: 1024 ** 2,
+    mib: 1024 ** 2,
+    g: 1024 ** 3,
+    gb: 1024 ** 3,
+    gib: 1024 ** 3,
+};
+const bytesOfMemory = (value: unknown): number | undefined => {
+    const m = /^\s*([0-9]+(?:\.[0-9]+)?)\s*([a-z]*)\s*$/i.exec(String(value ?? ""));
+    if (!m) return undefined;
+    const unit = COMPOSE_UNITS[(m[2] || "b").toLowerCase()];
+    if (unit === undefined) return undefined;
+    const bytes = Number(m[1]) * unit;
+    return Number.isFinite(bytes) ? bytes : undefined;
+};
 const LOOPBACK = "127.0.0.1";
 const DIGEST = /@sha256:[0-9a-f]{64}$/;
 const BUILT = ["dokku", "router"];
@@ -98,6 +120,7 @@ export function assertDev(model: Json, env: Env = DEV_EXAMPLE): string[] {
     };
     const at = (key: string, fallback: string) => env[key] ?? fallback;
     expectPorts("postgres", [[at("DEV_POSTGRES_PORT", "35432"), 5432]]);
+    expectPorts("adminer", [[at("DEV_ADMINER_PORT", "38080"), 8080]]);
     expectPorts("mailpit", [
         [at("DEV_SMTP_PORT", "31025"), 1025],
         [at("DEV_MAILPIT_UI_PORT", "38025"), 8025],
@@ -131,14 +154,39 @@ export function assertDev(model: Json, env: Env = DEV_EXAMPLE): string[] {
     if ((services.dokku?.volumes ?? []).map(mountOf).length !== 2) {
         fail("dokku must mount exactly its state directory and the Docker socket.");
     }
-    if (services.dokku?.restart || services.postgres?.restart) {
+    if (services.dokku?.restart || services.postgres?.restart || services.adminer?.restart) {
         fail("Dev services have no restart policy.");
     }
     if (!services.mailpit?.healthcheck) fail("mailpit needs a healthcheck.");
     if ((services.mailpit?.volumes ?? []).length > 0) fail("mailpit keeps no data.");
-    for (const name of ["dokku", "postgres"]) {
+    if (!services.adminer?.healthcheck) fail("adminer needs a healthcheck.");
+    else {
+        const probe = JSON.stringify(services.adminer.healthcheck.test ?? "");
+        // It must probe the web listener, not merely exit 0, and on 8080 exactly: a URL or argument
+        // that only contains "8080" (18080) would otherwise pass.
+        const used = [...probe.matchAll(/(?::|,\s*)([0-9]{2,5})\b/g)].map((m) => m[1]!);
+        if (used.length === 0 || used.some((port) => port !== "8080"))
+            fail("adminer's healthcheck must probe port 8080.");
+    }
+    // The raw file lists it; `docker compose config` renders a map of conditions.
+    const adminerDepends = services.adminer?.depends_on ?? [];
+    const dependsOnPostgres = Array.isArray(adminerDepends)
+        ? adminerDepends.includes("postgres")
+        : Object.hasOwn(adminerDepends, "postgres");
+    if (!dependsOnPostgres) fail("adminer must start after postgres.");
+    if ((services.adminer?.volumes ?? []).length > 0) fail("adminer keeps no data.");
+    for (const name of ["dokku", "postgres", "adminer"]) {
         if (!services[name]?.mem_limit) fail(`${name} needs a memory limit.`);
     }
+    // Above PHP's own memory_limit = 1G, so a dump import hits PHP's guard rather than the cgroup.
+    // The raw file says `1536m`; `docker compose config` renders bytes, so compare sizes.
+    const adminerMemory = bytesOfMemory(services.adminer?.mem_limit);
+    if (services.adminer?.mem_limit !== undefined && adminerMemory === undefined)
+        fail(`adminer: mem_limit ${services.adminer.mem_limit} is not a byte size Compose knows.`);
+    if (adminerMemory !== undefined && adminerMemory <= 1024 ** 3)
+        fail(
+            `adminer: mem_limit must be above 1 GiB (PHP's own memory_limit), not ${services.adminer?.mem_limit}.`,
+        );
     for (const name of Object.keys(model.networks ?? {})) {
         if (model.networks[name]?.internal) fail(`${name} is internal: the host must reach it.`);
     }

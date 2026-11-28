@@ -1,5 +1,6 @@
-// Starts and removes the development infrastructure of docker-compose.dev.yaml (PostgreSQL,
-// Mailpit, Dokku, the alias router) so that the controller, worker and CLI can run on the host.
+// Starts and removes the development infrastructure of docker-compose.dev.yaml (PostgreSQL, the
+// Adminer SQL client, Mailpit, Dokku and the alias router) so that the controller, worker and CLI
+// can run on the host.
 //
 //   omni -i run dev:infra:up       [-a "options=--preset deploy"]
 //   omni -i run dev:infra:status
@@ -13,6 +14,7 @@
 import { randomBytes } from "node:crypto";
 import { realpath } from "node:fs/promises";
 import path from "node:path";
+import { randomUUID } from "node:crypto";
 import { ClientCoreError, configDirectory } from "../packages/client-core/src/index";
 import { flagsOf, keyOf, optionHelp, parseOrFail, toolCommand, type Opt } from "./cli";
 import { loadRaw, interpolate } from "./compose-production";
@@ -82,7 +84,7 @@ export const STATE_DIR = ".dev-infra";
 export const PROJECT_PREFIX = "launchpad-dev-";
 export const PROJECT_PATTERN = /^launchpad-dev-[a-z0-9-]{1,40}$/;
 export const IMAGE_SERVICES = ["dokku", "router"] as const;
-export const SERVICES = ["postgres", "mailpit", "dokku", "router"] as const;
+export const SERVICES = ["postgres", "adminer", "mailpit", "dokku", "router"] as const;
 export const FIXED_CHILDREN = ["dokku", "credentials", "data", "env"] as const;
 export const IMAGE_LABEL = "com.launchpad.dev-project";
 export const APPS_DOMAIN = "apps.localhost";
@@ -98,6 +100,7 @@ export type Preset = (typeof PRESETS)[number];
 
 export interface Ports {
     postgres: number;
+    adminer: number;
     smtp: number;
     mailpit: number;
     ssh: number;
@@ -108,6 +111,7 @@ export interface Ports {
 
 export const PORT_DEFAULTS: Ports = {
     postgres: 35432,
+    adminer: 38080,
     smtp: 31025,
     mailpit: 38025,
     ssh: 33222,
@@ -119,6 +123,7 @@ export const PORT_DEFAULTS: Ports = {
 // The same names docker-compose.dev.yaml reads.
 export const PORT_KEYS: Record<keyof Ports, string> = {
     postgres: "DEV_POSTGRES_PORT",
+    adminer: "DEV_ADMINER_PORT",
     smtp: "DEV_SMTP_PORT",
     mailpit: "DEV_MAILPIT_UI_PORT",
     ssh: "DEV_DOKKU_SSH_PORT",
@@ -148,23 +153,136 @@ export function portsFrom(env: Record<string, string | undefined>): Ports {
     for (const name of Object.keys(PORT_KEYS) as (keyof Ports)[]) {
         ports[name] = checkPort(PORT_KEYS[name], env[PORT_KEYS[name]], PORT_DEFAULTS[name]);
     }
-    if (new Set(Object.values(ports)).size !== Object.values(ports).length) {
-        throw new DeployError("The seven host ports must all be different.");
+    return distinctPorts(ports);
+}
+
+// Two services on one port would make Compose fail to bind; name the keys rather than the numbers.
+function distinctPorts(ports: Ports): Ports {
+    const seen = new Map<number, string>();
+    const clashes: string[] = [];
+    for (const [name, port] of Object.entries(ports) as [keyof Ports, number][]) {
+        const key = PORT_KEYS[name];
+        const other = seen.get(port);
+        if (other) clashes.push(`${other} and ${key}`);
+        else seen.set(port, key);
+    }
+    if (clashes.length > 0) {
+        throw new DeployError(`Two services share a host port: ${clashes.join("; ")}.`);
     }
     return ports;
 }
 
-function portsFromRecord(env: Record<string, string>): Ports {
+// A record written before a port existed keeps working: the missing key takes its default and `up`
+// writes it back. Anything else wrong is still an error, because the record is then untrustworthy.
+function portsFromRecord(
+    recorded: Record<string, string>,
+    overrides: Record<string, string | undefined>,
+): Ports {
     const ports = {} as Ports;
     for (const name of Object.keys(PORT_KEYS) as (keyof Ports)[]) {
         const key = PORT_KEYS[name];
-        const n = Number(env[key]);
+        const raw = recorded[key];
+        if (raw === undefined || raw === "") {
+            // An older record: the environment may still choose the new port, else take the default.
+            ports[name] = checkPort(key, overrides[key], PORT_DEFAULTS[name]);
+            continue;
+        }
+        const n = Number(raw);
         if (!Number.isInteger(n) || n < 1024 || n > 65535) {
-            throw new DeployError(`compose.env has no valid ${key}; run destroy, then up again.`);
+            throw new DeployError(
+                `compose.env has no valid ${key}. Edit ${STATE_DIR}/compose.env by hand (down cannot read it) ` +
+                    `and set a free port.`,
+            );
         }
         ports[name] = n;
     }
-    return ports;
+    return distinctPorts(ports);
+}
+
+export const missingPortKeys = (env: Record<string, string>): string[] =>
+    Object.entries(PORT_KEYS)
+        .filter(([, key]) => env[key] === undefined || env[key] === "")
+        .map(([, key]) => key);
+
+// Keys no record may lose: without them the rendered settings are unusable, and a truncated file
+// must fail loudly instead of being "upgraded" into a ports-only record.
+export const RECORD_KEYS = [
+    "POSTGRES_PASSWORD",
+    "LAUNCHPAD_ALIAS_INSTANCE_ID",
+    "LAUNCHPAD_APPS_DOMAIN",
+    "LAUNCHPAD_APPS_NETWORK",
+    "DOKKU_DATA_DIR",
+    "DEV_PROJECT",
+    "LAUNCHPAD_VERSION",
+    "DEV_AUTH_SECRET",
+] as const;
+
+export function assertRecordSecrets(recorded: Record<string, string>): void {
+    const lost = RECORD_KEYS.filter((key) => !recorded[key]);
+    if (lost.length > 0)
+        throw new DeployError(
+            `${STATE_DIR}/compose.env is missing ${lost.join(", ")}; it looks truncated or hand-edited. ` +
+                `Restore the file, or remove the project's containers, volumes, networks and images by exact ` +
+                `name, then remove ${STATE_DIR} by hand and run up again (see docs/local-dev-infra.md, ` +
+                `"compose.env is missing"; down cannot read it).`,
+        );
+}
+
+// Atomic: a kill leaves the old record or the complete new one, never a torn file. Two concurrent
+// upgrades share the temporary name, so the loser of the rename adopts the record the winner wrote
+// instead of failing on a file that no longer exists.
+export async function rewriteComposeEnv(
+    d: BaseDeps,
+    layout: Layout,
+    recorded: Record<string, string>,
+    ports: Ports,
+): Promise<Ports> {
+    const next = layout.file(`compose.env.${process.pid}-${randomUUID().slice(0, 8)}.next`);
+    const target = layout.file("compose.env");
+    const filled = withPortDefaults(recorded);
+    for (const name of Object.keys(PORT_KEYS) as (keyof Ports)[]) {
+        filled[PORT_KEYS[name]] = String(ports[name]);
+    }
+    try {
+        // A kill between write and rename leaves this file; removing it first keeps the mode 600 the
+        // record documents, because writeFile only applies its mode when it creates the file.
+        try {
+            await d.fs.unlink(next);
+        } catch {
+            // Nothing to remove.
+        }
+        await d.fs.writeFile(next, renderEnv(filled), 0o600, true);
+        await d.fs.rename(next, target);
+    } catch (error) {
+        try {
+            await d.fs.unlink(next);
+        } catch {
+            // Nothing to clean up.
+        }
+        const after = await d.fs.readFile(target);
+        const parsed = after === null ? {} : parseEnv(after);
+        if (after !== null && missingPortKeys(parsed).length === 0)
+            return portsFromRecord(parsed, d.env);
+        throw new DeployError(
+            `Another up changed ${STATE_DIR}/compose.env while this one upgraded it (${(error as Error).message}). Run up again.`,
+        );
+    }
+    const after = parseEnv((await d.fs.readFile(target)) ?? "");
+    if (missingPortKeys(after).length > 0)
+        throw new DeployError(
+            `The upgrade of ${STATE_DIR}/compose.env did not complete. Run up again.`,
+        );
+    return portsFromRecord(after, d.env);
+}
+
+// Writes back any port key an older record lacks, so the file stays complete for later runs.
+export function withPortDefaults(env: Record<string, string>): Record<string, string> {
+    const filled = { ...env };
+    for (const [name, key] of Object.entries(PORT_KEYS)) {
+        if (filled[key] === undefined || filled[key] === "")
+            filled[key] = String(PORT_DEFAULTS[name as keyof Ports]);
+    }
+    return filled;
 }
 
 // ---- pure planning -------------------------------------------------------------------------
@@ -189,7 +307,10 @@ export const DEV_PROFILE: Profile = {
         "inventory.json",
         "inventory.json.next",
         "state.json.next",
+        "compose.env.next",
     ]),
+    // The upgrade writes a temporary file of its own per run, so two runs never share one.
+    cleanPatterns: /^compose\.env\.[A-Za-z0-9-]+\.next$/,
     imageTags: (project) => Object.values(projectImages(project)),
     imageLabel: IMAGE_LABEL,
     services: SERVICES,
@@ -284,7 +405,7 @@ export function appEnv(
     aliases: boolean,
     baseImage = nginxBaseImage(),
 ): AppEnv {
-    const ports = portsFromRecord(compose);
+    const ports = portsFromRecord(compose, {});
     const common = {
         DATABASE_URL: `postgresql://launchpad:${compose.POSTGRES_PASSWORD}@127.0.0.1:${ports.postgres}/launchpad`,
         LAUNCHPAD_DATA_DIR: layout.file("data"),
@@ -523,7 +644,9 @@ export async function up(d: Deps, options: UpOptions = {}): Promise<Summary> {
     if (record.kind === "ok") checkRecord(c, record.state!);
     else if (dirStat && (await d.fs.readdir(layout.dir)).length > 0) {
         throw new DeployError(
-            `${layout.dir} exists without a state.json; refusing to reuse it. Run destroy first.`,
+            `${layout.dir} exists without a state.json, so refusing to reuse it. Look inside, then remove it by ` +
+                `hand (its dokku/ child is root-owned, so it may need sudo): destroy cannot remove it, ` +
+                `because it refuses to guess what is there.`,
         );
     }
     if (record.kind !== "ok") await conflictsWithoutRecord(c);
@@ -563,8 +686,13 @@ export async function up(d: Deps, options: UpOptions = {}): Promise<Summary> {
         const env = composeEnv(layout, project, ports, generateSecrets(), d.version);
         await d.fs.writeFile(layout.file("compose.env"), renderEnv(env), 0o600, true);
     } else {
-        ports = portsFromRecord(parseEnv(envText));
+        const recorded = parseEnv(envText);
+        const missing = missingPortKeys(recorded);
+        assertRecordSecrets(recorded);
+        ports = portsFromRecord(recorded, d.env);
+        // Check the ports before writing, so a failed upgrade leaves the record as it was.
         await freePorts(c, ports, true);
+        if (missing.length > 0) ports = await rewriteComposeEnv(d, layout, recorded, ports);
     }
     const key = await d.fs.stat(layout.file("credentials/id_ed25519"));
     const pub = await d.fs.stat(layout.file("credentials/id_ed25519.pub"));
@@ -594,7 +722,7 @@ export async function up(d: Deps, options: UpOptions = {}): Promise<Summary> {
         await bootstrapDokkuAndRouter(c, ports);
     }
 
-    d.log("Starting the router...");
+    d.log("Starting the router and Adminer...");
     must(await compose(c, ["up", "-d", "--no-build"]), "Starting the services");
     await waitHealthy(c, "router", 7 * 60_000);
 
@@ -625,6 +753,7 @@ function printSummary(d: BaseDeps, s: Summary): void {
     d.log("");
     d.log(`Project ${s.project} is up. Everything listens on 127.0.0.1 only:`);
     d.log(`  PostgreSQL     127.0.0.1:${p.postgres}  (user and database launchpad)`);
+    d.log(`  Adminer        http://127.0.0.1:${p.adminer}  (the SQL client; server postgres)`);
     d.log(`  Mailpit SMTP   127.0.0.1:${p.smtp}`);
     d.log(`  Mailpit web    http://127.0.0.1:${p.mailpit}`);
     d.log(`  Dokku SSH      127.0.0.1:${p.ssh}`);
@@ -668,7 +797,7 @@ export async function status(d: Deps, options: { project?: string } = {}): Promi
         throw new DeployError(
             `compose.env is missing, so status cannot ask Compose. ${recoveryByHand(c.layout, c.project)}`,
         );
-    const ports = portsFromRecord(parseEnv(envText));
+    const ports = portsFromRecord(parseEnv(envText), d.env);
     d.log(`Project ${c.project}`);
     for (const service of SERVICES) {
         let health: string;
@@ -683,7 +812,7 @@ export async function status(d: Deps, options: { project?: string } = {}): Promi
         d.log(`  ${service.padEnd(9)} ${health}`);
     }
     d.log(
-        `Ports (127.0.0.1): PostgreSQL ${ports.postgres}, Mailpit ${ports.smtp}/${ports.mailpit}, ` +
+        `Ports (127.0.0.1): PostgreSQL ${ports.postgres}, Adminer ${ports.adminer}, Mailpit ${ports.smtp}/${ports.mailpit}, ` +
             `Dokku SSH ${ports.ssh}, HTTP ${ports.http}, router ${ports.routerData}/${ports.routerControl}`,
     );
     const query = await compose(c, DB_QUERY);
@@ -867,7 +996,7 @@ export const HELP = `Run the development infrastructure on this machine (see doc
 
 Usage: omni -i run dev:infra:<command> [-a "options=<flags>"]
 
-  up        build and start PostgreSQL, Mailpit, Dokku and the router, write the app settings
+  up        build and start PostgreSQL, Adminer, Mailpit, Dokku and the router, write the app settings
   status    show service health, ports and the number of recorded deployments
   down      stop everything and keep the data (database, Dokku state, credentials, images)
   destroy   remove everything this created: sites, containers, volumes, network, images, ${STATE_DIR}/
