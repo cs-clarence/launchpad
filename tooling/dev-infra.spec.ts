@@ -356,6 +356,7 @@ describe("up", () => {
         await status(deps());
         expect(parseEnv(host.text(`${host.dir}/compose.env`)!).DEV_ADMINER_PORT).toBeUndefined();
 
+        host.events.length = 0;
         await up(deps());
 
         const after = parseEnv(host.text(`${host.dir}/compose.env`)!);
@@ -363,6 +364,19 @@ describe("up", () => {
         expect(after.POSTGRES_PASSWORD).toBe(recorded.POSTGRES_PASSWORD!);
         expect(after.DEV_AUTH_SECRET).toBe(recorded.DEV_AUTH_SECRET!);
         expect(host.text(`${host.dir}/credentials/token`)).toBe(token);
+        expect(host.text(`${host.dir}/compose.env.next`)).toBeNull();
+        // Atomic: the record is replaced by a rename, never written in place.
+        expect(host.events.filter((e) => e === "write compose.env")).toEqual([]);
+        expect(host.events).toContain("write compose.env.next");
+        expect(host.events).toContain("rename compose.env.next -> compose.env");
+    });
+
+    it("retries an upgrade after a kill left the temporary file behind", async () => {
+        await up(deps());
+        stripPorts("DEV_ADMINER_PORT");
+        host.addFile(`${host.dir}/compose.env.next`, "POSTGRES_PASS", 0o600);
+        await up(deps());
+        expect(parseEnv(host.text(`${host.dir}/compose.env`)!).DEV_ADMINER_PORT).toBe("38080");
         expect(host.text(`${host.dir}/compose.env.next`)).toBeNull();
     });
 

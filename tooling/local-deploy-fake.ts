@@ -145,11 +145,13 @@ export class FakeHost {
         },
         writeFile: async (p, data, mode, exclusive) => {
             const old = this.nodes.get(p);
+            this.events.push(`write ${p.split("/").pop()}`);
             if (old && exclusive) throw new Error("EEXIST");
             if (old && old.uid !== this.uid) throw new Error("EACCES");
             this.addFile(p, data, mode);
         },
         rename: async (a, b) => {
+            this.events.push(`rename ${a.split("/").pop()} -> ${b.split("/").pop()}`);
             const n = this.nodes.get(a);
             if (!n) throw new Error("ENOENT");
             this.nodes.delete(a);

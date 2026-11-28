@@ -236,7 +236,8 @@ async function rewriteComposeEnv(
     for (const name of Object.keys(PORT_KEYS) as (keyof Ports)[]) {
         filled[PORT_KEYS[name]] = String(ports[name]);
     }
-    await d.fs.writeFile(next, renderEnv(filled), 0o600, true);
+    // Not exclusive: a kill between write and rename leaves this file, and the retry must replace it.
+    await d.fs.writeFile(next, renderEnv(filled), 0o600, false);
     await d.fs.rename(next, layout.file("compose.env"));
 }
 

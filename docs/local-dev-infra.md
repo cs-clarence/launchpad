@@ -196,6 +196,7 @@ with no network and a bind of `.dev-infra/` only; it has no further hardening.
 | Path                                   | What                                                                                                  |
 | -------------------------------------- | ----------------------------------------------------------------------------------------------------- |
 | `compose.env`                          | Generated Compose settings: passwords, ports, project name (mode 600)                                 |
+| `compose.env.next`                     | Only during an upgrade of `compose.env`, then renamed over it; safe to delete while nothing runs      |
 | `dokku/`                               | Dokku state, root-owned; the SSH host key survives `down`, so `known_hosts` stays valid               |
 | `credentials/`                         | The worker's SSH key, `known_hosts` (`[127.0.0.1]:33222 ssh-ed25519 ...`), the router token and epoch |
 | `data/`                                | `LAUNCHPAD_DATA_DIR`, shared by the host controller and worker                                        |
