@@ -1,6 +1,6 @@
 {
     "name": "@launchpad-kit/database",
-    "version": "0.0.0",
+    "version": "0.1.0-rc.1",
     "private": true,
     "description": "Kysely PostgreSQL access on Bun SQL, and migrations",
     "type": "module",

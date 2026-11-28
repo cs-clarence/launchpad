@@ -1,6 +1,6 @@
 {
     "name": "@launchpad-kit/router",
-    "version": "0.0.0",
+    "version": "0.1.0-rc.1",
     "private": true,
     "description": "The alias router: private control plane, public data plane and operator commands (R2b)",
     "type": "module",

@@ -1,0 +1,290 @@
+# Changelog
+All notable changes to this project will be documented in this file. See [conventional commits](https://www.conventionalcommits.org/) for commit guidelines.
+
+- - -
+## core-v0.1.0-rc.1 - 2026-11-28
+#### Features
+- (**admin**) revoke every restored credential offline after a restore - (283aead) - Clarence Manuel
+- (**admin**) add restore and check-restore (#47) - (48c3487) - Clarence Delmacio Manuel
+- (**admin**) add backup and verify-backup (#46) - (e52bff5) - Clarence Delmacio Manuel
+- (**api**) expose preview lifetimes and deletion operations (#36) - (d97125a) - Clarence Delmacio Manuel
+- (**cli**) add org, member, invite and key session commands (#96) - (1187451) - Clarence Delmacio Manuel
+- (**cli**) add api --session for session-only actions (#93) - (570fc26) - Clarence Delmacio Manuel
+- (**cli**) extend, delete and follow previews, and choose a lifetime on deploy (#38) - (934cb3b) - Clarence Delmacio Manuel
+- (**cli**) deploy, previews and deployments through the SDK (#21) - (cec43ac) - Clarence Delmacio Manuel
+- (**cli**) API-key login, profiles and project listing (#5) - (2a9b2fd) - Clarence Delmacio Manuel
+- (**client-core**) a named public API, redaction of the run's secrets and a security model (#116) - (1e07c08) - Clarence Delmacio Manuel
+- (**controller**) add an opt-in text format to drift (#109) - (bafd46a) - Clarence Delmacio Manuel
+- (**controller**) dashboard preview pages and preview key scopes (#22) - (912ebbc) - Clarence Delmacio Manuel
+- (**controller**) previews and deployments API with scoped keys (#20) - (d027a5e) - Clarence Delmacio Manuel
+- (**controller**) artifact upload with streamed validation (#13) - (183edae) - Clarence Delmacio Manuel
+- (**controller**) manage organization API keys (#10) - (c935aea) - Clarence Delmacio Manuel
+- (**dashboard**) deploy a built site from the previews page (#40) - (983ed98) - Clarence Delmacio Manuel
+- (**dashboard**) show preview lifetimes and offer extend, delete and resolve (#39) - (39933ed) - Clarence Delmacio Manuel
+- (**database**) add migration status and refuse a schema the build does not match (#45) - (b5bd120) - Clarence Delmacio Manuel
+- (**database**) lifecycle schema, preview:delete and lifecycle settings (#30) - (b17c52b) - Clarence Delmacio Manuel
+- (**dokku**) allowlisted operations over pinned ssh (#14) - (fd326e1) - Clarence Delmacio Manuel
+- (**images**) add OCI labels, licence notices and a required Compose image tag (#121) - (e20d3ef) - Clarence Delmacio Manuel
+- (**images**) controller and worker images with a runnable check (#49) - (b821855) - Clarence Delmacio Manuel
+- (**mcp**) delete_preview behind --allow-delete (#42) - (8288166) - Clarence Delmacio Manuel
+- (**mcp**) opt-in deploy tool with include and exclude policy (#26) - (c451be2) - Clarence Delmacio Manuel
+- (**mcp**) read-only stdio tools and per-call project context (#25) - (198e0cf) - Clarence Delmacio Manuel
+- (**operations**) drill upgrades and document recovery (#50) - (8b84b4a) - Clarence Delmacio Manuel
+- (**release**) put the repository, homepage and bugs URLs in every packed manifest (#119) - (5b7a4c1) - Clarence Delmacio Manuel
+- (**release**) publish cli and mcp as unbundled packages with client-core (#115) - (4040e8f) - Clarence Delmacio Manuel
+- (**release**) keep the npm packages runtime agnostic and smoke-test them on Node (#113) - (1f9216a) - Clarence Delmacio Manuel
+- (**router**) serve private control over verified TLS with scoped client CA trust - (9767e37) - Clarence Manuel
+- (**routing**) production preparation, package rename and the alias router (#53) - (ed56697) - Clarence Delmacio Manuel
+- (**services**) the preview deletion operation (#32) - (b1e9c9d) - Clarence Delmacio Manuel
+- (**services**) preview lifetimes, extension and the expiry claim (#31) - (8bab68a) - Clarence Delmacio Manuel
+- (**services**) fenced deployment state machine (#15) - (006c3b9) - Clarence Delmacio Manuel
+- (**services**) preview data model and creation (#12) - (1c23283) - Clarence Delmacio Manuel
+- (**status**) worker heartbeat and operator-only instance status (#41) - (03dbb90) - Clarence Delmacio Manuel
+- (**worker**) add an optional LAUNCHPAD_WORKER_ID (#86) - (6c8cdb8) - Clarence Delmacio Manuel
+- (**worker**) lifecycle ports, expiry loop and artifact collection (#33) - (27157a7) - Clarence Delmacio Manuel
+- (**worker**) roll back a failed verify, opt-in live tests (#18) - (0a3bb42) - Clarence Delmacio Manuel
+- (**worker**) build, load and verify static previews (#17) - (aac07a1) - Clarence Delmacio Manuel
+- docker-compose.dev.yaml and dev:infra tasks for host development (#108) - (9daa9c2) - Clarence Delmacio Manuel
+- run a local deployment with local:deploy (#98) - (72708af) - Clarence Delmacio Manuel
+- add a launchpad api command for raw controller API calls (#91) - (1a5b2f0) - Clarence Delmacio Manuel
+- add opt-in pagination to the controller's list endpoints (#88) - (f05c852) - Clarence Delmacio Manuel
+- pin the app base by digest and run Launchpad services read-only - (f0bd1b3) - Clarence Manuel
+- add production Compose and P7 acceptance rehearsal - (e1b34ee) - Clarence Manuel
+- <span style="background-color: #d73a49; color: white; padding: 2px 6px; border-radius: 3px; font-weight: bold; font-size: 0.85em;">BREAKING</span>cut over clients to immutable deployments (P6) (#77) - (eb7dd4f) - Clarence Delmacio Manuel
+- withdraw an alias whose restored target cannot serve - (c1a29f0) - Clarence Manuel
+- verify deployment recovery before reopening mutations - (55432e7) - Clarence Manuel
+- record the router epoch when a restore begins and verify it changed (P5a) (#75) - (f62bb5c) - Clarence Delmacio Manuel
+- recovery counters and router comparison before reopening (P4e) (#73) - (9964650) - Clarence Delmacio Manuel
+- promotion, withdrawal and app shutdown API (P4d) (#72) - (e01d7ad) - Clarence Delmacio Manuel
+- run alias promotions in the worker (P4c) (#71) - (373811d) - Clarence Delmacio Manuel
+- fence promotion dispatch and finalization (P4c) (#70) - (3514861) - Clarence Delmacio Manuel
+- add the private alias router control client (P4c) (#69) - (af33d85) - Clarence Delmacio Manuel
+- <span style="background-color: #d73a49; color: white; padding: 2px 6px; border-radius: 3px; font-weight: bold; font-size: 0.85em;">BREAKING</span>record promotion intent, pins and corrective operations (P4b) (#68) - (b8fd5bb) - Clarence Delmacio Manuel
+- <span style="background-color: #d73a49; color: white; padding: 2px 6px; border-radius: 3px; font-weight: bold; font-size: 0.85em;">BREAKING</span>create and read aliases without routing (P4a) (#67) - (1a53d51) - Clarence Delmacio Manuel
+- <span style="background-color: #d73a49; color: white; padding: 2px 6px; border-radius: 3px; font-weight: bold; font-size: 0.85em;">BREAKING</span>guarded deployment deletion and reconcile command (P3d) (#64) - (e7b3124) - Clarence Delmacio Manuel
+- <span style="background-color: #d73a49; color: white; padding: 2px 6px; border-radius: 3px; font-weight: bold; font-size: 0.85em;">BREAKING</span>run deployments with fenced worker claims (P3c) (#63) - (4f99712) - Clarence Delmacio Manuel
+- <span style="background-color: #d73a49; color: white; padding: 2px 6px; border-radius: 3px; font-weight: bold; font-size: 0.85em;">BREAKING</span>app, upload and deployment routes (P3b-ii) (#62) - (8c84290) - Clarence Delmacio Manuel
+- <span style="background-color: #d73a49; color: white; padding: 2px 6px; border-radius: 3px; font-weight: bold; font-size: 0.85em;">BREAKING</span>apps and deployments services with artifact project provenance (P3b-i) (#61) - (cf4dcd6) - Clarence Delmacio Manuel
+- <span style="background-color: #d73a49; color: white; padding: 2px 6px; border-radius: 3px; font-weight: bold; font-size: 0.85em;">BREAKING</span>require an operator attestation to clear deployment recovery (P3a) (#60) - (6b4d865) - Clarence Delmacio Manuel
+- <span style="background-color: #d73a49; color: white; padding: 2px 6px; border-radius: 3px; font-weight: bold; font-size: 0.85em;">BREAKING</span>refuse removed preview settings and check the apps domain (P2c) (#59) - (8e8d793) - Clarence Delmacio Manuel
+- <span style="background-color: #d73a49; color: white; padding: 2px 6px; border-radius: 3px; font-weight: bold; font-size: 0.85em;">BREAKING</span>replace preview schema and gate deployment recovery (P2b) (#58) - (f07d3bc) - Clarence Delmacio Manuel
+- <span style="background-color: #d73a49; color: white; padding: 2px 6px; border-radius: 3px; font-weight: bold; font-size: 0.85em;">BREAKING</span>remove the legacy preview runtime (P2a) (#57) - (24c0324) - Clarence Delmacio Manuel
+- contracts, SDK and client core (#4) - (d8ae8ff) - Clarence Delmacio Manuel
+- org-owned API keys and bearer authentication (#3) - (d0723b8) - Clarence Delmacio Manuel
+- auth, organizations, projects, Omni entrypoint and CI (#2) - (44e8353) - Clarence Delmacio Manuel
+#### Bug Fixes
+- (**admin**) preserve PostgreSQL client TLS options and refuse unsupported ones - (696f8b3) - Clarence Manuel
+- (**api**) act on the review of the lifecycle routes (#37) - (f8d235a) - Clarence Delmacio Manuel
+- (**clients**) harden credentials, input and store locking (#7) - (51563b3) - Clarence Delmacio Manuel
+- (**controller**) refuse migrate over orphaned archives and fix stale local-deploy keys (#105) - (668b1df) - Clarence Delmacio Manuel
+- (**controller**) run the dev server under Bun (#103) - (9071223) - Clarence Delmacio Manuel
+- (**dev-infra**) let seeded accounts use Mailpit password recovery (#127) - (34e1502) - Clarence Delmacio Manuel
+- (**dokku**) recognize the missing-app exit code from Dokku 0.38 (#35) - (5d86860) - Clarence Delmacio Manuel
+- (**images**) record the release version and close milestone 6 (#52) - (73bed5b) - Clarence Delmacio Manuel
+- (**keys**) align password recovery and audit key deactivation (#9) - (3ce3de3) - Clarence Delmacio Manuel
+- (**keys**) report credential lifecycle and correct active quota (#6) - (9b579e3) - Clarence Delmacio Manuel
+- (**lifecycle**) act on the milestone 5 review of behaviour (#43) - (2d83469) - Clarence Delmacio Manuel
+- (**lifecycle**) act on the independent review of expiry, deletion and collection (#34) - (1aa4861) - Clarence Delmacio Manuel
+- (**mcp**) milestone 4 review findings (#28) - (d15cd6d) - Clarence Delmacio Manuel
+- (**services**) hold every failure after the load, bound calls by deadline (#16) - (0d3c3e9) - Clarence Delmacio Manuel
+- (**worker**) accept sites that compress past tar's 1000:1 guard - (9ec175b) - Clarence Manuel
+- (**worker**) normalize extracted modes, stop a stalled save, share limits (#19) - (4b283bd) - Clarence Delmacio Manuel
+- surface dead workers, replaced databases and database outages (#106) - (e255db9) - Clarence Delmacio Manuel
+- address CodeRabbit review of router TLS, PostgreSQL options and the Compose runner - (815c874) - Clarence Manuel
+- address Compose and P7 rehearsal review findings - (84bd008) - Clarence Manuel
+- confirm the committed Dokku app is missing before withdrawal - (d1f6c2f) - Clarence Manuel
+- treat an upstream-less proxy as not serving when withdrawing a target - (3cb09fd) - Clarence Manuel
+- address recovery review findings - (89cc07b) - Clarence Manuel
+- milestone 3 review findings (#23) - (abe6f78) - Clarence Delmacio Manuel
+#### Documentation
+- record the database-loss, worker-liveness and failed-restore rehearsals (#104) - (730f0fa) - Clarence Delmacio Manuel
+- make revoke-all-credentials mandatory after a restore - (91f9bcc) - Clarence Manuel
+- correct the milestone 5 documentation and track what is deferred (#44) - (8d4c82b) - Clarence Delmacio Manuel
+#### Tests
+- (**cutover**) specify the immutable-model cutover against real PostgreSQL (#55) - (b5c1c51) - Clarence Delmacio Manuel
+- (**mcp**) end-to-end over stdio against the built controller, and standalone run (#27) - (8bf1705) - Clarence Delmacio Manuel
+- (**sdk**) verify real-fetch redirect and timeout boundaries (#8) - (19b420c) - Clarence Delmacio Manuel
+- extend P7 deployment and recovery acceptance - (dc7e894) - Clarence Manuel
+- P3 end-to-end acceptance and deployment docs (P3e) (#65) - (5eec8ad) - Clarence Delmacio Manuel
+#### Refactoring
+- (**release**) read program versions from their package manifests (#132) - (aa68d35) - Clarence Delmacio Manuel
+- (**router**) parse arguments with commander (#101) - (9da87bb) - Clarence Delmacio Manuel
+- replace pre-v1 migrations and preview-era artifacts with a clean v1 baseline (#84) - (2a1c6fa) - Clarence Delmacio Manuel
+#### Miscellaneous Chores
+- license Launchpad under Apache-2.0 (#117) - (33bcd96) - Clarence Delmacio Manuel
+- initial commit - (0bb5d20) - Clarence Manuel
+
+- - -
+
+## v0.1.0-rc.1 - 2026-11-28
+### Package updates
+- @launchpad-kit/tsconfig bumped to @launchpad-kit/tsconfig-v0.1.0-rc.1
+- @launchpad-kit/vite-config bumped to @launchpad-kit/vite-config-v0.1.0-rc.1
+- @launchpad-kit/vitest-config bumped to @launchpad-kit/vitest-config-v0.1.0-rc.1
+- core bumped to core-v0.1.0-rc.1
+### Global changes
+#### Features
+- (**admin**) revoke every restored credential offline after a restore - (283aead) - Clarence Manuel
+- (**admin**) add restore and check-restore (#47) - (48c3487) - Clarence Delmacio Manuel
+- (**admin**) add backup and verify-backup (#46) - (e52bff5) - Clarence Delmacio Manuel
+- (**api**) expose preview lifetimes and deletion operations (#36) - (d97125a) - Clarence Delmacio Manuel
+- (**cli**) add org, member, invite and key session commands (#96) - (1187451) - Clarence Delmacio Manuel
+- (**cli**) add api --session for session-only actions (#93) - (570fc26) - Clarence Delmacio Manuel
+- (**cli**) extend, delete and follow previews, and choose a lifetime on deploy (#38) - (934cb3b) - Clarence Delmacio Manuel
+- (**cli**) deploy, previews and deployments through the SDK (#21) - (cec43ac) - Clarence Delmacio Manuel
+- (**cli**) API-key login, profiles and project listing (#5) - (2a9b2fd) - Clarence Delmacio Manuel
+- (**client-core**) a named public API, redaction of the run's secrets and a security model (#116) - (1e07c08) - Clarence Delmacio Manuel
+- (**controller**) add an opt-in text format to drift (#109) - (bafd46a) - Clarence Delmacio Manuel
+- (**controller**) dashboard preview pages and preview key scopes (#22) - (912ebbc) - Clarence Delmacio Manuel
+- (**controller**) previews and deployments API with scoped keys (#20) - (d027a5e) - Clarence Delmacio Manuel
+- (**controller**) artifact upload with streamed validation (#13) - (183edae) - Clarence Delmacio Manuel
+- (**controller**) manage organization API keys (#10) - (c935aea) - Clarence Delmacio Manuel
+- (**dashboard**) deploy a built site from the previews page (#40) - (983ed98) - Clarence Delmacio Manuel
+- (**dashboard**) show preview lifetimes and offer extend, delete and resolve (#39) - (39933ed) - Clarence Delmacio Manuel
+- (**database**) add migration status and refuse a schema the build does not match (#45) - (b5bd120) - Clarence Delmacio Manuel
+- (**database**) lifecycle schema, preview:delete and lifecycle settings (#30) - (b17c52b) - Clarence Delmacio Manuel
+- (**dev-infra**) add an Adminer SQL client for the dev database (#126) - (6575af2) - Clarence Delmacio Manuel
+- (**dokku**) allowlisted operations over pinned ssh (#14) - (fd326e1) - Clarence Delmacio Manuel
+- (**images**) add OCI labels, licence notices and a required Compose image tag (#121) - (e20d3ef) - Clarence Delmacio Manuel
+- (**images**) controller and worker images with a runnable check (#49) - (b821855) - Clarence Delmacio Manuel
+- (**mcp**) delete_preview behind --allow-delete (#42) - (8288166) - Clarence Delmacio Manuel
+- (**mcp**) opt-in deploy tool with include and exclude policy (#26) - (c451be2) - Clarence Delmacio Manuel
+- (**mcp**) read-only stdio tools and per-call project context (#25) - (198e0cf) - Clarence Delmacio Manuel
+- (**operations**) drill upgrades and document recovery (#50) - (8b84b4a) - Clarence Delmacio Manuel
+- (**release**) regenerate the release PR when main moves (#130) - (03a6842) - Clarence Delmacio Manuel
+- (**release**) put the repository, homepage and bugs URLs in every packed manifest (#119) - (5b7a4c1) - Clarence Delmacio Manuel
+- (**release**) publish cli and mcp as unbundled packages with client-core (#115) - (4040e8f) - Clarence Delmacio Manuel
+- (**release**) keep the npm packages runtime agnostic and smoke-test them on Node (#113) - (1f9216a) - Clarence Delmacio Manuel
+- (**release**) version sync, dry-run workflow and release rules (#51) - (3fc1fd7) - Clarence Delmacio Manuel
+- (**router**) serve private control over verified TLS with scoped client CA trust - (9767e37) - Clarence Manuel
+- (**routing**) production preparation, package rename and the alias router (#53) - (ed56697) - Clarence Delmacio Manuel
+- (**services**) the preview deletion operation (#32) - (b1e9c9d) - Clarence Delmacio Manuel
+- (**services**) preview lifetimes, extension and the expiry claim (#31) - (8bab68a) - Clarence Delmacio Manuel
+- (**services**) fenced deployment state machine (#15) - (006c3b9) - Clarence Delmacio Manuel
+- (**services**) preview data model and creation (#12) - (1c23283) - Clarence Delmacio Manuel
+- (**status**) worker heartbeat and operator-only instance status (#41) - (03dbb90) - Clarence Delmacio Manuel
+- (**tooling**) pack and test the client packages outside the workspace (#48) - (1a94b18) - Clarence Delmacio Manuel
+- (**worker**) add an optional LAUNCHPAD_WORKER_ID (#86) - (6c8cdb8) - Clarence Delmacio Manuel
+- (**worker**) lifecycle ports, expiry loop and artifact collection (#33) - (27157a7) - Clarence Delmacio Manuel
+- (**worker**) roll back a failed verify, opt-in live tests (#18) - (0a3bb42) - Clarence Delmacio Manuel
+- (**worker**) build, load and verify static previews (#17) - (aac07a1) - Clarence Delmacio Manuel
+- docker-compose.dev.yaml and dev:infra tasks for host development (#108) - (9daa9c2) - Clarence Delmacio Manuel
+- run a local deployment with local:deploy (#98) - (72708af) - Clarence Delmacio Manuel
+- add a local quickstart guide and seed script (#92) - (3ef1167) - Clarence Delmacio Manuel
+- add a launchpad api command for raw controller API calls (#91) - (1a5b2f0) - Clarence Delmacio Manuel
+- add opt-in pagination to the controller's list endpoints (#88) - (f05c852) - Clarence Delmacio Manuel
+- pin the app base by digest and run Launchpad services read-only - (f0bd1b3) - Clarence Manuel
+- add production Compose and P7 acceptance rehearsal - (e1b34ee) - Clarence Manuel
+- <span style="background-color: #d73a49; color: white; padding: 2px 6px; border-radius: 3px; font-weight: bold; font-size: 0.85em;">BREAKING</span>cut over clients to immutable deployments (P6) (#77) - (eb7dd4f) - Clarence Delmacio Manuel
+- withdraw an alias whose restored target cannot serve - (c1a29f0) - Clarence Manuel
+- verify deployment recovery before reopening mutations - (55432e7) - Clarence Manuel
+- record the router epoch when a restore begins and verify it changed (P5a) (#75) - (f62bb5c) - Clarence Delmacio Manuel
+- recovery counters and router comparison before reopening (P4e) (#73) - (9964650) - Clarence Delmacio Manuel
+- promotion, withdrawal and app shutdown API (P4d) (#72) - (e01d7ad) - Clarence Delmacio Manuel
+- run alias promotions in the worker (P4c) (#71) - (373811d) - Clarence Delmacio Manuel
+- fence promotion dispatch and finalization (P4c) (#70) - (3514861) - Clarence Delmacio Manuel
+- add the private alias router control client (P4c) (#69) - (af33d85) - Clarence Delmacio Manuel
+- <span style="background-color: #d73a49; color: white; padding: 2px 6px; border-radius: 3px; font-weight: bold; font-size: 0.85em;">BREAKING</span>record promotion intent, pins and corrective operations (P4b) (#68) - (b8fd5bb) - Clarence Delmacio Manuel
+- <span style="background-color: #d73a49; color: white; padding: 2px 6px; border-radius: 3px; font-weight: bold; font-size: 0.85em;">BREAKING</span>create and read aliases without routing (P4a) (#67) - (1a53d51) - Clarence Delmacio Manuel
+- <span style="background-color: #d73a49; color: white; padding: 2px 6px; border-radius: 3px; font-weight: bold; font-size: 0.85em;">BREAKING</span>guarded deployment deletion and reconcile command (P3d) (#64) - (e7b3124) - Clarence Delmacio Manuel
+- <span style="background-color: #d73a49; color: white; padding: 2px 6px; border-radius: 3px; font-weight: bold; font-size: 0.85em;">BREAKING</span>run deployments with fenced worker claims (P3c) (#63) - (4f99712) - Clarence Delmacio Manuel
+- <span style="background-color: #d73a49; color: white; padding: 2px 6px; border-radius: 3px; font-weight: bold; font-size: 0.85em;">BREAKING</span>app, upload and deployment routes (P3b-ii) (#62) - (8c84290) - Clarence Delmacio Manuel
+- <span style="background-color: #d73a49; color: white; padding: 2px 6px; border-radius: 3px; font-weight: bold; font-size: 0.85em;">BREAKING</span>apps and deployments services with artifact project provenance (P3b-i) (#61) - (cf4dcd6) - Clarence Delmacio Manuel
+- <span style="background-color: #d73a49; color: white; padding: 2px 6px; border-radius: 3px; font-weight: bold; font-size: 0.85em;">BREAKING</span>require an operator attestation to clear deployment recovery (P3a) (#60) - (6b4d865) - Clarence Delmacio Manuel
+- <span style="background-color: #d73a49; color: white; padding: 2px 6px; border-radius: 3px; font-weight: bold; font-size: 0.85em;">BREAKING</span>refuse removed preview settings and check the apps domain (P2c) (#59) - (8e8d793) - Clarence Delmacio Manuel
+- <span style="background-color: #d73a49; color: white; padding: 2px 6px; border-radius: 3px; font-weight: bold; font-size: 0.85em;">BREAKING</span>replace preview schema and gate deployment recovery (P2b) (#58) - (f07d3bc) - Clarence Delmacio Manuel
+- <span style="background-color: #d73a49; color: white; padding: 2px 6px; border-radius: 3px; font-weight: bold; font-size: 0.85em;">BREAKING</span>remove the legacy preview runtime (P2a) (#57) - (24c0324) - Clarence Delmacio Manuel
+- contracts, SDK and client core (#4) - (d8ae8ff) - Clarence Delmacio Manuel
+- org-owned API keys and bearer authentication (#3) - (d0723b8) - Clarence Delmacio Manuel
+- auth, organizations, projects, Omni entrypoint and CI (#2) - (44e8353) - Clarence Delmacio Manuel
+#### Bug Fixes
+- (**admin**) preserve PostgreSQL client TLS options and refuse unsupported ones - (696f8b3) - Clarence Manuel
+- (**api**) act on the review of the lifecycle routes (#37) - (f8d235a) - Clarence Delmacio Manuel
+- (**clients**) harden credentials, input and store locking (#7) - (51563b3) - Clarence Delmacio Manuel
+- (**controller**) refuse migrate over orphaned archives and fix stale local-deploy keys (#105) - (668b1df) - Clarence Delmacio Manuel
+- (**controller**) run the dev server under Bun (#103) - (9071223) - Clarence Delmacio Manuel
+- (**dev-infra**) let seeded accounts use Mailpit password recovery (#127) - (34e1502) - Clarence Delmacio Manuel
+- (**dokku**) recognize the missing-app exit code from Dokku 0.38 (#35) - (5d86860) - Clarence Delmacio Manuel
+- (**images**) record the release version and close milestone 6 (#52) - (73bed5b) - Clarence Delmacio Manuel
+- (**keys**) align password recovery and audit key deactivation (#9) - (3ce3de3) - Clarence Delmacio Manuel
+- (**keys**) report credential lifecycle and correct active quota (#6) - (9b579e3) - Clarence Delmacio Manuel
+- (**lifecycle**) act on the milestone 5 review of behaviour (#43) - (2d83469) - Clarence Delmacio Manuel
+- (**lifecycle**) act on the independent review of expiry, deletion and collection (#34) - (1aa4861) - Clarence Delmacio Manuel
+- (**mcp**) milestone 4 review findings (#28) - (d15cd6d) - Clarence Delmacio Manuel
+- (**services**) hold every failure after the load, bound calls by deadline (#16) - (0d3c3e9) - Clarence Delmacio Manuel
+- (**tooling**) skip generated changelogs in the format check (#129) - (3e1fcfd) - Clarence Delmacio Manuel
+- (**tooling**) say when the schema is not migrated yet in dev:infra status (#111) - (cc2a846) - Clarence Delmacio Manuel
+- (**tooling**) clear errors and no side effects in dev:infra up/down/destroy (#110) - (75dee70) - Clarence Delmacio Manuel
+- (**worker**) accept sites that compress past tar's 1000:1 guard - (9ec175b) - Clarence Manuel
+- (**worker**) normalize extracted modes, stop a stalled save, share limits (#19) - (4b283bd) - Clarence Delmacio Manuel
+- surface dead workers, replaced databases and database outages (#106) - (e255db9) - Clarence Delmacio Manuel
+- address review findings on the local deployment tool (#99) - (31c22f6) - Clarence Delmacio Manuel
+- wait for the controller to notice the migration before seeding (#97) - (6fdeddd) - Clarence Delmacio Manuel
+- seed a fresh database and use the controller's real dev port (#94) - (c7ac776) - Clarence Delmacio Manuel
+- check only the branch's commits in the commit-msg hook (#89) - (38d935a) - Clarence Delmacio Manuel
+- address CodeRabbit review of the restore runbook and Compose runner - (f2cde16) - Clarence Manuel
+- address CodeRabbit review of router TLS, PostgreSQL options and the Compose runner - (815c874) - Clarence Manuel
+- address Compose and P7 rehearsal review findings - (84bd008) - Clarence Manuel
+- confirm the committed Dokku app is missing before withdrawal - (d1f6c2f) - Clarence Manuel
+- treat an upstream-less proxy as not serving when withdrawing a target - (3cb09fd) - Clarence Manuel
+- address recovery review findings - (89cc07b) - Clarence Manuel
+- milestone 3 review findings (#23) - (abe6f78) - Clarence Delmacio Manuel
+#### Documentation
+- (**design**) replace rather than retire the previews (P2 plan) (#56) - (7651a7e) - Clarence Delmacio Manuel
+- (**plans**) approve milestone 5, previews expire and recover (#29) - (19e984a) - Clarence Delmacio Manuel
+- (**plans**) approve milestone 4 local MCP (#24) - (3f3672e) - Clarence Delmacio Manuel
+- (**release**) gate the 0.1.0 steps on approved decisions (#123) - (0028a9f) - Clarence Delmacio Manuel
+- (**release**) refresh the 0.1.0 plan and draft the release notes (#122) - (bcb363d) - Clarence Delmacio Manuel
+- add always-High risk overrides (#125) - (944efdf) - Clarence Delmacio Manuel
+- decide how releases are published from CI (#118) - (f1db393) - Clarence Delmacio Manuel
+- record the rehearsal scenarios that are not yet reproduced (#107) - (fc8daaf) - Clarence Delmacio Manuel
+- record the database-loss, worker-liveness and failed-restore rehearsals (#104) - (730f0fa) - Clarence Delmacio Manuel
+- plan the production-readiness rehearsals (#102) - (8c7df7f) - Clarence Delmacio Manuel
+- verify and correct the quickstart's exposure guidance (#95) - (4f10a5e) - Clarence Delmacio Manuel
+- add plans for list pagination and the CLI api command (#90) - (22f9f4f) - Clarence Delmacio Manuel
+- refresh production Compose status after the rehearsals (#85) - (4ed1612) - Clarence Delmacio Manuel
+- record production Compose rehearsals and add ingress example - (5827791) - Clarence Manuel
+- make revoke-all-credentials mandatory after a restore - (91f9bcc) - Clarence Manuel
+- require reset-password for sessions and passwords changed after a backup - (dde5884) - Clarence Manuel
+- record capacity and hardening results, credential reset and shutdown behavior - (e8ced65) - Clarence Manuel
+- plan a fresh-host recovery rehearsal - (bd08188) - Clarence Manuel
+- record PostgreSQL TLS and same-host state recovery drills - (9d94c17) - Clarence Manuel
+- record the completed Compose recovery drill - (635d287) - Clarence Manuel
+- record aliases-on Compose rehearsal, rotation drill and P7 rerun - (7aea830) - Clarence Manuel
+- the P5 verified recovery plan (#74) - (f6df078) - Clarence Delmacio Manuel
+- correct the milestone 5 documentation and track what is deferred (#44) - (8d4c82b) - Clarence Delmacio Manuel
+- plan milestone 3 static preview deployments (#11) - (1437ee9) - Clarence Delmacio Manuel
+- plan launchpad application - (239582a) - Clarence Delmacio Manuel
+#### Tests
+- (**cutover**) specify the immutable-model cutover against real PostgreSQL (#55) - (b5c1c51) - Clarence Delmacio Manuel
+- (**mcp**) end-to-end over stdio against the built controller, and standalone run (#27) - (8bf1705) - Clarence Delmacio Manuel
+- (**routing**) rehearse the production alias router on a disposable Dokku (#54) - (e03c542) - Clarence Delmacio Manuel
+- (**sdk**) verify real-fetch redirect and timeout boundaries (#8) - (19b420c) - Clarence Delmacio Manuel
+- add read-only and capacity modes to the Compose rehearsal - (9c1efc9) - Clarence Manuel
+- add a repeatable aliases-on Compose rehearsal - (fde9197) - Clarence Manuel
+- retain P7 writer mounts with fixture state - (6596e14) - Clarence Manuel
+- preserve P7 fixtures when teardown is unverified - (15b7426) - Clarence Manuel
+- extend P7 deployment and recovery acceptance - (dc7e894) - Clarence Manuel
+- P3 end-to-end acceptance and deployment docs (P3e) (#65) - (5eec8ad) - Clarence Delmacio Manuel
+#### Continuous Integration
+- add the gated release workflow, release channels and the release-PR workflow (#124) - (f5287f7) - Clarence Delmacio Manuel
+#### Refactoring
+- (**release**) read program versions from their package manifests (#132) - (aa68d35) - Clarence Delmacio Manuel
+- (**router**) parse arguments with commander (#101) - (9da87bb) - Clarence Delmacio Manuel
+- (**tooling**) parse script arguments with commander (#100) - (9f4ff34) - Clarence Delmacio Manuel
+- replace pre-v1 migrations and preview-era artifacts with a clean v1 baseline (#84) - (2a1c6fa) - Clarence Delmacio Manuel
+#### Miscellaneous Chores
+- (**release**) use one global v<semver> tag and run CI on the bump commit (#120) - (4ea4908) - Clarence Delmacio Manuel
+- (**release**) bump when the Dokku image or Compose files change (#112) - (e164a5b) - Clarence Delmacio Manuel
+- disable interactive for tooling tasks - (5da7abb) - Clarence Manuel
+- license Launchpad under Apache-2.0 (#117) - (33bcd96) - Clarence Delmacio Manuel
+- use the typed commander wrapper everywhere and guard it (#114) - (1d1da58) - Clarence Delmacio Manuel
+- advance the pinned swe-skills projection (#87) - (bd866a3) - Clarence Delmacio Manuel
+- track swe-docs and swe-skills main refs - (7bffb02) - Clarence Manuel
+- update pinned swe-docs and swe-skills projections - (eef6ee9) - Clarence Manuel
+- update swe-skills - (c223e38) - Clarence Manuel
+- initial commit - (0bb5d20) - Clarence Manuel
+
+- - -
+
+Changelog generated by [cocogitto](https://github.com/cocogitto/cocogitto).
