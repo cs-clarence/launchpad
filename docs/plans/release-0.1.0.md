@@ -56,16 +56,14 @@ Owners: **USER** does it by hand in a web UI or with a credential; **AGENT** is 
 
 ## Ordered checklist
 
-1. [ ] USER: items 1-4 above (`main` protection, tag ruleset, `release` environment, npm scope).
-2. [ ] AGENT: `release.yaml`, its spec, and the `ci.spec.ts` extension (items 8-10); reviewed and merged.
-3. [ ] AGENT: Docker verification of the image builds (item 11).
-4. [ ] USER: bootstrap publish of `0.0.0-bootstrap.0`, revoke the token (item 5).
-5. [ ] USER: create the trusted publishers just before the rc, since an unused configuration expires after 2 days (item 6; decision record).
-6. [ ] `cog bump --version 0.1.0-rc.1 --include-packages` on a clean checkout (**proposed**, see decisions); release PR; merge; hand-made `v0.1.0-rc.1` tag on the merge commit; approve the `release` jobs.
-7. [ ] Confirm what the decision record lists as unverified (below) from the rc run; fix the workflow if any is wrong.
-8. [ ] USER: GHCR packages public (item 7); clean-machine smoke test from published artifacts only.
-9. [ ] Final: `cog bump --version 0.1.0 --include-packages`, release PR, tag `v0.1.0` on the merge commit, approvals, verification.
-10. [ ] Replace the DRAFT in `docs/release-notes/0.1.0.md` with the final notes; make the notes current in `docs/releasing.md`.
+1. [ ] USER: **approve the open decisions** (tag policy, rc.1 first, amd64 only, Compose tag, changelog baseline). Until then everything below that depends on them (the rc.1 steps, the tag and image tag rules) is proposed, not decided. Do this before the workflow is implemented or anything is published.
+2. [ ] USER: items 1-4 above (`main` protection, tag ruleset, `release` environment, npm scope).
+3. [ ] AGENT: `release.yaml`, its spec, and the `ci.spec.ts` extension (items 8-10), following the approved decisions; reviewed and merged.
+4. [ ] AGENT: Docker verification of the image builds (item 11).
+5. [ ] USER: bootstrap publish of `0.0.0-bootstrap.0`, revoke the token (item 5).
+6. [ ] **Only if rc.1 first is approved:** create the trusted publishers just before the rc, since an unused configuration expires after 2 days (item 6; decision record); `cog bump --version 0.1.0-rc.1 --include-packages` on a clean checkout; release PR; merge; hand-made `v0.1.0-rc.1` tag on the merge commit; approve the `release` jobs; confirm what the decision record lists as unverified (below) from the rc run and fix the workflow if any is wrong. If rc.1 is rejected, those statements are first confirmed by the final release, which is a higher risk, and the plan must be revised: the first GHCR push and everything in step 7 then move to the final release (step 8) and follow it. The trusted publishers must exist before step 8 publishes.
+7. [ ] **Only if rc.1 ran:** USER: GHCR packages public (item 7); clean-machine smoke test from published artifacts only. Without an rc, do this after step 8, once the first images exist.
+8. [ ] Final release PR: `cog bump --version 0.1.0 --include-packages` **and** the final `docs/release-notes/0.1.0.md` (DRAFT banner removed, content final) and current `docs/releasing.md`, so the tagged revision carries the final notes. Merge, then create tag `v0.1.0` on the merge commit, approve the jobs, and verify. (In every path the trusted publishers exist before this step publishes; create them just before it if rc.1 was skipped, since an unused configuration expires after 2 days.)
 
 ## Still unverified (from the decision record)
 
@@ -101,5 +99,5 @@ should be built on it as if it were.
 ## Rollback
 
 Unchanged from [releasing](../releasing.md) and the decision record: npm versions are deprecated and
-fixed forward; `X.Y.Z` image tags are never rewritten; `X.Y` and `latest` can move back to the last
+fixed forward; under the proposed tag policy `X.Y.Z` image tags are never rewritten and `X.Y` and `latest` can move back to the last
 good digest; data is protected by the backup the upgrade procedure requires first.
